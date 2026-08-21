@@ -776,11 +776,20 @@ class CodexBackend:
 # ---- OpencodeBackend -----------------------------------------------------
 
 
+# opencode reasons other than these still indicate a completed run
+_OPENCODE_FAILURE_REASONS: frozenset[str] = frozenset(
+    {"error", "cancelled", "aborted", "canceled"}
+)
+
+
 class OpencodeBackend:
     """Adapter for the `opencode` CLI (pass-through providers).
 
-    Success: terminal `step_finish` with `reason:"stop"` AND no `type:"error"`
-    event in the stream. Cost sums `step_finish.cost` (same shape as codex).
+    Success: terminal `step_finish` whose `reason` is NOT in
+    ``_OPENCODE_FAILURE_REASONS`` AND no `type:"error"` event in the stream.
+    Any other terminal reason (`"stop"`, `"unknown"`, `"length"`,
+    provider-specific values) counts as a completed run. Cost sums
+    `step_finish.cost` (same shape as codex).
     """
 
     name = "opencode"
@@ -837,11 +846,13 @@ class OpencodeBackend:
     ) -> DispatchResult:
         events = list(_iter_jsonl_events(log_text))
         has_error = any(e.get("type") == "error" for e in events)
-        # Terminal predicate: last step_finish must have reason=="stop".
+        # Terminal predicate: last step_finish must NOT have a failure reason.
         terminal_ok = False
+        terminal_reason: str | None = None
         for ev in reversed(events):
             if ev.get("type") == "step_finish":
-                terminal_ok = ev.get("reason") == "stop"
+                terminal_reason = ev.get("reason") or ""
+                terminal_ok = terminal_reason not in _OPENCODE_FAILURE_REASONS
                 break
         success = (exit_code == 0) and (not has_error) and terminal_ok
         cost_usd, tokens_in, tokens_out = _sum_step_finish_costs(events)
@@ -856,9 +867,15 @@ class OpencodeBackend:
                     error_message = str(err)
             elif not events:
                 error_message = "opencode produced no JSONL events"
+            elif terminal_reason is None:
+                error_message = (
+                    f"opencode did not emit a terminal step_finish event "
+                    f"(exit={exit_code})"
+                )
             else:
                 error_message = (
-                    f"opencode did not terminate with step_finish reason=stop "
+                    f"opencode step_finish reason={terminal_reason!r} is in "
+                    f"failure set {sorted(_OPENCODE_FAILURE_REASONS)} "
                     f"(exit={exit_code})"
                 )
         return DispatchResult(

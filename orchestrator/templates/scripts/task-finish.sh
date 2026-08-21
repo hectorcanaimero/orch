@@ -14,9 +14,11 @@ AUTHOR="${3:-agent}"
 TASKS_JSON="${PROJECT_ROOT:-.}/tasks.json"
 NOW="$(date -u +%FT%TZ)"
 
+# Write in place to preserve inode (symlink-safe).
+tmp="$(mktemp)"
 jq --arg id "$TASK_ID" --arg s "$SUMMARY" --arg a "$AUTHOR" --arg ts "$NOW" '
     (.tasks[] | select(.id == $id) | .status) = "done"
     | (.tasks[] | select(.id == $id) | .comments) += [
         {"author": $a, "body": $s, "at": $ts}
       ]
-' "$TASKS_JSON" > "$TASKS_JSON.tmp" && mv "$TASKS_JSON.tmp" "$TASKS_JSON"
+' "$TASKS_JSON" > "$tmp" && cat "$tmp" > "$TASKS_JSON" && rm -f "$tmp"

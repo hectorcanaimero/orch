@@ -23,10 +23,11 @@ done
 TASKS_JSON="$PROJECT_ROOT/tasks.json"
 NOW="$(date -u +%FT%TZ)"
 
-# Atomic rewrite via tmp + mv.
+# Write in place to preserve inode (symlink-safe).
+tmp="$(mktemp)"
 jq --arg id "$TASK_ID" --arg a "$AUTHOR" --arg ts "$NOW" '
     (.tasks[] | select(.id == $id) | .status) = "in-progress"
     | (.tasks[] | select(.id == $id) | .comments) += [
         {"author": $a, "body": "started", "at": $ts}
       ]
-' "$TASKS_JSON" > "$TASKS_JSON.tmp" && mv "$TASKS_JSON.tmp" "$TASKS_JSON"
+' "$TASKS_JSON" > "$tmp" && cat "$tmp" > "$TASKS_JSON" && rm -f "$tmp"
