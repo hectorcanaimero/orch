@@ -1,0 +1,9 @@
+# main_loop_router.yaml — router used by test_orch main-loop tests.
+# Kept tiny (one model) so the fixture tasks all route to a single provider,
+# making per-provider semaphore assertions unambiguous.
+
+opencode-go/glm-5.1:
+  backend: opencode
+  cli_model: zhipu/glm-5.1
+  tier: cheap
+  is_premium: false

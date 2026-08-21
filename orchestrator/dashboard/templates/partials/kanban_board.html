@@ -1,0 +1,77 @@
+<section id="kanban-board"
+         class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3"
+         hx-get="/kanban?partial=board{% if filters.q %}&q={{ filters.q | urlencode }}{% endif %}{% if filters.model %}&model={{ filters.model | urlencode }}{% endif %}{% if filters.phase is not none %}&phase={{ filters.phase }}{% endif %}{% if filters.parallelizable %}&parallelizable=1{% endif %}{% if filters.wip %}&wip={{ filters.wip }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.has_comments %}&has_comments=1{% endif %}{% if filters.has_spec %}&has_spec=1{% endif %}{% if filters.blocked_since is not none %}&blocked_since={{ filters.blocked_since }}{% endif %}"
+         hx-trigger="refresh-board from:body"
+         hx-swap="outerHTML">
+  {% for col in columns %}
+  <div class="bg-slate-100 border {% if col.over_wip %}border-amber-400{% else %}border-slate-200{% endif %} rounded flex flex-col min-h-[24rem]">
+    <div class="px-3 py-2 border-b border-slate-200 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="badge status-{{ col.key }}">{{ col.label }}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        {% if filters.wip %}
+        <span class="text-[0.65rem] font-mono {% if col.over_wip %}text-amber-700 font-semibold{% else %}text-slate-400{% endif %}"
+              title="{% if col.over_wip %}Over WIP limit ({{ col.count }} > {{ filters.wip }}){% else %}Within WIP limit{% endif %}">
+          {{ col.count }}/{{ filters.wip }}{% if col.over_wip %} ⚠{% endif %}
+        </span>
+        {% else %}
+        <span class="text-xs text-slate-500 font-mono">{{ col.count }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="flex-1 p-2 space-y-2 overflow-y-auto max-h-[70vh]">
+      {% if col.count == 0 %}
+        <div class="text-center text-[0.7rem] text-slate-400 py-6 px-2">
+          {{ col.empty_hint }}
+        </div>
+      {% else %}
+        {% for grp in col.groups %}
+          {% if grp.phase is not none %}
+            <div class="flex items-center gap-2 pt-1 pb-0.5 sticky top-0 bg-slate-100/95 backdrop-blur-sm z-10 border-b border-slate-200">
+              <span class="text-[0.65rem] uppercase text-slate-500 font-semibold tracking-wide">Phase {{ grp.phase }}</span>
+              <span class="text-[0.65rem] text-slate-400 font-mono">{{ grp.cards | length }}</span>
+            </div>
+          {% endif %}
+          {% for card in grp.cards %}
+          <article class="bg-white border rounded p-2 cursor-pointer hover:shadow transition
+                          {% if card.parallelizable %}border-emerald-300 ring-1 ring-emerald-200{% else %}border-slate-200 hover:border-slate-300{% endif %}"
+                   hx-get="/partials/task-modal/{{ card.id }}"
+                   hx-swap="none"
+                   @htmx:after-request.window="if ($event.detail.pathInfo && $event.detail.pathInfo.requestPath === '/partials/task-modal/{{ card.id }}') modal = $event.detail.xhr.responseText">
+            <div class="flex items-start justify-between gap-2">
+              <div class="font-mono text-[0.7rem] text-slate-500">{{ card.id }}</div>
+              <div class="flex items-center gap-1">
+                {% if card.on_critical_path %}
+                  <span class="text-[0.6rem] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1"
+                        title="On the project's critical path (longest weighted chain)">⚡</span>
+                {% endif %}
+                {% if card.downstream_impact and card.downstream_impact > 0 %}
+                  <span class="text-[0.6rem] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1"
+                        title="Completing this unblocks {{ card.downstream_impact }} downstream task(s)">
+                    ↓{{ card.downstream_impact }}
+                  </span>
+                {% endif %}
+                {% if card.parallelizable %}
+                  <span class="badge status-in-progress" title="Deps done, ready to launch">ready</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="text-sm font-medium text-slate-800 mt-0.5 line-clamp-2">{{ card.title }}</div>
+            <div class="mt-2 flex items-center justify-between text-[0.7rem] text-slate-500">
+              <span class="font-mono">{{ card.model or '—' }}</span>
+              <span>P{{ card.phase }}</span>
+            </div>
+            <div class="mt-1 flex items-center justify-between text-[0.7rem] text-slate-500">
+              <span title="{{ card.dependencies | join(', ') }}">{{ card.dep_count }} deps</span>
+              <span>{{ card.estimate_hours }}h</span>
+            </div>
+          </article>
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>

@@ -1,0 +1,50 @@
+{
+  "meta": {
+    "note": "3-root fixture for orch main-loop tests. All tasks route via opencode-go/glm-5.1 (opencode backend) so per-provider semaphore assertions are unambiguous. No deps → all three ready at startup."
+  },
+  "phases": [{"id": 1, "name": "test"}],
+  "tasks": [
+    {
+      "id": "T-A",
+      "phase": 1,
+      "title": "Root A",
+      "description": "root task A",
+      "model": "opencode-go/glm-5.1",
+      "reason": "cheap sanity",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "T-B",
+      "phase": 1,
+      "title": "Root B",
+      "description": "root task B",
+      "model": "opencode-go/glm-5.1",
+      "reason": "cheap sanity",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "T-C",
+      "phase": 1,
+      "title": "Root C",
+      "description": "root task C",
+      "model": "opencode-go/glm-5.1",
+      "reason": "cheap sanity",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    }
+  ]
+}

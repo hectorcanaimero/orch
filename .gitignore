@@ -1,0 +1,26 @@
+# Runtime artifacts — orchestrator writes here at run time, never checked in.
+# Keep the directory tracked via .gitkeep, ignore everything else.
+state/*
+!state/.gitkeep
+
+# Python build / cache
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Tooling caches
+.playwright-mcp/
+.mypy_cache/
+.ruff_cache/

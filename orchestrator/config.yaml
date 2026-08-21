@@ -1,0 +1,49 @@
+# config.yaml — runtime knobs. Loaded by orch.py at startup.
+# All values copied verbatim from proposal/explore §2 defaults (Batch B seed).
+
+concurrency:
+  # Hard cap on TOTAL in-flight subprocesses across all backends (FR-D-5).
+  global_max: 8
+  # Per-backend caps (FR-D-5). AS-05 verifies claude cap holds.
+  per_provider:
+    claude: 3
+    codex: 2
+    opencode: 3
+  # Per-file cap for the 33 tasks with declared `files[]` (opportunistic).
+  per_file: 1
+
+# Strict-files enforcement is OFF by default; enabled only for phase-10 tasks
+# (design.md OPEN — `git checkout --` can destroy concurrent work otherwise).
+strict_files_phases:
+  - 10
+
+# Multiplier applied to `estimateHours` for the subprocess timeout (FR-D-3).
+# Actual timeout = estimateHours * multiplier * 3600 seconds.
+default_timeout_multiplier: 1.5
+
+# Per-dispatch budget cap passed to `claude --max-budget-usd`.
+budget:
+  per_dispatch_usd: 5.00
+
+# FR-D-4 (design.md §5): wall-clock delay between a failed dispatch and its
+# retry. Uses `time.monotonic()` so it's immune to wall-clock jumps.
+# Fase B: RATE_LIMIT failures get a longer backoff so the provider's rate
+# window has time to reset before the retry hits it again.
+retry:
+  backoff_seconds: 5
+  rate_limit_backoff_seconds: 60
+
+# Fase 3 (multi-proyecto): prefijo aplicado a `Task.spec_ref` para armar la
+# línea `Spec ref (READ FIRST):` del prompt. Cada proyecto puede sobreescribir
+# esto (ej: `sdd/specs`, `docs/specs/`, `specs/`). Default: `docs/rewrite-plan`
+# — retrocompatible con rupies.
+spec_root: docs/rewrite-plan
+
+# Sprint 7 — provider budget guardrails.
+# `budgets_config` is the path (relative to the orchestrator package OR the
+# project root) to a `budgets.yaml` file. Absent/missing file → gate disabled
+# (backwards-compat: everything works exactly like pre-Sprint 7).
+# `budgets_preset` picks which preset inside that file to use. Overridable
+# with `--budgets-preset` on the CLI or `ORCH_BUDGETS_PRESET` env var.
+budgets_config: budgets.yaml
+budgets_preset: conservative

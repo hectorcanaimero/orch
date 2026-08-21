@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"cx-02"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"OpenAI API auth expired; run codex auth"}}
+{"type":"turn.failed","error":{"message":"OpenAI API auth expired; run codex auth"}}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Logs · {{ project_id }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 flex flex-col gap-3"
+     x-data="{ stream: true }"
+     x-init="
+       if (stream) {
+         const src = new EventSource('/logs/stream{% if task_id_filter %}?task_id={{ task_id_filter }}{% endif %}');
+         const box = document.getElementById('logbox');
+         src.addEventListener('event', (e) => {
+           const ev = JSON.parse(e.data);
+           const line = document.createElement('div');
+           line.className = 'log-line sev-' + ev.severity;
+           line.textContent = ev.human;
+           box.appendChild(line);
+           // Cap the DOM to 500 lines so we don't leak on long runs.
+           while (box.childNodes.length > 500) box.removeChild(box.firstChild);
+           box.scrollTop = box.scrollHeight;
+         });
+         window.addEventListener('beforeunload', () => src.close());
+       }
+     ">
+  <form method="get" action="/logs" class="flex items-center gap-2">
+    <label class="text-sm">Filter by task_id:</label>
+    <input type="text" name="task_id" value="{{ task_id_filter }}" placeholder="e.g. P0-016"
+           class="border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
+    <button type="submit" class="bg-slate-800 text-white text-sm px-3 py-1 rounded hover:bg-slate-700">Filter</button>
+    {% if task_id_filter %}
+    <a href="/logs" class="text-sm text-slate-500 hover:text-slate-700">Clear</a>
+    {% endif %}
+    <span class="ml-auto text-xs text-slate-500">
+      Showing last <b>{{ events | length }}</b> events + live stream
+    </span>
+  </form>
+
+  <div class="bg-slate-900 text-slate-100 border border-slate-700 rounded overflow-hidden">
+    <div id="logbox" class="h-[70vh] overflow-y-auto py-2">
+      {% for ev in events %}
+        <div class="log-line sev-{{ ev.severity }}">{{ ev.human }}</div>
+      {% else %}
+        <div class="log-line sev-muted">No events yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <p class="text-xs text-slate-500">
+    Live stream via SSE (<code>/logs/stream</code>). If new runs start, the tailer switches automatically.
+  </p>
+</div>
+{% endblock %}

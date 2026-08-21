@@ -1,0 +1,23 @@
+TASK_ID=T-A
+You are executing task T-A for the Rupies v2 rewrite.
+
+Working dir: /tmp/orch-golden-project
+Title: Root A
+Description: First root
+Phase: 1  Estimate: 0.5h
+Model reason: Cheap sanity task
+Files you may write: []
+Spec ref (READ FIRST): docs/rewrite-plan/specs/foo.md
+Completed dependencies (context):
+  - T-DEP: dep did the thing
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for T-A.
+2. Do the work. If blocked, run: scripts/task-block.sh T-A "<reason>" "opencode-go/glm-5.1" and STOP.
+3. On success, run: scripts/task-finish.sh T-A "<what you did>" "opencode-go/glm-5.1"
+   Note: the orchestrator will call scripts/task-start.sh T-A BEFORE launching you.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside [] unless the spec explicitly requires it.
+- Report progress via the scripts above only.

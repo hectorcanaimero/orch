@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Metrics · {{ project_id }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 flex flex-col gap-4">
+  <!-- Totals -->
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="text-xs uppercase text-slate-500">Total cost</div>
+      <div class="text-2xl font-semibold text-slate-800">${{ '%.2f'|format(total_cost) }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="text-xs uppercase text-slate-500">Estimate (h)</div>
+      <div class="text-2xl font-semibold">{{ estimate_hours_total }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="text-xs uppercase text-slate-500">Human (h) — done tasks</div>
+      <div class="text-2xl font-semibold">{{ done_hours }}</div>
+    </div>
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="text-xs uppercase text-slate-500">Progress</div>
+      <div class="text-2xl font-semibold">{{ summary.percent_done }}%</div>
+      <div class="text-xs text-slate-500">{{ summary.done }} / {{ summary.total }}</div>
+    </div>
+  </section>
+
+  <!-- By model -->
+  <section class="bg-white border border-slate-200 rounded">
+    <div class="px-4 py-3 border-b border-slate-200">
+      <h2 class="font-semibold">By model</h2>
+      <p class="text-xs text-slate-500">Distinct task_ids per model. Cost uses recorded value when > 0, else pricing.yaml fallback.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500">
+          <tr>
+            <th class="text-left px-3 py-2">Model</th>
+            <th class="text-right px-3 py-2">Tasks</th>
+            <th class="text-right px-3 py-2">Tokens in</th>
+            <th class="text-right px-3 py-2">Tokens out</th>
+            <th class="text-right px-3 py-2">Cost (USD)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for m in by_model %}
+          <tr>
+            <td class="px-3 py-2 font-mono text-xs">{{ m.model }}</td>
+            <td class="px-3 py-2 text-right">{{ m.tasks_total }}</td>
+            <td class="px-3 py-2 text-right">{{ '{:,}'.format(m.tokens_in) }}</td>
+            <td class="px-3 py-2 text-right">{{ '{:,}'.format(m.tokens_out) }}</td>
+            <td class="px-3 py-2 text-right font-medium">${{ '%.2f'|format(m.cost_usd) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-slate-400 py-4">No spend rows yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Burndown -->
+  <section class="bg-white border border-slate-200 rounded">
+    <div class="px-4 py-3 border-b border-slate-200">
+      <h2 class="font-semibold">Burndown (last 14 days)</h2>
+      <p class="text-xs text-slate-500">Completed tasks per day. Counts the first <code>exit_ok</code> event per task.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500">
+          <tr>
+            <th class="text-left px-3 py-2">Date (UTC)</th>
+            <th class="text-right px-3 py-2"># done</th>
+            <th class="text-left px-3 py-2 w-1/2">Bar</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% set max_done = (burndown | map(attribute='done_count') | max) or 1 %}
+          {% for d in burndown %}
+          <tr>
+            <td class="px-3 py-2 font-mono text-xs">{{ d.date }}</td>
+            <td class="px-3 py-2 text-right font-mono text-xs">{{ d.done_count }}</td>
+            <td class="px-3 py-2">
+              {% if d.done_count %}
+              <div class="bg-emerald-500 h-2 rounded" style="width: {{ (d.done_count / max_done * 100) | round(0, 'floor') }}%"></div>
+              {% else %}
+              <div class="bg-slate-100 h-2 rounded w-1"></div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- By day -->
+  <section class="bg-white border border-slate-200 rounded">
+    <div class="px-4 py-3 border-b border-slate-200">
+      <h2 class="font-semibold">Spend by day (last 14)</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500">
+          <tr>
+            <th class="text-left px-3 py-2">Date (UTC)</th>
+            <th class="text-right px-3 py-2">Tokens in</th>
+            <th class="text-right px-3 py-2">Tokens out</th>
+            <th class="text-right px-3 py-2">Cost (USD)</th>
+            <th class="text-right px-3 py-2"># tasks</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for d in by_day %}
+          <tr>
+            <td class="px-3 py-2 font-mono text-xs">{{ d.date }}</td>
+            <td class="px-3 py-2 text-right">{{ '{:,}'.format(d.tokens_in) }}</td>
+            <td class="px-3 py-2 text-right">{{ '{:,}'.format(d.tokens_out) }}</td>
+            <td class="px-3 py-2 text-right font-medium">${{ '%.2f'|format(d.cost_usd) }}</td>
+            <td class="px-3 py-2 text-right">{{ d.tasks_total }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-slate-400 py-4">No spend rows yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Projection -->
+  <section class="bg-white border border-slate-200 rounded p-4">
+    <div class="text-xs uppercase text-slate-500">Projection</div>
+    <div class="text-sm text-slate-700 mt-1">
+      Estimate total: <span class="font-semibold">{{ estimate_hours_total }}h</span>
+      &nbsp;·&nbsp;
+      Done (human): <span class="font-semibold">{{ done_hours }}h</span>
+      &nbsp;·&nbsp;
+      Delta: <span class="font-semibold">{{ '%.1f'|format(done_hours - estimate_hours_total) }}h</span>
+    </div>
+    <p class="text-xs text-slate-500 mt-1">
+      A positive delta means done tasks took MORE human wall-time than the LLM estimated; negative means you're ahead of estimate.
+    </p>
+  </section>
+</div>
+{% endblock %}

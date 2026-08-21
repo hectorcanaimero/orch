@@ -1,0 +1,7 @@
+{"type":"session_start","session_id":"oc-01","model":"deepseek/deepseek-v4-pro"}
+{"type":"step_start","step_id":1}
+{"type":"text","text":"Analyzing task..."}
+{"type":"step_finish","step_id":1,"reason":"tool_call","cost":0.0021,"tokens":{"input":600,"output":80,"cache":0}}
+{"type":"step_start","step_id":2}
+{"type":"text","text":"Writing supabase/migrations/003_credits.sql"}
+{"type":"step_finish","step_id":2,"reason":"stop","cost":0.0064,"tokens":{"input":1100,"output":240,"cache":40}}

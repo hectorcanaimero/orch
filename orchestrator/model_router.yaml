@@ -1,0 +1,263 @@
+# model_router.yaml — maps every `tasks.json` model string to a backend CLI
+# invocation. Keyed by the EXACT string that appears in `tasks.json` (do NOT
+# rename keys — the router validator does an exact match; see AS-06).
+#
+# Fields (per orchestrator/models.py::RouteEntry):
+#   backend             : one of {claude, codex, opencode}
+#   cli_model           : native model string the chosen CLI expects
+#   tier                : one of {premium, standard, cheap} — drives semi gate
+#   is_premium          : cached tier == "premium" (denormalized for hot path)
+#   fallback_cli_model  : (optional) same-family fallback used when the CLI's
+#                         local registry lacks `cli_model` (FR-D-7). Emit ONE
+#                         WARN per substitution at startup.
+#
+# Routing rules (approved in proposal Q1):
+#   opencode/claude-*      → claude CLI (Anthropic-native)
+#   opencode-go/claude-*   → claude CLI
+#   opencode/gpt-*         → codex CLI (OpenAI-native)
+#   opencode/{deepseek,gemini}-*, opencode-go/<non-claude> → opencode CLI
+#
+# Premium tier assigned per spec FR-C-1a:
+#   opus, gpt-5.6, gemini-3.0-pro, deepseek-v4-pro.
+#
+# Audit 2026-08-20: cleanup pass against the opencode-go accepted-model
+# registry. Renamed stale routes (grok-4.6 → grok-4.5, minimax-m2.5 →
+# minimax-m2.7), rerouted Gemini (not in accepted list) to xAI/DeepSeek,
+# restored the mimo temp-patch, and added new premium/standard/cheap routes
+# for the accepted models. See orchestrator/tests/test_model_router.py.
+
+# ----- Anthropic-family via claude CLI -----
+
+opencode/claude-opus-4-7:
+  backend: claude
+  cli_model: claude-opus-4-7
+  tier: premium
+  is_premium: true
+  fallback_cli_model: claude-opus-4-5
+
+opencode/claude-sonnet-4-6:
+  backend: claude
+  cli_model: claude-sonnet-4-6
+  tier: standard
+  is_premium: false
+  fallback_cli_model: claude-sonnet-4-5
+
+opencode-go/claude-haiku-4-5:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+
+# ----- OpenAI-family via codex CLI -----
+
+opencode/gpt-5.4:
+  backend: codex
+  cli_model: gpt-5.4
+  tier: standard
+  is_premium: false
+  fallback_cli_model: gpt-5
+
+opencode/gpt-5.5-codex:
+  backend: codex
+  # verified 2026-08-20: codex exec -m gpt-5.6-luna works
+  cli_model: gpt-5.6-luna
+  fallback_cli_model: gpt-5.4
+  tier: standard
+  is_premium: false
+
+opencode/gpt-5.6-codex:
+  backend: codex
+  # verified 2026-08-20: codex exec -m gpt-5.6-luna works
+  cli_model: gpt-5.6-luna
+  tier: premium
+  is_premium: true
+  fallback_cli_model: gpt-5.4
+
+# ----- Anything else via opencode CLI pass-through -----
+
+opencode/gemini-3.0-pro:
+  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list. The
+  # closest premium-tier substitute is xAI's Grok 4.5 (also frontier-class,
+  # long-context). Fallback to deepseek-v4-pro (premium-tier, same tier).
+  # Escalation 2026-08 (FR-D-8): on attempt-3 after retryable failure,
+  # escalate to opencode/deepseek-v4-pro — different backend cli_model +
+  # different family, breaks provider-level rate-limit sticky failures.
+  backend: opencode
+  cli_model: xai/grok-4.5
+  tier: premium
+  is_premium: true
+  fallback_cli_model: deepseek/deepseek-v4-pro
+  escalation_model: opencode/deepseek-v4-pro
+
+opencode/deepseek-v4-pro:
+  backend: opencode
+  cli_model: deepseek/deepseek-v4-pro
+  tier: premium
+  is_premium: true
+  fallback_cli_model: xiaomi/mimo-v2.5-pro
+
+opencode-go/deepseek-v4-flash:
+  backend: opencode
+  cli_model: deepseek/deepseek-v4-flash
+  tier: cheap
+  is_premium: false
+
+opencode-go/gemini-3.0-flash:
+  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list.
+  # Substituted with DeepSeek V4 Flash (same cheap tier, same-family speed).
+  backend: opencode
+  cli_model: deepseek/deepseek-v4-flash
+  tier: cheap
+  is_premium: false
+
+opencode-go/glm-5.1:
+  # Escalation 2026-08 (FR-D-8): opencode-go/kimi-k2.6 (different family,
+  # same cheap tier) — used on attempt 3 after retryable failures on 1 & 2.
+  backend: opencode
+  cli_model: opencode-go/glm-5.1
+  tier: cheap
+  is_premium: false
+  escalation_model: opencode-go/kimi-k2.6
+
+opencode-go/grok-4.6:
+  # Renamed 2026-08-20: `xai/grok-4.6` was superseded by `xai/grok-4.5` (the
+  # 4.6 slug never shipped to opencode-go; audit found this was stale).
+  backend: opencode
+  cli_model: xai/grok-4.5
+  tier: cheap
+  is_premium: false
+
+opencode-go/kimi-k3:
+  backend: opencode
+  cli_model: moonshot/kimi-k3
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: moonshot/kimi-k2.7-code
+
+opencode-go/mimo-v2.5:
+  # Restored 2026-08-20: temp claude patch (2026-08-20 earlier) is reverted
+  # now that the xiaomi backend is responsive again. Fallback to mimo-v2.5-pro
+  # (same family, premium tier).
+  # Escalation 2026-08 (FR-D-8): opencode-go/qwen3.7-plus (alibaba family,
+  # same cheap tier) — used on attempt 3 after retryable failures.
+  backend: opencode
+  cli_model: xiaomi/mimo-v2.5
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: xiaomi/mimo-v2.5-pro
+  escalation_model: opencode-go/qwen3.7-plus
+
+opencode-go/minimax-m2.5:
+  # Renamed 2026-08-20: `minimax/minimax-m2.5` was superseded by `-m2.7`.
+  backend: opencode
+  cli_model: minimax/minimax-m2.7
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: minimax/minimax-m3
+
+opencode-go/qwen3.8-max:
+  backend: opencode
+  cli_model: alibaba/qwen3.8-max
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: alibaba/qwen3.7-max
+
+# ----- NEW routes added 2026-08-20 for accepted models -----
+# Premium tier — frontier-class, long-context, high-cost.
+
+opencode/gpt-5.6-luna:
+  backend: opencode
+  cli_model: openai/gpt-5.6-luna
+  tier: premium
+  is_premium: true
+  fallback_cli_model: xai/grok-4.5
+
+opencode/glm-5.3:
+  backend: opencode
+  cli_model: zai/glm-5.3
+  tier: premium
+  is_premium: true
+  fallback_cli_model: zai/glm-5.2
+
+opencode/kimi-k3:
+  backend: opencode
+  cli_model: moonshot/kimi-k3
+  tier: premium
+  is_premium: true
+  fallback_cli_model: moonshot/kimi-k2.7-code
+
+opencode/minimax-m3:
+  backend: opencode
+  cli_model: minimax/minimax-m3
+  tier: premium
+  is_premium: true
+  fallback_cli_model: minimax/minimax-m2.7
+
+opencode/mimo-v2.5-pro:
+  backend: opencode
+  cli_model: xiaomi/mimo-v2.5-pro
+  tier: premium
+  is_premium: true
+  fallback_cli_model: xiaomi/mimo-v2.5
+
+# Standard tier — mid-range general-purpose.
+
+opencode/glm-5.2:
+  backend: opencode
+  cli_model: zai/glm-5.2
+  tier: standard
+  is_premium: false
+  fallback_cli_model: opencode-go/glm-5.1
+
+opencode/kimi-k2.7-code:
+  backend: opencode
+  cli_model: moonshot/kimi-k2.7-code
+  tier: standard
+  is_premium: false
+  fallback_cli_model: moonshot/kimi-k2.6
+
+opencode/qwen3.7-max:
+  backend: opencode
+  cli_model: alibaba/qwen3.7-max
+  tier: standard
+  is_premium: false
+  fallback_cli_model: alibaba/qwen3.7-plus
+
+opencode/minimax-m2.7:
+  backend: opencode
+  cli_model: minimax/minimax-m2.7
+  tier: standard
+  is_premium: false
+  fallback_cli_model: minimax/minimax-m3
+
+# Cheap tier — fast + inexpensive.
+
+opencode-go/kimi-k2.6:
+  backend: opencode
+  cli_model: moonshot/kimi-k2.6
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: moonshot/kimi-k2.7-code
+
+opencode-go/qwen3.7-plus:
+  backend: opencode
+  cli_model: alibaba/qwen3.7-plus
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: alibaba/qwen3.6-plus
+
+opencode-go/qwen3.6-plus:
+  backend: opencode
+  cli_model: alibaba/qwen3.6-plus
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: alibaba/qwen3.7-plus
+
+# ----- TODO: evaluate ---------------------------------------------------
+# The following models are in the opencode-go accepted list but have not
+# been given routes yet — need evaluation for tier + fallback strategy:
+#   - Muse Spark 1.2 Contributor  (unclear tier; contributor-only branding
+#     suggests it's a specialist model, not a general-purpose route)
+#   - Hy3                          (unknown provider/family; needs research
+#     before we can pick a sensible fallback)
+# Add routes here when the audit is complete.

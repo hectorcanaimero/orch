@@ -1,0 +1,78 @@
+{
+  "meta": {
+    "note": "5-task DAG fixture. Layout:\n  T-A (root) --\\\n              +--> T-C --> T-D (leaf)\n  T-B (root) --/\n  T-E depends on non-existent id in a MUTATED copy — kept valid here.\n\nStatuses seed: T-A/T-B/T-C/T-D=todo, T-E=blocked (already blocked before load)."
+  },
+  "phases": [{"id": 1, "name": "test"}],
+  "tasks": [
+    {
+      "id": "T-A",
+      "phase": 1,
+      "title": "Root A",
+      "description": "First root",
+      "model": "opencode-go/glm-5.1",
+      "reason": "Cheap sanity task",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "T-B",
+      "phase": 1,
+      "title": "Root B",
+      "description": "Second root",
+      "model": "opencode-go/glm-5.1",
+      "reason": "Cheap sanity task",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "T-C",
+      "phase": 1,
+      "title": "Merge A+B",
+      "description": "Depends on both roots",
+      "model": "opencode/claude-sonnet-4-6",
+      "reason": "Standard merge",
+      "status": "todo",
+      "dependencies": ["T-A", "T-B"],
+      "estimateHours": 1,
+      "files": ["v2/example.txt"],
+      "specRef": "docs/spec.md",
+      "comments": []
+    },
+    {
+      "id": "T-D",
+      "phase": 1,
+      "title": "Leaf after C",
+      "description": "Last in chain",
+      "model": "opencode-go/glm-5.1",
+      "reason": "Cheap follow-up",
+      "status": "todo",
+      "dependencies": ["T-C"],
+      "estimateHours": 0.25,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "T-E",
+      "phase": 1,
+      "title": "Pre-blocked orphan",
+      "description": "Starts blocked to exercise blocked propagation",
+      "model": "opencode-go/glm-5.1",
+      "reason": "Fixture edge case",
+      "status": "blocked",
+      "dependencies": [],
+      "estimateHours": 0.1,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    }
+  ]
+}

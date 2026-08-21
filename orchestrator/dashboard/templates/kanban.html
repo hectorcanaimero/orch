@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Kanban · {{ project_id }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 flex flex-col gap-4"
+     x-data="{
+       modal: null,
+       polling: (localStorage.getItem('kanbanPolling') ?? 'true') === 'true',
+       init() {
+         // Fires refresh-board every 10s IF polling is on AND no modal is open.
+         // Modal open → operator is reading; avoid the layout jump.
+         setInterval(() => {
+           if (this.polling && this.modal === null) {
+             document.body.dispatchEvent(new CustomEvent('refresh-board'));
+           }
+         }, 10000);
+         this.$watch('polling', v => localStorage.setItem('kanbanPolling', v));
+       }
+     }">
+  <!-- Toolbar (mirrors index.html filters minus status, which is the column axis) -->
+  <section class="bg-white border border-slate-200 rounded">
+    <form method="get" action="/kanban" class="flex flex-wrap items-center gap-2 p-3">
+      <input type="text" name="q" value="{{ filters.q or '' }}" placeholder="Buscar id/título..."
+             class="flex-1 min-w-[12rem] border border-slate-300 rounded px-2 py-1 text-sm" />
+      <select name="model" class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <option value="">Modelo (todos)</option>
+        {% for m in models %}
+        <option value="{{ m }}" {% if filters.model == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      <select name="phase" class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <option value="">Fase (todas)</option>
+        {% for p in phases %}
+        <option value="{{ p.phase }}" {% if filters.phase == p.phase %}selected{% endif %}>Phase {{ p.phase }} ({{ p.done }}/{{ p.total }})</option>
+        {% endfor %}
+      </select>
+      <select name="group" class="border border-slate-300 rounded px-2 py-1 text-sm" title="Group inside columns">
+        <option value="">Group: none</option>
+        <option value="phase" {% if filters.group == 'phase' %}selected{% endif %}>Group: phase</option>
+      </select>
+      <select name="sort" class="border border-slate-300 rounded px-2 py-1 text-sm" title="Sort within columns">
+        <option value="">Sort: phase/id</option>
+        <option value="impact" {% if filters.sort == 'impact' %}selected{% endif %}>Sort: impact ↓</option>
+      </select>
+      <label class="text-sm flex items-center gap-1" title="Warn columns above this count">
+        WIP
+        <input type="number" name="wip" min="1" max="99" value="{{ filters.wip or '' }}" placeholder="—"
+               class="w-14 border border-slate-300 rounded px-1 py-0.5 text-sm" />
+      </label>
+      <label class="text-sm flex items-center gap-1">
+        <input type="checkbox" name="parallelizable" value="1" {% if filters.parallelizable %}checked{% endif %} />
+        Paralelizables ahora
+      </label>
+      <label class="text-sm flex items-center gap-1" title="Only tasks with at least one comment">
+        <input type="checkbox" name="has_comments" value="1" {% if filters.has_comments %}checked{% endif %} />
+        With comments
+      </label>
+      <label class="text-sm flex items-center gap-1" title="Only tasks with a spec_ref set">
+        <input type="checkbox" name="has_spec" value="1" {% if filters.has_spec %}checked{% endif %} />
+        With spec
+      </label>
+      <label class="text-sm flex items-center gap-1" title="Blocked tasks stuck N+ days">
+        Stuck≥
+        <input type="number" name="blocked_since" min="0" max="365" value="{{ filters.blocked_since or '' }}" placeholder="d"
+               class="w-14 border border-slate-300 rounded px-1 py-0.5 text-sm" />
+      </label>
+      <button type="submit" class="bg-slate-800 text-white text-sm px-3 py-1 rounded hover:bg-slate-700">
+        Aplicar
+      </button>
+      <a href="/kanban" class="text-sm text-slate-500 hover:text-slate-700">Reset</a>
+      <span class="ml-auto text-xs text-slate-500 flex items-center gap-2">
+        <button type="button" @click="polling = !polling"
+                class="inline-flex items-center gap-1 border border-slate-200 rounded px-1.5 py-0.5 hover:bg-slate-100"
+                :title="polling ? 'Auto-refresh ON — click to pause' : 'Auto-refresh PAUSED — click to resume'">
+          <span class="w-1.5 h-1.5 rounded-full"
+                :class="polling ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"></span>
+          <span x-text="polling ? 'live' : 'paused'"></span>
+        </button>
+        <button type="button" @click="navigator.clipboard.writeText(location.href).then(() => $el.textContent = 'copied ✓').then(() => setTimeout(() => $el.textContent = 'save view', 1500))"
+                class="border border-slate-200 rounded px-1.5 py-0.5 hover:bg-slate-100"
+                title="Copy this view's URL to clipboard">
+          save view
+        </button>
+        <span>{{ row_count }} / {{ total_count }} tasks</span>
+      </span>
+    </form>
+  </section>
+
+  <!-- Board (extracted so /kanban?partial=board can return just this) -->
+  {% include "partials/kanban_board.html" %}
+
+  <!-- Modal container (same pattern as Tasks view) -->
+  <template x-if="modal">
+    <div class="modal-backdrop" @click.self="modal=null">
+      <div class="modal" x-html="modal"></div>
+    </div>
+  </template>
+</div>
+{% endblock %}

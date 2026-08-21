@@ -1,0 +1,24 @@
+# main_loop_config.yaml — tiny config for orch.py main-loop tests.
+# Concurrency is generous so the 3-task fixture can dispatch in parallel
+# and hit the reap path deterministically. strict_files_phases is empty
+# so the git-diff check is inert in tests (there's no real git repo).
+
+concurrency:
+  global_max: 3
+  per_provider:
+    claude: 3
+    codex: 3
+    opencode: 3
+  per_file: 1
+
+strict_files_phases: []
+
+default_timeout_multiplier: 1.5
+
+budget:
+  per_dispatch_usd: 5.00
+
+# Retry backoff overridden to 0 so main-loop tests don't wait 5s on retry
+# (see orchestrator/config.yaml — production default is 5s).
+retry:
+  backoff_seconds: 0

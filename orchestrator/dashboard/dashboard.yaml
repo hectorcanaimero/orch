@@ -1,0 +1,10 @@
+# Dashboard UX defaults. Applied when a request omits the corresponding
+# query param, so URL bookmarks always win.
+#
+# Ship these defaults with the package; a project can override by dropping
+# `<project_root>/dashboard.yaml` — same schema.
+kanban:
+  wip_default: null         # integer or null. null = no WIP badge unless ?wip=N.
+  sort_default: null        # "impact" | null (default = phase asc + id asc).
+  group_default: null       # "phase" | null.
+  refresh_interval_s: 10    # HTMX polling cadence for the board.
