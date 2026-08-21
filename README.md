@@ -1,18 +1,43 @@
 # orch
 
 Task orchestrator that walks a `tasks.json` DAG and dispatches each task to the
-right local CLI (`claude` | `codex` | `opencode`). Single-user, local, no
+right local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no
 daemon, no remote queue.
 
 Built to run 300+ task pipelines unattended. Handles per-provider concurrency
-caps, retries with backoff, per-task timeouts, budget guardrails against
-subscription quotas, semi-mode checkpoints for risky tasks, and a live
-FastAPI dashboard.
+caps, retries with backoff, per-task timeouts, **budget guardrails against
+subscription quotas** so long unattended runs don't lock you out of your own
+Claude / Codex / opencode terminal, semi-mode checkpoints for risky tasks, and
+a live FastAPI dashboard.
+
+**Status**: v0.2.0 — production-ready for the use case it was built for.
+
+---
+
+## Table of contents
+
+1. [Install](#install)
+2. [How orch thinks](#how-orch-thinks)
+3. [Project layout you need](#project-layout-you-need)
+4. [Minimum tasks.json example](#minimum-tasksjson-example)
+5. [The task-*.sh contract](#the-task-sh-contract)
+6. [First run](#first-run)
+7. [Dashboard](#dashboard)
+8. [Configuration](#configuration)
+9. [Budget guardrails (Sprint 7)](#budget-guardrails-sprint-7)
+10. [Atomizer — markdown → tasks.json](#atomizer--markdown--tasksjson)
+11. [State directory layout](#state-directory-layout)
+12. [Concurrent instances on disjoint tasks](#concurrent-instances-on-disjoint-tasks)
+13. [Exit codes](#exit-codes)
+14. [Development](#development)
+15. [History](#history)
+
+---
 
 ## Install
 
 Requires Python 3.11+ and at least one of `claude`, `codex`, or `opencode` on
-your `PATH`, authenticated.
+your `PATH`, authenticated with a subscription.
 
 ```bash
 # Recommended — isolated venv, `orch` on PATH globally
@@ -29,120 +54,408 @@ Verify:
 
 ```bash
 orch --help
+orch dashboard --help
 ```
 
-## Quickstart
+---
 
-`orch` expects a project layout like:
+## How orch thinks
+
+1. You describe your work as a **DAG of tasks** in `tasks.json` (id, model,
+   dependencies, files, estimate).
+2. `orch` walks the DAG. When a task's dependencies are done and there's
+   capacity, it **spawns the right CLI** for that task's model (via
+   `model_router.yaml`).
+3. Each dispatch runs `scripts/task-start.sh <id>` before, then the CLI does
+   the work, then the agent itself calls `scripts/task-finish.sh <id> …` on
+   success or `scripts/task-block.sh <id> …` on failure. `orch` reads the
+   result, updates `tasks.json`, and continues.
+4. **Budget gate** checks token usage per provider in a rolling window before
+   every dispatch. If the provider is over threshold, skip it. If ALL
+   providers are over → sleep until the next reset.
+5. **Semi mode** prompts you for critical tasks; **auto mode** dispatches
+   everything without asking.
+
+---
+
+## Project layout you need
+
+`orch` doesn't ship with your project. It expects this shape wherever you
+point it (`--project-root PATH` or `ORCH_PROJECT_ROOT` env):
 
 ```
 your-project/
-├── tasks.json                    # your task DAG
+├── tasks.json                    # your task DAG (see next section)
 ├── scripts/
-│   ├── task-start.sh             # called before each dispatch
-│   ├── task-finish.sh            # called by the agent on success
-│   └── task-block.sh             # called by the agent when blocked
+│   ├── task-start.sh             # invoked by orch BEFORE each dispatch
+│   ├── task-finish.sh            # invoked by the AGENT on success
+│   └── task-block.sh             # invoked by the AGENT when blocked
 └── orchestrator/
-    └── state/                    # created on first run
+    ├── state/                    # created on first run (spend, events, prompts)
+    ├── config.yaml               # optional — override packaged defaults
+    ├── model_router.yaml         # optional — override packaged defaults
+    └── budgets.yaml              # optional — override packaged defaults
 ```
 
-Then, from anywhere:
+If any of the YAML files are missing from your project, `orch` falls back to
+the defaults shipped with the installed package.
+
+---
+
+## Minimum tasks.json example
+
+Two tasks: a foundation task done by a cheap model, and a real feature
+depending on it done by Claude Sonnet.
+
+```json
+{
+  "meta": {
+    "project": "my-app",
+    "generatedAt": "2026-08-21"
+  },
+  "phases": [
+    { "id": 0, "name": "F0 — Foundation" },
+    { "id": 1, "name": "F1 — Feature" }
+  ],
+  "tasks": [
+    {
+      "id": "T-001",
+      "phase": 0,
+      "title": "Scaffold monorepo",
+      "description": "Create the base workspace + shared configs.",
+      "model": "opencode-go/glm-5.1",
+      "reason": "Cheap scaffolding, no design decisions.",
+      "status": "todo",
+      "dependencies": [],
+      "estimateHours": 1.0,
+      "files": ["package.json", "tsconfig.base.json"],
+      "specRef": "specs/f0-foundation.md",
+      "comments": []
+    },
+    {
+      "id": "T-002",
+      "phase": 1,
+      "title": "Implement auth flow",
+      "description": "Sign in + sign up + password reset.",
+      "model": "claude-sonnet-4-6",
+      "reason": "Non-trivial state machine — needs strong reasoning.",
+      "status": "todo",
+      "dependencies": ["T-001"],
+      "estimateHours": 6.0,
+      "files": ["src/auth/**"],
+      "specRef": "specs/f1-auth.md",
+      "comments": []
+    }
+  ]
+}
+```
+
+Valid statuses: `backlog`, `todo`, `in-progress`, `done`, `blocked`.
+
+The `model` string must exist in `model_router.yaml`. `orch` fails-fast at
+startup if any task points to an unrouted model.
+
+---
+
+## The task-*.sh contract
+
+Three shell scripts you write in your project's `scripts/` directory. They're
+the only surface where task state gets mutated — `orch` never edits
+`tasks.json` directly.
+
+### `scripts/task-start.sh`
+
+Called by `orch` right before spawning the agent CLI.
 
 ```bash
-# Auto mode — no prompts, dispatches every ready task
-orch --project-root /path/to/your-project --mode auto
-
-# Semi mode — pauses on tasks flagged as `critical` for operator approval
-orch --project-root /path/to/your-project --mode semi
-
-# Dry-run — enumerate the plan without spawning subprocesses
-orch --project-root /path/to/your-project --dry-run
-
-# Filter — `--only` accepts fnmatch globs on task ids
-orch --project-root /path/to/your-project --only 'F1-*'
+#!/usr/bin/env bash
+# scripts/task-start.sh <task-id> [--author "<backend>/<model>"] [--project-root PATH]
+# Set the task's status to "in-progress" and append an audit comment.
+set -euo pipefail
+TASK_ID="$1"
+jq --arg id "$TASK_ID" '(.tasks[] | select(.id == $id) | .status) = "in-progress"' \
+   tasks.json > tasks.json.tmp && mv tasks.json.tmp tasks.json
 ```
 
-`ORCH_PROJECT_ROOT` env var works as a fallback for `--project-root`.
+### `scripts/task-finish.sh`
 
-## Configuration
-
-Three YAML files live next to the installed package (override per-project by
-placing a file with the same name in your project root):
-
-| File | Purpose |
-|---|---|
-| `config.yaml` | concurrency caps, timeouts, retry backoff, spec_root prefix |
-| `model_router.yaml` | maps `Task.model` strings → `(backend, cli_model)` |
-| `budgets.yaml` | provider quota guardrails (Sprint 7) |
-
-### Budget guardrails (Sprint 7)
-
-Long unattended runs can exhaust your Claude Max / Codex Pro / opencode
-subscription quota, cutting you off from interactive terminal use for hours.
-
-`orch` tracks token usage per provider in a rolling window from
-`state/spend-*.jsonl` and pauses dispatches when usage crosses a configurable
-threshold. When ALL providers are capped, the main loop sleeps until the next
-reset window (chunked to 30s so `SIGINT` stays responsive).
-
-Presets in `budgets.yaml`:
-
-- `conservative` (default) — threshold 60-70%, safe for shared use
-- `aggressive` — threshold 90-95%, maximizes throughput
-- `shared` — threshold 40-60%, reserves capacity for interactive terminal use
-
-Select a preset:
+Called by the agent (inside the CLI) after the work is done.
 
 ```bash
-# CLI (highest priority)
-orch --budgets-preset aggressive ...
-
-# Env
-ORCH_BUDGETS_PRESET=shared orch ...
-
-# In your project's config.yaml
-budgets_preset: aggressive
+#!/usr/bin/env bash
+# scripts/task-finish.sh <task-id> "<summary>" "<backend>/<model>"
+set -euo pipefail
+TASK_ID="$1"; SUMMARY="$2"; AUTHOR="${3:-agent}"
+NOW="$(date -u +%FT%TZ)"
+jq --arg id "$TASK_ID" --arg s "$SUMMARY" --arg a "$AUTHOR" --arg ts "$NOW" '
+  (.tasks[] | select(.id == $id) | .status) = "done"
+  | (.tasks[] | select(.id == $id) | .comments) += [{"author":$a,"body":$s,"at":$ts}]
+' tasks.json > tasks.json.tmp && mv tasks.json.tmp tasks.json
 ```
 
-Calibration is empirical: start with `conservative`, observe where your
-provider actually rate-limits you, then set
-`token_budget = observed_tokens * 0.9` and gradually raise `threshold_pct`.
+### `scripts/task-block.sh`
 
-Delete or rename `budgets.yaml` to disable the gate entirely — everything
-works exactly like a pre-Sprint 7 orch.
+Called by the agent when it can't proceed.
+
+```bash
+#!/usr/bin/env bash
+# scripts/task-block.sh <task-id> "<reason>" "<backend>/<model>"
+set -euo pipefail
+TASK_ID="$1"; REASON="$2"; AUTHOR="${3:-agent}"
+NOW="$(date -u +%FT%TZ)"
+jq --arg id "$TASK_ID" --arg r "$REASON" --arg a "$AUTHOR" --arg ts "$NOW" '
+  (.tasks[] | select(.id == $id) | .status) = "blocked"
+  | (.tasks[] | select(.id == $id) | .comments) += [{"author":$a,"body":$r,"at":$ts}]
+' tasks.json > tasks.json.tmp && mv tasks.json.tmp tasks.json
+```
+
+`chmod +x scripts/task-*.sh` and you're set.
+
+---
+
+## First run
+
+```bash
+cd /path/to/your-project
+
+# Dry-run first — enumerate the plan, spawn NOTHING
+orch --dry-run
+
+# Auto mode — dispatch every ready task
+orch --mode auto
+
+# Semi mode — prompt for approval on critical tasks (see spec §10 for what's "critical")
+orch --mode semi
+
+# Filter — fnmatch glob on task ids
+orch --only 'T-0*'
+
+# Cap total dispatches (useful for smoke tests)
+orch --max-tasks 3
+
+# Point at a different project without cd'ing
+orch --project-root /other/project --mode auto
+```
+
+The main loop ticks every 200 ms: reap terminated children → sweep for
+timeouts → refill dispatches up to the concurrency caps → repeat. `Ctrl-C`
+triggers a graceful drain (waits for in-flight children to finish before
+exit) — hit `Ctrl-C` twice to force-kill.
+
+---
 
 ## Dashboard
 
-Read-only FastAPI dashboard for live task state, spend, and budget usage:
+Read-only FastAPI + SSE dashboard, no auth (bind to `127.0.0.1` by default).
 
 ```bash
+# Default: host 127.0.0.1, port 7420
 orch dashboard --project-root /path/to/your-project
-# → open http://127.0.0.1:8000
+
+# Open in browser
+open http://127.0.0.1:7420
+```
+
+Flags:
+
+```bash
+orch dashboard --port 8080 --host 0.0.0.0            # expose on LAN (careful!)
+orch dashboard --reload                              # uvicorn --reload for dev
+orch dashboard --config /path/to/custom-config.yaml
 ```
 
 Endpoints:
 
 | Path | What |
 |---|---|
-| `/` | kanban-style task table |
+| `/` | task table (Jira-style) |
 | `/kanban` | phase-grouped kanban view |
-| `/metrics` | cost/spend metrics |
+| `/metrics` | cost / spend metrics per model, per day |
 | `/logs` | live event stream (SSE) |
 | `/api/tasks` | JSON dump of all tasks |
+| `/api/task/{id}` | JSON detail for one task |
 | `/api/metrics` | JSON metrics |
-| `/api/budgets` | per-provider budget snapshot (Sprint 7) |
-| `/snapshot` | download full JSON snapshot |
+| `/api/budgets` | **per-provider budget snapshot (Sprint 7)** |
+| `/api/events/stream` | SSE stream of events |
+| `/snapshot` | full JSON dump, downloadable (archive-in-git safe) |
+
+The dashboard reads `orchestrator/state/spend-*.jsonl` and
+`orchestrator/state/events-*.jsonl` directly — no separate DB, no writes.
+
+---
+
+## Configuration
+
+Three YAML files at the project's `orchestrator/` directory OR in the
+installed package's directory (project takes priority).
+
+### `config.yaml` — runtime knobs
+
+```yaml
+concurrency:
+  global_max: 8                    # hard cap across all backends
+  per_provider:
+    claude: 3
+    codex: 2
+    opencode: 3
+  per_file: 1                      # only one dispatch per declared file
+strict_files_phases: [10]          # phases where unauthorized edits get git-checkout'd
+default_timeout_multiplier: 1.5    # timeout = estimateHours * mult * 3600s
+budget:
+  per_dispatch_usd: 5.00           # kill switch per dispatch (in USD)
+retry:
+  backoff_seconds: 5               # wall-clock delay before retry-once
+  rate_limit_backoff_seconds: 60   # longer backoff on RATE_LIMIT failures
+spec_root: docs/rewrite-plan       # prefix for Task.spec_ref in prompts
+budgets_config: budgets.yaml       # Sprint 7 — see below
+budgets_preset: conservative
+```
+
+### `model_router.yaml` — model → backend routing
+
+Maps every `Task.model` string to `(backend, cli_model, tier)`:
+
+```yaml
+"claude-opus-4-7":
+  backend: claude
+  cli_model: claude-opus-4-7
+  tier: premium
+  is_premium: true
+
+"opencode-go/glm-5.1":
+  backend: opencode
+  cli_model: glm-5.1
+  tier: cheap
+  is_premium: false
+  fallback_cli_model: glm-5.0      # version-drift fallback (FR-D-7)
+```
+
+Startup validates every task points to a real entry — unrouted model = exit 1.
+
+---
+
+## Budget guardrails (Sprint 7)
+
+Long unattended `--mode auto` runs can burn through your subscription quota
+(Claude Max ~800K tokens / 5h, Codex Pro similar, opencode plans vary),
+cutting you off from your own interactive terminal for hours.
+
+`orch` tracks token usage per provider in a rolling window from
+`state/spend-*.jsonl` and pauses dispatches when usage crosses a configurable
+threshold. When ALL providers are capped, the main loop sleeps until the
+earliest reset (chunked to 30s so `SIGINT` stays responsive).
+
+Presets shipped in `budgets.yaml`:
+
+| Preset | claude threshold | codex threshold | opencode threshold | When to use |
+|---|---|---|---|---|
+| `conservative` (default) | 60% | 60% | 70% | Anytime — safe |
+| `aggressive` | 90% | 90% | 95% | Overnight runs — no interactive use |
+| `shared` | 40% | 40% | 60% | You're also coding — reserves capacity for you |
+
+Select a preset (highest priority first):
+
+```bash
+orch --budgets-preset aggressive        # 1. CLI flag
+ORCH_BUDGETS_PRESET=shared orch         # 2. Env var
+# 3. `budgets_preset: aggressive` in config.yaml
+```
+
+**Calibration is empirical.** The shipped `token_budget` values are estimates.
+Real procedure:
+1. Start with `conservative`.
+2. Run a week. Note when Anthropic / OpenAI / opencode actually rate-limits
+   you in real usage.
+3. Set `token_budget = tokens_consumed_before_cutoff * 0.9`.
+4. Bump `threshold_pct` up gradually (60 → 75 → 85) as you gain confidence.
+
+**Disable entirely**: delete or rename `budgets.yaml`. The gate turns off and
+everything works exactly like a pre-Sprint 7 orch.
+
+Two new event types get emitted:
+- `budget_skip` — one dispatch was skipped because its provider was capped
+- `budget_pause` — the whole loop paused because ALL providers were capped
+
+Watch them live: `tail -f orchestrator/state/events-*.jsonl | grep budget`.
+
+---
+
+## Atomizer — markdown → tasks.json
+
+You can maintain tasks as markdown specs and let `orch atomize` generate the
+JSON. Format documented in [`docs/SPEC-FORMAT.md`](docs/SPEC-FORMAT.md).
+
+Minimal spec:
+
+```markdown
+# F1 — Auth
+
+## F1.1 — Package: authentication
+
+### F1.1.T1 — Setup del package
+
+- **Modelo**: opencode-go/glm-5.1
+- **Estimación**: 1h
+- **Razón**: Boilerplate simple.
+- **Dependencies**:
+- **Files**:
+  - `packages/auth/pubspec.yaml`
+
+### F1.1.T2 — Domain entities
+
+- **Modelo**: claude-sonnet-4-6
+- **Estimación**: 2h
+- **Razón**: Necesita razonamiento de tipos.
+- **Dependencies**: F1.1.T1
+- **Files**:
+  - `packages/auth/lib/src/domain/entities.dart`
+```
+
+Run:
+
+```bash
+orch atomize --spec specs/f1-auth.md --tasks tasks.json
+```
+
+Idempotent: re-running only adds new task IDs; existing tasks aren't touched.
+
+---
+
+## State directory layout
+
+Everything under `orchestrator/state/` is gitignored — pure runtime.
+
+```
+orchestrator/state/
+├── .lock                          # flock — protects concurrent orch instances
+├── task-locks/                    # optional per-task locks (--task-locks)
+├── run-<uuid>.json                # per-run operational state
+├── events-<uuid>.jsonl            # observability event stream
+├── spend-<YYYY-MM-DD>.jsonl       # cost log — dashboard + budget gate read this
+├── logs/<task-id>.log             # captured stdout/stderr per dispatch
+├── prompts/<run-id>/<task-id>.txt # rendered prompts (replay/debug)
+└── index.json                     # rebuilt after every write — dashboard uses it
+```
+
+You can `rm -rf` the whole `state/` dir to reset (only tasks.json holds
+persistent progress).
+
+---
 
 ## Concurrent instances on disjoint tasks
 
-Default flock protects the whole state directory (single writer). Add
-`--task-locks` to swap it for per-task locks — multiple `orch` instances can
-then work on disjoint tasks simultaneously:
+Default flock (`state/.lock`) is single-writer. Add `--task-locks` to swap
+for per-task locks — multiple `orch` instances can then work on disjoint
+tasks simultaneously:
 
 ```bash
-orch --project-root /path/to/project --only 'F1-*' --task-locks &
-orch --project-root /path/to/project --only 'F2-*' --task-locks &
+orch --only 'F1-*' --task-locks &
+orch --only 'F2-*' --task-locks &
 ```
+
+Overlap on the same task id → the second instance silently skips it.
+
+---
 
 ## Exit codes
 
@@ -154,6 +467,15 @@ orch --project-root /path/to/project --only 'F2-*' --task-locks &
 | `3` | flock contention — another `orch` holds `state/.lock` |
 | `130` | `SIGINT` during graceful drain |
 
+Live status snapshot (needs `jq`):
+
+```bash
+./status.sh /path/to/your-project
+# → last 5 events, in-flight tasks, recent commands per agent
+```
+
+---
+
 ## Development
 
 ```bash
@@ -161,8 +483,18 @@ git clone https://github.com/hectorcanaimero/orch.git
 cd orch
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
+
+# Full suite (301 tests + 19 skipped when jinja2 not installed)
 pytest
+
+# Or via the helper
+./scripts/check.sh
+
+# Individual module
+pytest orchestrator/tests/test_budget.py -v
 ```
+
+---
 
 ## History
 
@@ -170,10 +502,9 @@ Originally built as the task orchestrator for the Rupies v2 monorepo rewrite
 (334 tasks across 6 phases, Flutter + Supabase + Edge Functions). Extracted
 into a standalone tool that any tasks.json-shaped DAG can consume.
 
-SDD artifacts (`proposal.md`, `spec.md`, `design.md`, `tasks.md`,
-`verify-report.md`, `archive-report.md`) preserved as historical context in
-the repo root.
+Full SDD trail (proposal → spec → design → tasks → verify → archive) preserved
+in [`docs/history/`](docs/history/) as engineering-decision provenance.
 
 ## License
 
-MIT.
+MIT — see [`LICENSE`](LICENSE).
