@@ -1688,23 +1688,19 @@ def main(argv: list[str] | None = None) -> int:
         paths.config_yaml,
     )
 
-    # Historic guard: cuando corremos SIN --project-root, exigimos cwd
-    # con basename `v2` (contrato duro rupies, AS-08). Con --project-root
-    # ese chequeo pierde sentido — el usuario ya pidió otro root — y lo
-    # saltamos. `paths.ensure_valid()` reemplaza el guard genérico.
-    #
-    # Fase 2: `paths.explicit_root` unifica la decisión ("¿vino de flag/env?").
-    if not paths.explicit_root:
-        if Path.cwd().name != "v2":
-            print(
-                f"orchestrator must be run from v2/ root; cwd={Path.cwd()}",
-                file=sys.stderr,
-            )
-            return 2
+    # Layout validation: tasks.json + scripts/task-*.sh must exist at
+    # project_root. The historic "cwd must be named v2/" guard was a rupies
+    # remnant — removed in v0.3.1 now that orch is a standalone tool used
+    # against arbitrary project names.
     try:
         paths.ensure_valid()
     except CwdViolationError as exc:
         print(str(exc), file=sys.stderr)
+        print(
+            "\nHint: if this is a fresh directory, run `orch init .` to "
+            "scaffold the required layout.",
+            file=sys.stderr,
+        )
         return 2
 
     # cwd (variable histórica) se conserva para no reescribir todos los
