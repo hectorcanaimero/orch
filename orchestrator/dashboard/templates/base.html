@@ -168,7 +168,10 @@
   </style>
 </head>
 <body class="h-full" x-data="rootShell()" x-init="init()">
-  <div class="drawer lg:drawer-open min-h-screen">
+  <!-- `lg:drawer-open` is toggled by Alpine so the desktop sidebar can
+       actually collapse (the class forces the sidebar always-visible; without
+       it, DaisyUI falls back to off-canvas behavior driven by the checkbox). -->
+  <div class="drawer min-h-screen" :class="{ 'lg:drawer-open': sidebar }">
     <input id="orch-drawer" type="checkbox" class="drawer-toggle"
            x-model="sidebar" />
 
