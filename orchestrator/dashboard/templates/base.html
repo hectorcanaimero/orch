@@ -99,8 +99,14 @@
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.65);
       z-index: 60;
-      display: flex; align-items: center; justify-content: center;
+      display: flex;
+      /* `safe center` centers when the modal fits, otherwise falls back to
+         flex-start so the top of an overflowing modal is scrollable. */
+      align-items: safe center;
+      justify-content: center;
       padding: 2rem;
+      /* Backdrop itself scrolls so tall modals aren't clipped at the top. */
+      overflow-y: auto;
       backdrop-filter: blur(2px);
     }
     .orch-modal {
@@ -108,13 +114,32 @@
       color: oklch(var(--bc) / 1);
       border: 1px solid oklch(var(--bc) / 0.15);
       border-radius: 0.75rem;
-      max-width: 46rem; width: 100%; max-height: 85vh;
-      overflow: auto;
+      max-width: 46rem; width: 100%;
+      /* Cap height so long modals scroll INSIDE the card, and the scrollbar
+         stays on the card (not the backdrop) when content overflows. */
+      max-height: calc(100vh - 4rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       padding: 1.5rem;
       box-shadow:
         0 0 0 1px oklch(var(--bc) / 0.05),
         0 24px 48px -8px rgba(0, 0, 0, 0.35),
         0 12px 24px -12px rgba(0, 0, 0, 0.25);
+    }
+    /* Themed scrollbar for the modal so the track doesn't look like a
+       broken white bar on dark theme. */
+    .orch-modal::-webkit-scrollbar { width: 10px; }
+    .orch-modal::-webkit-scrollbar-track { background: transparent; }
+    .orch-modal::-webkit-scrollbar-thumb {
+      background: oklch(var(--bc) / 0.2);
+      border-radius: 8px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .orch-modal::-webkit-scrollbar-thumb:hover {
+      background: oklch(var(--bc) / 0.35);
+      background-clip: padding-box;
+      border: 2px solid transparent;
     }
 
     /* Legacy status badge classes referenced by partials/task_row + task_modal +
