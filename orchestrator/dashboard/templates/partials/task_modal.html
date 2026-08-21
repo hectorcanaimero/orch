@@ -41,7 +41,10 @@
     </div>
     <div>
       <div class="text-xs uppercase opacity-60 mb-1">Last updated</div>
-      <div class="font-mono text-xs">{{ task.last_updated or '—' }}</div>
+      <div class="font-mono text-xs"
+           {% if task.last_updated %}data-ts="{{ task.last_updated }}" title="{{ task.last_updated }}"{% endif %}>
+        {{ task.last_updated or '—' }}
+      </div>
     </div>
   </section>
 
@@ -101,7 +104,8 @@
           'sev-info'
       %}
       <li class="px-2 py-1 flex items-baseline gap-2">
-        <span class="opacity-50 shrink-0">{{ (e.get('ts', '') or '')[:19] }}</span>
+        <span class="opacity-50 shrink-0"
+              {% if e.get('ts') %}data-ts="{{ e.get('ts') }}" title="{{ e.get('ts') }}"{% endif %}>{{ (e.get('ts', '') or '')[:19] }}</span>
         <span class="uppercase {{ sev }} shrink-0" style="min-width: 4.5rem">{{ et }}</span>
         <span class="opacity-70 shrink-0">{{ e.get('backend', '') }}</span>
         {% set extra = e.get('extra', {}) or {} %}
@@ -127,7 +131,8 @@
       {% for c in task.comments %}
       <li class="bg-base-200 border border-base-300 rounded-md p-2 text-xs">
         <div class="font-medium opacity-80">
-          {{ c.get('ts', '') }} — {{ c.get('author', c.get('by', '?')) }}
+          <span {% if c.get('ts') or c.get('at') %}data-ts="{{ c.get('ts') or c.get('at') }}" title="{{ c.get('ts') or c.get('at') }}"{% endif %}>{{ c.get('ts', c.get('at', '')) }}</span>
+          — {{ c.get('author', c.get('by', '?')) }}
         </div>
         <div class="mt-1 whitespace-pre-wrap opacity-90">{{ c.get('body', c.get('text', '')) }}</div>
       </li>

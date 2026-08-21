@@ -32,6 +32,40 @@
       },
     };
 
+    // Compact relative-time formatter — `5m`, `3h`, `2d`, `4mo`, `2y`.
+    // Fills every `[data-ts]` element's textContent with the short form
+    // and keeps the ISO in `title` for hover. Called on load + on HTMX
+    // swap so freshly-loaded partials also get formatted.
+    function orchFormatRelative(iso) {
+      if (!iso) return '—';
+      const then = new Date(iso).getTime();
+      if (isNaN(then)) return iso;
+      const diffSec = Math.max(0, (Date.now() - then) / 1000);
+      if (diffSec < 30) return 'now';
+      if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm';
+      if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h';
+      if (diffSec < 2592000) return Math.floor(diffSec / 86400) + 'd';
+      if (diffSec < 31536000) return Math.floor(diffSec / 2592000) + 'mo';
+      return Math.floor(diffSec / 31536000) + 'y';
+    }
+    function orchApplyRelative(root) {
+      (root || document).querySelectorAll('[data-ts]').forEach(el => {
+        const ts = el.dataset.ts;
+        if (!ts || el.dataset.tsRendered === ts) return;
+        el.textContent = orchFormatRelative(ts);
+        if (!el.title) el.title = ts;  // hover shows full ISO
+        el.dataset.tsRendered = ts;
+      });
+    }
+    document.addEventListener('DOMContentLoaded', () => orchApplyRelative());
+    // HTMX inserts partials after page load — re-apply for those too.
+    document.body.addEventListener('htmx:afterSwap', e => orchApplyRelative(e.target));
+    // Refresh every minute so "5m ago" stays accurate on long-open pages.
+    setInterval(() => {
+      document.querySelectorAll('[data-ts]').forEach(el => delete el.dataset.tsRendered);
+      orchApplyRelative();
+    }, 60000);
+
     // Theme toggle (vanilla — no Alpine dependency, so it works even if
     // Alpine fails to load). Mutates data-theme on <html> directly.
     function orchToggleTheme() {
