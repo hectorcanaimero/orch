@@ -24,3 +24,5 @@ build/
 .playwright-mcp/
 .mypy_cache/
 .ruff_cache/
+# Playwright preview screenshots (dev only)
+/*.png

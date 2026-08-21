@@ -1,4 +1,5 @@
 <tr class="hover:bg-base-200 cursor-pointer transition-colors"
+    {% if collapse_key is defined %}x-show="!isPhaseCollapsed({{ collapse_key }})"{% endif %}
     hx-get="/partials/task-modal/{{ row.id }}"
     hx-swap="none"
     @htmx:after-request.window="if ($event.detail.pathInfo && $event.detail.pathInfo.requestPath === '/partials/task-modal/{{ row.id }}') modal = $event.detail.xhr.responseText">

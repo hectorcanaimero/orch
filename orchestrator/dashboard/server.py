@@ -160,7 +160,7 @@ def _load_project_view(state: AppState) -> dict[str, Any]:
 def _apply_filters(
     tasks: list,
     *,
-    phase: int | None,
+    phase: int | list[int] | None,
     status: str | None,
     model: str | None,
     q: str | None,
@@ -180,7 +180,12 @@ def _apply_filters(
     """
     out = tasks
     if phase is not None:
-        out = [t for t in out if t.phase == phase]
+        if isinstance(phase, list):
+            if phase:  # non-empty list → filter; empty list treated as "all"
+                phase_set = set(phase)
+                out = [t for t in out if t.phase in phase_set]
+        else:
+            out = [t for t in out if t.phase == phase]
     if status:
         out = [t for t in out if t.status == status]
     if model:
@@ -297,10 +302,12 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index(
         request: Request,
-        phase: int | None = Query(None),
+        phase: list[int] | None = Query(None),
         status: str | None = Query(None),
         model: str | None = Query(None),
         q: str | None = Query(None),
+        group: str | None = Query(None,
+                                  description="'phase' groups the table rows by phase with collapse."),
         parallelizable: int = Query(0),
         has_comments: int = Query(0),
         has_spec: int = Query(0),
@@ -325,12 +332,23 @@ def create_app(
         # Serialize once so both the template and downstream partials get the
         # same shape (dicts, not Task instances).
         rows = [_task_to_dict(t, view["human_hours"], view["last_updated"], view["impact"], view["critical_path"]) for t in filtered]
+        # Optional: group by phase for the collapsible-section render.
+        grouped_rows: list[dict] | None = None
+        if group == "phase":
+            buckets: dict[int, list] = {}
+            for r in rows:
+                buckets.setdefault(r["phase"], []).append(r)
+            grouped_rows = [
+                {"phase": p, "count": len(buckets[p]), "rows": buckets[p]}
+                for p in sorted(buckets)
+            ]
         ctx = {
             "request": request,
             "summary": view["summary"].as_dict(),
             "phases": view["phases"],
             "models": view["models"],
             "rows": rows,
+            "grouped_rows": grouped_rows,
             "row_count": len(rows),
             "total_count": len(tasks_all),
             "parallelizable_ids": list(view["parallelizable_ids"]),
@@ -338,8 +356,9 @@ def create_app(
             "project_root": view["project_root"],
             "state_layout": view["state_layout"],
             "filters": {
-                "phase": phase, "status": status, "model": model,
-                "q": q, "parallelizable": bool(parallelizable),
+                "phase": phase or [], "status": status, "model": model,
+                "q": q, "group": group or "",
+                "parallelizable": bool(parallelizable),
                 "has_comments": bool(has_comments),
                 "has_spec": bool(has_spec),
                 "blocked_since": blocked_since,

@@ -1,15 +1,26 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full" x-data="rootShell()" x-init="init()" :data-theme="theme">
+<html lang="en" class="h-full" data-theme="night">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Orch Dashboard{% endblock %}</title>
+  <script>
+    // Read persisted theme SYNCHRONOUSLY before DaisyUI paints. Runs
+    // before any CSS class references --b1/--bc, so no flash of unstyled
+    // content even if Alpine later fails to load.
+    (function() {
+      try {
+        var t = localStorage.getItem('orch.theme') || 'night';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (_) { /* localStorage disabled — stay on night */ }
+    })();
+  </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script>
-    // Configure Tailwind palette to feel closer to shadcn zinc.
+    // Tailwind palette tweaks.
     tailwind.config = {
       theme: {
         extend: {
@@ -21,20 +32,31 @@
       },
     };
 
-    // Root Alpine store — theme + sidebar collapse persisted to localStorage.
+    // Theme toggle (vanilla — no Alpine dependency, so it works even if
+    // Alpine fails to load). Mutates data-theme on <html> directly.
+    function orchToggleTheme() {
+      var html = document.documentElement;
+      var current = html.getAttribute('data-theme') || 'night';
+      var next = current === 'night' ? 'emerald' : 'night';
+      html.setAttribute('data-theme', next);
+      try { localStorage.setItem('orch.theme', next); } catch (_) {}
+      // Update the icon visibility manually since Alpine may not be up.
+      document.querySelectorAll('[data-theme-icon]').forEach(function(el) {
+        el.style.display = el.dataset.themeIcon === next ? '' : 'none';
+      });
+    }
+
+    // Root Alpine shell — ONLY sidebar + budget state. Theme is managed
+    // outside Alpine so it survives Alpine load failures.
     function rootShell() {
       return {
-        theme: localStorage.getItem('orch.theme') || 'night',
         sidebar: (localStorage.getItem('orch.sidebar') ?? 'open') === 'open',
         budget: null,
         init() {
-          this.$watch('theme', v => localStorage.setItem('orch.theme', v));
           this.$watch('sidebar', v => localStorage.setItem('orch.sidebar', v ? 'open' : 'closed'));
           this.refreshBudget();
-          // Poll every 15s so the topbar chip stays fresh during a run.
           setInterval(() => this.refreshBudget(), 15000);
         },
-        toggleTheme() { this.theme = this.theme === 'night' ? 'emerald' : 'night'; },
         toggleSidebar() { this.sidebar = !this.sidebar; },
         async refreshBudget() {
           try {
@@ -67,15 +89,17 @@
     .log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 font-size: 0.75rem; padding: 0.1rem 0.4rem; white-space: pre; }
 
-    /* Modal — theme-aware via DaisyUI CSS vars. */
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-                       z-index: 40; display: flex; align-items: center;
-                       justify-content: center; padding: 2rem; }
-    .modal { background: hsl(var(--b1)); color: hsl(var(--bc));
-             border: 1px solid hsl(var(--b3)); border-radius: 0.75rem;
-             max-width: 46rem; width: 100%; max-height: 85vh; overflow: auto;
-             padding: 1.5rem;
-             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    /* Modal — theme-aware via DaisyUI CSS vars.
+       Prefixed with `orch-` because DaisyUI ships its own `.modal` /
+       `.modal-backdrop` classes that clash (its default is display:none). */
+    .orch-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+                           z-index: 60; display: flex; align-items: center;
+                           justify-content: center; padding: 2rem; }
+    .orch-modal { background: hsl(var(--b1)); color: hsl(var(--bc));
+                  border: 1px solid hsl(var(--b3)); border-radius: 0.75rem;
+                  max-width: 46rem; width: 100%; max-height: 85vh; overflow: auto;
+                  padding: 1.5rem;
+                  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
 
     /* Legacy status badge classes referenced by partials/task_row + task_modal +
        kanban_board. Kept as plain CSS (Play CDN doesn't process @apply). Colors
@@ -102,7 +126,7 @@
     .sev-muted { color: hsl(var(--bc) / 0.55); }
   </style>
 </head>
-<body class="h-full">
+<body class="h-full" x-data="rootShell()" x-init="init()">
   <div class="drawer lg:drawer-open min-h-screen">
     <input id="orch-drawer" type="checkbox" class="drawer-toggle"
            x-model="sidebar" />
@@ -144,10 +168,21 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
           <span class="text-xs">snapshot</span>
         </a>
-        <button type="button" @click="toggleTheme()" class="btn btn-sm btn-ghost btn-square" title="Toggle theme">
-          <svg x-show="theme === 'night'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-          <svg x-show="theme !== 'night'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        <button type="button" onclick="orchToggleTheme()" class="btn btn-sm btn-ghost btn-square" title="Toggle theme">
+          <!-- Sun (shows when current is night → click to go light) -->
+          <svg data-theme-icon="night" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          <!-- Moon (shows when current is emerald → click to go dark) -->
+          <svg data-theme-icon="emerald" style="display:none" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
         </button>
+        <script>
+          // On first paint, show the icon matching the CURRENT theme.
+          (function() {
+            var current = document.documentElement.getAttribute('data-theme') || 'night';
+            document.querySelectorAll('[data-theme-icon]').forEach(function(el) {
+              el.style.display = el.dataset.themeIcon === current ? '' : 'none';
+            });
+          })();
+        </script>
       </header>
 
       <!-- main -->

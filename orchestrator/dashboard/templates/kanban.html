@@ -88,10 +88,11 @@
   <!-- Board (extracted so /kanban?partial=board can return just this) -->
   {% include "partials/kanban_board.html" %}
 
-  <!-- Modal container (same pattern as Tasks view) -->
-  <template x-if="modal">
-    <div class="modal-backdrop" @click.self="modal=null">
-      <div class="modal" x-html="modal"></div>
+  <!-- Modal container (teleported to body to escape drawer stacking context) -->
+  <template x-teleport="body">
+    <div x-show="modal" class="orch-modal-backdrop" @click.self="modal=null"
+         @keydown.escape.window="modal=null">
+      <div class="orch-modal" x-html="modal || ''"></div>
     </div>
   </template>
 </div>
