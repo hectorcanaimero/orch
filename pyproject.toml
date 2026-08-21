@@ -60,4 +60,12 @@ exclude = ["orchestrator.tests*", "orchestrator.state*"]
 # Ship the runtime YAML defaults so `pipx`-installed orch works without a
 # manual copy step. `config.yaml`, `model_router.yaml` and `budgets.yaml`
 # live at the package root and can be overridden per-project.
-"orchestrator" = ["config.yaml", "model_router.yaml", "budgets.yaml"]
+"orchestrator" = [
+    "config.yaml",
+    "model_router.yaml",
+    "budgets.yaml",
+    "templates/*.tmpl",
+    "templates/scripts/*.sh",
+    "templates/specs/*.md",
+    "templates/openspec/*.md",
+]

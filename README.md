@@ -54,8 +54,74 @@ Verify:
 
 ```bash
 orch --help
+orch init --help
 orch dashboard --help
 ```
+
+---
+
+## Getting started (60 seconds)
+
+`orch init` scaffolds a project with everything wired:
+
+```bash
+orch init ~/work/my-app
+```
+
+That creates:
+
+```
+my-app/
+├── tasks.json                    # empty skeleton
+├── specs/README.md               # explains the spec format
+├── scripts/task-{start,finish,block}.sh   # executable, functional
+├── orchestrator/
+│   ├── state/.gitkeep
+│   ├── config.yaml               # copy of the packaged default
+│   ├── model_router.yaml
+│   └── budgets.yaml
+└── .gitignore                    # only when absent
+```
+
+Then you have two paths to fill `tasks.json`:
+
+**A) Write specs manually** (works today, no extra tooling):
+
+```bash
+$EDITOR ~/work/my-app/specs/f0-foundation.md
+# ...write specs in the format documented in specs/README.md
+orch atomize --spec ~/work/my-app/specs/f0-foundation.md --tasks ~/work/my-app/tasks.json
+```
+
+**B) Use Spec-Driven Development** (via Claude Code + SDD skills):
+
+```bash
+orch init ~/work/my-app --sdd           # also creates openspec/ layout
+# then in Claude Code:
+#   /sdd-explore <topic>
+#   /sdd-new <change>
+#   /sdd-ff <change>                    # proposal → spec → design → tasks
+# hand off to orch:
+orch atomize --spec ~/work/my-app/openspec/changes/<change>/tasks.md --tasks ~/work/my-app/tasks.json
+```
+
+Then run:
+
+```bash
+orch --project-root ~/work/my-app --dry-run    # review the plan
+orch --project-root ~/work/my-app --mode semi  # dispatch with checkpoints
+```
+
+### `orch init` flags
+
+| Flag | Purpose |
+|---|---|
+| `--force` | Overwrite existing files at PATH (default: refuse on conflict) |
+| `--sdd` | Also create `openspec/` layout for SDD workflow |
+| `--project-name NAME` | Override `meta.project` in `tasks.json` (default: PATH basename) |
+
+The init also **detects if SDD skills are installed** at `~/.claude/skills/`
+and prints tailored next-steps.
 
 ---
 

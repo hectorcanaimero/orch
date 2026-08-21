@@ -1527,6 +1527,45 @@ def _record_spend(
 # ---- main() -------------------------------------------------------------
 
 
+def _run_init_subcommand(argv: list[str]) -> int:
+    """Handle `orch init <path> [--force] [--sdd] [--project-name NAME]`.
+
+    Separate parser so the scaffolder flags don't leak into the main-loop
+    `--help`. See `orchestrator/init_cmd.py` for the actual scaffolder.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch init",
+        description="Scaffold a new orch project at PATH (batch mode, no prompts).",
+    )
+    p.add_argument("path", metavar="PATH", help="Destination directory (created if missing).")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing files at PATH (default: refuse on conflict).",
+    )
+    p.add_argument(
+        "--sdd",
+        action="store_true",
+        help="Also scaffold openspec/ layout for Spec-Driven Development.",
+    )
+    p.add_argument(
+        "--project-name",
+        default=None,
+        metavar="NAME",
+        help="Sets `meta.project` in tasks.json. Default: basename of PATH.",
+    )
+    args = p.parse_args(argv)
+
+    from orchestrator.init_cmd import orch_init
+
+    return orch_init(
+        Path(args.path),
+        force=args.force,
+        sdd=args.sdd,
+        project_name=args.project_name,
+    )
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -1576,11 +1615,13 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # Subcommand routing. `orch dashboard` peels off before the main-loop
-    # parser touches argv so the flag namespaces don't collide.
+    # Subcommand routing. `orch dashboard` and `orch init` peel off before
+    # the main-loop parser touches argv so the flag namespaces don't collide.
     incoming = sys.argv[1:] if argv is None else argv
     if incoming and incoming[0] == "dashboard":
         return _run_dashboard_subcommand(incoming[1:])
+    if incoming and incoming[0] == "init":
+        return _run_init_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
