@@ -1,5 +1,7 @@
 # orch — Manual de uso paso a paso
 
+> También disponible en: [English](MANUAL.en.md) · [Português](MANUAL.pt.md)
+
 Este manual asume que usás **Claude Code** (o cualquier CLI equivalente con
 soporte de skills). El workflow completo es: **chateás la feature con Claude
 → Claude genera el spec en formato orch → orch atomiza a `tasks.json` → orch
