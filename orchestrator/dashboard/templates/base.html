@@ -89,11 +89,12 @@
     .log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 font-size: 0.75rem; padding: 0.1rem 0.4rem; white-space: pre; }
 
-    /* Modal — theme-aware via DaisyUI CSS vars.
+    /* Modal — theme-aware.
        Prefixed with `orch-` because DaisyUI ships its own `.modal` /
        `.modal-backdrop` classes that clash (its default is display:none).
-       Card background uses `--b1` with an explicit border + strong shadow
-       so it's visible against the page in both light and dark themes. */
+       IMPORTANT: DaisyUI 4.x stores theme colors as OKLCH triplets in the
+       CSS vars (--b1, --bc etc). Using hsl(var(--b1)) silently drops the
+       declaration as invalid CSS — must use oklch(var(--b1)) instead. */
     .orch-modal-backdrop {
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.65);
@@ -103,15 +104,15 @@
       backdrop-filter: blur(2px);
     }
     .orch-modal {
-      background: hsl(var(--b1));
-      color: hsl(var(--bc));
-      border: 1px solid hsl(var(--bc) / 0.15);
+      background-color: oklch(var(--b1) / 1);
+      color: oklch(var(--bc) / 1);
+      border: 1px solid oklch(var(--bc) / 0.15);
       border-radius: 0.75rem;
       max-width: 46rem; width: 100%; max-height: 85vh;
       overflow: auto;
       padding: 1.5rem;
       box-shadow:
-        0 0 0 1px hsl(var(--bc) / 0.05),
+        0 0 0 1px oklch(var(--bc) / 0.05),
         0 24px 48px -8px rgba(0, 0, 0, 0.35),
         0 12px 24px -12px rgba(0, 0, 0, 0.25);
     }
@@ -123,22 +124,22 @@
              border-radius: 9999px; font-size: 0.68rem; font-weight: 600;
              letter-spacing: 0.03em; text-transform: uppercase;
              border: 1px solid transparent; }
-    .status-done         { background: hsl(var(--su) / 0.15); color: hsl(var(--su));
-                           border-color: hsl(var(--su) / 0.3); }
-    .status-in-progress  { background: hsl(var(--in) / 0.15); color: hsl(var(--in));
-                           border-color: hsl(var(--in) / 0.3); }
-    .status-blocked      { background: hsl(var(--er) / 0.15); color: hsl(var(--er));
-                           border-color: hsl(var(--er) / 0.3); }
-    .status-backlog      { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc) / 0.7);
-                           border-color: hsl(var(--bc) / 0.15); }
-    .status-todo         { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc) / 0.7);
-                           border-color: hsl(var(--bc) / 0.15); }
-    .sev-ok    { color: hsl(var(--su)); }
-    .sev-err   { color: hsl(var(--er)); }
-    .sev-warn  { color: hsl(var(--wa)); }
-    .sev-block { color: hsl(var(--wa)); }
-    .sev-info  { color: hsl(var(--in)); }
-    .sev-muted { color: hsl(var(--bc) / 0.55); }
+    .status-done         { background: oklch(var(--su) / 0.15); color: oklch(var(--su));
+                           border-color: oklch(var(--su) / 0.3); }
+    .status-in-progress  { background: oklch(var(--in) / 0.15); color: oklch(var(--in));
+                           border-color: oklch(var(--in) / 0.3); }
+    .status-blocked      { background: oklch(var(--er) / 0.15); color: oklch(var(--er));
+                           border-color: oklch(var(--er) / 0.3); }
+    .status-backlog      { background: oklch(var(--bc) / 0.08); color: oklch(var(--bc) / 0.7);
+                           border-color: oklch(var(--bc) / 0.15); }
+    .status-todo         { background: oklch(var(--bc) / 0.08); color: oklch(var(--bc) / 0.7);
+                           border-color: oklch(var(--bc) / 0.15); }
+    .sev-ok    { color: oklch(var(--su)); }
+    .sev-err   { color: oklch(var(--er)); }
+    .sev-warn  { color: oklch(var(--wa)); }
+    .sev-block { color: oklch(var(--wa)); }
+    .sev-info  { color: oklch(var(--in)); }
+    .sev-muted { color: oklch(var(--bc) / 0.55); }
   </style>
 </head>
 <body class="h-full" x-data="rootShell()" x-init="init()">
