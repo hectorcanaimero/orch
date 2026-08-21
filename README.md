@@ -4,6 +4,10 @@ Task orchestrator that walks a `tasks.json` DAG and dispatches each task to the
 right local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no
 daemon, no remote queue.
 
+> **New user?** Read the step-by-step manual first: **[`docs/MANUAL.md`](docs/MANUAL.md)** —
+> covers install → project init → chat-driven spec generation → dashboard, with
+> concrete commands and expected output.
+
 Built to run 300+ task pipelines unattended. Handles per-provider concurrency
 caps, retries with backoff, per-task timeouts, **budget guardrails against
 subscription quotas** so long unattended runs don't lock you out of your own
