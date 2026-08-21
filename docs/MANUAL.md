@@ -119,8 +119,10 @@ Al final del init te va a decir si tenés SDD instalado y qué hacer:
 Next steps:
   1. Write your first spec:
        $EDITOR specs/f0-foundation.md
-  2. Generate tasks.json from the spec:
-       orch atomize --spec specs/f0-foundation.md --tasks tasks.json
+  2. Preview atomize (dry, shows diff):
+       orch atomize --file specs/f0-foundation.md
+     Then apply:
+       orch atomize --file specs/f0-foundation.md --apply
   ...
 
 Spec-Driven Development:
@@ -253,11 +255,15 @@ Editás `specs/mi-feature.md` a mano siguiendo el formato:
 Y en la terminal:
 
 ```bash
-orch atomize --spec specs/mi-feature.md --tasks tasks.json
+# 1) Preview (dry-run — muestra qué se va a agregar sin escribir)
+orch atomize --file specs/mi-feature.md
+
+# 2) Apply — escribe tasks.json + crea backup tasks.json.bak-<ts>
+orch atomize --file specs/mi-feature.md --apply
 ```
 
 Los tres flujos terminan en lo mismo: **`tasks.json` con las tasks nuevas
-en `status: todo`, listas para dispatch**.
+en `status: backlog`, listas para dispatch**.
 
 ---
 
@@ -274,7 +280,7 @@ genera entries así en `tasks.json`:
   "description": "",
   "model": "claude-sonnet-4-6",
   "reason": "Diseño de tipos requiere razonamiento.",
-  "status": "todo",
+  "status": "backlog",
   "dependencies": ["F1.1.T1"],
   "estimateHours": 2.0,
   "files": [
@@ -285,6 +291,10 @@ genera entries así en `tasks.json`:
   "comments": []
 }
 ```
+
+El status arranca en `backlog` (default del atomizer). El main loop de `orch`
+promueve `backlog` → `todo` cuando las dependencias están OK, después `todo`
+→ `in-progress` en el momento del dispatch.
 
 **Qué garantiza el atomizer:**
 

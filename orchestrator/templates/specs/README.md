@@ -10,10 +10,15 @@ into `tasks.json` entries the orchestrator can dispatch.
 **Atomizer** — write specs here as markdown and run:
 
 ```bash
-orch atomize --spec specs/f0-foundation.md --tasks tasks.json
+# Preview the diff (dry-run — nothing written)
+orch atomize --file specs/f0-foundation.md
+
+# Apply — writes tasks.json + creates tasks.json.bak-<ts>
+orch atomize --file specs/f0-foundation.md --apply
 ```
 
-Idempotent: re-running only adds new task IDs; existing tasks aren't touched.
+Idempotent: re-running `--apply` only adds new task IDs; existing tasks
+aren't touched.
 
 ## Minimum spec format
 
@@ -69,7 +74,7 @@ If you use Claude Code + the SDD skills, the recommended flow is:
 3. `/sdd-spec` — behavioral requirements (FR/NFR)
 4. `/sdd-design` — technical design
 5. `/sdd-tasks` — task breakdown → drop it here as `specs/<change>.md`
-6. `orch atomize --spec specs/<change>.md --tasks tasks.json`
+6. `orch atomize --file specs/<change>.md --apply`
 7. `orch --mode auto`
 
 The `orch init --sdd` flag scaffolds the `openspec/` layout SDD uses.

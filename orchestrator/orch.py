@@ -130,16 +130,26 @@ except ImportError:  # pragma: no cover — rich is a hard dep, but be defensive
 
 
 _HELP_EPILOG = """
+Subcommands (run `orch <cmd> --help` for details):
+  orch [FLAGS]              Run the main dispatch loop (default — flags below)
+  orch init PATH [FLAGS]    Scaffold a new orch project at PATH
+  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)
+  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard
+
 Exit codes:
   0   clean drain (all reachable tasks done, none blocked)
   1   config error / unrouted model / dependency cycle / blocked tasks
-  2   CWD contract violation (must run from v2/ root)
+  2   project layout invalid (tasks.json / scripts/task-*.sh missing)
   3   flock contention (another orchestrator holds state/.lock)
   130 SIGINT during graceful drain
 
-CWD contract:
-  MUST be invoked from the v2/ repo root — `tasks.json` and
-  `scripts/task-start.sh` must be present in the current directory.
+Project layout expected at --project-root (or CWD if not set):
+  <project>/
+  ├── tasks.json                    # your task DAG
+  ├── scripts/task-{start,finish,block}.sh
+  └── orchestrator/state/           # created on first run
+
+Run `orch init PATH` to scaffold this layout automatically.
 """
 
 
@@ -1527,6 +1537,36 @@ def _record_spend(
 # ---- main() -------------------------------------------------------------
 
 
+def _run_atomize_subcommand(argv: list[str]) -> int:
+    """Handle `orch atomize [flags]` — delegate to `orchestrator.atomize.main`.
+
+    The atomizer parses markdown specs and merges them into `tasks.json`.
+    Read-only by default (shows a diff); pass `--apply` to actually write.
+    """
+    from orchestrator.atomize import main as atomize_main
+
+    return atomize_main(argv)
+
+
+_SUBCOMMANDS = ("init", "atomize", "dashboard")
+
+
+def _print_subcommand_list() -> int:
+    """`orch list` — one-line summary of every subcommand."""
+    print("orch — Task orchestrator for tasks.json DAG dispatch")
+    print()
+    print("Commands:")
+    print("  orch [FLAGS]              Run the main dispatch loop (default)")
+    print("  orch init PATH [FLAGS]    Scaffold a new orch project at PATH")
+    print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
+    print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
+    print("  orch list                 Print this list")
+    print("  orch --help               Full main-loop help (flags, exit codes)")
+    print()
+    print("Docs: https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.md")
+    return 0
+
+
 def _run_init_subcommand(argv: list[str]) -> int:
     """Handle `orch init <path> [--force] [--sdd] [--project-name NAME]`.
 
@@ -1615,13 +1655,18 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # Subcommand routing. `orch dashboard` and `orch init` peel off before
-    # the main-loop parser touches argv so the flag namespaces don't collide.
+    # Subcommand routing. Every subcommand (`dashboard`, `init`, `atomize`,
+    # `list`) peels off BEFORE the main-loop argparser touches argv so the
+    # flag namespaces don't collide. Order-insensitive dispatch.
     incoming = sys.argv[1:] if argv is None else argv
+    if incoming and incoming[0] == "list":
+        return _print_subcommand_list()
     if incoming and incoming[0] == "dashboard":
         return _run_dashboard_subcommand(incoming[1:])
     if incoming and incoming[0] == "init":
         return _run_init_subcommand(incoming[1:])
+    if incoming and incoming[0] == "atomize":
+        return _run_atomize_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)

@@ -94,7 +94,12 @@ Then you have two paths to fill `tasks.json`:
 ```bash
 $EDITOR ~/work/my-app/specs/f0-foundation.md
 # ...write specs in the format documented in specs/README.md
-orch atomize --spec ~/work/my-app/specs/f0-foundation.md --tasks ~/work/my-app/tasks.json
+
+# Preview the diff (read-only)
+orch atomize --project-root ~/work/my-app --file ~/work/my-app/specs/f0-foundation.md
+
+# Apply — writes tasks.json + creates a .bak-<ts> backup
+orch atomize --project-root ~/work/my-app --file ~/work/my-app/specs/f0-foundation.md --apply
 ```
 
 **B) Use Spec-Driven Development** (via Claude Code + SDD skills):
@@ -102,11 +107,11 @@ orch atomize --spec ~/work/my-app/specs/f0-foundation.md --tasks ~/work/my-app/t
 ```bash
 orch init ~/work/my-app --sdd           # also creates openspec/ layout
 # then in Claude Code:
+#   /orch-plan <feature idea>            # full pipeline PRD→ARCH→SPEC→TASKS
+# or granular:
 #   /sdd-explore <topic>
-#   /sdd-new <change>
-#   /sdd-ff <change>                    # proposal → spec → design → tasks
-# hand off to orch:
-orch atomize --spec ~/work/my-app/openspec/changes/<change>/tasks.md --tasks ~/work/my-app/tasks.json
+#   /orch-spec                            # atomizer-ready spec
+#   /orch-tasks                           # invokes orch atomize --apply (diff-first)
 ```
 
 Then run:
@@ -484,10 +489,16 @@ Minimal spec:
 Run:
 
 ```bash
-orch atomize --spec specs/f1-auth.md --tasks tasks.json
+# Preview diff
+orch atomize --file specs/f1-auth.md
+
+# Apply
+orch atomize --file specs/f1-auth.md --apply
 ```
 
 Idempotent: re-running only adds new task IDs; existing tasks aren't touched.
+Every `--apply` also writes a `tasks.json.bak-<timestamp>` backup unless you
+pass `--no-backup`.
 
 ---
 

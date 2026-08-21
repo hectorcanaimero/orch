@@ -30,7 +30,13 @@ from Claude Code:
 Once `changes/<name>/tasks.md` exists, hand it to orch:
 
 ```bash
-orch atomize --spec openspec/changes/<name>/tasks.md --tasks tasks.json
+# Preview diff first (dry-run)
+orch atomize --file openspec/changes/<name>/tasks.md
+
+# Apply
+orch atomize --file openspec/changes/<name>/tasks.md --apply
+
+# Dispatch
 orch --mode auto
 ```
 

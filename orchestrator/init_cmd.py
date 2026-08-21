@@ -191,10 +191,15 @@ def _print_next_steps(project_path: Path, *, sdd: bool) -> None:
     print(f"       $EDITOR {project_path / 'specs' / 'f0-foundation.md'}")
     print("     (format reference: specs/README.md)")
     print()
-    print("  2. Generate tasks.json from the spec:")
+    print("  2. Preview atomize (dry, shows diff):")
     print(
-        f"       orch atomize --spec {project_path / 'specs' / 'f0-foundation.md'} "
-        f"--tasks {project_path / 'tasks.json'}"
+        f"       orch atomize --project-root {project_path} "
+        f"--file {project_path / 'specs' / 'f0-foundation.md'}"
+    )
+    print("     Then apply:")
+    print(
+        f"       orch atomize --project-root {project_path} "
+        f"--file {project_path / 'specs' / 'f0-foundation.md'} --apply"
     )
     print()
     print("  3. Dry-run to review the plan:")

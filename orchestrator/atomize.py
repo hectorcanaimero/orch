@@ -947,10 +947,10 @@ def write_tasks_json(
 
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m orchestrator.atomize",
+        prog="orch atomize",
         description=(
-            "Spec Atomizer — parseá specs markdown y mergeá en tasks.json. "
-            "Read-only por default (sólo muestra diff). Usá --apply para escribir."
+            "Spec Atomizer — parse markdown specs and merge into tasks.json. "
+            "Read-only by default (shows a diff). Pass --apply to write."
         ),
     )
     p.add_argument(
