@@ -23,17 +23,18 @@
   <form method="get" action="/logs" class="flex items-center gap-2">
     <label class="text-sm">Filter by task_id:</label>
     <input type="text" name="task_id" value="{{ task_id_filter }}" placeholder="e.g. P0-016"
-           class="border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
-    <button type="submit" class="bg-slate-800 text-white text-sm px-3 py-1 rounded hover:bg-slate-700">Filter</button>
+           class="bg-base-100 border border-base-300 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40" />
+    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
     {% if task_id_filter %}
-    <a href="/logs" class="text-sm text-slate-500 hover:text-slate-700">Clear</a>
+    <a href="/logs" class="text-sm opacity-60 hover:opacity-100">Clear</a>
     {% endif %}
-    <span class="ml-auto text-xs text-slate-500">
+    <span class="ml-auto text-xs opacity-60 flex items-center gap-2">
+      <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
       Showing last <b>{{ events | length }}</b> events + live stream
     </span>
   </form>
 
-  <div class="bg-slate-900 text-slate-100 border border-slate-700 rounded overflow-hidden">
+  <div class="bg-neutral text-neutral-content border border-base-300 rounded-lg overflow-hidden shadow-sm">
     <div id="logbox" class="h-[70vh] overflow-y-auto py-2">
       {% for ev in events %}
         <div class="log-line sev-{{ ev.severity }}">{{ ev.human }}</div>
@@ -43,7 +44,7 @@
     </div>
   </div>
 
-  <p class="text-xs text-slate-500">
+  <p class="text-xs opacity-60">
     Live stream via SSE (<code>/logs/stream</code>). If new runs start, the tailer switches automatically.
   </p>
 </div>

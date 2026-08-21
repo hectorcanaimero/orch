@@ -1,64 +1,239 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<html lang="en" class="h-full" x-data="rootShell()" x-init="init()" :data-theme="theme">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Orch Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script>
+    // Configure Tailwind palette to feel closer to shadcn zinc.
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', '"SF Pro Text"', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+
+    // Root Alpine store — theme + sidebar collapse persisted to localStorage.
+    function rootShell() {
+      return {
+        theme: localStorage.getItem('orch.theme') || 'night',
+        sidebar: (localStorage.getItem('orch.sidebar') ?? 'open') === 'open',
+        budget: null,
+        init() {
+          this.$watch('theme', v => localStorage.setItem('orch.theme', v));
+          this.$watch('sidebar', v => localStorage.setItem('orch.sidebar', v ? 'open' : 'closed'));
+          this.refreshBudget();
+          // Poll every 15s so the topbar chip stays fresh during a run.
+          setInterval(() => this.refreshBudget(), 15000);
+        },
+        toggleTheme() { this.theme = this.theme === 'night' ? 'emerald' : 'night'; },
+        toggleSidebar() { this.sidebar = !this.sidebar; },
+        async refreshBudget() {
+          try {
+            const r = await fetch('/api/budgets');
+            if (!r.ok) { this.budget = null; return; }
+            this.budget = await r.json();
+          } catch (_) { this.budget = null; }
+        },
+        get budgetTone() {
+          if (!this.budget || this.budget.disabled) return 'ghost';
+          const providers = Object.values(this.budget.providers || {});
+          if (!providers.length) return 'ghost';
+          const max = Math.max(...providers.map(p => p.usage_pct || 0));
+          if (max >= 80) return 'error';
+          if (max >= 60) return 'warning';
+          return 'success';
+        },
+        get budgetLabel() {
+          if (!this.budget || this.budget.disabled) return 'budget: off';
+          const providers = Object.values(this.budget.providers || {});
+          if (!providers.length) return 'budget: —';
+          const max = Math.max(...providers.map(p => p.usage_pct || 0));
+          return `budget: ${max.toFixed(0)}%`;
+        },
+      };
+    }
+  </script>
   <style>
-    /* Tiny helpers on top of Tailwind. Everything else comes from utility classes. */
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", sans-serif; }
-    .badge { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem;
-             border-radius: 9999px; font-size: 0.7rem; font-weight: 600;
-             letter-spacing: 0.02em; text-transform: uppercase; }
-    .status-done         { background: #dcfce7; color: #166534; }
-    .status-in-progress  { background: #dbeafe; color: #1e40af; }
-    .status-blocked      { background: #fee2e2; color: #991b1b; }
-    .status-backlog      { background: #f3f4f6; color: #374151; }
-    .status-todo         { background: #f3f4f6; color: #374151; }
-    .sev-ok    { color: #16a34a; }
-    .sev-err   { color: #dc2626; }
-    .sev-warn  { color: #ca8a04; }
-    .sev-block { color: #ea580c; }
-    .sev-info  { color: #2563eb; }
-    .sev-muted { color: #6b7280; }
+    /* Log line font (used by /logs). */
     .log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 font-size: 0.75rem; padding: 0.1rem 0.4rem; white-space: pre; }
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+
+    /* Modal — theme-aware via DaisyUI CSS vars. */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
                        z-index: 40; display: flex; align-items: center;
                        justify-content: center; padding: 2rem; }
-    .modal { background: white; border-radius: 0.5rem; max-width: 46rem;
-             width: 100%; max-height: 85vh; overflow: auto; padding: 1.5rem;
-             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+    .modal { background: hsl(var(--b1)); color: hsl(var(--bc));
+             border: 1px solid hsl(var(--b3)); border-radius: 0.75rem;
+             max-width: 46rem; width: 100%; max-height: 85vh; overflow: auto;
+             padding: 1.5rem;
+             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+
+    /* Legacy status badge classes referenced by partials/task_row + task_modal +
+       kanban_board. Kept as plain CSS (Play CDN doesn't process @apply). Colors
+       are DaisyUI theme variables so light/dark toggle works automatically. */
+    .badge { display: inline-flex; align-items: center; padding: 0.15rem 0.55rem;
+             border-radius: 9999px; font-size: 0.68rem; font-weight: 600;
+             letter-spacing: 0.03em; text-transform: uppercase;
+             border: 1px solid transparent; }
+    .status-done         { background: hsl(var(--su) / 0.15); color: hsl(var(--su));
+                           border-color: hsl(var(--su) / 0.3); }
+    .status-in-progress  { background: hsl(var(--in) / 0.15); color: hsl(var(--in));
+                           border-color: hsl(var(--in) / 0.3); }
+    .status-blocked      { background: hsl(var(--er) / 0.15); color: hsl(var(--er));
+                           border-color: hsl(var(--er) / 0.3); }
+    .status-backlog      { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc) / 0.7);
+                           border-color: hsl(var(--bc) / 0.15); }
+    .status-todo         { background: hsl(var(--bc) / 0.08); color: hsl(var(--bc) / 0.7);
+                           border-color: hsl(var(--bc) / 0.15); }
+    .sev-ok    { color: hsl(var(--su)); }
+    .sev-err   { color: hsl(var(--er)); }
+    .sev-warn  { color: hsl(var(--wa)); }
+    .sev-block { color: hsl(var(--wa)); }
+    .sev-info  { color: hsl(var(--in)); }
+    .sev-muted { color: hsl(var(--bc) / 0.55); }
   </style>
 </head>
-<body class="h-full bg-slate-50 text-slate-800">
-  <div class="min-h-full flex flex-col">
-    <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-4">
-        <a href="/" class="text-lg font-semibold tracking-tight">Orch Dashboard</a>
-        <span class="text-xs text-slate-500 hidden sm:inline">
-          {{ project_id }} <span class="opacity-50">•</span> <code>{{ project_root }}</code>
-        </span>
+<body class="h-full">
+  <div class="drawer lg:drawer-open min-h-screen">
+    <input id="orch-drawer" type="checkbox" class="drawer-toggle"
+           x-model="sidebar" />
+
+    <!-- ---- content ---- -->
+    <div class="drawer-content flex flex-col bg-base-200">
+      <!-- topbar -->
+      <header class="navbar bg-base-100 border-b border-base-300 min-h-14 px-4 gap-2 sticky top-0 z-30">
+        <label for="orch-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden">
+          <!-- mobile menu icon -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+        </label>
+        <button type="button" @click="toggleSidebar()" class="btn btn-square btn-ghost btn-sm hidden lg:inline-flex" title="Toggle sidebar">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-semibold truncate">{% block topbar_title %}{{ project_id }}{% endblock %}</div>
+          <div class="text-xs opacity-60 truncate hidden sm:block"><code>{{ project_root }}</code></div>
+        </div>
+        <!-- budget chip -->
+        <a href="/api/budgets" class="btn btn-sm btn-ghost gap-2"
+           :class="{
+             'text-success': budgetTone === 'success',
+             'text-warning': budgetTone === 'warning',
+             'text-error':   budgetTone === 'error',
+             'opacity-60':   budgetTone === 'ghost',
+           }"
+           title="Budget snapshot — click for JSON">
+          <span class="w-2 h-2 rounded-full"
+                :class="{
+                  'bg-success': budgetTone === 'success',
+                  'bg-warning': budgetTone === 'warning',
+                  'bg-error':   budgetTone === 'error',
+                  'bg-base-content/40': budgetTone === 'ghost',
+                }"></span>
+          <span class="text-xs" x-text="budgetLabel"></span>
+        </a>
+        <a href="/snapshot" class="btn btn-sm btn-ghost hidden md:inline-flex" title="Download JSON snapshot">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <span class="text-xs">snapshot</span>
+        </a>
+        <button type="button" @click="toggleTheme()" class="btn btn-sm btn-ghost btn-square" title="Toggle theme">
+          <svg x-show="theme === 'night'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          <svg x-show="theme !== 'night'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
+      </header>
+
+      <!-- main -->
+      <main class="flex-1 min-w-0">
+        {% block content %}{% endblock %}
+      </main>
+
+      <!-- footer -->
+      <footer class="border-t border-base-300 bg-base-100 px-6 py-2 text-xs opacity-60 flex justify-between">
+        <span>read-only view — no writes to tasks.json</span>
+        <span>layout: {{ state_layout | default("legacy") }}</span>
+      </footer>
+    </div>
+
+    <!-- ---- sidebar ---- -->
+    <aside class="drawer-side z-40">
+      <label for="orch-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+      <div class="min-h-full bg-base-100 border-r border-base-300 w-64 flex flex-col">
+        <!-- brand -->
+        <div class="px-4 py-4 border-b border-base-300 flex items-center gap-2">
+          <div class="w-8 h-8 rounded-md bg-primary/10 text-primary flex items-center justify-center font-bold">o</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold leading-tight">orch</div>
+            <div class="text-[10px] uppercase tracking-wide opacity-60">dashboard</div>
+          </div>
+        </div>
+        <!-- nav -->
+        <ul class="menu menu-sm p-2 gap-0.5 flex-1">
+          <li class="menu-title opacity-60">Navigation</li>
+          <li>
+            <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+              Tasks
+            </a>
+          </li>
+          <li>
+            <a href="/kanban" class="{% if request.url.path == '/kanban' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="12" x="14" y="3" rx="1"/></svg>
+              Kanban
+            </a>
+          </li>
+          <li>
+            <a href="/metrics" class="{% if request.url.path == '/metrics' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              Metrics
+            </a>
+          </li>
+          <li>
+            <a href="/logs" class="{% if request.url.path == '/logs' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+              Logs
+            </a>
+          </li>
+          <li class="menu-title opacity-60 pt-3">Export</li>
+          <li>
+            <a href="/snapshot">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              Snapshot (JSON)
+            </a>
+          </li>
+          <li>
+            <a href="/api/tasks">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              API · tasks
+            </a>
+          </li>
+          <li>
+            <a href="/api/metrics">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              API · metrics
+            </a>
+          </li>
+          <li>
+            <a href="/api/budgets">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              API · budgets
+            </a>
+          </li>
+        </ul>
+        <!-- project footer -->
+        <div class="px-4 py-3 border-t border-base-300 text-xs opacity-70">
+          <div class="font-semibold truncate">{{ project_id }}</div>
+          <div class="opacity-60 truncate font-mono text-[10px]">{{ project_root }}</div>
+        </div>
       </div>
-      <nav class="flex items-center gap-2">
-        <a href="/" class="px-3 py-1.5 rounded text-sm font-medium text-slate-700 hover:bg-slate-100">Tasks</a>
-        <a href="/kanban" class="px-3 py-1.5 rounded text-sm font-medium text-slate-700 hover:bg-slate-100">Kanban</a>
-        <a href="/metrics" class="px-3 py-1.5 rounded text-sm font-medium text-slate-700 hover:bg-slate-100">Metrics</a>
-        <a href="/logs" class="px-3 py-1.5 rounded text-sm font-medium text-slate-700 hover:bg-slate-100">Logs</a>
-        <a href="/snapshot" class="px-3 py-1.5 rounded text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-           title="Download a JSON snapshot of the current project state">↓ snapshot</a>
-      </nav>
-    </header>
-    <main class="flex-1">
-      {% block content %}{% endblock %}
-    </main>
-    <footer class="border-t border-slate-200 bg-white px-6 py-2 text-xs text-slate-400 flex justify-between">
-      <span>read-only view — no writes to tasks.json</span>
-      <span>layout: {{ state_layout | default("legacy") }}</span>
-    </footer>
+    </aside>
   </div>
 </body>
 </html>

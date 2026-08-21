@@ -3,7 +3,7 @@
 {% block content %}
 <div class="px-6 py-4 flex flex-col gap-4" x-data="{ modal: null, hoverDeps: null, showOrphans: true }">
   {% if orphans %}
-  <section x-show="showOrphans" class="bg-amber-50 border border-amber-300 rounded p-3 text-sm">
+  <section x-show="showOrphans" class="alert alert-warning py-3 text-sm">
     <div class="flex items-start justify-between gap-2">
       <div>
         <div class="font-semibold text-amber-800">
@@ -25,61 +25,61 @@
   {% endif %}
 
   <!-- Summary bar -->
-  <section class="bg-white border border-slate-200 rounded p-4 grid grid-cols-2 md:grid-cols-6 gap-4">
+  <section class="bg-base-100 border border-base-300 rounded-lg shadow-sm p-4 grid grid-cols-2 md:grid-cols-6 gap-4">
     <div>
-      <div class="text-xs uppercase text-slate-500">Project</div>
+      <div class="text-xs uppercase opacity-60">Project</div>
       <div class="text-lg font-semibold">{{ project_id }}</div>
     </div>
     <div>
-      <div class="text-xs uppercase text-slate-500">Progress</div>
+      <div class="text-xs uppercase opacity-60">Progress</div>
       <div class="text-lg font-semibold">{{ summary.percent_done }}%</div>
-      <div class="w-full bg-slate-200 rounded h-1.5 mt-1">
-        <div class="bg-green-500 h-1.5 rounded" style="width: {{ summary.percent_done }}%"></div>
+      <div class="w-full bg-base-300 rounded h-1.5 mt-1">
+        <div class="bg-success h-1.5 rounded" style="width: {{ summary.percent_done }}%"></div>
       </div>
     </div>
     <div>
-      <div class="text-xs uppercase text-slate-500">Total</div>
+      <div class="text-xs uppercase opacity-60">Total</div>
       <div class="text-lg font-semibold">{{ summary.total }}</div>
     </div>
     <div>
-      <div class="text-xs uppercase text-slate-500">Done · In-progress</div>
-      <div class="text-lg font-semibold text-green-700">{{ summary.done }} <span class="text-slate-400">·</span> <span class="text-blue-700">{{ summary.in_progress }}</span></div>
+      <div class="text-xs uppercase opacity-60">Done · In-progress</div>
+      <div class="text-lg font-semibold text-success">{{ summary.done }} <span class="text-slate-400">·</span> <span class="text-info">{{ summary.in_progress }}</span></div>
     </div>
     <div>
-      <div class="text-xs uppercase text-slate-500">Blocked · Backlog</div>
-      <div class="text-lg font-semibold text-red-700">{{ summary.blocked }} <span class="text-slate-400">·</span> <span class="text-slate-600">{{ summary.backlog }}</span></div>
+      <div class="text-xs uppercase opacity-60">Blocked · Backlog</div>
+      <div class="text-lg font-semibold text-error">{{ summary.blocked }} <span class="text-slate-400">·</span> <span class="text-base-content/70">{{ summary.backlog }}</span></div>
     </div>
     <div>
-      <div class="text-xs uppercase text-slate-500">Estimate total (h)</div>
+      <div class="text-xs uppercase opacity-60">Estimate total (h)</div>
       <div class="text-lg font-semibold">{{ summary.estimate_hours_total }}</div>
     </div>
   </section>
 
   <div class="grid grid-cols-12 gap-4">
     <!-- Sidebar: phases -->
-    <aside class="col-span-12 md:col-span-3 lg:col-span-2 bg-white border border-slate-200 rounded p-3">
-      <div class="text-xs uppercase text-slate-500 mb-2">Phases</div>
+    <aside class="col-span-12 md:col-span-3 lg:col-span-2 bg-base-100 border border-base-300 rounded-lg shadow-sm p-3">
+      <div class="text-xs uppercase opacity-60 mb-2">Phases</div>
       <ul class="space-y-1">
         <li>
-          <a href="/" class="block px-2 py-1 rounded text-sm hover:bg-slate-100 {% if filters.phase is none %}bg-slate-100 font-medium{% endif %}">
-            All <span class="text-slate-400 float-right">{{ summary.total }}</span>
+          <a href="/" class="block px-2 py-1 rounded text-sm hover:bg-base-200 {% if filters.phase is none %}bg-base-200 font-medium{% endif %}">
+            All <span class="opacity-50 float-right">{{ summary.total }}</span>
           </a>
         </li>
         {% for p in phases %}
         <li>
-          <a href="/?phase={{ p.phase }}" class="block px-2 py-1 rounded text-sm hover:bg-slate-100 {% if filters.phase == p.phase %}bg-slate-100 font-medium{% endif %}">
+          <a href="/?phase={{ p.phase }}" class="block px-2 py-1 rounded text-sm hover:bg-base-200 {% if filters.phase == p.phase %}bg-base-200 font-medium{% endif %}">
             Phase {{ p.phase }}
-            <span class="text-slate-400 float-right">{{ p.done }}/{{ p.total }}</span>
+            <span class="opacity-50 float-right">{{ p.done }}/{{ p.total }}</span>
           </a>
         </li>
         {% endfor %}
       </ul>
 
-      <div class="text-xs uppercase text-slate-500 mt-4 mb-2">Status</div>
+      <div class="text-xs uppercase opacity-60 mt-4 mb-2">Status</div>
       <ul class="space-y-1">
         {% for s in ["done", "in-progress", "blocked", "backlog", "todo"] %}
         <li>
-          <a href="/?status={{ s }}" class="block px-2 py-1 rounded text-sm hover:bg-slate-100 {% if filters.status == s %}bg-slate-100 font-medium{% endif %}">
+          <a href="/?status={{ s }}" class="block px-2 py-1 rounded text-sm hover:bg-base-200 {% if filters.status == s %}bg-base-200 font-medium{% endif %}">
             {{ s }}
           </a>
         </li>
@@ -88,12 +88,12 @@
     </aside>
 
     <!-- Main table -->
-    <section class="col-span-12 md:col-span-9 lg:col-span-10 bg-white border border-slate-200 rounded">
+    <section class="col-span-12 md:col-span-9 lg:col-span-10 bg-base-100 border border-base-300 rounded-lg shadow-sm">
       <!-- Toolbar -->
       <form method="get" action="/" class="flex flex-wrap items-center gap-2 p-3 border-b border-slate-200">
         <input type="text" name="q" value="{{ filters.q or '' }}" placeholder="Buscar id/título..."
-               class="flex-1 min-w-[12rem] border border-slate-300 rounded px-2 py-1 text-sm" />
-        <select name="model" class="border border-slate-300 rounded px-2 py-1 text-sm">
+               class="flex-1 min-w-[12rem] border bg-base-100 border-base-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+        <select name="model" class="border bg-base-100 border-base-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
           <option value="">Modelo (todos)</option>
           {% for m in models %}
           <option value="{{ m }}" {% if filters.model == m %}selected{% endif %}>{{ m }}</option>
@@ -105,11 +105,11 @@
           <input type="checkbox" name="parallelizable" value="1" {% if filters.parallelizable %}checked{% endif %} />
           Paralelizables ahora
         </label>
-        <button type="submit" class="bg-slate-800 text-white text-sm px-3 py-1 rounded hover:bg-slate-700">
+        <button type="submit" class="btn btn-primary btn-sm">
           Aplicar
         </button>
-        <a href="/" class="text-sm text-slate-500 hover:text-slate-700">Reset</a>
-        <span class="ml-auto text-xs text-slate-500">
+        <a href="/" class="text-sm opacity-60 hover:opacity-100">Reset</a>
+        <span class="ml-auto text-xs opacity-60">
           {{ row_count }} / {{ total_count }} tasks
         </span>
       </form>
@@ -117,7 +117,7 @@
       <!-- Table -->
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
-          <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500">
+          <thead class="bg-slate-50 border-b border-slate-200 text-xs uppercase opacity-60">
             <tr>
               <th class="text-left px-3 py-2">ID</th>
               <th class="text-left px-3 py-2">Título</th>
@@ -130,12 +130,12 @@
               <th class="text-left px-3 py-2">Última actualización</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody class="divide-y divide-base-300">
             {% for row in rows %}
               {% include "partials/task_row.html" %}
             {% else %}
               <tr>
-                <td colspan="9" class="text-center text-slate-400 py-8">
+                <td colspan="9" class="text-center opacity-50 py-8">
                   No hay tasks que coincidan con los filtros.
                 </td>
               </tr>

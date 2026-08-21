@@ -1,4 +1,4 @@
-<tr class="hover:bg-slate-50 cursor-pointer"
+<tr class="hover:bg-base-200 cursor-pointer transition-colors"
     hx-get="/partials/task-modal/{{ row.id }}"
     hx-swap="none"
     @htmx:after-request.window="if ($event.detail.pathInfo && $event.detail.pathInfo.requestPath === '/partials/task-modal/{{ row.id }}') modal = $event.detail.xhr.responseText">
@@ -9,21 +9,21 @@
     {% endif %}
   </td>
   <td class="px-3 py-2">{{ row.title }}</td>
-  <td class="px-3 py-2 text-slate-500">{{ row.phase }}</td>
-  <td class="px-3 py-2 font-mono text-xs text-slate-600">{{ row.model }}</td>
+  <td class="px-3 py-2 opacity-60">{{ row.phase }}</td>
+  <td class="px-3 py-2 font-mono text-xs opacity-70">{{ row.model }}</td>
   <td class="px-3 py-2">
     <span class="badge status-{{ row.status }}">{{ row.status }}</span>
   </td>
-  <td class="px-3 py-2 text-slate-600" title="{{ row.dependencies | join(', ') }}">
+  <td class="px-3 py-2 opacity-70" title="{{ row.dependencies | join(', ') }}">
     {{ row.dep_count }}
   </td>
-  <td class="px-3 py-2 text-right text-slate-600">{{ row.estimate_hours }}</td>
-  <td class="px-3 py-2 text-right text-slate-600">
+  <td class="px-3 py-2 text-right opacity-70">{{ row.estimate_hours }}</td>
+  <td class="px-3 py-2 text-right opacity-70">
     {% if row.human_hours and row.human_hours > 0 %}
       {{ '%.1f'|format(row.human_hours) }}
     {% else %}
-      <span class="text-slate-300">—</span>
+      <span class="opacity-40">—</span>
     {% endif %}
   </td>
-  <td class="px-3 py-2 text-xs text-slate-500">{{ row.last_updated or '—' }}</td>
+  <td class="px-3 py-2 text-xs opacity-60">{{ row.last_updated or '—' }}</td>
 </tr>

@@ -4,51 +4,51 @@
          hx-trigger="refresh-board from:body"
          hx-swap="outerHTML">
   {% for col in columns %}
-  <div class="bg-slate-100 border {% if col.over_wip %}border-amber-400{% else %}border-slate-200{% endif %} rounded flex flex-col min-h-[24rem]">
-    <div class="px-3 py-2 border-b border-slate-200 flex items-center justify-between">
+  <div class="bg-base-200/50 border {% if col.over_wip %}border-warning{% else %}border-base-300{% endif %} rounded-lg flex flex-col min-h-[24rem] shadow-sm">
+    <div class="px-3 py-2 border-b border-base-300 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <span class="badge status-{{ col.key }}">{{ col.label }}</span>
       </div>
       <div class="flex items-center gap-2">
         {% if filters.wip %}
-        <span class="text-[0.65rem] font-mono {% if col.over_wip %}text-amber-700 font-semibold{% else %}text-slate-400{% endif %}"
+        <span class="text-[0.65rem] font-mono {% if col.over_wip %}text-warning font-semibold{% else %}opacity-50{% endif %}"
               title="{% if col.over_wip %}Over WIP limit ({{ col.count }} > {{ filters.wip }}){% else %}Within WIP limit{% endif %}">
           {{ col.count }}/{{ filters.wip }}{% if col.over_wip %} ⚠{% endif %}
         </span>
         {% else %}
-        <span class="text-xs text-slate-500 font-mono">{{ col.count }}</span>
+        <span class="text-xs opacity-60 font-mono">{{ col.count }}</span>
         {% endif %}
       </div>
     </div>
 
     <div class="flex-1 p-2 space-y-2 overflow-y-auto max-h-[70vh]">
       {% if col.count == 0 %}
-        <div class="text-center text-[0.7rem] text-slate-400 py-6 px-2">
+        <div class="text-center text-[0.7rem] opacity-50 py-6 px-2">
           {{ col.empty_hint }}
         </div>
       {% else %}
         {% for grp in col.groups %}
           {% if grp.phase is not none %}
-            <div class="flex items-center gap-2 pt-1 pb-0.5 sticky top-0 bg-slate-100/95 backdrop-blur-sm z-10 border-b border-slate-200">
-              <span class="text-[0.65rem] uppercase text-slate-500 font-semibold tracking-wide">Phase {{ grp.phase }}</span>
-              <span class="text-[0.65rem] text-slate-400 font-mono">{{ grp.cards | length }}</span>
+            <div class="flex items-center gap-2 pt-1 pb-0.5 sticky top-0 bg-base-200/95 backdrop-blur-sm z-10 border-b border-base-300">
+              <span class="text-[0.65rem] uppercase opacity-60 font-semibold tracking-wide">Phase {{ grp.phase }}</span>
+              <span class="text-[0.65rem] opacity-50 font-mono">{{ grp.cards | length }}</span>
             </div>
           {% endif %}
           {% for card in grp.cards %}
-          <article class="bg-white border rounded p-2 cursor-pointer hover:shadow transition
-                          {% if card.parallelizable %}border-emerald-300 ring-1 ring-emerald-200{% else %}border-slate-200 hover:border-slate-300{% endif %}"
+          <article class="bg-base-100 border rounded-md p-2 cursor-pointer hover:shadow-md transition-all
+                          {% if card.parallelizable %}border-success ring-1 ring-success/30{% else %}border-base-300 hover:border-base-content/30{% endif %}"
                    hx-get="/partials/task-modal/{{ card.id }}"
                    hx-swap="none"
                    @htmx:after-request.window="if ($event.detail.pathInfo && $event.detail.pathInfo.requestPath === '/partials/task-modal/{{ card.id }}') modal = $event.detail.xhr.responseText">
             <div class="flex items-start justify-between gap-2">
-              <div class="font-mono text-[0.7rem] text-slate-500">{{ card.id }}</div>
+              <div class="font-mono text-[0.7rem] opacity-60">{{ card.id }}</div>
               <div class="flex items-center gap-1">
                 {% if card.on_critical_path %}
-                  <span class="text-[0.6rem] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1"
+                  <span class="text-[0.6rem] font-semibold text-warning bg-warning/10 border border-warning/30 rounded px-1"
                         title="On the project's critical path (longest weighted chain)">⚡</span>
                 {% endif %}
                 {% if card.downstream_impact and card.downstream_impact > 0 %}
-                  <span class="text-[0.6rem] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1"
+                  <span class="text-[0.6rem] font-semibold text-success bg-success/10 border border-success/30 rounded px-1"
                         title="Completing this unblocks {{ card.downstream_impact }} downstream task(s)">
                     ↓{{ card.downstream_impact }}
                   </span>
@@ -58,12 +58,12 @@
                 {% endif %}
               </div>
             </div>
-            <div class="text-sm font-medium text-slate-800 mt-0.5 line-clamp-2">{{ card.title }}</div>
-            <div class="mt-2 flex items-center justify-between text-[0.7rem] text-slate-500">
+            <div class="text-sm font-medium mt-0.5 line-clamp-2">{{ card.title }}</div>
+            <div class="mt-2 flex items-center justify-between text-[0.7rem] opacity-70">
               <span class="font-mono">{{ card.model or '—' }}</span>
               <span>P{{ card.phase }}</span>
             </div>
-            <div class="mt-1 flex items-center justify-between text-[0.7rem] text-slate-500">
+            <div class="mt-1 flex items-center justify-between text-[0.7rem] opacity-70">
               <span title="{{ card.dependencies | join(', ') }}">{{ card.dep_count }} deps</span>
               <span>{{ card.estimate_hours }}h</span>
             </div>
