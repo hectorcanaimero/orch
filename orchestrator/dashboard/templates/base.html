@@ -91,15 +91,30 @@
 
     /* Modal — theme-aware via DaisyUI CSS vars.
        Prefixed with `orch-` because DaisyUI ships its own `.modal` /
-       `.modal-backdrop` classes that clash (its default is display:none). */
-    .orch-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-                           z-index: 60; display: flex; align-items: center;
-                           justify-content: center; padding: 2rem; }
-    .orch-modal { background: hsl(var(--b1)); color: hsl(var(--bc));
-                  border: 1px solid hsl(var(--b3)); border-radius: 0.75rem;
-                  max-width: 46rem; width: 100%; max-height: 85vh; overflow: auto;
-                  padding: 1.5rem;
-                  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+       `.modal-backdrop` classes that clash (its default is display:none).
+       Card background uses `--b1` with an explicit border + strong shadow
+       so it's visible against the page in both light and dark themes. */
+    .orch-modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 60;
+      display: flex; align-items: center; justify-content: center;
+      padding: 2rem;
+      backdrop-filter: blur(2px);
+    }
+    .orch-modal {
+      background: hsl(var(--b1));
+      color: hsl(var(--bc));
+      border: 1px solid hsl(var(--bc) / 0.15);
+      border-radius: 0.75rem;
+      max-width: 46rem; width: 100%; max-height: 85vh;
+      overflow: auto;
+      padding: 1.5rem;
+      box-shadow:
+        0 0 0 1px hsl(var(--bc) / 0.05),
+        0 24px 48px -8px rgba(0, 0, 0, 0.35),
+        0 12px 24px -12px rgba(0, 0, 0, 0.25);
+    }
 
     /* Legacy status badge classes referenced by partials/task_row + task_modal +
        kanban_board. Kept as plain CSS (Play CDN doesn't process @apply). Colors
