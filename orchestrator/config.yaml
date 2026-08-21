@@ -35,9 +35,8 @@ retry:
 
 # Fase 3 (multi-proyecto): prefijo aplicado a `Task.spec_ref` para armar la
 # línea `Spec ref (READ FIRST):` del prompt. Cada proyecto puede sobreescribir
-# esto (ej: `sdd/specs`, `docs/specs/`, `specs/`). Default: `docs/rewrite-plan`
-# — retrocompatible con rupies.
-spec_root: docs/rewrite-plan
+# esto (ej: `sdd/specs`, `docs/specs/`, `specs/`). Default: `specs`.
+spec_root: specs
 
 # Sprint 7 — provider budget guardrails.
 # `budgets_config` is the path (relative to the orchestrator package OR the

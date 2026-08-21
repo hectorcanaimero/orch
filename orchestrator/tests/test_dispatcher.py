@@ -278,12 +278,12 @@ def test_codex_build_cmd_snapshot() -> None:
     assert cmd[cmd.index("-m") + 1] == "gpt-5.6-codex"
 
 
-def test_opencode_build_cmd_snapshot() -> None:
+def test_opencode_build_cmd_snapshot(tmp_path: Path) -> None:
     task = _mk_task(tid="P-100", model="opencode/gemini-3.0-pro")
     route = _mk_route(
         backend="opencode", cli_model="google/gemini-3.0-pro", tier="premium"
     )
-    cmd = OpencodeBackend().build_cmd(task, route)
+    cmd = OpencodeBackend().build_cmd(task, route, cwd=tmp_path)
     assert cmd == [
         "opencode",
         "run",
@@ -292,7 +292,22 @@ def test_opencode_build_cmd_snapshot() -> None:
         "--model",
         "google/gemini-3.0-pro",
         "--auto",
+        "--dir",
+        str(tmp_path.resolve()),
     ]
+
+
+def test_opencode_build_cmd_dir_is_absolute(tmp_path: Path) -> None:
+    """--dir must be an absolute path so opencode ignores the parent shell's cwd."""
+    task = _mk_task(tid="P-101", model="opencode/gemini-3.0-pro")
+    route = _mk_route(
+        backend="opencode", cli_model="google/gemini-3.0-pro", tier="premium"
+    )
+    cmd = OpencodeBackend().build_cmd(task, route, cwd=tmp_path)
+    assert "--dir" in cmd
+    dir_value = cmd[cmd.index("--dir") + 1]
+    assert Path(dir_value).is_absolute()
+    assert dir_value == str(tmp_path.resolve())
 
 
 # ---- get_backend registry ----------------------------------------------

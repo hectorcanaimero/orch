@@ -429,6 +429,10 @@ def _spawn_generic(
     `dispatch._fhs` so `wait_result` can close them.
     """
     prompt_fh, log_fh = _open_prompt_and_log(prompt_path, log_path)
+    # Scrub PWD so opencode doesn't inherit the parent shell's cwd (it resolves
+    # file writes against $PWD, ignoring Popen(cwd=...)). Harmless for claude
+    # and codex — they both take an explicit dir flag already.
+    env = {**os.environ, "PWD": str(cwd)}
     try:
         popen = subprocess.Popen(  # noqa: S603 — argv is locally constructed
             cmd,
@@ -436,6 +440,7 @@ def _spawn_generic(
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(cwd),
+            env=env,
             close_fds=True,
         )
     except (FileNotFoundError, OSError):
@@ -794,12 +799,17 @@ class OpencodeBackend:
 
     name = "opencode"
 
-    def build_cmd(self, task: Task, route: RouteEntry) -> list[str]:
-        """Return the argv for `opencode run --format json --auto ...`.
+    def build_cmd(self, task: Task, route: RouteEntry, cwd: Path) -> list[str]:
+        """Return the argv for `opencode run --format json --auto --dir <abs> ...`.
 
         `RouteEntry` has no `backend_provider` field — router entries already
         embed the provider prefix in `cli_model` (see `model_router.yaml`,
         e.g. `google/gemini-3.0-pro`). Use `cli_model` verbatim.
+
+        `--dir` is required because opencode resolves file writes against $PWD
+        (or its own project detection), ignoring Popen(cwd=...). The value must
+        be absolute so it works regardless of what shell the orch was launched
+        from.
         """
         return [
             "opencode",
@@ -809,6 +819,8 @@ class OpencodeBackend:
             "--model",
             route.cli_model,
             "--auto",
+            "--dir",
+            str(Path(cwd).resolve()),
         ]
 
     def spawn(
@@ -820,7 +832,7 @@ class OpencodeBackend:
         cwd: Path,
     ) -> Dispatch:
         _ensure_logs_dir(log_path.parent.parent)
-        cmd = self.build_cmd(task, route)
+        cmd = self.build_cmd(task, route, cwd)
         return _spawn_generic(
             self.name,
             task,

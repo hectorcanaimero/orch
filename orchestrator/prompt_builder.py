@@ -162,7 +162,7 @@ def render_prompt(
 # reorder or reword lines without updating the spec.
 _TEMPLATE = """\
 TASK_ID={id}
-You are executing task {id} for the Rupies v2 rewrite.
+You are executing task {id}.
 
 Working dir: {working_dir}
 Title: {title}

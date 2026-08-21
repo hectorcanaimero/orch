@@ -383,7 +383,7 @@ budget:
 retry:
   backoff_seconds: 5               # wall-clock delay before retry-once
   rate_limit_backoff_seconds: 60   # longer backoff on RATE_LIMIT failures
-spec_root: docs/rewrite-plan       # prefix for Task.spec_ref in prompts
+spec_root: specs                   # prefix for Task.spec_ref in prompts
 budgets_config: budgets.yaml       # Sprint 7 — see below
 budgets_preset: conservative
 ```

@@ -41,7 +41,7 @@ Three header levels: **phase → package → task**.
 
 ### F0.1.T2 — Root README
 
-- **Modelo**: claude-haiku-4-5
+- **Modelo**: opencode-go/claude-haiku-4-5
 - **Estimación**: 0.5h
 - **Razón**: Short docs task.
 - **Dependencies**: F0.1.T1
