@@ -3361,14 +3361,169 @@ def _find_finding_by_prefix(backend: Any, prefix: str) -> Any | None:
     return None
 
 
-def _findings_publish_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 4
-    print("orch findings publish — implemented in commit 4", file=sys.stderr)
-    return 1
+def _findings_publish_cli(argv: list[str]) -> int:
+    """`orch findings publish ID` — main publish flow with guardrails.
+
+    Exit codes (per Sprint E-1 spec):
+      0   published (or dry-run rendered)
+      1   rate-limited or a dedup match warned/blocked
+      2   refused (about=project OR confidence below floor)
+      130 user cancelled at the TTY consent prompt
+    """
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings publish",
+        description=(
+            "Publish a finding to a GitHub issue via the gh CLI. Runs every "
+            "guardrail (classification, confidence, rate limit, dedup) before "
+            "creating the issue."
+        ),
+    )
+    p.add_argument("finding_id", help="Finding id (prefix ok if unique).")
+    p.add_argument("--repo", default=None,
+                   help="Override target repo (default from config.yaml).")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would be published without creating an issue.")
+    p.add_argument("--yes", action="store_true",
+                   help="Skip the final TTY consent prompt (guardrails still run).")
+    p.add_argument("--force", action="store_true",
+                   help="Override confidence / dedup guardrails (still respects "
+                        "about=project and rate limit).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    fcfg = cfg.get("findings", {}) or {}
+    repo = args.repo or fcfg.get("publish_repo", f_mod.DEFAULT_REPO)
+    label = fcfg.get("label", f_mod.DEFAULT_LABEL)
+    rate = int(fcfg.get("publish_rate_limit_per_hour", f_mod.DEFAULT_RATE_LIMIT))
+    min_conf = fcfg.get(
+        "min_publish_confidence", f_mod.DEFAULT_MIN_PUBLISH_CONFIDENCE
+    )
+
+    # Build the consent callable. `--yes` short-circuits to True. Otherwise
+    # we ask via stdin when it's a TTY; on a non-TTY we refuse for safety.
+    def _consent(f) -> bool:
+        if args.yes:
+            return True
+        if not sys.stdin.isatty():
+            print(
+                "publish requires TTY confirmation (or --yes on non-interactive "
+                "shells)",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            resp = input(
+                f"Publish {f.id[:8]} to {repo}? [y/N] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return resp in {"y", "yes"}
+
+    try:
+        result = f_mod.publish(
+            backend,
+            finding.id,
+            repo=repo,
+            label=label,
+            rate_limit_per_hour=rate,
+            min_confidence=min_conf,
+            dry_run=args.dry_run,
+            force=args.force,
+            confirm=None if args.dry_run else _consent,
+        )
+    except f_mod.RateLimitExceeded as exc:
+        print(f"rate limit: {exc}", file=sys.stderr)
+        return 1
+    except f_mod.DuplicateIssueFound as exc:
+        print(f"duplicate: {exc}", file=sys.stderr)
+        return 1
+    except f_mod.PublishRefusedError as exc:
+        msg = str(exc)
+        if "cancelled" in msg.lower():
+            print(msg, file=sys.stderr)
+            return 130
+        # about=project or below min confidence.
+        if "about=project" in msg or "confidence" in msg:
+            print(f"refused: {msg}", file=sys.stderr)
+            return 2
+        print(f"publish failed: {msg}", file=sys.stderr)
+        return 1
+
+    status = result["status"]
+    if status == "dry_run":
+        print("[dry-run] would publish:")
+        print(f"  finding {finding.id}")
+        print(f"  repo    {repo}")
+        print(f"  label   {label}")
+        matches = result.get("dedup_matches") or []
+        if matches:
+            print(f"  dedup matches ({len(matches)}):")
+            for m in matches:
+                print(
+                    f"    #{m.get('number')} · overlap={m.get('overlap'):.2f} "
+                    f"· {m.get('html_url')}"
+                )
+        rl = result.get("rate_limit", {})
+        print(f"  rate    {rl.get('count')}/{rl.get('limit')} in last hour")
+        return 0
+    if status == "already_published":
+        print(f"already published: {result['published_url']}")
+        return 0
+    print(f"published: {result['published_url']}")
+    return 0
 
 
-def _findings_dismiss_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 4
-    print("orch findings dismiss — implemented in commit 4", file=sys.stderr)
-    return 1
+def _findings_dismiss_cli(argv: list[str]) -> int:
+    """`orch findings dismiss ID --reason REASON`."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings dismiss",
+        description="Mark a finding as dismissed with a required reason.",
+    )
+    p.add_argument("finding_id", help="Finding id (prefix ok if unique).")
+    p.add_argument("--reason", required=True,
+                   help="Why this finding is being dismissed. Required.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    try:
+        f_mod.dismiss(backend, finding.id, args.reason)
+    except f_mod.PublishRefusedError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"dismissed {finding.id}")
+    return 0
 
 
 def _run_dashboard_subcommand(argv: list[str]) -> int:
