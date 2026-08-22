@@ -1630,7 +1630,7 @@ def _run_task_status_subcommand(argv: list[str]) -> int:
     return 0
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard", "task-status")
+_SUBCOMMANDS = ("init", "atomize", "dashboard", "task-status", "migrate")
 
 
 def _print_subcommand_list() -> int:
@@ -1643,6 +1643,7 @@ def _print_subcommand_list() -> int:
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
     print("  orch task-status ID STATUS  Single-writer helper for scripts/task-*.sh")
+    print("  orch migrate [FLAGS]      Migrate state/ JSONL → sqlite (backup + rollback)")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -1752,6 +1753,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_atomize_subcommand(incoming[1:])
     if incoming and incoming[0] == "task-status":
         return _run_task_status_subcommand(incoming[1:])
+    if incoming and incoming[0] == "migrate":
+        from orchestrator.migrate import run_migrate
+
+        return run_migrate(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
