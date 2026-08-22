@@ -948,25 +948,96 @@ class FileBackend:
         self,
         run_id: str | None = None,
         since_id: int | None = None,  # noqa: ARG002 — file backend has no monotonic id
+        task_id: str | None = None,
+        limit: int | None = None,
     ) -> Iterator[dict[str, Any]]:
+        """Yield event rows from the file backend's JSONL files.
+
+        `task_id` is applied as a filter during the forward scan.
+        `limit` truncates from the NEWEST side by buffering matches, then
+        yielding the last `limit` in chronological order. This mirrors the
+        semantics `orch events --tail N` expects (recent slice, oldest→newest).
+        """
         if run_id is not None:
             paths = [self.state_dir / f"events-{run_id}.jsonl"]
         else:
             paths = sorted(self.state_dir.glob("events-*.jsonl"))
-        for p in paths:
-            if not p.exists():
-                continue
-            with p.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    if isinstance(obj, dict):
+
+        def _stream() -> Iterator[dict[str, Any]]:
+            for p in paths:
+                if not p.exists():
+                    continue
+                with p.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if not isinstance(obj, dict):
+                            continue
+                        if task_id is not None and obj.get("task_id") != task_id:
+                            continue
                         yield obj
+
+        if limit is None or limit <= 0:
+            yield from _stream()
+            return
+
+        # Cheap tail: keep a bounded deque of the last `limit` matches.
+        from collections import deque as _deque
+
+        buffer: _deque[dict[str, Any]] = _deque(maxlen=limit)
+        for row in _stream():
+            buffer.append(row)
+        yield from buffer
+
+    def get_task_last_events(
+        self,
+        task_ids: Iterable[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Reverse-scan events-*.jsonl newest-first, dict-fill.
+
+        We walk each file top-to-bottom (they're small — the tail dominates)
+        and keep track of the last-seen row per task_id. Optionally restrict
+        to a whitelist.
+        """
+        whitelist: set[str] | None
+        if task_ids is None:
+            whitelist = None
+        else:
+            whitelist = {str(t) for t in task_ids}
+            if not whitelist:
+                return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        paths = sorted(self.state_dir.glob("events-*.jsonl"))
+        for p in paths:
+            try:
+                with p.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if not isinstance(obj, dict):
+                            continue
+                        tid = obj.get("task_id")
+                        if not isinstance(tid, str):
+                            continue
+                        if whitelist is not None and tid not in whitelist:
+                            continue
+                        # Forward scan; later rows overwrite earlier ones so
+                        # the final map holds the newest event per task.
+                        out[tid] = obj
+            except OSError:
+                continue
+        return out
 
     def append_spend(self, entry: SpendEntry) -> None:
         SpendLog(self.state_dir, project_id=self.project_id).record(entry)

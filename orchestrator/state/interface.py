@@ -112,8 +112,39 @@ class StateBackend(Protocol):
         self,
         run_id: str | None = None,
         since_id: int | None = None,
+        task_id: str | None = None,
+        limit: int | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Yield event rows. `since_id` is for the sqlite dashboard live tail."""
+        """Yield event rows.
+
+        `since_id` — sqlite dashboard live tail (file backend ignores this;
+            it has no monotonic id).
+        `task_id`  — restrict to a single task (Sprint C: `orch events <id>`).
+        `limit`    — cap the number of rows yielded (Sprint C: `--tail N`).
+            For the file backend, `limit` truncates from the newest side by
+            buffering: iteration still walks the JSONL forward, but the last
+            `limit` matches are returned in chronological order.
+        """
+        ...
+
+    def get_task_last_events(
+        self,
+        task_ids: Iterable[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Return `{task_id: latest_event_row}` for each task with events.
+
+        Sprint C: powers `orch status` LAST EVENT column and the graph node
+        tooltip. Tasks with zero events are simply absent from the mapping;
+        callers render `—` in that case.
+
+        `task_ids` — optional whitelist. `None` means "every task_id that has
+        at least one event in this project". The mapping is a snapshot — no
+        ordering guarantee across calls, but each row is the most recent
+        event for that task_id.
+
+        Sqlite: single indexed self-join per project. File: reverse-scan
+        `events-*.jsonl` newest-first, dict-fill.
+        """
         ...
 
     def append_spend(self, entry: SpendEntry) -> None:

@@ -603,7 +603,15 @@ class SqliteBackend:
         self,
         run_id: str | None = None,
         since_id: int | None = None,
+        task_id: str | None = None,
+        limit: int | None = None,
     ) -> Iterator[dict[str, Any]]:
+        """Yield event rows from the sqlite `events` table.
+
+        Adds Sprint C's `task_id` filter and `limit` cap. When `limit` is
+        set we sort DESC + LIMIT + reverse in Python so callers still see
+        chronological order — matches file-backend behavior.
+        """
         conn = self._conn()
         try:
             where = ["project_id = ?"]
@@ -614,14 +622,28 @@ class SqliteBackend:
             if since_id is not None:
                 where.append("id > ?")
                 params.append(since_id)
-            sql = (
-                "SELECT id, project_id, run_id, event_type, task_id, "
-                "backend, ts, extra_json FROM events "
-                f"WHERE {' AND '.join(where)} "
-                "ORDER BY id ASC"
-            )
-            cur = conn.execute(sql, tuple(params))
-            for row in cur.fetchall():
+            if task_id is not None:
+                where.append("task_id = ?")
+                params.append(task_id)
+            if limit is not None and limit > 0:
+                sql = (
+                    "SELECT id, project_id, run_id, event_type, task_id, "
+                    "backend, ts, extra_json FROM events "
+                    f"WHERE {' AND '.join(where)} "
+                    "ORDER BY id DESC LIMIT ?"
+                )
+                params.append(int(limit))
+                rows = list(conn.execute(sql, tuple(params)).fetchall())
+                rows.reverse()  # oldest → newest for the caller
+            else:
+                sql = (
+                    "SELECT id, project_id, run_id, event_type, task_id, "
+                    "backend, ts, extra_json FROM events "
+                    f"WHERE {' AND '.join(where)} "
+                    "ORDER BY id ASC"
+                )
+                rows = conn.execute(sql, tuple(params)).fetchall()
+            for row in rows:
                 yield {
                     "id": row["id"],
                     "event_type": row["event_type"],
@@ -632,6 +654,70 @@ class SqliteBackend:
                     "project_id": row["project_id"],
                     "run_id": row["run_id"],
                 }
+        finally:
+            conn.close()
+
+    def get_task_last_events(
+        self,
+        task_ids: Iterable[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Latest event per task_id via one indexed self-join.
+
+        The correlated subquery uses the (project_id, task_id) index we get
+        for free through the events primary key + our secondary lookups.
+        """
+        wl: list[str] | None
+        if task_ids is None:
+            wl = None
+        else:
+            wl = [str(t) for t in task_ids]
+            if not wl:
+                return {}
+
+        params: list[Any] = [self.project_id]
+        extra_where = ""
+        if wl is not None:
+            placeholders = ",".join("?" * len(wl))
+            extra_where = f" AND e.task_id IN ({placeholders})"
+            params.extend(wl)
+
+        sql = (
+            "SELECT e.id, e.project_id, e.run_id, e.event_type, e.task_id, "
+            "e.backend, e.ts, e.extra_json FROM events e "
+            "JOIN ("
+            "  SELECT task_id, MAX(id) AS max_id FROM events "
+            "  WHERE project_id = ? "
+            f"  {'AND task_id IN (' + ','.join('?' * len(wl)) + ')' if wl else ''} "
+            "  GROUP BY task_id"
+            ") latest "
+            "  ON latest.task_id = e.task_id AND latest.max_id = e.id "
+            f"WHERE e.project_id = ?{extra_where}"
+        )
+        # Params: inner (project_id [+ wl]), outer (project_id [+ wl]).
+        inner_params: list[Any] = [self.project_id]
+        if wl:
+            inner_params.extend(wl)
+        outer_params: list[Any] = [self.project_id]
+        if wl:
+            outer_params.extend(wl)
+        all_params = tuple(inner_params + outer_params)
+
+        conn = self._conn()
+        try:
+            out: dict[str, dict[str, Any]] = {}
+            for row in conn.execute(sql, all_params).fetchall():
+                tid = row["task_id"]
+                out[tid] = {
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "task_id": tid,
+                    "backend": row["backend"] or "",
+                    "ts": row["ts"],
+                    "extra": json.loads(row["extra_json"] or "{}"),
+                    "project_id": row["project_id"],
+                    "run_id": row["run_id"],
+                }
+            return out
         finally:
             conn.close()
 

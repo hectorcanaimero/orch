@@ -165,6 +165,83 @@ def test_parity_event_append_and_iter(backend: StateBackend, tmp_path: Path) -> 
     assert task_ids == ["T-0", "T-1", "T-2"]
 
 
+# ---- Sprint C: extended iter_events + get_task_last_events --------------
+
+
+def test_parity_iter_events_task_id_filter(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.create_run(run_id="r-tf", mode="auto")
+    for i in range(4):
+        backend.append_event("r-tf", EventEntry(
+            event_type="dispatch",
+            task_id="T-A" if i % 2 == 0 else "T-B",
+            backend="opencode",
+            ts=f"2026-08-19T12:00:0{i}Z",
+        ))
+    rows = list(backend.iter_events(task_id="T-A"))
+    assert rows and all(r["task_id"] == "T-A" for r in rows)
+    assert len(rows) == 2
+
+
+def test_parity_iter_events_limit_returns_tail(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.create_run(run_id="r-lim", mode="auto")
+    for i in range(5):
+        backend.append_event("r-lim", EventEntry(
+            event_type="dispatch",
+            task_id="T-A",
+            backend="opencode",
+            ts=f"2026-08-19T12:00:0{i}Z",
+        ))
+    rows = list(backend.iter_events(task_id="T-A", limit=2))
+    # Tail semantics: last 2 in chronological order.
+    assert len(rows) == 2
+    assert rows[0]["ts"] == "2026-08-19T12:00:03Z"
+    assert rows[1]["ts"] == "2026-08-19T12:00:04Z"
+
+
+def test_parity_get_task_last_events_full(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.create_run(run_id="r-le", mode="auto")
+    # Two events for T-A (dispatch then success), one for T-B.
+    backend.append_event("r-le", EventEntry(
+        event_type="dispatch", task_id="T-A", backend="opencode",
+        ts="2026-08-19T12:00:00Z",
+    ))
+    backend.append_event("r-le", EventEntry(
+        event_type="success", task_id="T-A", backend="opencode",
+        ts="2026-08-19T12:00:05Z",
+    ))
+    backend.append_event("r-le", EventEntry(
+        event_type="dispatch", task_id="T-B", backend="opencode",
+        ts="2026-08-19T12:00:03Z",
+    ))
+    last = backend.get_task_last_events()
+    assert set(last.keys()) >= {"T-A", "T-B"}
+    assert last["T-A"]["event_type"] == "success"
+    assert last["T-A"]["ts"] == "2026-08-19T12:00:05Z"
+    assert last["T-B"]["event_type"] == "dispatch"
+
+
+def test_parity_get_task_last_events_whitelist(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.create_run(run_id="r-wl", mode="auto")
+    for tid, ts in [("T-A", "01"), ("T-B", "02"), ("T-C", "03")]:
+        backend.append_event("r-wl", EventEntry(
+            event_type="dispatch", task_id=tid, backend="opencode",
+            ts=f"2026-08-19T12:00:{ts}Z",
+        ))
+    last = backend.get_task_last_events(task_ids=["T-A", "T-C"])
+    assert set(last.keys()) == {"T-A", "T-C"}
+    # Empty whitelist returns an empty mapping without touching storage.
+    assert backend.get_task_last_events(task_ids=[]) == {}
+
+
+def test_parity_get_task_last_events_no_events(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    assert backend.get_task_last_events() == {}
+
+
 # ---- spend --------------------------------------------------------------
 
 
