@@ -167,7 +167,7 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
                 aria-label="Stop tunnel"
                 className="gap-1.5"
               >
-                {stopMutation.isPending || state === "stopping" ? (
+                {stopMutation.isPending || (state as TunnelState) === "stopping" ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 ) : (
                   <Square className="h-4 w-4" aria-hidden />
@@ -183,7 +183,7 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
                 aria-label="Start tunnel"
                 className="gap-1.5"
               >
-                {startMutation.isPending || state === "starting" ? (
+                {startMutation.isPending || (state as TunnelState) === "starting" ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 ) : (
                   <Play className="h-4 w-4" aria-hidden />

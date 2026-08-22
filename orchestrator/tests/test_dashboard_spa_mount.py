@@ -68,6 +68,16 @@ def _client(paths):
     return TestClient(app)
 
 
+def _write_marker_dist(dist: Path, marker: str) -> None:
+    """Write a minimal fake compiled SPA. StaticFiles only cares that
+    `index.html` exists — no need for real Vite bundles here."""
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text(
+        f"<!doctype html><html><body>{marker}</body></html>",
+        encoding="utf-8",
+    )
+
+
 # ---- Test A: /spa/ returns 200 with the fixture body --------------------
 
 
@@ -108,11 +118,22 @@ def test_spa_mount_serves_index_when_dist_exists(tmp_path: Path) -> None:
 # ---- Test B: absent dist → 404 but boot succeeds ------------------------
 
 
-def test_spa_mount_absent_does_not_crash_and_returns_404(tmp_path: Path) -> None:
-    """No frontend/dist → dashboard still boots, /spa/ is 404."""
+def test_spa_mount_absent_does_not_crash_and_returns_404(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No project dist AND no packaged spa → dashboard boots, /spa/ 404s."""
+    from orchestrator.dashboard import server as server_mod
+
     paths = _make_project(tmp_path)
     # Deliberately do NOT create frontend/dist/.
     assert not (paths.project_root / "frontend" / "dist").exists()
+
+    # Force the resolver to report "no SPA available" so the test isn't
+    # polluted by a real `orchestrator/spa/` that may exist in the source
+    # tree (built by `scripts/build-spa.sh`). Without this patch, running
+    # the test AFTER a wheel build would find the packaged SPA and mount
+    # it — flipping the expected 404 to 200.
+    monkeypatch.setattr(server_mod, "_resolve_spa_dist", lambda *a, **kw: None)
 
     # Boot must not raise — this is the "OPTIONAL mount" invariant.
     client = _client(paths)
@@ -125,3 +146,76 @@ def test_spa_mount_absent_does_not_crash_and_returns_404(tmp_path: Path) -> None
     # /spa/ has nothing to serve → 404 (no mount registered).
     r_spa = client.get("/spa/")
     assert r_spa.status_code == 404
+
+
+# ---- Test C: resolver — project wins over packaged ----------------------
+
+
+def test_resolve_spa_dist_project_wins_over_packaged(tmp_path: Path) -> None:
+    """When BOTH tiers exist, `_resolve_spa_dist` must pick project first.
+
+    This is the invariant that lets an operator override the bundled SPA
+    with a locally-built one. If it ever inverts silently, a `pnpm build`
+    in a project's frontend/ would be ignored — a nasty debugging trap.
+    """
+    from orchestrator.dashboard.server import _resolve_spa_dist
+
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    _write_marker_dist(project_root / "frontend" / "dist", "<!-- project -->")
+
+    fake_pkg_dir = tmp_path / "pkg"
+    fake_pkg_dir.mkdir()
+    _write_marker_dist(fake_pkg_dir / "spa", "<!-- packaged -->")
+
+    resolved = _resolve_spa_dist(project_root, package_dir=fake_pkg_dir)
+    assert resolved is not None
+    path, source = resolved
+    assert source == "project"
+    assert path == project_root / "frontend" / "dist"
+
+
+# ---- Test D: packaged-only mounts and serves ----------------------------
+
+
+def test_spa_mount_uses_packaged_when_project_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No project frontend/dist/ → packaged spa/ mounts and serves.
+
+    Simulates a `pipx install`d wheel running in an unrelated project
+    directory. We fake the packaged tier by monkeypatching
+    `_resolve_spa_dist` to point at a tmp fixture — that's the same code
+    path `create_app()` calls, just with a controllable "packaged" dir.
+    """
+    from orchestrator.dashboard import server as server_mod
+
+    paths = _make_project(tmp_path)
+    # Deliberately do NOT create frontend/dist/ under project.
+    assert not (paths.project_root / "frontend" / "dist").exists()
+
+    fake_pkg_dir = tmp_path / "fake-pkg"
+    fake_pkg_dir.mkdir()
+    marker = "<!-- packaged-spa-fixture-marker -->"
+    _write_marker_dist(fake_pkg_dir / "spa", marker)
+
+    # Redirect the "packaged" tier at the tmp fixture. The parameter is
+    # exposed on `_resolve_spa_dist` precisely for this test — no
+    # `Path.__file__` shenanigans required.
+    real_resolve = server_mod._resolve_spa_dist
+
+    def _patched(project_root, package_dir=None):
+        return real_resolve(project_root, package_dir=fake_pkg_dir)
+
+    monkeypatch.setattr(server_mod, "_resolve_spa_dist", _patched)
+
+    client = _client(paths)
+
+    r = client.get("/spa/")
+    assert r.status_code == 200, r.text
+    assert marker in r.text
+
+    # Client-side route fallback works against packaged tier too.
+    r_route = client.get("/spa/kanban")
+    assert r_route.status_code == 200, r_route.text
+    assert marker in r_route.text

@@ -38,3 +38,6 @@ frontend/.env
 frontend/.env.local
 frontend/*.log
 coverage/
+
+# Compiled SPA (shipped in wheel, built by scripts/build-spa.sh)
+orchestrator/spa/

@@ -171,6 +171,37 @@ async def _run_auto_start(
         )
 
 
+def _resolve_spa_dist(
+    project_root: Path, package_dir: Path | None = None
+) -> tuple[Path, str] | None:
+    """Return (path, source_label) or None if no SPA build is available.
+
+    Resolution order:
+      1. --spa-dist CLI flag (if wired in the future — currently unused)
+      2. <project_root>/frontend/dist/  (project-specific build)
+      3. <orchestrator package>/spa/    (build shipped in the wheel)
+
+    `package_dir` is the `orchestrator/` package directory. Defaulting to
+    `Path(__file__).parent.parent` locates the packaged SPA next to the
+    dashboard module in every install layout setuptools produces. It's
+    exposed as a parameter purely for tests that need to point the
+    "packaged" tier at a tmp fixture without patching `__file__`.
+    """
+    # 2. Project-specific
+    project_dist = project_root / "frontend" / "dist"
+    if project_dist.is_dir() and (project_dist / "index.html").is_file():
+        return project_dist, "project"
+
+    # 3. Packaged
+    if package_dir is None:
+        package_dir = Path(__file__).parent.parent
+    package_dist = package_dir / "spa"
+    if package_dist.is_dir() and (package_dist / "index.html").is_file():
+        return package_dist, "packaged"
+
+    return None
+
+
 # ---- App state -------------------------------------------------------------
 
 
@@ -1473,8 +1504,9 @@ def create_app(
     # `@app.get(...)`. FastAPI resolves routes in registration order, so
     # placing it last keeps the specific Jinja/JSON routes winning over
     # the catch-all StaticFiles mount.
-    spa_dist = paths.project_root / "frontend" / "dist"
-    if spa_dist.is_dir():
+    resolved = _resolve_spa_dist(paths.project_root)
+    if resolved is not None:
+        spa_dist, source = resolved
         from starlette.exceptions import HTTPException as StarletteHTTPException
         from starlette.responses import FileResponse
         from starlette.types import Scope
@@ -1511,10 +1543,11 @@ def create_app(
             SPAStaticFiles(directory=str(spa_dist), html=True),
             name="spa",
         )
-        print(f"SPA mounted at /spa → {spa_dist}", file=sys.stderr)
+        print(f"SPA mounted at /spa → {spa_dist} ({source})", file=sys.stderr)
     else:
         print(
-            f"SPA not mounted — run `pnpm build` in {spa_dist.parent} to enable /spa",
+            "SPA not mounted — run `pnpm build` in frontend/ (project-specific) "
+            "or reinstall via `pipx install --force ...` (packaged).",
             file=sys.stderr,
         )
 
