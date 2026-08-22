@@ -68,9 +68,13 @@ orch dashboard --help
 
 ## Getting started (60 seconds)
 
-`orch init` scaffolds a project with everything wired:
+`orch init` scaffolds a project with everything wired. Two modes:
 
 ```bash
+# Interactive wizard (no flags) — prompts for id, backend, budget preset, etc.
+orch init
+
+# Or batch mode with a path
 orch init ~/work/my-app
 ```
 
@@ -127,12 +131,27 @@ orch --project-root ~/work/my-app --mode semi  # dispatch with checkpoints
 
 | Flag | Purpose |
 |---|---|
+| `--interactive` | Force the wizard even when a PATH is present (default: auto-detect) |
+| `--non-interactive` | Force batch mode; requires PATH. Useful in CI. |
 | `--force` | Overwrite existing files at PATH (default: refuse on conflict) |
 | `--sdd` | Also create `openspec/` layout for SDD workflow |
 | `--project-name NAME` | Override `meta.project` in `tasks.json` (default: PATH basename) |
 
 The init also **detects if SDD skills are installed** at `~/.claude/skills/`
-and prints tailored next-steps.
+and prints tailored next-steps. When `stdin` isn't a TTY (CI, piped stdin) and
+no flags are given, the wizard auto-falls-back with a clear error message.
+
+### Preflight commands
+
+Two read-only commands verify a scaffold is ready to run:
+
+```bash
+orch doctor       # backends installed, scripts exec, jq on PATH, state writable
+orch validate     # tasks.json shape, dep cycles, unresolved routes, config sanity
+```
+
+Both accept `--json` for CI gates. Exit codes: `0` all ok, `1` warnings only,
+`2` any error. See [docs/PREFLIGHT.md](docs/PREFLIGHT.md) for the operator guide.
 
 ---
 
