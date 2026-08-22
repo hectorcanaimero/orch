@@ -106,7 +106,12 @@ class Dispatch:
 
 @dataclass
 class RunState:
-    """Per-run operational state, persisted to `state/run-<uuid>.json`."""
+    """Per-run operational state, persisted to `state/run-<uuid>.json`.
+
+    Sprint A / Issue #12: `parent_pid` records the orch process PID at run
+    start so `orch stop` (subcommand) can locate the running orch and send
+    it SIGTERM. 0 = not recorded (backwards-compat with pre-Sprint-A rows).
+    """
 
     run_id: str
     started_at: str
@@ -115,6 +120,7 @@ class RunState:
     completed: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
     deferred: list[str] = field(default_factory=list)
+    parent_pid: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -447,6 +447,13 @@ def _spawn_generic(
             cwd=str(cwd),
             env=env,
             close_fds=True,
+            # Sprint A / Issue #12: each child becomes its own session leader
+            # (and process-group leader). Cleanup on SIGINT / SIGTERM / timeout
+            # can then use `os.killpg(os.getpgid(pid), sig)` to catch not just
+            # the CLI but any bash wrappers or sub-agents it forked. Without
+            # this, killing the CLI could leave grandchildren orphaned in the
+            # user's login session.
+            start_new_session=True,
         )
     except (FileNotFoundError, OSError):
         # Clean up handles before re-raising so we don't leak.
@@ -472,10 +479,39 @@ def _spawn_generic(
     return dispatch
 
 
+def _signal_child_group(popen: subprocess.Popen, sig: int) -> None:
+    """Send `sig` to the child's process group; fall back to the direct pid.
+
+    Sprint A / Issue #12: mirrors `orch._killpg_or_pid` but scoped to a
+    single Popen. Kept in dispatcher.py so `_wait_with_timeout` doesn't
+    have to import from orch.py (would create a circular import).
+    """
+    pid = popen.pid
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            popen.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+        return
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            popen.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def _wait_with_timeout(dispatch: Dispatch, timeout_s: float) -> tuple[int, str, bool]:
     """Wait for the child, enforcing SIGTERM → grace → SIGKILL on timeout.
 
     Returns `(exit_code, error_message_or_empty, timed_out)`.
+
+    Sprint A / Issue #12: uses process-group signals (killpg) so bash
+    wrappers or sub-agents forked by the CLI get reaped too, not just
+    the direct child.
     """
     popen: subprocess.Popen = dispatch._popen  # type: ignore[attr-defined]
     timed_out = False
@@ -485,19 +521,13 @@ def _wait_with_timeout(dispatch: Dispatch, timeout_s: float) -> tuple[int, str, 
     except subprocess.TimeoutExpired:
         timed_out = True
         err_msg = f"orchestrator timeout after {timeout_s:.0f}s"
-        # SIGTERM first — polite request.
-        try:
-            popen.send_signal(signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
+        # SIGTERM to the whole process group first — polite request.
+        _signal_child_group(popen, signal.SIGTERM)
         try:
             exit_code = popen.wait(timeout=_TERM_TO_KILL_GRACE_S)
         except subprocess.TimeoutExpired:
-            # Grace expired — SIGKILL and reap unconditionally.
-            try:
-                popen.kill()
-            except (ProcessLookupError, OSError):
-                pass
+            # Grace expired — SIGKILL the group and reap unconditionally.
+            _signal_child_group(popen, signal.SIGKILL)
             try:
                 exit_code = popen.wait(timeout=5.0)
             except subprocess.TimeoutExpired:

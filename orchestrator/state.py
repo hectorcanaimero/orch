@@ -540,13 +540,25 @@ class RunFile:
     # ---- factory / persistence ------------------------------------------
 
     @classmethod
-    def create(cls, state_dir: Path, run_id: str, mode: str) -> "RunFile":
-        """Build a fresh RunFile — used by the CLI when starting a new run."""
+    def create(
+        cls,
+        state_dir: Path,
+        run_id: str,
+        mode: str,
+        parent_pid: int = 0,
+    ) -> "RunFile":
+        """Build a fresh RunFile — used by the CLI when starting a new run.
+
+        Sprint A / Issue #12: `parent_pid` records the orch process PID so
+        `orch stop` can locate the running orch later. 0 (default) means
+        the caller doesn't know / doesn't care.
+        """
         state_dir.mkdir(parents=True, exist_ok=True)
         state = RunState(
             run_id=run_id,
             started_at=_utc_now_iso(),
             mode=mode,  # type: ignore[arg-type]
+            parent_pid=int(parent_pid or 0),
         )
         path = state_dir / f"run-{run_id}.json"
         rf = cls(path, state)
@@ -569,6 +581,9 @@ class RunFile:
             completed=list(raw.get("completed", [])),
             blocked=list(raw.get("blocked", [])),
             deferred=list(raw.get("deferred", [])),
+            # Sprint A / Issue #12: tolerate rows written before the field
+            # existed (default 0 == "not recorded").
+            parent_pid=int(raw.get("parent_pid", 0) or 0),
         )
         return cls(path, state)
 
@@ -621,6 +636,7 @@ def _run_state_to_dict(state: RunState) -> dict[str, Any]:
         "completed": list(state.completed),
         "blocked": list(state.blocked),
         "deferred": list(state.deferred),
+        "parent_pid": int(state.parent_pid or 0),
     }
 
 

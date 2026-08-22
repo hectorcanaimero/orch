@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -1670,3 +1671,243 @@ def test_reset_exits_0_when_nothing_to_do(
     assert rc == 0
     out = capsys.readouterr().out
     assert "no in-progress" in out.lower()
+
+
+# ---- Sprint A / Issue #12: signal handling + orch stop ----------------
+
+
+def test_sigterm_handler_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_install_sigint` must also install a SIGTERM handler.
+
+    Confirms Fix #12's requirement that `kill <orch-pid>` triggers the
+    same drain-then-SIGKILL cleanup as Ctrl-C.
+    """
+    import signal as _sig
+
+    installed: dict[int, object] = {}
+
+    def _fake_signal(signum, handler):
+        installed[signum] = handler
+        return None
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _fake_signal)
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight={})
+    assert _sig.SIGINT in installed
+    assert _sig.SIGTERM in installed
+    # Both signals route through the same handler.
+    assert installed[_sig.SIGINT] is installed[_sig.SIGTERM]
+
+
+def test_sigterm_handler_triggers_drain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When SIGTERM fires, the drain flag flips (same as SIGINT)."""
+    import signal as _sig
+
+    captured: dict = {}
+
+    def _capture_handler(signum, handler):
+        captured[signum] = handler
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _capture_handler)
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight={})
+
+    assert drain.set is False
+    # Simulate the SIGTERM firing.
+    handler = captured[_sig.SIGTERM]
+    handler(_sig.SIGTERM, None)
+    assert drain.set is True
+    assert drain.hard_kill_next is False
+
+
+def test_second_signal_hard_kills_all_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second SIGTERM/SIGINT calls killpg on every in-flight child pid."""
+    import signal as _sig
+
+    captured: dict = {}
+
+    def _capture_handler(signum, handler):
+        captured[signum] = handler
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _capture_handler)
+
+    killed: list[tuple[int, int]] = []
+
+    def _fake_killpg_or_pid(pid, sig):
+        killed.append((pid, sig))
+
+    monkeypatch.setattr(orch_mod, "_killpg_or_pid", _fake_killpg_or_pid)
+
+    # Two fake in-flight entries.
+    task = Task.from_json({"id": "T-1", "phase": 0, "title": "t", "model": "m"})
+    route = RouteEntry(backend="opencode", cli_model="c", tier="cheap", is_premium=False)
+    d1 = Dispatch(task_id="T-1", backend="opencode", pid=1111, session_id="s",
+                  started_at="", prompt_path="", log_path="", output_path="")
+    d2 = Dispatch(task_id="T-2", backend="opencode", pid=2222, session_id="s",
+                  started_at="", prompt_path="", log_path="", output_path="")
+    entry1 = orch_mod.InFlight(task, route, None, d1, 0.0, 60.0)  # type: ignore[arg-type]
+    entry2 = orch_mod.InFlight(task, route, None, d2, 0.0, 60.0)  # type: ignore[arg-type]
+    in_flight = {1111: entry1, 2222: entry2}
+
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight)
+
+    handler = captured[_sig.SIGTERM]
+    # First signal → drain only.
+    handler(_sig.SIGTERM, None)
+    assert drain.set is True
+    assert killed == []
+    # Second signal → SIGKILL every child pid via _killpg_or_pid.
+    handler(_sig.SIGTERM, None)
+    kill_pids = sorted(pid for pid, _ in killed)
+    assert kill_pids == [1111, 2222]
+    assert all(sig == _sig.SIGKILL for _, sig in killed)
+    assert drain.hard_kill_next is True
+
+
+def test_killpg_or_pid_falls_back_when_pgid_lookup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `os.getpgid` raises (process gone), fall back to `os.kill(pid, sig)`."""
+    monkeypatch.setattr(
+        orch_mod.os, "getpgid", lambda pid: (_ for _ in ()).throw(ProcessLookupError)
+    )
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        orch_mod.os, "kill", lambda pid, sig: sent.append((pid, sig))
+    )
+    # No exception should escape.
+    orch_mod._killpg_or_pid(12345, 15)
+    assert sent == [(12345, 15)]
+
+
+def test_orch_stop_no_running_orch_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no run file references a live orch pid, exit 1."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["stop"])
+    assert rc == 1
+
+
+def test_orch_stop_signals_parent_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a run file references a live pid, `orch stop` sends SIGTERM.
+
+    We stage a run file recording os.getpid() as parent_pid, then monkeypatch
+    os.kill to record calls without actually killing the test runner.
+    """
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    state_dir = v2 / "orchestrator" / "state"
+    state_dir.mkdir(exist_ok=True, parents=True)
+    run_id = "target-run"
+    payload = {
+        "run_id": run_id,
+        "started_at": "2026-08-21T10:00:00Z",
+        "mode": "auto",
+        "in_flight": {},
+        "completed": [],
+        "blocked": [],
+        "deferred": [],
+        "parent_pid": os.getpid(),  # ourselves — definitely alive
+    }
+    (state_dir / f"run-{run_id}.json").write_text(json.dumps(payload))
+
+    monkeypatch.chdir(v2)
+
+    signals_sent: list[tuple[int, int]] = []
+    real_kill = os.kill
+
+    def _record_kill(pid, sig):
+        signals_sent.append((pid, sig))
+        # For signal 0 (probe) we still need to respect aliveness so the
+        # wait-loop exits. Simulate: after the SIGTERM record, subsequent
+        # signal-0 probes should raise ProcessLookupError.
+        if sig == 0 and any(s != 0 for _, s in signals_sent):
+            raise ProcessLookupError
+        # Don't actually kill ourselves.
+        if sig == 0:
+            return
+        # Suppress: no-op.
+        return
+
+    monkeypatch.setattr(orch_mod.os, "kill", _record_kill)
+
+    rc = orch_mod.main(["stop", "--grace", "2"])
+    assert rc == 0
+    # The first non-probe signal must be SIGTERM to our own pid.
+    non_probes = [(pid, sig) for pid, sig in signals_sent if sig != 0]
+    assert non_probes, "expected at least one non-probe kill call"
+    assert non_probes[0] == (os.getpid(), signal.SIGTERM)
+
+
+def test_orch_stop_grace_expires_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If orch stays alive past --grace, `orch stop` returns 1."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    state_dir = v2 / "orchestrator" / "state"
+    state_dir.mkdir(exist_ok=True, parents=True)
+    payload = {
+        "run_id": "target-run",
+        "started_at": "2026-08-21T10:00:00Z",
+        "mode": "auto",
+        "in_flight": {},
+        "completed": [],
+        "blocked": [],
+        "deferred": [],
+        "parent_pid": os.getpid(),
+    }
+    (state_dir / "run-target-run.json").write_text(json.dumps(payload))
+
+    monkeypatch.chdir(v2)
+
+    # Simulate: SIGTERM is sent, but subsequent probes ALWAYS report alive.
+    def _fake_kill(pid, sig):  # noqa: ARG001
+        # Never raise → probe always says "alive".
+        return
+
+    monkeypatch.setattr(orch_mod.os, "kill", _fake_kill)
+
+    rc = orch_mod.main(["stop", "--grace", "0.5"])
+    assert rc == 1
+
+
+def test_run_file_stores_parent_pid(tmp_path: Path) -> None:
+    """RunFile.create records parent_pid; RunFile.load reads it back."""
+    from orchestrator.state import RunFile
+
+    rf = RunFile.create(tmp_path / "state", run_id="r-1", mode="auto", parent_pid=54321)
+    assert rf.state.parent_pid == 54321
+
+    reloaded = RunFile.load(rf.path)
+    assert reloaded.state.parent_pid == 54321
+
+
+def test_run_file_load_tolerates_missing_parent_pid(tmp_path: Path) -> None:
+    """Legacy run files (pre-Sprint-A, no parent_pid field) load with default 0."""
+    from orchestrator.state import RunFile
+
+    path = tmp_path / "run-legacy.json"
+    path.write_text(
+        json.dumps({
+            "run_id": "legacy",
+            "started_at": "2026-08-01T00:00:00Z",
+            "mode": "auto",
+            "in_flight": {},
+            "completed": [],
+            "blocked": [],
+            "deferred": [],
+        }),
+        encoding="utf-8",
+    )
+    rf = RunFile.load(path)
+    assert rf.state.parent_pid == 0

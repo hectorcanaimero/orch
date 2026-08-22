@@ -142,6 +142,7 @@ Subcommands (run `orch <cmd> --help` for details):
   orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)
   orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard
   orch reset [FLAGS]        Revert stuck in-progress tasks to todo
+  orch stop [FLAGS]         Signal a running orch to drain and exit
 
 Exit codes:
   0   clean drain (all reachable tasks done, none blocked)
@@ -688,24 +689,65 @@ class _DrainFlag:
         self.hard_kill_next: bool = False
 
 
+def _killpg_or_pid(pid: int, sig: int) -> None:
+    """Send `sig` to the process group of `pid`, falling back to the pid.
+
+    Children spawned with `start_new_session=True` become process-group
+    leaders — signaling the group catches the CLI plus any subprocesses
+    (bash wrappers, sub-agents) it forked. `killpg` requires the pgid
+    which we look up via `os.getpgid`. Any error (ProcessLookupError when
+    the process already exited, PermissionError for foreign uids) is
+    swallowed — callers use this for best-effort cleanup, not correctness.
+    """
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        # Fall back to the single-pid signal — old-style children still
+        # respond to it.
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        return
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        # If killpg fails (e.g. race, permission), try the pid directly.
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
 def _install_sigint(drain: _DrainFlag, in_flight: dict[int, InFlight]) -> None:
-    """SIGINT → drain; second SIGINT → SIGKILL every child (proposal Rollback)."""
+    """SIGINT/SIGTERM → drain; second signal → SIGKILL every child group.
+
+    Sprint A / Issue #12: SIGTERM is treated identically to SIGINT so that
+    `kill <orch-pid>` and `orch stop` behave the same as Ctrl-C. Both hit
+    the same in-memory `_DrainFlag`. On the second signal we escalate:
+    SIGKILL the whole process group of every in-flight child (catches
+    subprocess-of-subprocess trees, not just the direct CLI).
+    """
 
     def handler(signum, frame):  # noqa: ARG001
         if drain.set:
-            # Second SIGINT → kill everything immediately.
+            # Second signal → kill everything immediately (whole pgroup).
             for pid, entry in list(in_flight.items()):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                _killpg_or_pid(pid, signal.SIGKILL)
                 entry.timed_out = True
             drain.hard_kill_next = True
         else:
             drain.set = True
-            log.warning("SIGINT received — draining in-flight; hit again to SIGKILL")
+            log.warning(
+                "%s received — draining in-flight; hit again to SIGKILL",
+                signal.Signals(signum).name if signum else "signal",
+            )
 
     signal.signal(signal.SIGINT, handler)
+    # Sprint A / Issue #12: install the same handler for SIGTERM so
+    # `orch stop` / `kill <pid>` triggers graceful drain instead of an
+    # abrupt exit that would strand children.
+    signal.signal(signal.SIGTERM, handler)
 
 
 # ---- Helpers ------------------------------------------------------------
@@ -1086,11 +1128,9 @@ def _timeout_sweep(
     for pid, entry in list(in_flight.items()):
         if entry.timed_out:
             # Already SIGTERM'd — escalate to SIGKILL after 10 s.
+            # Sprint A / Issue #12: killpg catches bash wrappers and forks.
             if now - entry.started_at_mono > entry.timeout_s + 10.0:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                _killpg_or_pid(pid, signal.SIGKILL)
             continue
         if now - entry.started_at_mono > entry.timeout_s:
             entry.timed_out = True
@@ -1100,10 +1140,7 @@ def _timeout_sweep(
                 entry.timeout_s,
                 pid,
             )
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _killpg_or_pid(pid, signal.SIGTERM)
             # Emit timeout event now so the dashboard sees it live.
             event_log.emit(
                 "timeout",
@@ -1622,7 +1659,7 @@ def _run_atomize_subcommand(argv: list[str]) -> int:
     return atomize_main(argv)
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard", "reset")
+_SUBCOMMANDS = ("init", "atomize", "dashboard", "reset", "stop")
 
 
 def _print_subcommand_list() -> int:
@@ -1635,6 +1672,7 @@ def _print_subcommand_list() -> int:
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
     print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
+    print("  orch stop [FLAGS]         Signal a running orch to drain and exit")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -1801,6 +1839,123 @@ def _run_reset_subcommand(argv: list[str]) -> int:
     return 0
 
 
+def _run_stop_subcommand(argv: list[str]) -> int:
+    """Handle `orch stop [--project-root PATH] [--grace SECONDS]`.
+
+    Sprint A / Issue #12: locate the newest running orch instance for the
+    project (via `state/run-*.json` -> parent_pid) and send it SIGTERM so
+    it drains cleanly. If the process doesn't exit within the grace window
+    we exit with 1 (operator decides whether to escalate — we don't
+    SIGKILL from here).
+
+    Exit codes:
+        0 — orch was signaled and exited within grace.
+        1 — no running orch found for the project OR still alive after grace.
+        2 — invalid project layout.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch stop",
+        description=(
+            "Send SIGTERM to the running orch for a project and wait for it "
+            "to drain. Does NOT SIGKILL — operator decides if force is needed."
+        ),
+    )
+    p.add_argument(
+        "--project-root",
+        default=None,
+        metavar="PATH",
+        help="Project root. Env fallback: ORCH_PROJECT_ROOT. Default: cwd.",
+    )
+    p.add_argument(
+        "--project-id",
+        default=None,
+        metavar="ID",
+        help="Project id override. Env fallback: ORCH_PROJECT_ID.",
+    )
+    p.add_argument(
+        "--config",
+        default="orchestrator/config.yaml",
+        help="Path to config.yaml (default: orchestrator/config.yaml)",
+    )
+    p.add_argument(
+        "--grace",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="Seconds to wait for orch to exit after SIGTERM (default: 30).",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        paths = resolve_project_paths(
+            project_root_arg=args.project_root,
+            project_id_arg=args.project_id,
+            config_arg=args.config,
+        )
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    # Find the newest run file that reports a live parent_pid.
+    state_dir = paths.state_dir
+    candidates: list[tuple[float, int, Path]] = []
+    for run_path in state_dir.glob("run-*.json"):
+        if run_path.suffix != ".json":
+            continue
+        try:
+            with open(run_path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        pid = int(raw.get("parent_pid", 0) or 0)
+        if pid <= 0:
+            continue
+        # Alive check via os.kill(pid, 0).
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            # ProcessLookupError → dead; PermissionError → foreign, skip.
+            continue
+        except OSError:
+            continue
+        candidates.append((run_path.stat().st_mtime, pid, run_path))
+
+    if not candidates:
+        print("no running orch found for this project.", file=sys.stderr)
+        return 1
+
+    candidates.sort(reverse=True)  # newest first
+    _, target_pid, run_path = candidates[0]
+    print(f"signaling orch pid={target_pid} (run={run_path.name})...")
+    try:
+        os.kill(target_pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError) as exc:
+        print(f"could not signal pid {target_pid}: {exc}", file=sys.stderr)
+        return 1
+
+    # Wait for exit within grace window.
+    deadline = time.monotonic() + max(0.1, args.grace)
+    while time.monotonic() < deadline:
+        try:
+            os.kill(target_pid, 0)
+        except ProcessLookupError:
+            print(f"orch pid={target_pid} exited cleanly.")
+            return 0
+        except (PermissionError, OSError):
+            # Foreign / can't probe — assume exit and return success.
+            print(f"orch pid={target_pid} no longer signalable (assumed exited).")
+            return 0
+        time.sleep(0.2)
+
+    print(
+        f"orch pid={target_pid} still alive after {args.grace:.0f}s grace. "
+        "Send SIGKILL manually if needed (`kill -9 {pid}`).",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -1864,6 +2019,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_atomize_subcommand(incoming[1:])
     if incoming and incoming[0] == "reset":
         return _run_reset_subcommand(incoming[1:])
+    if incoming and incoming[0] == "stop":
+        return _run_stop_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
@@ -2027,7 +2184,11 @@ def main(argv: list[str] | None = None) -> int:
             run_file = RunFile.load(run_path)
         else:
             run_id = str(uuid.uuid4())
-            run_file = RunFile.create(state_dir, run_id=run_id, mode=args.mode)
+            # Sprint A / Issue #12: record our PID so `orch stop` can locate
+            # this run later.
+            run_file = RunFile.create(
+                state_dir, run_id=run_id, mode=args.mode, parent_pid=os.getpid()
+            )
 
         if lock_fd is not None:
             write_lock_holder(lock_fd, run_id=run_id, pid=os.getpid())
