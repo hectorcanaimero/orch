@@ -184,6 +184,11 @@ def build_doctor_report(
         )
     )
 
+    # Sprint E-5 (TUN-11): tunnel config + provider binary checks. Read
+    # dashboard.yaml from the project root — matches DashboardConfig.load()
+    # which layers the packaged default under any project override.
+    checks.extend(preflight.check_tunnel(paths.project_root / "dashboard.yaml"))
+
     if only:
         checks = [c for c in checks if only in c.name]
 

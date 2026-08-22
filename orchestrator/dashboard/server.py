@@ -25,6 +25,7 @@ Design:
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,91 @@ def _get_sse_idle_cutoff_s() -> float:
     return float(TUNNEL_SSE_IDLE_CUTOFF_S)
 
 
+# Sprint E-5 (TUN-9): auto_start knobs. Overridable in tests so we don't
+# actually sleep 0.5s × 3 while probing. Both are module-level so tests can
+# shrink them via monkeypatch without importing the handler closure.
+TUNNEL_AUTO_START_PROBE_RETRIES = 3
+TUNNEL_AUTO_START_PROBE_GAP_S = 0.5
+
+
+def _tunnel_self_probe(port: int, timeout_s: float) -> bool:
+    """Blocking `GET http://127.0.0.1:<port>/` — stdlib only (NFR-2).
+
+    Retries up to `TUNNEL_AUTO_START_PROBE_RETRIES` times with a fixed gap
+    to tolerate slow bind. Any 2xx counts as success. Returns False if
+    every attempt raises or returns non-2xx.
+    """
+    import time
+    from urllib.error import URLError
+    from urllib.request import urlopen
+
+    url = f"http://127.0.0.1:{port}/"
+    attempts = max(1, int(TUNNEL_AUTO_START_PROBE_RETRIES))
+    for i in range(attempts):
+        try:
+            with urlopen(url, timeout=timeout_s) as resp:  # noqa: S310 — loopback
+                code = getattr(resp, "status", None) or resp.getcode()
+                if 200 <= int(code) < 300:
+                    return True
+        except (URLError, OSError, ValueError):
+            pass
+        if i < attempts - 1:
+            time.sleep(TUNNEL_AUTO_START_PROBE_GAP_S)
+    return False
+
+
+async def _run_auto_start(
+    app_state: "AppState", mgr: Any, port: int, timeout_s: float
+) -> None:
+    """Probe the running dashboard from the event loop and spawn on success.
+
+    Blocking bits (urlopen, Popen inside `manager.start`) are pushed off
+    the loop via `asyncio.to_thread` so uvicorn keeps serving during the
+    probe window.
+    """
+    import asyncio
+
+    try:
+        ok = await asyncio.to_thread(_tunnel_self_probe, port, timeout_s)
+    except Exception as exc:  # noqa: BLE001 — self-probe MUST NOT break startup
+        print(
+            f"[tunnel] auto_start_skipped: self_probe_failed ({exc})",
+            file=sys.stderr,
+        )
+        return
+    if not ok:
+        print(
+            "[tunnel] auto_start_skipped: self_probe_failed",
+            file=sys.stderr,
+        )
+        return
+
+    tcfg = app_state.config.tunnel
+    # Rebuild the same TunnelManagerConfig shape the route uses so the
+    # spawn path is identical.
+    from orchestrator.dashboard.tunnel import TunnelManagerConfig
+
+    mcfg = TunnelManagerConfig(
+        provider=tcfg.provider,
+        command=tcfg.command,
+        args=tuple(tcfg.args or ()),
+        url_regex=tcfg.url_regex,
+        url_parse_timeout_s=int(tcfg.url_parse_timeout_s),
+    )
+    try:
+        await asyncio.to_thread(mgr.start, mcfg)
+        print("[tunnel] auto_start: spawned", file=sys.stderr)
+    except RuntimeError as exc:
+        # `already_running` / `locked` land here — logged, not raised, so
+        # a race with a manual /start doesn't crash startup.
+        print(f"[tunnel] auto_start_skipped: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 — mirror the log-and-continue rule
+        print(
+            f"[tunnel] auto_start_skipped: spawn_error ({type(exc).__name__})",
+            file=sys.stderr,
+        )
+
+
 # ---- App state -------------------------------------------------------------
 
 
@@ -108,6 +194,9 @@ class AppState:
     config: DashboardConfig = field(default_factory=lambda: DashboardConfig.load())
     _cache: dict[str, tuple[float, Any]] = field(default_factory=dict)
     _cache_ttl_s: float = 2.0
+    # Sprint E-5: uvicorn port for the tunnel auto_start self-probe (TUN-9).
+    # `None` when unknown (tests / non-uvicorn boots) → auto_start skips.
+    probe_port: int | None = None
 
     def cached(self, key: str, loader):
         """Return `loader()` result cached for `_cache_ttl_s` seconds.
@@ -350,6 +439,7 @@ def create_app(
     config: str = "orchestrator/config.yaml",
     profile_override: str | None = None,
     token_override: str | None = None,
+    probe_port: int | None = None,
 ) -> Any:
     """Build and return the FastAPI application.
 
@@ -384,7 +474,9 @@ def create_app(
         profile_override=profile_override,
         token_override=token_override,
     )
-    app_state = AppState(paths=paths, pricing=pricing, config=dash_cfg)
+    app_state = AppState(
+        paths=paths, pricing=pricing, config=dash_cfg, probe_port=probe_port
+    )
     # Sprint E-5: attach the tunnel supervisor singleton when enabled.
     # Kept absent (None) when disabled so nothing spawns/sweeps — TUN-NFR-3
     # (rollback via config) plus TUN-8 (reconciler runs at boot only when
@@ -1197,6 +1289,39 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    # ---- Tunnel auto_start startup handler (Sprint E-5, TUN-9) -----------
+    # Sequence: bind → serve → self-probe GET / → spawn.
+    # The startup event fires AFTER uvicorn binds but BEFORE serve begins
+    # accepting; scheduling `asyncio.create_task` lets the event handler
+    # return, uvicorn drops into its serve loop, and the task then probes
+    # the socket that's now accepting. Blocking pieces (urlopen, subprocess
+    # Popen) run through `asyncio.to_thread` so the event loop stays free.
+    @app.on_event("startup")
+    async def _tunnel_auto_start() -> None:  # noqa: D401
+        import asyncio
+
+        tcfg = getattr(app_state.config, "tunnel", None)
+        if not tcfg or not tcfg.enabled or not tcfg.auto_start:
+            return
+        mgr = getattr(app_state, "tunnel_manager", None)
+        if mgr is None:
+            print(
+                "[tunnel] auto_start_skipped: manager not initialized",
+                file=sys.stderr,
+            )
+            return
+        port = app_state.probe_port
+        if port is None:
+            print(
+                "[tunnel] auto_start_skipped: probe port unknown",
+                file=sys.stderr,
+            )
+            return
+        timeout_s = float(tcfg.startup_probe_timeout_s or 3)
+        asyncio.create_task(
+            _run_auto_start(app_state, mgr, port, timeout_s)
+        )
+
     # ---- Snapshot export ---------------------------------------------------
     @app.get("/snapshot", name="snapshot")
     def snapshot(request: Request):
@@ -1369,6 +1494,7 @@ def run(
         paths=paths,
         profile_override=profile,
         token_override=token,
+        probe_port=port,
     )
     resolved = app.state.app_state.config
 
