@@ -45,15 +45,44 @@ a live FastAPI dashboard.
 Requires Python 3.11+ and at least one of `claude`, `codex`, or `opencode` on
 your `PATH`, authenticated with a subscription.
 
+### Install (recommended) — prebuilt wheel from GitHub Releases
+
+The wheel published to Releases is built by CI with the compiled SPA
+already embedded, so no Node / pnpm toolchain is needed on your machine.
+
 ```bash
-# Recommended — isolated venv, `orch` on PATH globally
-pipx install git+https://github.com/hectorcanaimero/orch.git
+# Always latest release
+pipx install https://github.com/hectorcanaimero/orch/releases/latest/download/orchestrator-0.5.0-py3-none-any.whl
+```
 
-# Or with uv
-uv tool install git+https://github.com/hectorcanaimero/orch.git
+Or pin to a specific version:
 
-# Or classic pip --user
-pip install --user git+https://github.com/hectorcanaimero/orch.git
+```bash
+pipx install https://github.com/hectorcanaimero/orch/releases/download/v0.5.0/orchestrator-0.5.0-py3-none-any.whl
+```
+
+To upgrade later: `pipx install --force <same-url>`.
+
+### Install from source (for contributors)
+
+```bash
+pipx install --force git+https://github.com/hectorcanaimero/orch.git@main
+```
+
+Note: this clones the repo and builds the wheel locally. Requires Node
++ pnpm for the SPA build step (falls back to npm if pnpm isn't
+available). The compiled SPA is committed to the repo, so this works
+today, but the CI-built release wheel above is the canonical
+distribution.
+
+Alternatives:
+
+```bash
+# uv
+uv tool install https://github.com/hectorcanaimero/orch/releases/latest/download/orchestrator-0.5.0-py3-none-any.whl
+
+# pip --user
+pip install --user https://github.com/hectorcanaimero/orch/releases/latest/download/orchestrator-0.5.0-py3-none-any.whl
 ```
 
 Verify:

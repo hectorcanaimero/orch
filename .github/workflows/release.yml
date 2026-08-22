@@ -1,0 +1,61 @@
+name: Release wheel
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # allow manual runs from the Actions tab
+
+permissions:
+  contents: write  # needed to create/update releases
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tool
+        run: python -m pip install --upgrade build
+
+      - name: Build SPA and wheel
+        run: bash scripts/build-wheel.sh
+
+      - name: Verify wheel contains SPA
+        run: |
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Verifying $WHEEL"
+          python -m zipfile -l "$WHEEL" | grep -E "orchestrator/spa/(index\.html|assets/.*\.(js|css))" || {
+            echo "ERROR: SPA files missing from wheel"
+            exit 1
+          }
+
+      - name: Upload wheel to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          fail_on_unmatched_files: true
+          # If the tag doesn't have a release yet, create one. Otherwise
+          # attach the wheel to the existing release. Generate release
+          # notes from commits since the previous tag.
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
