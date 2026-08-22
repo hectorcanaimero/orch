@@ -9,12 +9,10 @@ export interface StakeholderSummaryStats {
 }
 
 export interface StakeholderMilestone {
-  id?: string
-  name: string
-  status?: string
-  eta_hours?: number | null
-  percent_done?: number
-  [key: string]: unknown
+  phase: number
+  total_count: number
+  done_count: number
+  done: boolean
 }
 
 export interface StakeholderSummary {
