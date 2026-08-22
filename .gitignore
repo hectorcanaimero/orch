@@ -20,9 +20,13 @@ build/
 .idea/
 .vscode/
 
+# Claude Code — personal overrides (settings.json is committed for team-wide config)
+.claude/settings.local.json
+
 # Tooling caches
 .playwright-mcp/
 .mypy_cache/
 .ruff_cache/
 # Playwright preview screenshots (dev only)
 /*.png
+/tasks.json
