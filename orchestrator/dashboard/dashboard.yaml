@@ -8,3 +8,32 @@ kanban:
   sort_default: null        # "impact" | null (default = phase asc + id asc).
   group_default: null       # "phase" | null.
   refresh_interval_s: 10    # HTMX polling cadence for the board.
+
+# Tunnel manager (Sprint E-5). See docs/DASHBOARD-PROFILES.md for the full
+# guide, security caveats, and CLI examples. Default is disabled — flip
+# `enabled: true` to expose `/api/tunnel/*` (three-gate: config → operator
+# profile → loopback host). Requires `autossh` on PATH (macOS: `brew install
+# autossh`; Debian/Ubuntu: `sudo apt install autossh`).
+tunnel:
+  enabled: false
+  provider: autossh         # v1 allowlist: only "autossh".
+  command: autossh          # MUST equal the provider's pinned binary.
+  # `args` forwarded verbatim to the subprocess. The default below fronts
+  # Pinggy's free tier on port 443 → localhost:7420.
+  args:
+    - "-M"
+    - "0"
+    - "-o"
+    - "StrictHostKeyChecking=no"
+    - "-o"
+    - "ServerAliveInterval=30"
+    - "-o"
+    - "ExitOnForwardFailure=yes"
+    - "-p"
+    - "443"
+    - "-R"
+    - "0:localhost:7420"
+    - "a.pinggy.io"
+  auto_start: false         # true = self-probe + spawn on dashboard boot.
+  startup_probe_timeout_s: 3   # 1..30 — self-probe timeout for auto_start.
+  url_parse_timeout_s: 30      # 5..300 — how long we wait for the URL line.
