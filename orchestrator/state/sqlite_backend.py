@@ -354,7 +354,7 @@ class SqliteBackend:
 
     # ---- runs ----------------------------------------------------------
 
-    def create_run(self, run_id: str, mode: str) -> RunState:
+    def create_run(self, run_id: str, mode: str, parent_pid: int = 0) -> RunState:
         now = _utc_now_iso()
         with self._write() as conn:
             # Ensure the project row exists (safe fallback if bootstrap
@@ -371,12 +371,17 @@ class SqliteBackend:
             )
             conn.execute(
                 "INSERT INTO runs "
-                "(run_id, project_id, started_at, updated_at, mode, status, "
-                " completed_json, blocked_json, deferred_json) "
-                "VALUES (?, ?, ?, ?, ?, 'live', '[]', '[]', '[]')",
-                (run_id, self.project_id, now, now, mode),
+                "(run_id, project_id, started_at, updated_at, mode, parent_pid, "
+                " status, completed_json, blocked_json, deferred_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'live', '[]', '[]', '[]')",
+                (run_id, self.project_id, now, now, mode, int(parent_pid or 0)),
             )
-        return RunState(run_id=run_id, started_at=now, mode=mode)  # type: ignore[arg-type]
+        return RunState(  # type: ignore[arg-type]
+            run_id=run_id,
+            started_at=now,
+            mode=mode,
+            parent_pid=int(parent_pid or 0),
+        )
 
     def load_run(self, run_id: str) -> RunState:
         conn = self._conn()
@@ -405,6 +410,12 @@ class SqliteBackend:
                     output_path=d["output_path"] or "",
                     attempt=d["attempt"] or 1,
                 )
+            # Sprint A / Issue #12: parent_pid may be NULL for legacy rows
+            # written before the column was populated. Default to 0.
+            try:
+                pp = row["parent_pid"]
+            except (IndexError, KeyError):
+                pp = 0
             return RunState(
                 run_id=row["run_id"],
                 started_at=row["started_at"],
@@ -413,6 +424,7 @@ class SqliteBackend:
                 completed=list(json.loads(row["completed_json"] or "[]")),
                 blocked=list(json.loads(row["blocked_json"] or "[]")),
                 deferred=list(json.loads(row["deferred_json"] or "[]")),
+                parent_pid=int(pp or 0),
             )
         finally:
             conn.close()
@@ -423,12 +435,14 @@ class SqliteBackend:
         with self._write() as conn:
             conn.execute(
                 "UPDATE runs SET updated_at = ?, mode = ?, status = ?, "
-                "completed_json = ?, blocked_json = ?, deferred_json = ? "
+                "parent_pid = ?, completed_json = ?, blocked_json = ?, "
+                "deferred_json = ? "
                 "WHERE run_id = ? AND project_id = ?",
                 (
                     now,
                     state.mode,
                     status,
+                    int(getattr(state, "parent_pid", 0) or 0),
                     json.dumps(state.completed),
                     json.dumps(state.blocked),
                     json.dumps(state.deferred),
@@ -468,7 +482,7 @@ class SqliteBackend:
         try:
             cur = conn.execute(
                 "SELECT run_id, started_at, updated_at, mode, status, "
-                "completed_json, blocked_json, deferred_json "
+                "parent_pid, completed_json, blocked_json, deferred_json "
                 "FROM runs WHERE project_id = ? "
                 "ORDER BY started_at DESC",
                 (self.project_id,),
@@ -484,12 +498,17 @@ class SqliteBackend:
                     (row["run_id"],),
                 )
                 in_flight = in_flight_cur.fetchone()["n"]
+                try:
+                    pp = row["parent_pid"]
+                except (IndexError, KeyError):
+                    pp = 0
                 out.append({
                     "run_id": row["run_id"],
                     "started_at": row["started_at"],
                     "updated_at": row["updated_at"],
                     "mode": row["mode"],
                     "status": row["status"],
+                    "parent_pid": int(pp or 0),
                     "in_flight_count": int(in_flight),
                     "completed_count": len(completed),
                     "blocked_count": len(blocked),
@@ -691,9 +710,12 @@ class SqliteBackend:
 
         Same semantics as the file backend: any dispatch whose PID is dead
         gets removed and appended to `blocked_json`. Emits a synthetic
-        `reconciled` event per orphan. Never raises past its own boundary.
+        `reconciled` event per orphan. Sprint A / Issue #7 parity: ALSO
+        reverts the corresponding `tasks_runtime` row from `in-progress`
+        back to `todo` so `queue.ready()` picks it up on the next tick.
+        Never raises past its own boundary.
         """
-        result: dict[str, Any] = {"reconciled": [], "checked": 0}
+        result: dict[str, Any] = {"reconciled": [], "checked": 0, "reset": []}
         try:
             conn = self._conn()
             try:
@@ -776,6 +798,38 @@ class SqliteBackend:
                     "task_id": tid,
                     "pid": o["pid"],
                 })
+                # Sprint A / Issue #7: revert stuck tasks_runtime row too.
+                try:
+                    ts = _utc_now_iso()
+                    with self._write() as w:
+                        cur = w.execute(
+                            "SELECT status, comments_json FROM tasks_runtime "
+                            "WHERE project_id = ? AND task_id = ?",
+                            (self.project_id, tid),
+                        )
+                        trow = cur.fetchone()
+                        if trow is not None and trow["status"] == "in-progress":
+                            comments = json.loads(trow["comments_json"] or "[]")
+                            comments.append({
+                                "author": "orch-reconcile",
+                                "body": "reset from in-progress (orphaned)",
+                                "at": ts,
+                            })
+                            w.execute(
+                                "UPDATE tasks_runtime SET status = 'todo', "
+                                "comments_json = ?, updated_at = ?, "
+                                "started_at = NULL, finished_at = NULL, "
+                                "in_flight_pid = NULL, in_flight_run_id = NULL "
+                                "WHERE project_id = ? AND task_id = ?",
+                                (json.dumps(comments), ts, self.project_id, tid),
+                            )
+                            result["reset"].append(tid)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "sqlite reconcile_in_flight: reset failed for %s: %s",
+                        tid,
+                        exc,
+                    )
             return result
         except Exception as exc:  # noqa: BLE001
             log.warning("sqlite reconcile_in_flight failed: %s", exc)

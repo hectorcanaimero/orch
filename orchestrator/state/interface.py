@@ -67,8 +67,13 @@ class StateBackend(Protocol):
 
     # ---- runs -----------------------------------------------------------
 
-    def create_run(self, run_id: str, mode: str) -> RunState:
-        """Persist a fresh run and return the initial in-memory state."""
+    def create_run(self, run_id: str, mode: str, parent_pid: int = 0) -> RunState:
+        """Persist a fresh run and return the initial in-memory state.
+
+        Sprint A / Issue #12: `parent_pid` records the orch CLI's PID so
+        `orch stop` can locate the running orch later. 0 (default) means
+        the caller doesn't know / doesn't care.
+        """
         ...
 
     def load_run(self, run_id: str) -> RunState:

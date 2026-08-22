@@ -49,8 +49,15 @@ class SqliteRunFile:
         self.path = state_dir / f"run-{state.run_id}.json"
 
     @classmethod
-    def create(cls, backend: SqliteBackend, run_id: str, mode: str, state_dir: Path) -> "SqliteRunFile":
-        state = backend.create_run(run_id=run_id, mode=mode)
+    def create(
+        cls,
+        backend: SqliteBackend,
+        run_id: str,
+        mode: str,
+        state_dir: Path,
+        parent_pid: int = 0,
+    ) -> "SqliteRunFile":
+        state = backend.create_run(run_id=run_id, mode=mode, parent_pid=parent_pid)
         return cls(backend, state, state_dir)
 
     @classmethod
@@ -165,14 +172,23 @@ def make_runfile(
     mode: str,
     *,
     create: bool = True,
+    parent_pid: int = 0,
 ) -> Any:
-    """Backend-aware factory. Returns either `RunFile` or `SqliteRunFile`."""
+    """Backend-aware factory. Returns either `RunFile` or `SqliteRunFile`.
+
+    Sprint A / Issue #12: `parent_pid` is forwarded to the concrete backend
+    on create so `orch stop` can locate the running orch later.
+    """
     if isinstance(backend, SqliteBackend):
         if create:
-            return SqliteRunFile.create(backend, run_id, mode, state_dir)
+            return SqliteRunFile.create(
+                backend, run_id, mode, state_dir, parent_pid=parent_pid
+            )
         return SqliteRunFile.load(backend, run_id, state_dir)
     if create:
-        return RunFile.create(state_dir, run_id=run_id, mode=mode)
+        return RunFile.create(
+            state_dir, run_id=run_id, mode=mode, parent_pid=parent_pid
+        )
     return RunFile.load(state_dir / f"run-{run_id}.json")
 
 

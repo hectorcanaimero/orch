@@ -2,8 +2,10 @@
 # task-reset.sh <task-id> [author] [note]
 #
 # Sprint B: forces a task back to `todo` via the active state backend.
-# Only valid on the sqlite backend (file backend has no clean way to
-# reopen a done task in tasks.json without hand-editing).
+# Called by orch during startup reconcile (Issue #7) when a task is stuck in
+# "in-progress" but its recorded PID is dead, and by `orch reset` to revert
+# tasks explicitly. Backend-aware: routes through `orch task-status`, which
+# is the single writer for both file and sqlite backends.
 set -euo pipefail
 
 TASK_ID="${1:?task-reset.sh <task-id> [author] [note]}"

@@ -1,7 +1,6 @@
-{"type":"session_start","session_id":"oc-01","model":"deepseek/deepseek-v4-pro"}
-{"type":"step_start","step_id":1}
-{"type":"text","text":"Analyzing task..."}
-{"type":"step_finish","step_id":1,"reason":"tool_call","cost":0.0021,"tokens":{"input":600,"output":80,"cache":0}}
-{"type":"step_start","step_id":2}
-{"type":"text","text":"Writing supabase/migrations/003_credits.sql"}
-{"type":"step_finish","step_id":2,"reason":"stop","cost":0.0064,"tokens":{"input":1100,"output":240,"cache":40}}
+{"type":"step_start","timestamp":1787360103025,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ca6d0010Z0pKlTvccaBhZ","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"step-start"}}
+{"type":"text","timestamp":1787360104184,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ce9b001V12EIO1KiCpMBK","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"text","text":"Analyzing task..."}}
+{"type":"step_finish","timestamp":1787360104184,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ceea00141M7fBfLjl64iw","reason":"tool_call","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"step-finish","tokens":{"total":680,"input":600,"output":80,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.0021}}
+{"type":"step_start","timestamp":1787360110000,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ca6d0010Z0pKlTvccaBhZ2","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"step-start"}}
+{"type":"text","timestamp":1787360111000,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ce9b001V12EIO1KiCpMBK2","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"text","text":"Writing supabase/migrations/003_credits.sql"}}
+{"type":"step_finish","timestamp":1787360112000,"sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","part":{"id":"prt_026f6ceea00141M7fBfLjl64iw2","reason":"stop","messageID":"msg_026f6bb2d001cXAlQFcqfvRcby","sessionID":"ses_fd90945f7ffe9olBTKHmCF4x8m","type":"step-finish","tokens":{"total":1340,"input":1100,"output":240,"reasoning":0,"cache":{"write":0,"read":40}},"cost":0.0064}}

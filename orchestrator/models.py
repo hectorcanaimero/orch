@@ -106,7 +106,12 @@ class Dispatch:
 
 @dataclass
 class RunState:
-    """Per-run operational state, persisted to `state/run-<uuid>.json`."""
+    """Per-run operational state, persisted to `state/run-<uuid>.json`.
+
+    Sprint A / Issue #12: `parent_pid` records the orch process PID at run
+    start so `orch stop` (subcommand) can locate the running orch and send
+    it SIGTERM. 0 = not recorded (backwards-compat with pre-Sprint-A rows).
+    """
 
     run_id: str
     started_at: str
@@ -115,6 +120,7 @@ class RunState:
     completed: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
     deferred: list[str] = field(default_factory=list)
+    parent_pid: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +130,12 @@ class SpendEntry:
     Fase 2: `project_id` opcional. Default None por retrocompatibilidad con
     filas escritas antes del refactor multi-proyecto — tolerado al leer.
     Sitios nuevos que construyen SpendEntry deben pasar `paths.project_id`.
+
+    Sprint A / Issue #8: `estimated` is True when the backend produced work
+    events but never reported usage (tokens_in/out both 0). Downstream
+    consumers (dashboard, budget report) can flag these rows so operators
+    know the number is not real telemetry. Default False keeps rows written
+    before the field existed backwards-compatible.
     """
 
     ts: str
@@ -135,6 +147,7 @@ class SpendEntry:
     cost_usd: float
     duration_s: float
     project_id: str | None = None
+    estimated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

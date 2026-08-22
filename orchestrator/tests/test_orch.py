@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -1371,3 +1372,542 @@ def test_escalation_respects_per_dispatch_budget(
     assert len(escalates) == 0, (
         f"budget cap → no escalate event; got {len(escalates)}"
     )
+
+
+# ---- Sprint A / Issue #11: budget deferral logging ---------------------
+
+
+def test_extract_usage_from_reason_parses_gate_string() -> None:
+    """`_extract_usage_from_reason` parses `(used, budget)` from the reason
+    string produced by BudgetGate.can_dispatch."""
+    reason = "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+    used, budget = orch_mod._extract_usage_from_reason(reason)
+    assert used == 367_000
+    assert budget == 400_000
+
+
+def test_extract_usage_from_reason_returns_zeros_on_garbage() -> None:
+    assert orch_mod._extract_usage_from_reason("") == (0, 0)
+    assert orch_mod._extract_usage_from_reason("nothing to see here") == (0, 0)
+
+
+def test_defer_emits_human_readable_log_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the budget gate blocks a dispatch, orch logs a compact line with
+    task_id, provider, window pct, and reset ETA — in addition to the
+    structured `budget_skip` event."""
+    from datetime import datetime, timedelta, timezone
+
+    task = Task.from_json(
+        {"id": "F0.6.T3", "phase": 0, "title": "t", "model": "opencode-go/glm-5.1"}
+    )
+    route = RouteEntry(
+        backend="codex",
+        cli_model="gpt-5.6-codex",
+        tier="premium",
+        is_premium=True,
+    )
+    # Fake budget gate: always blocks with a realistic reason + reset.
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=2, minutes=14)
+
+    class _AlwaysBlocksGate:
+        def can_dispatch(self, provider: str):  # noqa: ARG002
+            reason = (
+                "codex over threshold: 367,000 tokens used, "
+                "cap 240,000 (60% of 400,000)"
+            )
+            return False, reason, reset_at
+
+    # Stub event log — records only what was emitted.
+    emitted_events: list[dict] = []
+
+    class _StubEventLog:
+        def emit(self, event_type, task_id, **extra):  # noqa: ANN001
+            emitted_events.append({"event_type": event_type, "task_id": task_id, **extra})
+
+    class _StubRunFile:
+        pass
+
+    class _StubQueue:
+        pass
+
+    gsem, psem = orch_mod._build_semaphores({
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+    })
+    cfg = {
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+        "strict_files_phases": [],
+        "default_timeout_multiplier": 1.5,
+        "budget": {"per_dispatch_usd": 5.0},
+        "retry": {"backoff_seconds": 5.0},
+        "spec_root": "specs",
+    }
+
+    defer_reasons: dict[str, str] = {}
+    with caplog.at_level("INFO", logger="orchestrator.orch"):
+        ok = orch_mod._spawn_one(
+            task=task,
+            route=route,
+            attempt=1,
+            cfg=cfg,
+            gsem=gsem,
+            psem=psem,
+            in_flight={},
+            run_file=_StubRunFile(),
+            event_log=_StubEventLog(),
+            run_id="test-run",
+            state_dir=tmp_path,
+            cwd=tmp_path,
+            queue=_StubQueue(),
+            use_task_locks=False,
+            budget_gate=_AlwaysBlocksGate(),
+            defer_reasons=defer_reasons,
+        )
+    assert ok is False
+
+    # Structured event was emitted.
+    budget_skips = [e for e in emitted_events if e["event_type"] == "budget_skip"]
+    assert len(budget_skips) == 1
+    assert budget_skips[0]["task_id"] == "F0.6.T3"
+    assert budget_skips[0]["backend"] == "codex"
+
+    # Human-readable log line contains the expected pieces.
+    log_lines = [r.getMessage() for r in caplog.records]
+    defer_lines = [line for line in log_lines if "deferred" in line and "F0.6.T3" in line]
+    assert defer_lines, f"no defer log line found; captured: {log_lines}"
+    line = defer_lines[0]
+    assert "F0.6.T3" in line
+    assert "codex" in line
+    assert "367k" in line  # tokens used, formatted short
+    assert "400k" in line  # token budget, formatted short
+    # ETA should look like `~2h 14m` (or `~2h 13m` if a second slipped by).
+    assert "2h" in line
+    assert "resets in" in line
+
+    # Defer-reasons side channel was populated so future `orch status` can see it.
+    assert defer_reasons.get("F0.6.T3", "").startswith("blocked-by-budget:")
+
+
+def test_defer_reason_cleared_when_gate_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the budget gate passes on a subsequent tick, the stale
+    `blocked-by-budget` marker for that task must be cleared."""
+
+    class _AllowingGate:
+        def can_dispatch(self, provider: str):  # noqa: ARG002
+            return True, None, None
+
+    # We only need the gate check to succeed; the spawn will then fail on
+    # the semaphore-less/skeletal environment, but the defer_reasons
+    # cleanup happens BEFORE the semaphore try_acquire — so we can assert
+    # against a partial-completion in _spawn_one.
+    #
+    # To keep the test tight, we shortcut: pre-populate the marker and
+    # monkeypatch out the semaphore path so the function returns early
+    # after clearing the marker.
+    task = Task.from_json(
+        {"id": "F0.6.T3", "phase": 0, "title": "t", "model": "opencode-go/glm-5.1"}
+    )
+    route = RouteEntry(
+        backend="codex",
+        cli_model="gpt-5.6-codex",
+        tier="premium",
+        is_premium=True,
+    )
+
+    # Force the psem check to fail so _spawn_one returns False right after
+    # clearing the defer marker — no need to build the rest of the world.
+    class _AlwaysFullSem:
+        def try_acquire(self):
+            return False
+
+        def release(self):
+            pass
+
+    gsem = _AlwaysFullSem()
+    psem = {"codex": _AlwaysFullSem()}
+    cfg = {
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+        "strict_files_phases": [],
+        "default_timeout_multiplier": 1.5,
+        "budget": {"per_dispatch_usd": 5.0},
+        "retry": {"backoff_seconds": 5.0},
+        "spec_root": "specs",
+    }
+    defer_reasons = {"F0.6.T3": "blocked-by-budget:codex"}
+
+    class _StubEventLog:
+        def emit(self, *_a, **_kw):  # noqa: ANN001
+            pass
+
+    class _StubRunFile:
+        pass
+
+    class _StubQueue:
+        pass
+
+    orch_mod._spawn_one(
+        task=task,
+        route=route,
+        attempt=1,
+        cfg=cfg,
+        gsem=gsem,
+        psem=psem,
+        in_flight={},
+        run_file=_StubRunFile(),
+        event_log=_StubEventLog(),
+        run_id="test-run",
+        state_dir=tmp_path,
+        cwd=tmp_path,
+        queue=_StubQueue(),
+        use_task_locks=False,
+        budget_gate=_AllowingGate(),
+        defer_reasons=defer_reasons,
+    )
+    # Gate said OK → stale marker cleared even though semaphore was full.
+    assert "F0.6.T3" not in defer_reasons
+
+
+# ---- Sprint A / Issue #7: orch reset subcommand ------------------------
+
+
+def _stage_v2_with_status(tmp_path: Path, tasks: list[dict]) -> Path:
+    """Stage a minimal v2/-shaped project with the given tasks.json rows."""
+    v2 = tmp_path / "v2"
+    v2.mkdir()
+    (v2 / "scripts").mkdir()
+    (v2 / "orchestrator" / "state").mkdir(parents=True)
+    for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
+        p = v2 / "scripts" / name
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    (v2 / "tasks.json").write_text(
+        json.dumps({"meta": {}, "phases": [], "tasks": tasks}, indent=2)
+    )
+    # config + router (minimal — reset subcommand doesn't need them but
+    # resolve_project_paths reads them).
+    shutil.copy(FIXTURES / "main_loop_config.yaml", v2 / "orchestrator" / "config.yaml")
+    shutil.copy(FIXTURES / "main_loop_router.yaml", v2 / "orchestrator" / "model_router.yaml")
+    return v2
+
+
+def test_reset_dry_run_prints_candidates_but_no_mutation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default reset (no --requeue) is dry-run: prints candidates, mutates nothing."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T2", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "F0.5.T1" in out
+    assert "would revert" in out.lower()
+
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    # Untouched — dry-run.
+    assert reloaded["tasks"][0]["status"] == "in-progress"
+
+
+def test_reset_requeue_reverts_all_in_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--requeue actually mutates tasks.json (all in-progress → todo)."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T2", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T3", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset", "--requeue"])
+    assert rc == 0
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    statuses = {r["id"]: r["status"] for r in reloaded["tasks"]}
+    assert statuses["F0.5.T1"] == "todo"
+    assert statuses["F0.5.T2"] == "todo"
+    assert statuses["F0.5.T3"] == "done"  # untouched
+
+
+def test_reset_only_glob_narrows_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--only restricts to matching task ids (via fnmatch)."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.6.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset", "--requeue", "--only", "F0.5.*"])
+    assert rc == 0
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    statuses = {r["id"]: r["status"] for r in reloaded["tasks"]}
+    assert statuses["F0.5.T1"] == "todo"
+    # NOT matched by glob → still in-progress.
+    assert statuses["F0.6.T1"] == "in-progress"
+
+
+def test_reset_exits_0_when_nothing_to_do(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No in-progress tasks → prints friendly message, exits 0."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no in-progress" in out.lower()
+
+
+# ---- Sprint A / Issue #12: signal handling + orch stop ----------------
+
+
+def test_sigterm_handler_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_install_sigint` must also install a SIGTERM handler.
+
+    Confirms Fix #12's requirement that `kill <orch-pid>` triggers the
+    same drain-then-SIGKILL cleanup as Ctrl-C.
+    """
+    import signal as _sig
+
+    installed: dict[int, object] = {}
+
+    def _fake_signal(signum, handler):
+        installed[signum] = handler
+        return None
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _fake_signal)
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight={})
+    assert _sig.SIGINT in installed
+    assert _sig.SIGTERM in installed
+    # Both signals route through the same handler.
+    assert installed[_sig.SIGINT] is installed[_sig.SIGTERM]
+
+
+def test_sigterm_handler_triggers_drain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When SIGTERM fires, the drain flag flips (same as SIGINT)."""
+    import signal as _sig
+
+    captured: dict = {}
+
+    def _capture_handler(signum, handler):
+        captured[signum] = handler
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _capture_handler)
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight={})
+
+    assert drain.set is False
+    # Simulate the SIGTERM firing.
+    handler = captured[_sig.SIGTERM]
+    handler(_sig.SIGTERM, None)
+    assert drain.set is True
+    assert drain.hard_kill_next is False
+
+
+def test_second_signal_hard_kills_all_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second SIGTERM/SIGINT calls killpg on every in-flight child pid."""
+    import signal as _sig
+
+    captured: dict = {}
+
+    def _capture_handler(signum, handler):
+        captured[signum] = handler
+
+    monkeypatch.setattr(orch_mod.signal, "signal", _capture_handler)
+
+    killed: list[tuple[int, int]] = []
+
+    def _fake_killpg_or_pid(pid, sig):
+        killed.append((pid, sig))
+
+    monkeypatch.setattr(orch_mod, "_killpg_or_pid", _fake_killpg_or_pid)
+
+    # Two fake in-flight entries.
+    task = Task.from_json({"id": "T-1", "phase": 0, "title": "t", "model": "m"})
+    route = RouteEntry(backend="opencode", cli_model="c", tier="cheap", is_premium=False)
+    d1 = Dispatch(task_id="T-1", backend="opencode", pid=1111, session_id="s",
+                  started_at="", prompt_path="", log_path="", output_path="")
+    d2 = Dispatch(task_id="T-2", backend="opencode", pid=2222, session_id="s",
+                  started_at="", prompt_path="", log_path="", output_path="")
+    entry1 = orch_mod.InFlight(task, route, None, d1, 0.0, 60.0)  # type: ignore[arg-type]
+    entry2 = orch_mod.InFlight(task, route, None, d2, 0.0, 60.0)  # type: ignore[arg-type]
+    in_flight = {1111: entry1, 2222: entry2}
+
+    drain = orch_mod._DrainFlag()
+    orch_mod._install_sigint(drain, in_flight)
+
+    handler = captured[_sig.SIGTERM]
+    # First signal → drain only.
+    handler(_sig.SIGTERM, None)
+    assert drain.set is True
+    assert killed == []
+    # Second signal → SIGKILL every child pid via _killpg_or_pid.
+    handler(_sig.SIGTERM, None)
+    kill_pids = sorted(pid for pid, _ in killed)
+    assert kill_pids == [1111, 2222]
+    assert all(sig == _sig.SIGKILL for _, sig in killed)
+    assert drain.hard_kill_next is True
+
+
+def test_killpg_or_pid_falls_back_when_pgid_lookup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `os.getpgid` raises (process gone), fall back to `os.kill(pid, sig)`."""
+    monkeypatch.setattr(
+        orch_mod.os, "getpgid", lambda pid: (_ for _ in ()).throw(ProcessLookupError)
+    )
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        orch_mod.os, "kill", lambda pid, sig: sent.append((pid, sig))
+    )
+    # No exception should escape.
+    orch_mod._killpg_or_pid(12345, 15)
+    assert sent == [(12345, 15)]
+
+
+def test_orch_stop_no_running_orch_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When no run file references a live orch pid, exit 1."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["stop"])
+    assert rc == 1
+
+
+def test_orch_stop_signals_parent_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a run file references a live pid, `orch stop` sends SIGTERM.
+
+    We stage a run file recording os.getpid() as parent_pid, then monkeypatch
+    os.kill to record calls without actually killing the test runner.
+    """
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    state_dir = v2 / "orchestrator" / "state"
+    state_dir.mkdir(exist_ok=True, parents=True)
+    run_id = "target-run"
+    payload = {
+        "run_id": run_id,
+        "started_at": "2026-08-21T10:00:00Z",
+        "mode": "auto",
+        "in_flight": {},
+        "completed": [],
+        "blocked": [],
+        "deferred": [],
+        "parent_pid": os.getpid(),  # ourselves — definitely alive
+    }
+    (state_dir / f"run-{run_id}.json").write_text(json.dumps(payload))
+
+    monkeypatch.chdir(v2)
+
+    signals_sent: list[tuple[int, int]] = []
+    real_kill = os.kill
+
+    def _record_kill(pid, sig):
+        signals_sent.append((pid, sig))
+        # For signal 0 (probe) we still need to respect aliveness so the
+        # wait-loop exits. Simulate: after the SIGTERM record, subsequent
+        # signal-0 probes should raise ProcessLookupError.
+        if sig == 0 and any(s != 0 for _, s in signals_sent):
+            raise ProcessLookupError
+        # Don't actually kill ourselves.
+        if sig == 0:
+            return
+        # Suppress: no-op.
+        return
+
+    monkeypatch.setattr(orch_mod.os, "kill", _record_kill)
+
+    rc = orch_mod.main(["stop", "--grace", "2"])
+    assert rc == 0
+    # The first non-probe signal must be SIGTERM to our own pid.
+    non_probes = [(pid, sig) for pid, sig in signals_sent if sig != 0]
+    assert non_probes, "expected at least one non-probe kill call"
+    assert non_probes[0] == (os.getpid(), signal.SIGTERM)
+
+
+def test_orch_stop_grace_expires_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If orch stays alive past --grace, `orch stop` returns 1."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    state_dir = v2 / "orchestrator" / "state"
+    state_dir.mkdir(exist_ok=True, parents=True)
+    payload = {
+        "run_id": "target-run",
+        "started_at": "2026-08-21T10:00:00Z",
+        "mode": "auto",
+        "in_flight": {},
+        "completed": [],
+        "blocked": [],
+        "deferred": [],
+        "parent_pid": os.getpid(),
+    }
+    (state_dir / "run-target-run.json").write_text(json.dumps(payload))
+
+    monkeypatch.chdir(v2)
+
+    # Simulate: SIGTERM is sent, but subsequent probes ALWAYS report alive.
+    def _fake_kill(pid, sig):  # noqa: ARG001
+        # Never raise → probe always says "alive".
+        return
+
+    monkeypatch.setattr(orch_mod.os, "kill", _fake_kill)
+
+    rc = orch_mod.main(["stop", "--grace", "0.5"])
+    assert rc == 1
+
+
+def test_run_file_stores_parent_pid(tmp_path: Path) -> None:
+    """RunFile.create records parent_pid; RunFile.load reads it back."""
+    from orchestrator.state import RunFile
+
+    rf = RunFile.create(tmp_path / "state", run_id="r-1", mode="auto", parent_pid=54321)
+    assert rf.state.parent_pid == 54321
+
+    reloaded = RunFile.load(rf.path)
+    assert reloaded.state.parent_pid == 54321
+
+
+def test_run_file_load_tolerates_missing_parent_pid(tmp_path: Path) -> None:
+    """Legacy run files (pre-Sprint-A, no parent_pid field) load with default 0."""
+    from orchestrator.state import RunFile
+
+    path = tmp_path / "run-legacy.json"
+    path.write_text(
+        json.dumps({
+            "run_id": "legacy",
+            "started_at": "2026-08-01T00:00:00Z",
+            "mode": "auto",
+            "in_flight": {},
+            "completed": [],
+            "blocked": [],
+            "deferred": [],
+        }),
+        encoding="utf-8",
+    )
+    rf = RunFile.load(path)
+    assert rf.state.parent_pid == 0
