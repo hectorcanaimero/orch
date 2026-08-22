@@ -1659,7 +1659,97 @@ def _run_atomize_subcommand(argv: list[str]) -> int:
     return atomize_main(argv)
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard", "reset", "stop")
+def _run_task_status_subcommand(argv: list[str]) -> int:
+    """Handle `orch task-status <task_id> <status> [--author X] [--note Y]`.
+
+    Sprint B: single-writer helper the shell scripts (`task-{start,finish,
+    block,reset}.sh`) shell into. Preserves the single-writer contract while
+    routing through the active backend (file → tasks.json via legacy scripts;
+    sqlite → tasks_runtime row).
+
+    Exit codes:
+      0  success
+      1  config / project layout error
+      2  unknown task id
+      3  illegal transition
+    """
+    p = argparse.ArgumentParser(
+        prog="orch task-status",
+        description=(
+            "Single-writer helper. Updates task status via the active "
+            "state backend. Called by scripts/task-*.sh."
+        ),
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument(
+        "status",
+        choices=["backlog", "todo", "in-progress", "done", "blocked"],
+    )
+    p.add_argument("--author", default="orch", help="Comment author (default: orch)")
+    p.add_argument("--note", default="", help="Free-form comment appended to the task")
+    p.add_argument("--project-root", default=None, metavar="PATH",
+                   help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
+    p.add_argument("--project-id", default=None, metavar="ID",
+                   help="Project id override. Env fallback: ORCH_PROJECT_ID.")
+    p.add_argument("--config", default="orchestrator/config.yaml",
+                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+    args = p.parse_args(argv)
+
+    paths = resolve_project_paths(
+        project_root_arg=args.project_root,
+        project_id_arg=args.project_id,
+        config_arg=args.config,
+    )
+    try:
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except (FileNotFoundError, Exception) as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.state import get_backend
+
+    backend = get_backend(paths, cfg)
+    # For sqlite, ensure bootstrap has been done so tasks_runtime is seeded.
+    try:
+        from orchestrator.state import load_tasks
+
+        tasks = load_tasks(paths.tasks_json)
+        backend.bootstrap(tasks)
+    except Exception:  # noqa: BLE001 — bootstrap is best-effort here
+        pass
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        backend.set_task_status(
+            args.task_id,
+            args.status,  # type: ignore[arg-type]
+            author=args.author,
+            note=args.note,
+            ts=ts,
+        )
+    except KeyError:
+        print(f"unknown task id: {args.task_id!r}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"illegal transition: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
+_SUBCOMMANDS = (
+    "init",
+    "atomize",
+    "dashboard",
+    "task-status",
+    "migrate",
+    "reset",
+    "stop",
+)
 
 
 def _print_subcommand_list() -> int:
@@ -1671,6 +1761,8 @@ def _print_subcommand_list() -> int:
     print("  orch init PATH [FLAGS]    Scaffold a new orch project at PATH")
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
+    print("  orch task-status ID STATUS  Single-writer helper for scripts/task-*.sh")
+    print("  orch migrate [FLAGS]      Migrate state/ JSONL → sqlite (backup + rollback)")
     print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
     print("  orch stop [FLAGS]         Signal a running orch to drain and exit")
     print("  orch list                 Print this list")
@@ -1822,14 +1914,31 @@ def _run_reset_subcommand(argv: list[str]) -> int:
         print("\nRe-run with --requeue to actually mutate tasks.json.")
         return 0
 
-    # Actual mutation — via call_task_reset (script preferred, fallback fine).
-    from orchestrator.state import call_task_reset
+    # Actual mutation — route through the active backend so both file and
+    # sqlite backends see the reset consistently (single-writer contract).
+    # For file backend, `reset_task` internally shells into task-reset.sh
+    # (or the _reset_task_in_place Python fallback). For sqlite it hits
+    # tasks_runtime directly.
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
 
+    from orchestrator.state import get_backend, load_tasks
+
+    backend = get_backend(paths, cfg)
+    try:
+        backend.bootstrap(load_tasks(paths.tasks_json))
+    except Exception:  # noqa: BLE001 — best-effort bootstrap
+        pass
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     reverted: list[str] = []
     for tid in candidates:
         try:
-            if call_task_reset(tid, project_root=paths.project_root, author="orch-reset"):
-                reverted.append(tid)
+            backend.reset_task(tid, author="orch-reset", note="reset", ts=ts)
+            reverted.append(tid)
         except Exception as exc:  # noqa: BLE001
             print(f"reset failed for {tid}: {exc}", file=sys.stderr)
 
@@ -2017,6 +2126,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_init_subcommand(incoming[1:])
     if incoming and incoming[0] == "atomize":
         return _run_atomize_subcommand(incoming[1:])
+    if incoming and incoming[0] == "task-status":
+        return _run_task_status_subcommand(incoming[1:])
+    if incoming and incoming[0] == "migrate":
+        from orchestrator.migrate import run_migrate
+
+        return run_migrate(incoming[1:])
     if incoming and incoming[0] == "reset":
         return _run_reset_subcommand(incoming[1:])
     if incoming and incoming[0] == "stop":
@@ -2116,6 +2231,28 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    # ---- (5b) state backend selection (Sprint B) -------------------------
+    # `get_backend()` picks FileBackend or SqliteBackend based on cfg. For the
+    # sqlite backend, `bootstrap(tasks)` idempotently seeds the projects +
+    # tasks_runtime rows. For the file backend it's a no-op. Downstream code
+    # keeps using RunFile / EventLog / SpendLog surfaces — the adapter
+    # factories (`make_runfile` / `make_event_log` / `make_spend_log`) hand
+    # back sqlite-backed shims when the backend is sqlite, so callsites don't
+    # need to branch.
+    from orchestrator.state import (  # noqa: E402
+        get_backend,
+        make_event_log,
+        make_runfile,
+        make_spend_log,
+    )
+
+    try:
+        state_backend = get_backend(paths, cfg)
+        state_backend.bootstrap(tasks)
+    except Exception as exc:  # noqa: BLE001
+        print(f"state backend init failed: {exc}", file=sys.stderr)
+        return 1
+
     # ---- (6) flock -------------------------------------------------------
     state_dir = paths.state_dir
     lock_path = state_dir / ".lock"
@@ -2152,11 +2289,12 @@ def main(argv: list[str] | None = None) -> int:
     # otherwise appear "live" in the dashboard forever. Sweep them once at
     # startup so we begin from a clean slate; the main loop below repeats
     # the sweep periodically. Never raises past its own boundary.
-    reap_report = reconcile_in_flight(
-        state_dir,
-        project_id=paths.project_id,
-        project_root=paths.project_root,
-    )
+    # Sprint B: reconcile routes through the active backend so sqlite runs
+    # get the same orphan-reap semantics as the file backend.
+    # Sprint A / Issue #7: the file backend method internally passes
+    # project_root so tasks.json rows also get reverted from in-progress
+    # → todo when their PID is dead.
+    reap_report = state_backend.reconcile_in_flight()
     if reap_report.get("reconciled"):
         log.info(
             "startup reconcile: reaped %d orphan(s) from %d in-flight entry(ies): %s",
@@ -2176,26 +2314,40 @@ def main(argv: list[str] | None = None) -> int:
         if args.resume:
             run_id = args.resume
             run_path = state_dir / f"run-{run_id}.json"
-            if not run_path.exists():
+            # For sqlite backend the file may not exist; the adapter loads
+            # from the DB instead. Only enforce the file check on file backend.
+            from orchestrator.state.sqlite_backend import SqliteBackend
+
+            if not isinstance(state_backend, SqliteBackend) and not run_path.exists():
                 print(f"resume: no run file at {run_path}", file=sys.stderr)
                 if lock_fd is not None:
                     lock_fd.close()
                 return 1
-            run_file = RunFile.load(run_path)
+            run_file = make_runfile(
+                state_backend, state_dir, run_id=run_id, mode=args.mode, create=False,
+            )
         else:
             run_id = str(uuid.uuid4())
             # Sprint A / Issue #12: record our PID so `orch stop` can locate
-            # this run later.
-            run_file = RunFile.create(
-                state_dir, run_id=run_id, mode=args.mode, parent_pid=os.getpid()
+            # this run later. Routes through the backend-aware factory.
+            run_file = make_runfile(
+                state_backend,
+                state_dir,
+                run_id=run_id,
+                mode=args.mode,
+                create=True,
+                parent_pid=os.getpid(),
             )
 
         if lock_fd is not None:
             write_lock_holder(lock_fd, run_id=run_id, pid=os.getpid())
 
-        events_path = state_dir / f"events-{run_id}.jsonl"
-        event_log = EventLog(events_path, project_id=paths.project_id)
-        spend_log = SpendLog(state_dir, project_id=paths.project_id)
+        event_log = make_event_log(
+            state_backend, state_dir, run_id=run_id, project_id=paths.project_id,
+        )
+        spend_log = make_spend_log(
+            state_backend, state_dir, project_id=paths.project_id,
+        )
 
         # ---- resume reconciliation ---------------------------------------
         if args.resume:
@@ -2233,9 +2385,12 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
             # Also unlink the events file if we created one empty on init.
+            # (Only meaningful for the file backend; sqlite backend has no
+            # per-run JSONL file — the `.path` attribute is synthetic.)
             try:
-                if events_path.exists() and events_path.stat().st_size == 0:
-                    events_path.unlink()
+                ev_path = getattr(event_log, "path", None)
+                if ev_path is not None and ev_path.exists() and ev_path.stat().st_size == 0:
+                    ev_path.unlink()
             except OSError:
                 pass
             log.info("dry-run planned %d dispatches", count)
@@ -2359,11 +2514,7 @@ def main(argv: list[str] | None = None) -> int:
             now_mono = time.monotonic()
             if now_mono - last_reconcile_ts >= _RECONCILE_INTERVAL_SEC:
                 last_reconcile_ts = now_mono
-                tick_report = reconcile_in_flight(
-                    state_dir,
-                    project_id=paths.project_id,
-                    project_root=paths.project_root,
-                )
+                tick_report = state_backend.reconcile_in_flight()
                 if tick_report.get("reconciled"):
                     log.info(
                         "tick reconcile: reaped %d orphan(s): %s",

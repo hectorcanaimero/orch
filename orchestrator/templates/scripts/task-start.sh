@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # task-start.sh <task-id> [--author "<backend>/<model>"] [--project-root PATH]
 #
-# Called by orch RIGHT BEFORE spawning the agent CLI. Marks the task as
-# "in-progress" and appends an audit comment. Never mutates other fields.
-#
-# Requires: jq
+# Sprint B: this script now shells into `orch task-status <id> in-progress`
+# so the active state backend (file or sqlite) is the single writer.
+# tasks.json remains the source of truth on the file backend; the shell
+# script kept its historic argv contract so existing agents keep working.
 set -euo pipefail
 
 TASK_ID="${1:?task-start.sh <task-id> …}"
@@ -20,14 +20,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-TASKS_JSON="$PROJECT_ROOT/tasks.json"
-NOW="$(date -u +%FT%TZ)"
-
-# Write in place to preserve inode (symlink-safe).
-tmp="$(mktemp)"
-jq --arg id "$TASK_ID" --arg a "$AUTHOR" --arg ts "$NOW" '
-    (.tasks[] | select(.id == $id) | .status) = "in-progress"
-    | (.tasks[] | select(.id == $id) | .comments) += [
-        {"author": $a, "body": "started", "at": $ts}
-      ]
-' "$TASKS_JSON" > "$tmp" && cat "$tmp" > "$TASKS_JSON" && rm -f "$tmp"
+exec orch task-status "$TASK_ID" in-progress \
+    --author "$AUTHOR" \
+    --note "started" \
+    --project-root "$PROJECT_ROOT"
