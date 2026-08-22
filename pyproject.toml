@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orchestrator"
-version = "0.4.2"
+version = "0.4.3"
 description = "Task orchestrator that walks a tasks.json DAG and dispatches to claude/codex/opencode CLIs with per-provider budget guardrails"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -51,12 +51,13 @@ orch = "orchestrator.orch:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["orchestrator*"]
-exclude = ["orchestrator.tests*", "orchestrator.state*"]
+exclude = ["orchestrator.tests*"]
 
 [tool.setuptools.package-data]
 # Ship the dashboard templates + default pricing table + dashboard config
 # with the wheel.
 "orchestrator.dashboard" = ["templates/*.html", "templates/**/*.html", "pricing.yaml", "dashboard.yaml", "static/*"]
+"orchestrator.state" = ["sqlite_migrations/*.sql"]
 # Ship the runtime YAML defaults so `pipx`-installed orch works without a
 # manual copy step. `config.yaml`, `model_router.yaml` and `budgets.yaml`
 # live at the package root and can be overridden per-project.
