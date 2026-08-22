@@ -64,7 +64,13 @@ if __package__ in (None, ""):  # pragma: no cover — invocation bootstrap
 from dataclasses import replace as _dc_replace  # noqa: E402
 
 from orchestrator import state as state_mod  # noqa: E402
-from orchestrator.budget import BudgetGate, load_budget_config  # noqa: E402
+from orchestrator.budget import (  # noqa: E402
+    BudgetGate,
+    _format_reset_eta,
+    _format_tokens_short,
+    load_budget_config,
+    warn_undersized_presets,
+)
 from orchestrator.checkpoints import SemiModeGate, is_critical  # noqa: E402
 from orchestrator.dispatcher import (  # noqa: E402
     Backend,
@@ -135,6 +141,8 @@ Subcommands (run `orch <cmd> --help` for details):
   orch init PATH [FLAGS]    Scaffold a new orch project at PATH
   orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)
   orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard
+  orch reset [FLAGS]        Revert stuck in-progress tasks to todo
+  orch stop [FLAGS]         Signal a running orch to drain and exit
 
 Exit codes:
   0   clean drain (all reachable tasks done, none blocked)
@@ -281,6 +289,10 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     # everything behaves like pre-Sprint 7 (backwards-compat).
     cfg.setdefault("budgets_config", "budgets.yaml")
     cfg.setdefault("budgets_preset", "conservative")
+    # Sprint A / Issue #11 — used by budget preset sanity check at startup.
+    # If a provider's window can't fit at least 2 x this many tokens, orch
+    # warns because dispatches will serialize inside the rolling window.
+    cfg.setdefault("typical_dispatch_tokens", 200_000)
     return cfg
 
 
@@ -333,6 +345,10 @@ def _load_budget_gate(
             preset,
             list(budget_cfg.providers.keys()),
         )
+        # Sprint A / Issue #11: warn once per undersized provider so operators
+        # know their window can't fit two dispatches back-to-back.
+        typical_tokens = int(cfg.get("typical_dispatch_tokens", 200_000) or 0)
+        warn_undersized_presets(budget_cfg, preset, typical_tokens)
     return BudgetGate(state_dir=state_dir, config=budget_cfg)
 
 
@@ -673,24 +689,65 @@ class _DrainFlag:
         self.hard_kill_next: bool = False
 
 
+def _killpg_or_pid(pid: int, sig: int) -> None:
+    """Send `sig` to the process group of `pid`, falling back to the pid.
+
+    Children spawned with `start_new_session=True` become process-group
+    leaders — signaling the group catches the CLI plus any subprocesses
+    (bash wrappers, sub-agents) it forked. `killpg` requires the pgid
+    which we look up via `os.getpgid`. Any error (ProcessLookupError when
+    the process already exited, PermissionError for foreign uids) is
+    swallowed — callers use this for best-effort cleanup, not correctness.
+    """
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        # Fall back to the single-pid signal — old-style children still
+        # respond to it.
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        return
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        # If killpg fails (e.g. race, permission), try the pid directly.
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
 def _install_sigint(drain: _DrainFlag, in_flight: dict[int, InFlight]) -> None:
-    """SIGINT → drain; second SIGINT → SIGKILL every child (proposal Rollback)."""
+    """SIGINT/SIGTERM → drain; second signal → SIGKILL every child group.
+
+    Sprint A / Issue #12: SIGTERM is treated identically to SIGINT so that
+    `kill <orch-pid>` and `orch stop` behave the same as Ctrl-C. Both hit
+    the same in-memory `_DrainFlag`. On the second signal we escalate:
+    SIGKILL the whole process group of every in-flight child (catches
+    subprocess-of-subprocess trees, not just the direct CLI).
+    """
 
     def handler(signum, frame):  # noqa: ARG001
         if drain.set:
-            # Second SIGINT → kill everything immediately.
+            # Second signal → kill everything immediately (whole pgroup).
             for pid, entry in list(in_flight.items()):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                _killpg_or_pid(pid, signal.SIGKILL)
                 entry.timed_out = True
             drain.hard_kill_next = True
         else:
             drain.set = True
-            log.warning("SIGINT received — draining in-flight; hit again to SIGKILL")
+            log.warning(
+                "%s received — draining in-flight; hit again to SIGKILL",
+                signal.Signals(signum).name if signum else "signal",
+            )
 
     signal.signal(signal.SIGINT, handler)
+    # Sprint A / Issue #12: install the same handler for SIGTERM so
+    # `orch stop` / `kill <pid>` triggers graceful drain instead of an
+    # abrupt exit that would strand children.
+    signal.signal(signal.SIGTERM, handler)
 
 
 # ---- Helpers ------------------------------------------------------------
@@ -1071,11 +1128,9 @@ def _timeout_sweep(
     for pid, entry in list(in_flight.items()):
         if entry.timed_out:
             # Already SIGTERM'd — escalate to SIGKILL after 10 s.
+            # Sprint A / Issue #12: killpg catches bash wrappers and forks.
             if now - entry.started_at_mono > entry.timeout_s + 10.0:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                _killpg_or_pid(pid, signal.SIGKILL)
             continue
         if now - entry.started_at_mono > entry.timeout_s:
             entry.timed_out = True
@@ -1085,10 +1140,7 @@ def _timeout_sweep(
                 entry.timeout_s,
                 pid,
             )
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _killpg_or_pid(pid, signal.SIGTERM)
             # Emit timeout event now so the dashboard sees it live.
             event_log.emit(
                 "timeout",
@@ -1114,6 +1166,7 @@ def _spawn_one(
     queue: TaskQueue,
     use_task_locks: bool = False,
     budget_gate: BudgetGate | None = None,
+    defer_reasons: dict[str, str] | None = None,
 ) -> bool:
     """Try to acquire semaphores and spawn one task; return True on success.
 
@@ -1150,7 +1203,30 @@ def _spawn_one(
                     if reset_at
                     else None,
                 )
+                # Sprint A / Issue #11: human-readable log line for the operator.
+                # `reason` from can_dispatch looks like:
+                #   "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+                # We reformat it compactly with the tokens_used/token_budget and ETA.
+                used_tokens, budget_tokens = _extract_usage_from_reason(reason)
+                eta = _format_reset_eta(reset_at)
+                log.info(
+                    "deferred %s (%s): window %s/%s, resets in ~%s",
+                    task.id,
+                    route.backend,
+                    _format_tokens_short(used_tokens) if used_tokens else "?",
+                    _format_tokens_short(budget_tokens) if budget_tokens else "?",
+                    eta,
+                )
+                # Populate the defer-reason side channel so callers (future
+                # `orch status`) can distinguish blocked-by-budget from
+                # not-ready-yet. Overwritten each tick — always current.
+                if defer_reasons is not None:
+                    defer_reasons[task.id] = f"blocked-by-budget:{route.backend}"
             return False
+        # If we DID pass the gate this tick, clear any stale deferral marker
+        # so `orch status` reflects the fresh state on the next look.
+        if defer_reasons is not None:
+            defer_reasons.pop(task.id, None)
 
     # ---- semaphore acquisition (non-blocking) -------------------------
     if not psem[route.backend].try_acquire():
@@ -1303,6 +1379,7 @@ def _refill(
     use_task_locks: bool = False,
     only: str | None = None,
     budget_gate: BudgetGate | None = None,
+    defer_reasons: dict[str, str] | None = None,
 ) -> int:
     """Try to dispatch as many ready tasks as capacity allows.
 
@@ -1352,6 +1429,7 @@ def _refill(
                 queue,
                 use_task_locks=use_task_locks,
                 budget_gate=budget_gate,
+                defer_reasons=defer_reasons,
             )
             if ok:
                 dispatched_count += 1
@@ -1423,6 +1501,7 @@ def _refill(
             queue,
             use_task_locks=use_task_locks,
             budget_gate=budget_gate,
+            defer_reasons=defer_reasons,
         )
         if ok:
             dispatched_count += 1
@@ -1478,6 +1557,37 @@ def _read_log_safely(path: str | Path) -> str:
         return ""
 
 
+def _extract_usage_from_reason(reason: str) -> tuple[int, int]:
+    """Parse `(tokens_used, token_budget)` out of the budget gate's reason string.
+
+    The reason string produced by `BudgetGate.can_dispatch` looks like:
+        "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+
+    We yank the first two comma-formatted integers as `(used, budget)` from
+    that pattern. Returns `(0, 0)` on any parse failure — the caller falls
+    back to `"?"` in the log line rather than crashing.
+    """
+    if not reason:
+        return 0, 0
+    # First integer: `tokens_used`. Third integer (after "of"): `token_budget`.
+    matches = re.findall(r"([\d,]+)", reason)
+    used = 0
+    budget_val = 0
+    if matches:
+        try:
+            used = int(matches[0].replace(",", ""))
+        except ValueError:
+            used = 0
+    # The `token_budget` is the last number in the parenthesized "of NNN" tail.
+    m = re.search(r"of\s+([\d,]+)", reason)
+    if m:
+        try:
+            budget_val = int(m.group(1).replace(",", ""))
+        except ValueError:
+            budget_val = 0
+    return used, budget_val
+
+
 def _completed_dep_tasks(queue: TaskQueue, task: Task) -> list[Task]:
     """Look up the completed dep Tasks for prompt rendering.
 
@@ -1528,6 +1638,7 @@ def _record_spend(
                 tokens_out=int(result.tokens_out or 0),
                 cost_usd=float(result.cost_usd or 0.0),
                 duration_s=float(duration_s),
+                estimated=bool(getattr(result, "estimated", False)),
             )
         )
     except Exception as exc:  # noqa: BLE001 — spend logging is best-effort
@@ -1548,7 +1659,7 @@ def _run_atomize_subcommand(argv: list[str]) -> int:
     return atomize_main(argv)
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard")
+_SUBCOMMANDS = ("init", "atomize", "dashboard", "reset", "stop")
 
 
 def _print_subcommand_list() -> int:
@@ -1560,6 +1671,8 @@ def _print_subcommand_list() -> int:
     print("  orch init PATH [FLAGS]    Scaffold a new orch project at PATH")
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
+    print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
+    print("  orch stop [FLAGS]         Signal a running orch to drain and exit")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -1604,6 +1717,243 @@ def _run_init_subcommand(argv: list[str]) -> int:
         sdd=args.sdd,
         project_name=args.project_name,
     )
+
+
+def _run_reset_subcommand(argv: list[str]) -> int:
+    """Handle `orch reset [--requeue] [--only GLOB] [--project-root PATH]`.
+
+    Sprint A / Issue #7: manual escape hatch for stuck in-progress tasks.
+
+    Modes:
+        (default)   dry-run — print what WOULD be reverted; touches nothing.
+        --requeue   nuclear — revert ALL in-progress tasks to todo (respects
+                    --only if set). No PID check; assumes the operator KNOWS
+                    the tasks are stuck.
+        --only GLOB restrict by fnmatch on task-id (both dry-run and requeue).
+
+    Returns 0 on success (even when dry-run finds zero candidates), 1 on I/O
+    error, 2 on invalid project layout (same as main-loop exit conventions).
+    """
+    import fnmatch as _fnmatch
+
+    p = argparse.ArgumentParser(
+        prog="orch reset",
+        description=(
+            "Revert stuck in-progress tasks to todo. Dry-run by default; "
+            "pass --requeue to actually mutate tasks.json."
+        ),
+    )
+    p.add_argument(
+        "--requeue",
+        action="store_true",
+        help="Actually revert (default is dry-run — print candidates only).",
+    )
+    p.add_argument(
+        "--only",
+        default=None,
+        metavar="GLOB",
+        help="Restrict to task ids matching this fnmatch glob.",
+    )
+    p.add_argument(
+        "--project-root",
+        default=None,
+        metavar="PATH",
+        help="Project root. Env fallback: ORCH_PROJECT_ROOT. Default: cwd.",
+    )
+    p.add_argument(
+        "--project-id",
+        default=None,
+        metavar="ID",
+        help="Project id override. Env fallback: ORCH_PROJECT_ID.",
+    )
+    p.add_argument(
+        "--config",
+        default="orchestrator/config.yaml",
+        help="Path to config.yaml (default: orchestrator/config.yaml)",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        paths = resolve_project_paths(
+            project_root_arg=args.project_root,
+            project_id_arg=args.project_id,
+            config_arg=args.config,
+        )
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    # Read tasks.json fresh — read-only.
+    try:
+        with open(paths.tasks_json, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"could not read {paths.tasks_json}: {exc}", file=sys.stderr)
+        return 1
+
+    rows = raw.get("tasks") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        print(f"malformed tasks.json at {paths.tasks_json}", file=sys.stderr)
+        return 1
+
+    candidates: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") != "in-progress":
+            continue
+        tid = row.get("id")
+        if not isinstance(tid, str):
+            continue
+        if args.only and not _fnmatch.fnmatchcase(tid, args.only):
+            continue
+        candidates.append(tid)
+
+    if not candidates:
+        print("no in-progress tasks to reset.")
+        return 0
+
+    if not args.requeue:
+        # Dry-run mode — print candidates, exit 0.
+        print(f"would revert {len(candidates)} in-progress task(s) to todo:")
+        for tid in candidates:
+            print(f"  - {tid}")
+        print("\nRe-run with --requeue to actually mutate tasks.json.")
+        return 0
+
+    # Actual mutation — via call_task_reset (script preferred, fallback fine).
+    from orchestrator.state import call_task_reset
+
+    reverted: list[str] = []
+    for tid in candidates:
+        try:
+            if call_task_reset(tid, project_root=paths.project_root, author="orch-reset"):
+                reverted.append(tid)
+        except Exception as exc:  # noqa: BLE001
+            print(f"reset failed for {tid}: {exc}", file=sys.stderr)
+
+    print(f"reverted {len(reverted)} task(s) to todo:")
+    for tid in reverted:
+        print(f"  - {tid}")
+    return 0
+
+
+def _run_stop_subcommand(argv: list[str]) -> int:
+    """Handle `orch stop [--project-root PATH] [--grace SECONDS]`.
+
+    Sprint A / Issue #12: locate the newest running orch instance for the
+    project (via `state/run-*.json` -> parent_pid) and send it SIGTERM so
+    it drains cleanly. If the process doesn't exit within the grace window
+    we exit with 1 (operator decides whether to escalate — we don't
+    SIGKILL from here).
+
+    Exit codes:
+        0 — orch was signaled and exited within grace.
+        1 — no running orch found for the project OR still alive after grace.
+        2 — invalid project layout.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch stop",
+        description=(
+            "Send SIGTERM to the running orch for a project and wait for it "
+            "to drain. Does NOT SIGKILL — operator decides if force is needed."
+        ),
+    )
+    p.add_argument(
+        "--project-root",
+        default=None,
+        metavar="PATH",
+        help="Project root. Env fallback: ORCH_PROJECT_ROOT. Default: cwd.",
+    )
+    p.add_argument(
+        "--project-id",
+        default=None,
+        metavar="ID",
+        help="Project id override. Env fallback: ORCH_PROJECT_ID.",
+    )
+    p.add_argument(
+        "--config",
+        default="orchestrator/config.yaml",
+        help="Path to config.yaml (default: orchestrator/config.yaml)",
+    )
+    p.add_argument(
+        "--grace",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="Seconds to wait for orch to exit after SIGTERM (default: 30).",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        paths = resolve_project_paths(
+            project_root_arg=args.project_root,
+            project_id_arg=args.project_id,
+            config_arg=args.config,
+        )
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    # Find the newest run file that reports a live parent_pid.
+    state_dir = paths.state_dir
+    candidates: list[tuple[float, int, Path]] = []
+    for run_path in state_dir.glob("run-*.json"):
+        if run_path.suffix != ".json":
+            continue
+        try:
+            with open(run_path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        pid = int(raw.get("parent_pid", 0) or 0)
+        if pid <= 0:
+            continue
+        # Alive check via os.kill(pid, 0).
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            # ProcessLookupError → dead; PermissionError → foreign, skip.
+            continue
+        except OSError:
+            continue
+        candidates.append((run_path.stat().st_mtime, pid, run_path))
+
+    if not candidates:
+        print("no running orch found for this project.", file=sys.stderr)
+        return 1
+
+    candidates.sort(reverse=True)  # newest first
+    _, target_pid, run_path = candidates[0]
+    print(f"signaling orch pid={target_pid} (run={run_path.name})...")
+    try:
+        os.kill(target_pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError) as exc:
+        print(f"could not signal pid {target_pid}: {exc}", file=sys.stderr)
+        return 1
+
+    # Wait for exit within grace window.
+    deadline = time.monotonic() + max(0.1, args.grace)
+    while time.monotonic() < deadline:
+        try:
+            os.kill(target_pid, 0)
+        except ProcessLookupError:
+            print(f"orch pid={target_pid} exited cleanly.")
+            return 0
+        except (PermissionError, OSError):
+            # Foreign / can't probe — assume exit and return success.
+            print(f"orch pid={target_pid} no longer signalable (assumed exited).")
+            return 0
+        time.sleep(0.2)
+
+    print(
+        f"orch pid={target_pid} still alive after {args.grace:.0f}s grace. "
+        "Send SIGKILL manually if needed (`kill -9 {pid}`).",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _run_dashboard_subcommand(argv: list[str]) -> int:
@@ -1667,6 +2017,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_init_subcommand(incoming[1:])
     if incoming and incoming[0] == "atomize":
         return _run_atomize_subcommand(incoming[1:])
+    if incoming and incoming[0] == "reset":
+        return _run_reset_subcommand(incoming[1:])
+    if incoming and incoming[0] == "stop":
+        return _run_stop_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
@@ -1798,13 +2152,23 @@ def main(argv: list[str] | None = None) -> int:
     # otherwise appear "live" in the dashboard forever. Sweep them once at
     # startup so we begin from a clean slate; the main loop below repeats
     # the sweep periodically. Never raises past its own boundary.
-    reap_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+    reap_report = reconcile_in_flight(
+        state_dir,
+        project_id=paths.project_id,
+        project_root=paths.project_root,
+    )
     if reap_report.get("reconciled"):
         log.info(
             "startup reconcile: reaped %d orphan(s) from %d in-flight entry(ies): %s",
             len(reap_report["reconciled"]),
             reap_report.get("checked", 0),
             reap_report["reconciled"],
+        )
+    if reap_report.get("reset"):
+        log.info(
+            "startup reconcile: reverted %d task(s) to todo: %s",
+            len(reap_report["reset"]),
+            reap_report["reset"],
         )
 
     # ---- (7) run-file (new or resumed) -----------------------------------
@@ -1820,7 +2184,11 @@ def main(argv: list[str] | None = None) -> int:
             run_file = RunFile.load(run_path)
         else:
             run_id = str(uuid.uuid4())
-            run_file = RunFile.create(state_dir, run_id=run_id, mode=args.mode)
+            # Sprint A / Issue #12: record our PID so `orch stop` can locate
+            # this run later.
+            run_file = RunFile.create(
+                state_dir, run_id=run_id, mode=args.mode, parent_pid=os.getpid()
+            )
 
         if lock_fd is not None:
             write_lock_holder(lock_fd, run_id=run_id, pid=os.getpid())
@@ -1883,6 +2251,11 @@ def main(argv: list[str] | None = None) -> int:
         task_costs: dict[str, float] = {}
         drain = _DrainFlag()
         deferred: set[str] = set()
+        # Sprint A / Issue #11: in-memory map of task_id → defer reason
+        # (currently only "blocked-by-budget:<provider>"). Populated by
+        # `_spawn_one` when the budget gate blocks; consumed by future
+        # `orch status` reporting. Purely runtime — never persisted.
+        defer_reasons: dict[str, str] = {}
         gate: SemiModeGate | None = (
             SemiModeGate(router) if args.mode == "semi" else None
         )
@@ -1938,6 +2311,7 @@ def main(argv: list[str] | None = None) -> int:
                     use_task_locks=args.task_locks,
                     only=args.only,
                     budget_gate=budget_gate,
+                    defer_reasons=defer_reasons,
                 )
 
             # Sprint 7 — sleep-until-reset when every provider is capped.
@@ -1985,7 +2359,11 @@ def main(argv: list[str] | None = None) -> int:
             now_mono = time.monotonic()
             if now_mono - last_reconcile_ts >= _RECONCILE_INTERVAL_SEC:
                 last_reconcile_ts = now_mono
-                tick_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+                tick_report = reconcile_in_flight(
+                    state_dir,
+                    project_id=paths.project_id,
+                    project_root=paths.project_root,
+                )
                 if tick_report.get("reconciled"):
                     log.info(
                         "tick reconcile: reaped %d orphan(s): %s",

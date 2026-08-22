@@ -44,5 +44,10 @@ spec_root: specs
 # (backwards-compat: everything works exactly like pre-Sprint 7).
 # `budgets_preset` picks which preset inside that file to use. Overridable
 # with `--budgets-preset` on the CLI or `ORCH_BUDGETS_PRESET` env var.
+# `typical_dispatch_tokens` is the estimated tokens spent on ONE dispatch —
+# used at startup for preset sanity: if any provider's `token_budget` is
+# < 2 * typical, orch prints a WARN because dispatches will serialize inside
+# the budget window (see budget.warn_undersized_presets).
 budgets_config: budgets.yaml
 budgets_preset: conservative
+typical_dispatch_tokens: 200000

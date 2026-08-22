@@ -21,7 +21,10 @@ from orchestrator.budget import (
     BudgetConfig,
     BudgetGate,
     ProviderBudget,
+    _format_reset_eta,
+    _format_tokens_short,
     load_budget_config,
+    warn_undersized_presets,
 )
 from orchestrator.models import SpendEntry
 from orchestrator.state import SpendLog
@@ -349,3 +352,92 @@ def test_disabled_gate_never_blocks(tmp_path: Path) -> None:
     assert reason is None
     assert gate.all_capped() is False
     assert gate.snapshot() == {}
+
+
+# ---- Sprint A / Issue #11: formatting helpers ---------------------------
+
+
+def test_format_tokens_short() -> None:
+    assert _format_tokens_short(0) == "0"
+    assert _format_tokens_short(400) == "400"
+    assert _format_tokens_short(1_500) == "1.5k"
+    assert _format_tokens_short(400_000) == "400k"
+    assert _format_tokens_short(2_000_000) == "2m"
+    assert _format_tokens_short(2_500_000) == "2.5m"
+
+
+def test_format_reset_eta_hours_and_minutes() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
+    reset = now + timedelta(hours=2, minutes=14)
+    assert _format_reset_eta(reset, now=now) == "2h 14m"
+
+
+def test_format_reset_eta_minutes_only() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
+    reset = now + timedelta(minutes=45)
+    assert _format_reset_eta(reset, now=now) == "45m"
+
+
+def test_format_reset_eta_none_returns_placeholder() -> None:
+    assert _format_reset_eta(None) == "?"
+
+
+def test_format_reset_eta_past_returns_now() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
+    reset = now - timedelta(minutes=5)
+    assert _format_reset_eta(reset, now=now) == "now"
+
+
+# ---- Sprint A / Issue #11: preset sanity --------------------------------
+
+
+def test_preset_sanity_warns_when_window_too_small(caplog) -> None:
+    """A provider whose token_budget < 2 * typical_dispatch must warn."""
+    cfg = BudgetConfig(providers={
+        "codex": ProviderBudget(
+            window_hours=3, token_budget=100_000, threshold_pct=60
+        ),
+    })
+    with caplog.at_level("WARNING"):
+        warnings = warn_undersized_presets(
+            cfg, preset_name="test", typical_dispatch_tokens=200_000
+        )
+    assert len(warnings) == 1
+    assert "codex" in warnings[0]
+    assert "100k" in warnings[0]
+    assert "200k" in warnings[0]
+    assert "serialize" in warnings[0]
+
+
+def test_preset_sanity_no_warn_when_window_ok(caplog) -> None:
+    """When token_budget >= 2 * typical_dispatch, no warning is emitted."""
+    cfg = BudgetConfig(providers={
+        "claude": ProviderBudget(
+            window_hours=5, token_budget=800_000, threshold_pct=60
+        ),
+    })
+    with caplog.at_level("WARNING"):
+        warnings = warn_undersized_presets(
+            cfg, preset_name="conservative", typical_dispatch_tokens=200_000
+        )
+    assert warnings == []
+
+
+def test_preset_sanity_disabled_gate_no_warn() -> None:
+    """A None config short-circuits (gate disabled)."""
+    assert warn_undersized_presets(None, preset_name="x", typical_dispatch_tokens=1) == []
+
+
+def test_preset_sanity_warns_per_provider() -> None:
+    """Each undersized provider gets its own warning line."""
+    cfg = BudgetConfig(providers={
+        "codex": ProviderBudget(3, 100_000, 60),
+        "claude": ProviderBudget(5, 800_000, 60),  # OK
+        "opencode": ProviderBudget(24, 200_000, 70),  # undersized
+    })
+    warnings = warn_undersized_presets(
+        cfg, preset_name="mixed", typical_dispatch_tokens=200_000
+    )
+    assert len(warnings) == 2
+    provider_names = {w.split("'")[3] for w in warnings}  # extract 'codex'/'opencode'
+    assert provider_names == {"codex", "opencode"}

@@ -90,6 +90,11 @@ class DispatchResult:
     # loop reads this flag to decide whether to swap in `route.fallback_cli_model`
     # before retrying instead of blocking.
     should_retry_with_fallback: bool = False
+    # Sprint A / Issue #8: True when the backend produced step_finish events
+    # but never populated usage (tokens_in/out both 0). The main loop
+    # propagates this to the spend row so downstream reporting/dashboards can
+    # distinguish real zero-cost dispatches from missing telemetry.
+    estimated: bool = False
 
 
 # ---- Utilities -----------------------------------------------------------
@@ -442,6 +447,13 @@ def _spawn_generic(
             cwd=str(cwd),
             env=env,
             close_fds=True,
+            # Sprint A / Issue #12: each child becomes its own session leader
+            # (and process-group leader). Cleanup on SIGINT / SIGTERM / timeout
+            # can then use `os.killpg(os.getpgid(pid), sig)` to catch not just
+            # the CLI but any bash wrappers or sub-agents it forked. Without
+            # this, killing the CLI could leave grandchildren orphaned in the
+            # user's login session.
+            start_new_session=True,
         )
     except (FileNotFoundError, OSError):
         # Clean up handles before re-raising so we don't leak.
@@ -467,10 +479,39 @@ def _spawn_generic(
     return dispatch
 
 
+def _signal_child_group(popen: subprocess.Popen, sig: int) -> None:
+    """Send `sig` to the child's process group; fall back to the direct pid.
+
+    Sprint A / Issue #12: mirrors `orch._killpg_or_pid` but scoped to a
+    single Popen. Kept in dispatcher.py so `_wait_with_timeout` doesn't
+    have to import from orch.py (would create a circular import).
+    """
+    pid = popen.pid
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            popen.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+        return
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            popen.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def _wait_with_timeout(dispatch: Dispatch, timeout_s: float) -> tuple[int, str, bool]:
     """Wait for the child, enforcing SIGTERM → grace → SIGKILL on timeout.
 
     Returns `(exit_code, error_message_or_empty, timed_out)`.
+
+    Sprint A / Issue #12: uses process-group signals (killpg) so bash
+    wrappers or sub-agents forked by the CLI get reaped too, not just
+    the direct child.
     """
     popen: subprocess.Popen = dispatch._popen  # type: ignore[attr-defined]
     timed_out = False
@@ -480,19 +521,13 @@ def _wait_with_timeout(dispatch: Dispatch, timeout_s: float) -> tuple[int, str, 
     except subprocess.TimeoutExpired:
         timed_out = True
         err_msg = f"orchestrator timeout after {timeout_s:.0f}s"
-        # SIGTERM first — polite request.
-        try:
-            popen.send_signal(signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
+        # SIGTERM to the whole process group first — polite request.
+        _signal_child_group(popen, signal.SIGTERM)
         try:
             exit_code = popen.wait(timeout=_TERM_TO_KILL_GRACE_S)
         except subprocess.TimeoutExpired:
-            # Grace expired — SIGKILL and reap unconditionally.
-            try:
-                popen.kill()
-            except (ProcessLookupError, OSError):
-                pass
+            # Grace expired — SIGKILL the group and reap unconditionally.
+            _signal_child_group(popen, signal.SIGKILL)
             try:
                 exit_code = popen.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
@@ -842,12 +877,18 @@ class OpencodeBackend:
             cwd,
             session_id="",  # opencode issues its own session id in the JSONL
             output_path="",  # JSONL is streamed to stdout → captured in log_path
+            # Stash cli_model on the Dispatch so parse_result can key the
+            # once-per-model "no usage reported" warning by (backend, model).
+            extra={"cli_model": route.cli_model},
         )
 
     def wait_result(self, dispatch: Dispatch, timeout_s: float) -> DispatchResult:
         exit_code, err_msg, timed_out = _wait_with_timeout(dispatch, timeout_s)
         log_text = _read_log(dispatch.log_path)
-        result = self.parse_result(exit_code, log_text)
+        # Pass along the cli_model (stashed in `Dispatch.extra` during spawn) so
+        # the "no usage reported" warning fires once per (backend, model).
+        extra = getattr(dispatch, "extra", None) or {}
+        result = self.parse_result(exit_code, log_text, extra=extra)
         if timed_out:
             result.success = False
             result.error_message = err_msg
@@ -859,15 +900,29 @@ class OpencodeBackend:
         events = list(_iter_jsonl_events(log_text))
         has_error = any(e.get("type") == "error" for e in events)
         # Terminal predicate: last step_finish must NOT have a failure reason.
+        # Real opencode 1.18.19 wraps `reason` inside `part.reason`; the shared
+        # `_step_finish_payload` helper tolerates both layouts.
         terminal_ok = False
         terminal_reason: str | None = None
         for ev in reversed(events):
             if ev.get("type") == "step_finish":
-                terminal_reason = ev.get("reason") or ""
+                payload = _step_finish_payload(ev)
+                terminal_reason = payload.get("reason") or ""
                 terminal_ok = terminal_reason not in _OPENCODE_FAILURE_REASONS
                 break
         success = (exit_code == 0) and (not has_error) and terminal_ok
         cost_usd, tokens_in, tokens_out = _sum_step_finish_costs(events)
+        # Sprint A / Issue #8: if opencode produced step_finish events but never
+        # populated usage (both token counts zero), warn once and mark the row
+        # estimated so downstream code can distinguish "no work" from "no
+        # telemetry".
+        estimated = False
+        if _has_any_step_finish(events) and tokens_in == 0 and tokens_out == 0:
+            estimated = True
+            model = ""
+            if extra and isinstance(extra, dict):
+                model = str(extra.get("cli_model") or "")
+            _warn_usage_missing_once(self.name, model)
         error_message: str | None = None
         if not success:
             err_ev = next((e for e in events if e.get("type") == "error"), None)
@@ -899,6 +954,7 @@ class OpencodeBackend:
             stdout=log_text,
             stderr="",
             error_message=error_message,
+            estimated=estimated,
         )
 
     def extract_cost(self, log_text: str) -> tuple[float, int, int]:
@@ -908,11 +964,46 @@ class OpencodeBackend:
 # ---- Shared helpers ------------------------------------------------------
 
 
+# Tracks (backend_name, cli_model) pairs we've already warned about not
+# reporting usage. Prevents log spam: one warning per (backend, model) per
+# process run. Cleared on module reload / process restart.
+_USAGE_MISSING_WARNED: set[tuple[str, str]] = set()
+
+
+def _step_finish_payload(ev: dict[str, Any]) -> dict[str, Any]:
+    """Return the payload dict for a step_finish event, tolerating schema drift.
+
+    Real opencode 1.18.19 wraps the fields (`cost`, `tokens`, `reason`) inside
+    an inner `part` dict:
+        {"type":"step_finish", "part": {"cost": 0.003, "tokens": {...}, "reason": "stop"}}
+
+    Older/aspirational fixtures put them at the top level:
+        {"type":"step_finish", "cost": 0.003, "tokens": {...}, "reason": "stop"}
+
+    This helper returns whichever level has the payload keys, preferring `part`
+    (real opencode) when both exist. Falls back to the event itself so the
+    legacy shape keeps working.
+    """
+    part = ev.get("part")
+    if isinstance(part, dict) and (
+        "cost" in part or "tokens" in part or "reason" in part
+    ):
+        return part
+    return ev
+
+
 def _sum_step_finish_costs(events: list[dict[str, Any]]) -> tuple[float, int, int]:
     """Sum `step_finish.cost` and token counts across every step_finish event.
 
-    Used by both codex and opencode — their JSONL shape for `step_finish` is
-    identical per `explore.md §1` (cost, tokens.{input,output,cache}).
+    Used by both codex and opencode. Real opencode 1.18.19 wraps the payload
+    under `part` (`part.cost`, `part.tokens.{input,output}`); older/test
+    fixtures put those fields at the top level. `_step_finish_payload` picks
+    the right layer so we never silently return 0.
+
+    Some model providers via opencode may not emit token usage at all — in
+    that case this returns 0s and the caller should treat the spend as
+    estimated (see `OpencodeBackend.parse_result` which sets the `estimated`
+    flag on the `DispatchResult`).
     """
     cost = 0.0
     tokens_in = 0
@@ -920,11 +1011,12 @@ def _sum_step_finish_costs(events: list[dict[str, Any]]) -> tuple[float, int, in
     for ev in events:
         if ev.get("type") != "step_finish":
             continue
+        payload = _step_finish_payload(ev)
         try:
-            cost += float(ev.get("cost", 0.0) or 0.0)
+            cost += float(payload.get("cost", 0.0) or 0.0)
         except (TypeError, ValueError):
             pass
-        tokens = ev.get("tokens") or {}
+        tokens = payload.get("tokens") or {}
         if isinstance(tokens, dict):
             try:
                 tokens_in += int(tokens.get("input", 0) or 0)
@@ -935,6 +1027,30 @@ def _sum_step_finish_costs(events: list[dict[str, Any]]) -> tuple[float, int, in
             except (TypeError, ValueError):
                 pass
     return cost, tokens_in, tokens_out
+
+
+def _has_any_step_finish(events: list[dict[str, Any]]) -> bool:
+    """True when at least one `step_finish` event exists in the stream."""
+    return any(ev.get("type") == "step_finish" for ev in events)
+
+
+def _warn_usage_missing_once(backend_name: str, cli_model: str) -> None:
+    """Emit one warning per (backend, model) when usage numbers are all zero.
+
+    Some opencode providers (older models, some free-tier passthroughs) don't
+    populate `tokens.{input,output}` on `step_finish`. Silently accepting
+    that as `0 tokens` breaks budget guardrails and hides real spend. We warn
+    the operator and mark the spend row `estimated: true` upstream.
+    """
+    key = (backend_name, cli_model or "unknown")
+    if key in _USAGE_MISSING_WARNED:
+        return
+    _USAGE_MISSING_WARNED.add(key)
+    log.warning(
+        "WARN: %s/%s does not report usage — spend will be estimated (tokens=0)",
+        backend_name,
+        cli_model or "unknown",
+    )
 
 
 # Codex a veces emite item.type=="error" para warnings no-fatales (ej. contexto

@@ -19,6 +19,8 @@ either use `echo` / `sleep` (present on macOS + Linux) or drive the pure
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -223,6 +225,176 @@ def test_sum_step_finish_costs_ignores_non_step_events() -> None:
     assert cost == pytest.approx(0.75)
     assert tin == 15
     assert tout == 4
+
+
+# ---- Regression: Issue #8 — real opencode 1.18.19 schema ---------------
+
+
+def test_sum_step_finish_costs_reads_real_opencode_part_wrapped_payload() -> None:
+    """Regression for Issue #8.
+
+    Real opencode 1.18.19 wraps `cost`, `tokens`, `reason` under `part`:
+        {"type":"step_finish","part":{"cost":0.003,"tokens":{"input":100,"output":20},"reason":"stop"}}
+    The old parser looked at TOP-LEVEL `cost`/`tokens` and silently returned 0
+    because the real payload was nested. Defends against that regression.
+    """
+    events = [
+        {
+            "type": "step_finish",
+            "part": {
+                "type": "step-finish",
+                "reason": "stop",
+                "tokens": {"input": 100, "output": 20, "total": 120},
+                "cost": 0.003,
+            },
+        },
+        {
+            "type": "step_finish",
+            "part": {
+                "type": "step-finish",
+                "reason": "tool_call",
+                "tokens": {"input": 50, "output": 5},
+                "cost": 0.001,
+            },
+        },
+    ]
+    cost, tin, tout = _sum_step_finish_costs(events)
+    assert cost == pytest.approx(0.004)
+    assert tin == 150
+    assert tout == 25
+
+
+def test_opencode_real_fixture_reports_nonzero_tokens_and_cost() -> None:
+    """Regression for Issue #8: the shipped fixture must exercise real schema.
+
+    Guards against the fixture drifting back to the aspirational top-level
+    layout (which silently zeroed spend telemetry in production).
+    """
+    backend = OpencodeBackend()
+    text = (FIXTURES / "opencode_success.jsonl").read_text()
+    res = backend.parse_result(exit_code=0, log_text=text)
+    assert res.success is True, res.error_message
+    assert res.tokens_in > 0, "opencode fixture must report input tokens"
+    assert res.tokens_out > 0, "opencode fixture must report output tokens"
+    assert res.cost_usd > 0.0, "opencode fixture must report cost"
+    # Not estimated — usage IS present in the real fixture.
+    assert getattr(res, "estimated", False) is False
+
+
+def test_opencode_marks_estimated_when_usage_is_missing() -> None:
+    """When opencode emits step_finish events with NO usage numbers, the
+    DispatchResult must be flagged `estimated=True` so downstream reporting
+    can distinguish missing telemetry from real zero-cost work.
+    """
+    # Real-shape step_finish but with empty tokens object → provider not
+    # emitting usage.
+    log_text = "\n".join([
+        '{"type":"step_finish","part":{"type":"step-finish","reason":"stop","tokens":{"input":0,"output":0}}}',
+    ])
+    backend = OpencodeBackend()
+    res = backend.parse_result(
+        exit_code=0, log_text=log_text, extra={"cli_model": "some/model"}
+    )
+    assert res.success is True
+    assert res.tokens_in == 0
+    assert res.tokens_out == 0
+    assert res.estimated is True
+
+
+def test_opencode_no_events_is_not_marked_estimated() -> None:
+    """When there are no step_finish events at all (empty stream, crash before
+    first step), the estimated flag stays False — the row is a genuine zero,
+    not a telemetry gap."""
+    backend = OpencodeBackend()
+    res = backend.parse_result(exit_code=0, log_text="")
+    # No events → failure (no terminal event), but estimated stays False.
+    assert res.estimated is False
+
+
+# ---- Sprint A / Issue #12: children spawn in new session ---------------
+
+
+def test_children_spawn_in_new_session(tmp_path: Path) -> None:
+    """Every child must be its own session leader (== process group leader)
+    so cleanup can `killpg` the whole tree, not just the direct child."""
+    task = _mk_task()
+    route = _mk_route()
+    prompt = _write_prompt(tmp_path, body="hello\n")
+    log_path = tmp_path / "state" / "logs" / "B-020.log"
+
+    class _SleepBackend(ClaudeBackend):
+        """Runs a sleep so we can inspect the pgid before it exits."""
+
+        def build_cmd(self, task, route):  # type: ignore[override]
+            return ["sleep", "1"]
+
+    backend = _SleepBackend()
+    dispatch = backend.spawn(
+        task=task,
+        route=route,
+        prompt_path=prompt,
+        log_path=log_path,
+        cwd=tmp_path,
+    )
+    try:
+        pgid_child = os.getpgid(dispatch.pid)
+        pgid_parent = os.getpgid(os.getpid())
+        # Child MUST be in its own process group (its pgid == its pid).
+        assert pgid_child == dispatch.pid
+        # And that group MUST be different from the test-runner's group.
+        assert pgid_child != pgid_parent
+    finally:
+        # Reap.
+        popen = dispatch._popen  # type: ignore[attr-defined]
+        try:
+            popen.terminate()
+            popen.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+        for fh in dispatch._fhs:  # type: ignore[attr-defined]
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
+def test_killpg_reaps_grandchildren(tmp_path: Path) -> None:
+    """The SIGTERM/SIGKILL path uses `killpg` so children spawned by the
+    child (e.g. bash wrappers) also die. Sanity check: spawn `sh -c 'sleep 10'`,
+    send SIGTERM to the group, both processes must be gone quickly."""
+    task = _mk_task()
+    route = _mk_route()
+    prompt = _write_prompt(tmp_path, body="\n")
+    log_path = tmp_path / "state" / "logs" / "B-021.log"
+
+    class _ShellBackend(ClaudeBackend):
+        def build_cmd(self, task, route):  # type: ignore[override]
+            # `sh -c 'sleep 10'` → sh is child, sleep is grandchild.
+            return ["sh", "-c", "sleep 10"]
+
+    backend = _ShellBackend()
+    dispatch = backend.spawn(
+        task=task,
+        route=route,
+        prompt_path=prompt,
+        log_path=log_path,
+        cwd=tmp_path,
+    )
+    popen = dispatch._popen  # type: ignore[attr-defined]
+    try:
+        pgid = os.getpgid(popen.pid)
+        # SIGTERM the whole group.
+        os.killpg(pgid, signal.SIGTERM)
+        # Wait briefly — sh should propagate the signal.
+        exit_code = popen.wait(timeout=5)
+        # sh dies from SIGTERM (or 143 = 128+15).
+        assert exit_code in (-signal.SIGTERM, 143, 0)
+    finally:
+        for fh in dispatch._fhs:  # type: ignore[attr-defined]
+            try:
+                fh.close()
+            except OSError:
+                pass
 
 
 # ---- build_cmd snapshots ------------------------------------------------

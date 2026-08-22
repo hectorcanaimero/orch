@@ -32,11 +32,14 @@ from orchestrator.state import (
     RunFile,
     SpendLog,
     _atomic_write,
+    _reset_task_in_place,
     acquire_flock,
     call_task_block,
     call_task_finish,
+    call_task_reset,
     call_task_start,
     load_tasks,
+    reconcile_in_flight,
     reconcile_run,
     write_lock_holder,
 )
@@ -516,3 +519,181 @@ def test_atomic_write_creates_parent_dirs(tmp_path: Path) -> None:
     target = tmp_path / "deep" / "nested" / "file.json"
     _atomic_write(target, b'{"ok":true}')
     assert target.read_bytes() == b'{"ok":true}'
+
+
+# ---- Sprint A / Issue #7: stuck in-progress recovery -------------------
+
+
+def _write_tasks_json(root: Path, rows: list[dict]) -> Path:
+    """Write a `tasks.json` with the given rows and return its path."""
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "tasks.json"
+    path.write_text(
+        json.dumps({"meta": {}, "phases": [], "tasks": rows}, indent=2),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_reset_task_in_place_reverts_in_progress_to_todo(tmp_path: Path) -> None:
+    """`_reset_task_in_place` (Python fallback) reverts one task."""
+    path = _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T2", "phase": 0, "title": "t", "model": "m", "status": "todo", "comments": []},
+    ])
+    assert _reset_task_in_place(path, "F0.5.T1") is True
+    reloaded = json.loads(path.read_text())
+    row = next(r for r in reloaded["tasks"] if r["id"] == "F0.5.T1")
+    assert row["status"] == "todo"
+    # Audit comment appended.
+    assert any("reset from in-progress" in c["body"] for c in row["comments"])
+    # Other task untouched.
+    other = next(r for r in reloaded["tasks"] if r["id"] == "F0.5.T2")
+    assert other["status"] == "todo"
+
+
+def test_reset_task_in_place_noop_when_not_in_progress(tmp_path: Path) -> None:
+    """Resetting a `todo`/`done` task is a no-op returning False."""
+    path = _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "done", "comments": []},
+    ])
+    assert _reset_task_in_place(path, "F0.5.T1") is False
+    row = json.loads(path.read_text())["tasks"][0]
+    assert row["status"] == "done"  # untouched
+
+
+def test_call_task_reset_prefers_shell_script_when_present(tmp_path: Path) -> None:
+    """When `scripts/task-reset.sh` exists, it is invoked instead of the fallback."""
+    _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+    ])
+    (tmp_path / "scripts").mkdir()
+    for name in ("task-start.sh", "task-finish.sh", "task-block.sh", "task-reset.sh"):
+        script = tmp_path / "scripts" / name
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+
+    fake = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch("orchestrator.state.subprocess.run", return_value=fake) as m:
+        result = call_task_reset("F0.5.T1", project_root=tmp_path)
+    assert result is True
+    # First positional arg is the argv list.
+    argv = m.call_args.args[0]
+    assert argv[:2] == ["scripts/task-reset.sh", "F0.5.T1"]
+
+
+def test_call_task_reset_falls_back_when_script_missing(tmp_path: Path) -> None:
+    """Legacy projects without task-reset.sh must still recover via the
+    Python fallback (in-place atomic rewrite)."""
+    path = _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+    ])
+    (tmp_path / "scripts").mkdir()
+    for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
+        script = tmp_path / "scripts" / name
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+    # NO task-reset.sh present.
+
+    assert call_task_reset("F0.5.T1", project_root=tmp_path) is True
+    reloaded = json.loads(path.read_text())
+    assert reloaded["tasks"][0]["status"] == "todo"
+
+
+def _make_run_file_with_stale_in_flight(
+    state_dir: Path, task_id: str, dead_pid: int
+) -> Path:
+    """Build a run-*.json where `task_id` has PID `dead_pid` in in_flight."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "test-run-orphan"
+    payload = {
+        "run_id": run_id,
+        "started_at": "2026-08-21T10:00:00Z",
+        "mode": "auto",
+        "in_flight": {
+            task_id: {
+                "task_id": task_id,
+                "backend": "opencode",
+                "pid": dead_pid,
+                "session_id": "s-1",
+                "started_at": "2026-08-21T10:00:00Z",
+                "prompt_path": "",
+                "log_path": "",
+                "output_path": "",
+                "attempt": 1,
+            }
+        },
+        "completed": [],
+        "blocked": [],
+        "deferred": [],
+    }
+    path = state_dir / f"run-{run_id}.json"
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def test_reconcile_reverts_in_progress_with_dead_pid(tmp_path: Path) -> None:
+    """Extended reconcile_in_flight (Issue #7) must ALSO revert tasks.json
+    when the PID is dead — not just the run-file's in_flight map."""
+    state_dir = tmp_path / "orchestrator" / "state"
+    _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=999999)
+    _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+    ])
+    (tmp_path / "scripts").mkdir()
+    for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
+        script = tmp_path / "scripts" / name
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+
+    # Force PID to be reported dead deterministically.
+    with patch("orchestrator.state.os.kill", side_effect=ProcessLookupError):
+        report = reconcile_in_flight(state_dir, project_root=tmp_path)
+
+    assert len(report["reconciled"]) == 1
+    assert report["reconciled"][0]["task_id"] == "F0.5.T1"
+    assert report["reset"] == ["F0.5.T1"]
+    # tasks.json now says todo.
+    reloaded = json.loads((tmp_path / "tasks.json").read_text())
+    assert reloaded["tasks"][0]["status"] == "todo"
+
+
+def test_reconcile_keeps_in_progress_with_alive_pid(tmp_path: Path) -> None:
+    """Live PID → no reconcile, tasks.json untouched."""
+    state_dir = tmp_path / "orchestrator" / "state"
+    _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=os.getpid())
+    _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+    ])
+
+    # No monkeypatching of os.kill — self PID IS alive.
+    report = reconcile_in_flight(state_dir, project_root=tmp_path)
+
+    assert report["reconciled"] == []
+    assert report["reset"] == []
+    reloaded = json.loads((tmp_path / "tasks.json").read_text())
+    assert reloaded["tasks"][0]["status"] == "in-progress"
+
+
+def test_reconcile_reverts_with_project_root_none_skips_tasks_json(
+    tmp_path: Path,
+) -> None:
+    """Backwards-compat: legacy call sites that don't pass project_root
+    still get the run-file reconcile but skip tasks.json (silently). This
+    preserves pre-Sprint-A behavior for tests / callers that don't know
+    the project root."""
+    state_dir = tmp_path / "orchestrator" / "state"
+    _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=999999)
+    _write_tasks_json(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
+    ])
+
+    with patch("orchestrator.state.os.kill", side_effect=ProcessLookupError):
+        report = reconcile_in_flight(state_dir)  # project_root omitted
+
+    # Run-file still reconciled (backwards-compat).
+    assert len(report["reconciled"]) == 1
+    # But tasks.json was NOT touched because project_root wasn't provided.
+    assert report["reset"] == []
+    reloaded = json.loads((tmp_path / "tasks.json").read_text())
+    assert reloaded["tasks"][0]["status"] == "in-progress"

@@ -323,7 +323,11 @@ def rebuild_index(state_dir: Path) -> None:
 # ---- Orphan reconciliation (dead in-flight PIDs) ------------------------
 
 
-def reconcile_in_flight(state_dir: Path, project_id: str | None = None) -> dict:
+def reconcile_in_flight(
+    state_dir: Path,
+    project_id: str | None = None,
+    project_root: Path | None = None,
+) -> dict:
     """Scan every `run-*.json` in `state_dir` for orphaned in-flight dispatches.
 
     A dispatch is "orphaned" when its recorded PID is no longer a live process
@@ -340,12 +344,21 @@ def reconcile_in_flight(state_dir: Path, project_id: str | None = None) -> dict:
         3. Append a synthetic `reconciled` line to the run's `events-*.jsonl`
            so the dashboard and audit trail see the transition.
         4. Persist the mutated run file via `_atomic_write`.
+        5. Sprint A / Issue #7: ALSO revert the task's `tasks.json` status
+           from `in-progress` back to `todo` (via `scripts/task-reset.sh` or
+           an atomic Python fallback for legacy projects). Without this the
+           task never becomes ready() again — `queue.ready()` filters
+           `status != "todo"` — and stays stuck across restarts. Requires
+           `project_root` to locate `tasks.json`; when None we skip the
+           tasks.json revert (backwards-compat with call sites that don't
+           know the project root).
 
     After all mutations we call `rebuild_index(state_dir)` once so the
     dashboard's `index.json` reflects the new `in_flight_count` / status.
 
     Returns a small dict for observability:
-        {"reconciled": [{"run_id", "task_id", "pid"}, ...], "checked": N}
+        {"reconciled": [{"run_id", "task_id", "pid"}, ...], "checked": N,
+         "reset": [task_id, ...]}
 
     Never raises past its own boundary — a broken reconciler must not crash
     the orchestrator loop it runs inside.
@@ -354,7 +367,7 @@ def reconcile_in_flight(state_dir: Path, project_id: str | None = None) -> dict:
     que las líneas `reconciled` traigan el tenant correcto. None es válido
     (retrocompat con call sites que aún no lo pasan).
     """
-    result: dict[str, Any] = {"reconciled": [], "checked": 0}
+    result: dict[str, Any] = {"reconciled": [], "checked": 0, "reset": []}
     try:
         state_dir = Path(state_dir)
         if not state_dir.exists():
@@ -449,6 +462,29 @@ def reconcile_in_flight(state_dir: Path, project_id: str | None = None) -> dict:
                     run_id,
                 )
 
+                # Sprint A / Issue #7: revert tasks.json status too, so the
+                # next tick's queue.ready() actually picks the task up.
+                # Skipped when project_root is None (legacy callers).
+                if project_root is not None:
+                    try:
+                        was_reset = call_task_reset(
+                            task_id, project_root=project_root
+                        )
+                        if was_reset:
+                            result["reset"].append(task_id)
+                            log.info(
+                                "reconcile_in_flight: reverted %s "
+                                "(in-progress, pid %d dead) -> todo",
+                                task_id,
+                                pid,
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "reconcile_in_flight: task-reset failed for %s: %s",
+                            task_id,
+                            exc,
+                        )
+
             if run_mutated:
                 raw["in_flight"] = in_flight
                 raw["blocked"] = blocked
@@ -504,13 +540,25 @@ class RunFile:
     # ---- factory / persistence ------------------------------------------
 
     @classmethod
-    def create(cls, state_dir: Path, run_id: str, mode: str) -> "RunFile":
-        """Build a fresh RunFile — used by the CLI when starting a new run."""
+    def create(
+        cls,
+        state_dir: Path,
+        run_id: str,
+        mode: str,
+        parent_pid: int = 0,
+    ) -> "RunFile":
+        """Build a fresh RunFile — used by the CLI when starting a new run.
+
+        Sprint A / Issue #12: `parent_pid` records the orch process PID so
+        `orch stop` can locate the running orch later. 0 (default) means
+        the caller doesn't know / doesn't care.
+        """
         state_dir.mkdir(parents=True, exist_ok=True)
         state = RunState(
             run_id=run_id,
             started_at=_utc_now_iso(),
             mode=mode,  # type: ignore[arg-type]
+            parent_pid=int(parent_pid or 0),
         )
         path = state_dir / f"run-{run_id}.json"
         rf = cls(path, state)
@@ -533,6 +581,9 @@ class RunFile:
             completed=list(raw.get("completed", [])),
             blocked=list(raw.get("blocked", [])),
             deferred=list(raw.get("deferred", [])),
+            # Sprint A / Issue #12: tolerate rows written before the field
+            # existed (default 0 == "not recorded").
+            parent_pid=int(raw.get("parent_pid", 0) or 0),
         )
         return cls(path, state)
 
@@ -585,6 +636,7 @@ def _run_state_to_dict(state: RunState) -> dict[str, Any]:
         "completed": list(state.completed),
         "blocked": list(state.blocked),
         "deferred": list(state.deferred),
+        "parent_pid": int(state.parent_pid or 0),
     }
 
 
@@ -760,6 +812,99 @@ def call_task_block(
         ["scripts/task-block.sh", task_id, reason, model],
         project_root=project_root,
     )
+
+
+def call_task_reset(
+    task_id: str,
+    project_root: Path | None = None,
+    author: str = "orch-reconcile",
+) -> bool:
+    """Revert a stuck `in-progress` task to `todo` in `tasks.json`.
+
+    Sprint A / Issue #7: called by `reconcile_in_flight` for tasks whose
+    recorded PID is dead. Preferred path is the shell script (respects the
+    "orchestrator never writes tasks.json directly" contract). Falls back to
+    an atomic Python-side rewrite for projects that were initialized before
+    task-reset.sh existed — otherwise recovery of legacy projects is broken.
+
+    Returns True when the task WAS in `in-progress` and got reset (or the
+    script reported success); False when nothing to do OR the fallback also
+    fails. Never raises past its own boundary.
+
+    Contract-preservation note: the "shell scripts own tasks.json" rule was
+    written for normal lifecycle transitions (start/finish/block). This is a
+    RECOVERY path — the corresponding "undo start" transition has no
+    matching script in the historical contract, so the fallback is the
+    pragmatic choice for legacy projects.
+    """
+    root = Path(project_root) if project_root is not None else Path.cwd()
+    reset_script = root / "scripts" / "task-reset.sh"
+    if reset_script.exists():
+        try:
+            proc = _run_script(
+                ["scripts/task-reset.sh", task_id, "--author", author],
+                project_root=root,
+            )
+            return proc.returncode == 0
+        except (FileNotFoundError, OSError) as exc:
+            log.warning("task-reset.sh invocation failed for %s: %s", task_id, exc)
+            # Fall through to the Python fallback.
+
+    return _reset_task_in_place(root / "tasks.json", task_id, author=author)
+
+
+def _reset_task_in_place(
+    tasks_json_path: Path, task_id: str, *, author: str = "orch-reconcile"
+) -> bool:
+    """Fallback Python revert: `in-progress` → `todo` in tasks.json atomically.
+
+    Used only when `scripts/task-reset.sh` is missing (legacy projects that
+    predate Sprint A). Reuses the module's `_atomic_write` primitive so
+    readers never see a half-written file. Idempotent: reset of a non-
+    in-progress task is a no-op returning False.
+    """
+    try:
+        raw = json.loads(tasks_json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("could not read %s for in-place reset: %s", tasks_json_path, exc)
+        return False
+
+    rows = raw.get("tasks") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        return False
+
+    changed = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("id") != task_id:
+            continue
+        if row.get("status") != "in-progress":
+            return False  # already at rest, nothing to do
+        row["status"] = "todo"
+        comments = row.get("comments") or []
+        if isinstance(comments, list):
+            comments.append(
+                {
+                    "author": author,
+                    "body": "reset from in-progress (orphaned)",
+                    "at": _utc_now_iso(),
+                }
+            )
+            row["comments"] = comments
+        changed = True
+        break
+
+    if not changed:
+        return False
+
+    try:
+        payload = json.dumps(raw, indent=2).encode("utf-8")
+        _atomic_write(tasks_json_path, payload)
+        return True
+    except OSError as exc:
+        log.warning("atomic write of %s failed during reset: %s", tasks_json_path, exc)
+        return False
 
 
 # ---- Resume reconciliation ---------------------------------------------
