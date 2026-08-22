@@ -181,6 +181,14 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="Enumerate the plan and exit 0. NO subprocess is spawned.",
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit the dry-run plan as JSON to stdout. Requires --dry-run "
+            "(this flag is a no-op outside dry-run mode)."
+        ),
+    )
+    parser.add_argument(
         "--config",
         default="orchestrator/config.yaml",
         help="Path to config.yaml (default: orchestrator/config.yaml)",
@@ -389,51 +397,161 @@ def _filter_by_only(tasks: list[Task], only: str | None) -> list[Task]:
 # ---- Dry-run plan -------------------------------------------------------
 
 
-def _print_plan(
+def _build_plan_rows(
     queue: TaskQueue,
     router: dict[str, RouteEntry],
     max_tasks: int | None,
     only: str | None = None,
-) -> int:
-    """Print a `rich.Table` of the planned dispatches, return count printed.
+) -> list[dict[str, Any]]:
+    """Pure aggregator: return the plan rows the renderers consume.
 
-    Only enumerates the CURRENT ready-set, not the transitive one — the point
-    of --dry-run is to prove routes resolve and the first tick has work.
+    Extracted from the pre-Sprint-C `_print_plan` so both the human table
+    renderer and the JSON renderer share the same source of truth. Only
+    enumerates the CURRENT ready-set (see original docstring).
     """
     ready = queue.ready(in_flight_ids=[], only=only)
     if max_tasks is not None:
         ready = ready[:max_tasks]
 
+    rows: list[dict[str, Any]] = []
+    for t in ready:
+        route = router.get(t.model)
+        rows.append({
+            "task_id": t.id,
+            "phase": t.phase,
+            "backend": route.backend if route else "?",
+            "cli_model": route.cli_model if route else t.model,
+            "tier": route.tier if route else None,
+            "model": t.model,
+            "estimate_hours": t.estimate_hours,
+        })
+    return rows
+
+
+def _print_plan_table(rows: list[dict[str, Any]]) -> int:
+    """Human rich-table renderer for the dry-run plan."""
     if _HAVE_RICH:
-        table = Table(title=f"Dry-run plan ({len(ready)} ready)")
+        table = Table(title=f"Dry-run plan ({len(rows)} ready)")
         table.add_column("Task ID", style="cyan")
         table.add_column("Phase", justify="right")
         table.add_column("Backend", style="green")
         table.add_column("CLI Model")
         table.add_column("Tier")
         table.add_column("Est h", justify="right")
-        for t in ready:
-            route = router.get(t.model)
-            if route is None:
-                table.add_row(t.id, str(t.phase), "?", t.model, "?", str(t.estimate_hours))
-            else:
-                table.add_row(
-                    t.id,
-                    str(t.phase),
-                    route.backend,
-                    route.cli_model,
-                    route.tier,
-                    str(t.estimate_hours),
-                )
+        for r in rows:
+            table.add_row(
+                str(r["task_id"]),
+                str(r["phase"]),
+                str(r["backend"]),
+                str(r["cli_model"]),
+                str(r["tier"] or "?"),
+                str(r["estimate_hours"]),
+            )
         _console.print(table)  # type: ignore[union-attr]
     else:  # pragma: no cover
-        print(f"Dry-run plan ({len(ready)} ready)")
-        for t in ready:
-            route = router.get(t.model)
-            b = route.backend if route else "?"
-            m = route.cli_model if route else "?"
-            print(f"  {t.id}  [{t.phase}]  {b}/{m}  est={t.estimate_hours}h")
-    return len(ready)
+        print(f"Dry-run plan ({len(rows)} ready)")
+        for r in rows:
+            print(
+                f"  {r['task_id']}  [{r['phase']}]  {r['backend']}/{r['cli_model']}  "
+                f"est={r['estimate_hours']}h"
+            )
+    return len(rows)
+
+
+def _print_plan_json(rows: list[dict[str, Any]]) -> int:
+    """JSON renderer for `orch --dry-run --json`. Emits `{plan: [rows], count}`."""
+    payload = {"plan": rows, "count": len(rows)}
+    print(json.dumps(payload, default=str, separators=(",", ":")))
+    return len(rows)
+
+
+def _print_run_summary(
+    *,
+    run_id: str,
+    run_file: Any,
+    task_costs: dict[str, float] | None,
+    deferred: set[str] | None = None,
+    defer_reasons: dict[str, str] | None = None,
+) -> None:
+    """Sprint C end-of-run recap. Called once after the main loop drains.
+
+    Prints a compact table (rich when available) covering:
+      - Run id + counts (completed, blocked, deferred, still in-flight)
+      - Total cost across the in-memory `task_costs` dict
+      - Top 5 costliest tasks
+
+    We use the in-memory `task_costs` (populated in the reap loop) instead
+    of re-reading spend files because `SpendEntry` has no `run_id` column
+    yet (Sprint C decision #5 — schema bump deferred).
+    """
+    state = run_file.state
+    completed = list(state.completed or [])
+    blocked = list(state.blocked or [])
+    still_in_flight = list((state.in_flight or {}).keys())
+    deferred_list = sorted(deferred or [])
+
+    task_costs = task_costs or {}
+    total_cost = round(sum(task_costs.values()), 4)
+    top5 = sorted(task_costs.items(), key=lambda kv: kv[1], reverse=True)[:5]
+
+    header = (
+        f"Run summary · {run_id[:8]} · completed={len(completed)} "
+        f"blocked={len(blocked)} deferred={len(deferred_list)} "
+        f"in_flight={len(still_in_flight)} · cost=${total_cost:.4f}"
+    )
+
+    if _HAVE_RICH:
+        table = Table(title=header)
+        table.add_column("METRIC", style="cyan")
+        table.add_column("VALUE")
+        table.add_row("completed", ", ".join(completed) or "—")
+        if blocked:
+            table.add_row("blocked", ", ".join(blocked))
+        if deferred_list:
+            reasons = ", ".join(
+                f"{tid}({(defer_reasons or {}).get(tid, 'unknown')})"
+                for tid in deferred_list
+            )
+            table.add_row("deferred", reasons)
+        if still_in_flight:
+            table.add_row("still_in_flight", ", ".join(still_in_flight))
+        if top5:
+            top_rows = ", ".join(f"{tid}=${cost:.4f}" for tid, cost in top5)
+            table.add_row("top_costs", top_rows)
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(header)
+        print(f"  completed: {', '.join(completed) or '—'}")
+        if blocked:
+            print(f"  blocked  : {', '.join(blocked)}")
+        if deferred_list:
+            print(f"  deferred : {', '.join(deferred_list)}")
+        if still_in_flight:
+            print(f"  in_flight: {', '.join(still_in_flight)}")
+        if top5:
+            print("  top costs:")
+            for tid, cost in top5:
+                print(f"    {tid}  ${cost:.4f}")
+
+
+def _print_plan(
+    queue: TaskQueue,
+    router: dict[str, RouteEntry],
+    max_tasks: int | None,
+    only: str | None = None,
+    *,
+    as_json: bool = False,
+) -> int:
+    """Legacy façade — kept so old callers/tests still work.
+
+    New callers should use `_build_plan_rows` + `_print_plan_table` /
+    `_print_plan_json` directly. The `as_json` toggle here exists just to
+    make the main-loop wire-up in this file readable.
+    """
+    rows = _build_plan_rows(queue, router, max_tasks, only=only)
+    if as_json:
+        return _print_plan_json(rows)
+    return _print_plan_table(rows)
 
 
 # ---- In-flight bookkeeping ---------------------------------------------
@@ -2532,6 +2650,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_argparser()
     args = parser.parse_args(argv)
 
+    # Sprint C: `--json` only means something in --dry-run mode. Enforce the
+    # constraint at parse time so operators get a clear error rather than a
+    # silent no-op deep in the main loop.
+    if getattr(args, "json", False) and not args.dry_run:
+        parser.error("--json requires --dry-run")
+
     # ---- (1) Project path resolution + root contract ---------------------
     # Fase 1 multi-proyecto: `paths.project_root` centraliza la resolución
     # de tasks.json / config.yaml / model_router.yaml / state/. Cuando el
@@ -2768,7 +2892,11 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- (8) --dry-run ------------------------------------------------
         if args.dry_run:
-            count = _print_plan(queue, router, args.max_tasks, only=args.only)
+            count = _print_plan(
+                queue, router, args.max_tasks,
+                only=args.only,
+                as_json=bool(getattr(args, "json", False)),
+            )
             # AS-08: NO run/spend/events files touched — but we already made
             # the run file above (create) which is a side effect. Remove it
             # so dry-run stays clean.
@@ -2923,6 +3051,23 @@ def main(argv: list[str] | None = None) -> int:
                 router=router, task_costs=task_costs,
             )
             return 130
+
+        # ---- Sprint C end-of-run summary --------------------------------
+        # Prints unconditionally after a clean drain (both success and
+        # blocked-tasks exit paths). Skipped on:
+        #   - `--dry-run` (already returned above)
+        #   - SIGINT drain (return 130 above)
+        #   - config-error early exits (return 1 before we reach here)
+        try:
+            _print_run_summary(
+                run_id=run_id,
+                run_file=run_file,
+                task_costs=task_costs,
+                deferred=deferred,
+                defer_reasons=defer_reasons,
+            )
+        except Exception as exc:  # noqa: BLE001 — summary must never crash orch
+            log.warning("end-of-run summary failed: %s", exc)
 
         # ---- exit code ---------------------------------------------------
         blocked_count = len(run_file.state.blocked)
