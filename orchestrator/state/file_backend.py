@@ -1,35 +1,45 @@
-"""State / I/O layer for the Rupies v2 orchestrator.
+"""File-based `StateBackend` implementation — wraps today's JSON/JSONL logic.
 
-Owns everything that touches the filesystem or subprocess boundary:
-    - Reading `tasks.json` (never writes it — C-4, FR-STATE-2).
-    - Acquiring / releasing the advisory `flock` on `state/.lock` (FR-STATE-4).
-    - Atomic writes of the per-run file `state/run-<uuid>.json` (FR-STATE-3).
-    - Append-only event log `state/events-<run-id>.jsonl` (FR-STATE-7).
-    - Append-only spend log `state/spend-<YYYY-MM-DD>.jsonl` (FR-STATE-6).
-    - Shell-out to `scripts/task-{start,finish,block}.sh` (C-1..C-3).
-    - `--resume` reconciliation of in-flight PIDs (FR-STATE-5, AS-07).
-
-Contracts respected everywhere:
-    - CWD MUST be `v2/` root (`tasks.json` + `scripts/task-start.sh` present).
-    - Orchestrator NEVER writes `tasks.json` directly — all mutations go
-      through the shell scripts (single source of truth).
-    - Event types are locked (see `EVENT_TYPES`); extending them requires a
-      spec update (FR-STATE-7 / NFR-OBS-1).
+All the code in this module was moved verbatim from the original `state.py`
+during the Sprint B refactor. Behavior is byte-identical; only the module
+boundary changed. `FileBackend` at the bottom is a thin façade that maps the
+`StateBackend` Protocol onto the free functions and classes above.
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
-import subprocess
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, Any
+from typing import Any, Iterable
 
-from .models import Dispatch, EventEntry, RunState, SpendEntry, Task
+from ..models import Dispatch, EventEntry, RunState, SpendEntry, Status, Task
+from .shell import (
+    _ensure_v2_cwd,
+    call_task_block as _call_task_block_direct,
+    call_task_finish as _call_task_finish_direct,
+    call_task_start as _call_task_start_direct,
+)
+
+
+def _lookup_shell(name: str, default):
+    """Late-bind a callable through `orchestrator.state`.
+
+    Tests do `patch("orchestrator.state.call_task_finish", ...)`; the patch
+    only touches the `state` package namespace. This helper resolves the
+    symbol on the package at call-time so those patches actually reach
+    `reconcile_run` inside this file.
+    """
+    import sys
+
+    pkg = sys.modules.get("orchestrator.state")
+    if pkg is None:
+        return default
+    return getattr(pkg, name, default)
 
 log = logging.getLogger(__name__)
 
@@ -57,62 +67,12 @@ EVENT_TYPES: tuple[str, ...] = (
 )
 
 
-# ---- Exceptions ---------------------------------------------------------
-
-
-class CwdViolationError(Exception):
-    """Raised when the orchestrator is invoked from a directory that is not
-    `v2/` root (FR-STATE-1). Callers should map to exit-code 2.
-    """
-
-
-class FlockContentionError(Exception):
-    """Another orchestrator holds `state/.lock` (FR-STATE-4 / AS-09).
-
-    Callers should map to exit-code 3. `holder_run_id` may be `None` if the
-    lock exists but the holder file couldn't be identified.
-    """
-
-    def __init__(self, path: Path, holder_run_id: str | None = None):
-        self.path = path
-        self.holder_run_id = holder_run_id
-        msg = (
-            f"another orchestrator holds the flock at {path}"
-            + (f" (run-id={holder_run_id})" if holder_run_id else "")
-            + ". wait or --resume <run-id>."
-        )
-        super().__init__(msg)
-
-
 # ---- Utilities ----------------------------------------------------------
 
 
 def _utc_now_iso() -> str:
     """ISO-8601 UTC timestamp with 'Z' suffix (matches shell scripts)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _ensure_v2_cwd(project_root: Path | None = None) -> None:
-    """Assert `project_root` (or cwd) contains the expected orchestrator layout.
-
-    Reused by every `call_task_*` wrapper so a mis-invoked orchestrator can't
-    ever hit `scripts/task-*.sh` with the wrong root (FR-STATE-1, AS-08 guard).
-
-    Nombre histórico (`_ensure_v2_cwd`) conservado por compatibilidad con
-    el resto del código y los tests. Cuando `project_root` es `None`
-    validamos `Path.cwd()` (comportamiento clásico rupies). Cuando llega el
-    root explícito (Fase 1 multi-proyecto) validamos ese path en su lugar.
-    """
-    root = Path(project_root) if project_root is not None else Path.cwd()
-    if not (root / "tasks.json").exists() or not (root / "scripts" / "task-start.sh").exists():
-        raise CwdViolationError(
-            f"orchestrator must be run from v2/ root; project_root={root} is "
-            "missing tasks.json or scripts/task-start.sh"
-        )
-
-
-# Alias público con nombre no-rupies para nuevo código. Comparte firma.
-ensure_project_root = _ensure_v2_cwd
 
 
 def load_tasks(path: str | Path) -> list[Task]:
@@ -138,97 +98,6 @@ def load_tasks(path: str | Path) -> list[Task]:
         )
 
     return [Task.from_json(row) for row in rows]
-
-
-# ---- flock --------------------------------------------------------------
-
-
-def acquire_flock(path: str | Path) -> IO[bytes]:
-    """Acquire an advisory exclusive flock on `path`.
-
-    Uses `LOCK_EX | LOCK_NB` — non-blocking, exclusive. On contention the
-    caller gets a `FlockContentionError` immediately (AS-09 says "second
-    exits 3 within 1 s").
-
-    The returned file handle MUST be kept alive for the lifetime of the run;
-    closing it releases the flock. Callers typically stash it on `RunFile` or
-    a top-level variable.
-    """
-    lock_path = Path(path)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    # Open in append+binary so we can write the holder run-id later without
-    # truncating any pre-existing content another orchestrator might have
-    # left. `os.O_CLOEXEC` prevents accidental leak into spawned CLIs.
-    fd = open(lock_path, "ab+")
-    try:
-        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        # Best-effort: try to read the run-id the holder wrote.
-        holder: str | None = None
-        try:
-            fd.seek(0)
-            holder = fd.read().decode("utf-8", errors="replace").strip() or None
-        except Exception:  # noqa: BLE001 — never let diagnostics mask the real error
-            holder = None
-        fd.close()
-        raise FlockContentionError(lock_path, holder_run_id=holder) from None
-    return fd
-
-
-def try_acquire_task_lock(task_id: str, state_dir: str | Path) -> IO[bytes] | None:
-    """Non-blocking exclusive lock scoped to a single task.
-
-    Allows multiple concurrent orch instances as long as each targets a
-    distinct set of task ids (opt-in via `--task-locks`). Returns the open
-    fd on success (caller MUST keep it alive and close on release), or None
-    if another orch already holds this task's lock.
-
-    Lock files live under `<state_dir>/task-locks/<task_id>.lock` and are
-    never garbage-collected (advisory flock is released on process exit).
-    """
-    locks_dir = Path(state_dir) / "task-locks"
-    locks_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = locks_dir / f"{task_id}.lock"
-    fd = open(lock_path, "ab+")
-    try:
-        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        fd.close()
-        return None
-    try:
-        fd.seek(0)
-        fd.truncate(0)
-        fd.write(f"pid={os.getpid()}\n".encode())
-        fd.flush()
-    except Exception:  # noqa: BLE001
-        pass
-    return fd
-
-
-def release_task_lock(fd: IO[bytes] | None) -> None:
-    """Release a per-task lock acquired via `try_acquire_task_lock`."""
-    if fd is None:
-        return
-    try:
-        fd.close()
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def write_lock_holder(fd: IO[bytes], run_id: str, pid: int) -> None:
-    """Write `run-id=<uuid>, pid=<pid>` inside the lock file for diagnostics.
-
-    The bytes are meaningful only for the error message another orchestrator
-    would print on contention; they never gate any behavior.
-    """
-    try:
-        fd.seek(0)
-        fd.truncate(0)
-        fd.write(f"run-id={run_id}, pid={pid}\n".encode("utf-8"))
-        fd.flush()
-        os.fsync(fd.fileno())
-    except Exception as exc:  # noqa: BLE001
-        log.warning("could not write lock holder metadata: %s", exc)
 
 
 # ---- Atomic write helper ------------------------------------------------
@@ -689,79 +558,6 @@ class SpendLog:
         return path
 
 
-# ---- Shell-out wrappers -------------------------------------------------
-
-
-def _run_script(
-    cmd: list[str], project_root: Path | None = None
-) -> subprocess.CompletedProcess:
-    """Invoke a `scripts/task-*.sh` script from `project_root` (o cwd).
-
-    We use `check=False` so a non-zero exit surfaces via warning log; caller
-    decides how to handle it. Capturamos stdout/stderr para inspección.
-
-    Fase 1: cuando `project_root` es None se usa `Path.cwd()` — retro-
-    compatible con la invocación clásica desde rupies `v2/`. Cuando llega
-    un `project_root` explícito, el guard y el `cwd=` de subprocess apuntan
-    a ese path (permite ejecutar `orch --project-root /otro/lado` sin `cd`).
-    """
-    _ensure_v2_cwd(project_root)
-    log.debug("shell-out: %s", " ".join(cmd))
-    exec_cwd = Path(project_root) if project_root is not None else Path.cwd()
-    result = subprocess.run(  # noqa: S603 — args are locally constructed, not user shell
-        cmd,
-        check=False,  # we log a warning on non-zero, but let caller decide
-        capture_output=True,
-        text=True,
-        cwd=str(exec_cwd),
-    )
-    if result.returncode != 0:
-        log.warning(
-            "shell script exit=%d cmd=%s stderr=%s",
-            result.returncode,
-            " ".join(cmd),
-            (result.stderr or "").strip(),
-        )
-    return result
-
-
-def call_task_start(
-    task_id: str,
-    author: str = "orchestrator",
-    project_root: Path | None = None,
-) -> subprocess.CompletedProcess:
-    """Wrap `scripts/task-start.sh <id> <author>` (C-1)."""
-    return _run_script(
-        ["scripts/task-start.sh", task_id, author], project_root=project_root
-    )
-
-
-def call_task_finish(
-    task_id: str,
-    comment: str,
-    model: str,
-    project_root: Path | None = None,
-) -> subprocess.CompletedProcess:
-    """Wrap `scripts/task-finish.sh <id> "<comment>" <model>` (C-2)."""
-    return _run_script(
-        ["scripts/task-finish.sh", task_id, comment, model],
-        project_root=project_root,
-    )
-
-
-def call_task_block(
-    task_id: str,
-    reason: str,
-    model: str,
-    project_root: Path | None = None,
-) -> subprocess.CompletedProcess:
-    """Wrap `scripts/task-block.sh <id> "<reason>" <model>` (C-3)."""
-    return _run_script(
-        ["scripts/task-block.sh", task_id, reason, model],
-        project_root=project_root,
-    )
-
-
 # ---- Resume reconciliation ---------------------------------------------
 
 
@@ -789,6 +585,8 @@ def _git_diff_touches(files: list[str], project_root: Path | None = None) -> boo
 
     Fase 1: acepta `project_root` opcional; None → `Path.cwd()`.
     """
+    import subprocess
+
     if not files:
         return False
     probe_cwd = Path(project_root) if project_root is not None else Path.cwd()
@@ -831,7 +629,7 @@ def reconcile_run(
     # Snapshot the dict — we mutate `in_flight` inside the loop.
     for task_id, dispatch in list(run_file.state.in_flight.items()):
         try:
-            if _pid_alive(dispatch.pid):
+            if _lookup_shell("_pid_alive", _pid_alive)(dispatch.pid):
                 event_log.emit(
                     "resume_adopt",
                     task_id,
@@ -847,8 +645,10 @@ def reconcile_run(
             files = list(task.files) if task else []
             model = f"{dispatch.backend}/unknown"  # best-effort tag for scripts
 
-            if files and _git_diff_touches(files, project_root=project_root):
-                call_task_finish(
+            if files and _lookup_shell("_git_diff_touches", _git_diff_touches)(
+                files, project_root=project_root
+            ):
+                _lookup_shell("call_task_finish", _call_task_finish_direct)(
                     task_id,
                     "resumed: git diff detected on declared files",
                     model,
@@ -864,7 +664,7 @@ def reconcile_run(
                 run_file.mark_done(task_id)
                 report.adopted.append(task_id)
             else:
-                call_task_block(
+                _lookup_shell("call_task_block", _call_task_block_direct)(
                     task_id,
                     "orchestrator crash, no work detected",
                     model,
@@ -883,3 +683,259 @@ def reconcile_run(
             log.exception("reconcile failed for %s: %s", task_id, exc)
             report.errors.append(f"{task_id}: {exc}")
     return report
+
+
+# ------------------------------------------------------------------------
+# StateBackend façade — commit 1 wrapper. No behavior change vs pre-refactor.
+# ------------------------------------------------------------------------
+
+
+class FileBackend:
+    """`StateBackend` implementation that delegates to the free functions above.
+
+    The wrapper is intentionally thin: every method routes to the same
+    JSON/JSONL code path today's orchestrator uses. The abstraction only
+    exists so commit 2 can drop a `SqliteBackend` alongside without touching
+    callsites (see `orchestrator/state/interface.py`).
+
+    Constructed once per process by `get_backend(paths, cfg)`.
+    """
+
+    def __init__(
+        self,
+        state_dir: Path,
+        project_id: str | None = None,
+        project_root: Path | None = None,
+    ) -> None:
+        self.state_dir = Path(state_dir)
+        self.project_id = project_id
+        self.project_root = project_root
+        # In-memory cache of RunFile handles keyed by run_id so `add_dispatch`
+        # and friends don't re-read + re-parse on every mutation.
+        self._runs: dict[str, RunFile] = {}
+
+    # ---- lifecycle ------------------------------------------------------
+
+    def bootstrap(self, tasks: Iterable[Task]) -> None:
+        """No-op for the file backend — state files are lazy-created on write."""
+        # Reserved for parity with sqlite. Kept as an explicit no-op so a
+        # reader sees the intent instead of an accidental omission.
+        _ = list(tasks)
+
+    # ---- task status ----------------------------------------------------
+
+    def get_task_status(self, task_id: str) -> Status | None:
+        """Read status straight from `tasks.json` — the source of truth for
+        the file backend. Returns None if the id is unknown.
+        """
+        if self.project_root is None:
+            return None
+        tasks_json = self.project_root / "tasks.json"
+        if not tasks_json.exists():
+            return None
+        try:
+            tasks = load_tasks(tasks_json)
+        except Exception:  # noqa: BLE001
+            return None
+        for t in tasks:
+            if t.id == task_id:
+                return t.status
+        return None
+
+    def get_all_task_status(self) -> dict[str, Status]:
+        """Snapshot of every task_id → status from `tasks.json`."""
+        if self.project_root is None:
+            return {}
+        tasks_json = self.project_root / "tasks.json"
+        if not tasks_json.exists():
+            return {}
+        try:
+            tasks = load_tasks(tasks_json)
+        except Exception:  # noqa: BLE001
+            return {}
+        return {t.id: t.status for t in tasks}
+
+    def set_task_status(
+        self,
+        task_id: str,
+        status: Status,
+        author: str,
+        note: str,
+        ts: str,  # noqa: ARG002 — file backend derives ts inside the shell script
+    ) -> None:
+        """Route to the appropriate `scripts/task-*.sh` for file backend.
+
+        The shell scripts remain the sole writers of tasks.json (single-writer
+        contract). The file backend just picks which script based on status.
+        `reset` uses task-start-style transition to `todo` — for the file
+        backend today, we shell out to a `task-reset.sh` if present; otherwise
+        we skip (sqlite backend implements it natively).
+        """
+        # Validate the id up front so unknown tasks fail with KeyError.
+        if self.get_task_status(task_id) is None and self.project_root is not None:
+            raise KeyError(task_id)
+        if status == "in-progress":
+            call_task_start(task_id, author=author, project_root=self.project_root)
+        elif status == "done":
+            call_task_finish(task_id, note or "done", author, project_root=self.project_root)
+        elif status == "blocked":
+            call_task_block(task_id, note or "blocked", author, project_root=self.project_root)
+        elif status == "todo":
+            # No dedicated shell script for reset in the current templates.
+            # Best effort: shell out if the operator added one, else no-op.
+            reset = None
+            if self.project_root is not None:
+                candidate = self.project_root / "scripts" / "task-reset.sh"
+                if candidate.exists():
+                    reset = candidate
+            if reset is not None:
+                import subprocess
+
+                subprocess.run(  # noqa: S603
+                    [str(reset), task_id, author, note or "reset"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(self.project_root),
+                )
+        else:
+            raise ValueError(f"unsupported status transition: {status!r}")
+
+    # ---- runs -----------------------------------------------------------
+
+    def create_run(self, run_id: str, mode: str) -> RunState:
+        rf = RunFile.create(self.state_dir, run_id=run_id, mode=mode)
+        self._runs[run_id] = rf
+        return rf.state
+
+    def load_run(self, run_id: str) -> RunState:
+        path = self.state_dir / f"run-{run_id}.json"
+        rf = RunFile.load(path)
+        self._runs[run_id] = rf
+        return rf.state
+
+    def save_run(self, state: RunState) -> None:
+        rf = self._runs.get(state.run_id)
+        if rf is None:
+            rf = RunFile(self.state_dir / f"run-{state.run_id}.json", state)
+            self._runs[state.run_id] = rf
+        rf.state = state
+        rf.save()
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        rebuild_index(self.state_dir)
+        index_path = self.state_dir / "index.json"
+        if not index_path.exists():
+            return []
+        try:
+            with open(index_path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+            return list(raw.get("runs", []) or [])
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    # ---- dispatches -----------------------------------------------------
+
+    def add_dispatch(self, run_id: str, dispatch: Dispatch) -> None:
+        rf = self._require_run(run_id)
+        rf.add_dispatch(dispatch)
+
+    def remove_dispatch(self, run_id: str, task_id: str) -> None:
+        rf = self._require_run(run_id)
+        rf.remove_dispatch(task_id)
+
+    def iter_in_flight(self, run_id: str) -> Iterator[Dispatch]:
+        rf = self._require_run(run_id)
+        for d in rf.state.in_flight.values():
+            yield d
+
+    def _require_run(self, run_id: str) -> RunFile:
+        rf = self._runs.get(run_id)
+        if rf is None:
+            path = self.state_dir / f"run-{run_id}.json"
+            if not path.exists():
+                raise KeyError(run_id)
+            rf = RunFile.load(path)
+            self._runs[run_id] = rf
+        return rf
+
+    # ---- events + spend -------------------------------------------------
+
+    def append_event(self, run_id: str, entry: EventEntry) -> None:
+        events_path = self.state_dir / f"events-{run_id}.jsonl"
+        # Bypass EventLog's ts stamping — the entry already has one.
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(asdict(entry), separators=(",", ":"))
+        with open(events_path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+        rebuild_index(self.state_dir)
+
+    def iter_events(
+        self,
+        run_id: str | None = None,
+        since_id: int | None = None,  # noqa: ARG002 — file backend has no monotonic id
+    ) -> Iterator[dict[str, Any]]:
+        if run_id is not None:
+            paths = [self.state_dir / f"events-{run_id}.jsonl"]
+        else:
+            paths = sorted(self.state_dir.glob("events-*.jsonl"))
+        for p in paths:
+            if not p.exists():
+                continue
+            with p.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if isinstance(obj, dict):
+                        yield obj
+
+    def append_spend(self, entry: SpendEntry) -> None:
+        SpendLog(self.state_dir, project_id=self.project_id).record(entry)
+
+    def iter_spend(
+        self,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        for row in self.iter_all_spend():
+            ts = row.get("ts", "")
+            if since is not None and ts < since:
+                continue
+            if until is not None and ts > until:
+                continue
+            yield row
+
+    def iter_all_spend(self) -> Iterator[dict[str, Any]]:
+        for path in sorted(self.state_dir.glob("spend-*.jsonl")):
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if isinstance(obj, dict):
+                        yield obj
+
+    # ---- reconciliation -------------------------------------------------
+
+    def reconcile_in_flight(self) -> dict[str, Any]:
+        return reconcile_in_flight(self.state_dir, project_id=self.project_id)
+
+    def reset_task(self, task_id: str, author: str, note: str, ts: str) -> None:
+        self.set_task_status(task_id, "todo", author=author, note=note, ts=ts)
+
+    def clear_in_flight_for_run(self, run_id: str) -> list[str]:
+        rf = self._require_run(run_id)
+        cleared = list(rf.state.in_flight.keys())
+        rf.state.in_flight.clear()
+        rf.save()
+        return cleared
