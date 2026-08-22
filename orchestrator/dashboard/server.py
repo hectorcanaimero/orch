@@ -261,6 +261,74 @@ def _task_to_dict(t, hours: dict[str, float], last: dict[str, str],
     }
 
 
+def _load_project_config(state: AppState) -> dict[str, Any]:
+    """Return a whitelisted view of the project's `config.yaml`.
+
+    Explicit picking (never `dict(**raw)`) so a future config key with a
+    secret cannot accidentally leak through the `/api/config` endpoint.
+    """
+    def _loader() -> dict[str, Any]:
+        import yaml
+        cfg_path = state.paths.config_yaml
+        try:
+            raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+
+        concurrency_raw = raw.get("concurrency") or {}
+        budget_raw = raw.get("budget") or {}
+        state_raw = raw.get("state") or {}
+        retry_raw = raw.get("retry") or {}
+        findings_raw = raw.get("findings") or {}
+        dashboard_raw = raw.get("dashboard") or {}
+
+        return {
+            "concurrency": {
+                "global_max": concurrency_raw.get("global_max"),
+                "per_provider": concurrency_raw.get("per_provider") or {},
+                "per_file": concurrency_raw.get("per_file"),
+            },
+            "budget": {
+                "per_dispatch_usd": budget_raw.get("per_dispatch_usd"),
+            },
+            "state": {
+                "backend": state_raw.get("backend"),
+                "sqlite_path": state_raw.get("sqlite_path"),
+                # `tasks_json_precedence` is a top-level key in config.yaml
+                # but belongs to state semantics — group it here for API sanity.
+                "tasks_json_precedence": raw.get("tasks_json_precedence"),
+            },
+            "retry": {
+                "backoff_seconds": retry_raw.get("backoff_seconds"),
+                "rate_limit_backoff_seconds": retry_raw.get("rate_limit_backoff_seconds"),
+            },
+            "spec_root": raw.get("spec_root"),
+            "budgets": {
+                "config_path": raw.get("budgets_config"),
+                "preset": raw.get("budgets_preset"),
+                "typical_dispatch_tokens": raw.get("typical_dispatch_tokens"),
+            },
+            "findings": {
+                "publish_repo": findings_raw.get("publish_repo"),
+                "publish_rate_limit_per_hour": findings_raw.get("publish_rate_limit_per_hour"),
+                "label": findings_raw.get("label"),
+                "min_publish_confidence": findings_raw.get("min_publish_confidence"),
+            },
+            # Sprint E-3 — per-project SPA client config. Only surface public,
+            # non-secret keys here (profile/token stay OUT: the middleware
+            # already gates auth, and echoing the token would defeat it).
+            "dashboard": {
+                "board_url": dashboard_raw.get("board_url"),
+            },
+            "strict_files_phases": raw.get("strict_files_phases") or [],
+            "default_timeout_multiplier": raw.get("default_timeout_multiplier"),
+        }
+
+    return state.cached("config", _loader)
+
+
 # ---- App factory -----------------------------------------------------------
 
 
@@ -329,6 +397,34 @@ def create_app(
     if dash_cfg.profile != PROFILE_OPERATOR:
         app.add_middleware(ProfileGuardMiddleware, config=dash_cfg)
         app.add_middleware(TokenAuthMiddleware, config=dash_cfg)
+
+    # ---- Sprint E-3 middleware: DEV-ONLY CORS ----------------------------
+    # Enabled only when `ORCH_DASHBOARD_DEV_CORS` is truthy so a local
+    # Vite SPA on :5173 can talk to the FastAPI backend on :7420. Added
+    # AFTER auth in code so it runs BEFORE auth at request time — that
+    # lets the CORS preflight (OPTIONS) succeed without a token, which
+    # is what browsers require before dispatching the real request.
+    #
+    # NEVER enable in production. The allow-list is hard-coded to
+    # localhost origins and a warning is printed to stderr on boot.
+    import os
+    import sys
+    _cors_flag = (os.environ.get("ORCH_DASHBOARD_DEV_CORS") or "").strip().lower()
+    if _cors_flag in ("1", "true", "yes"):
+        from starlette.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
+        print(
+            "[dashboard] DEV CORS enabled for localhost:5173 — "
+            "do NOT enable in production",
+            file=sys.stderr,
+        )
 
     # ---- Template context helper -----------------------------------------
     # `profile` is injected into every template render so partials can
@@ -617,6 +713,23 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/events", name="api_events")
+    def api_events(
+        task_id: str | None = Query(None),
+        limit: int = Query(200, ge=1, le=1000),
+    ):
+        """Return the last `limit` events (formatted). Used to seed the Logs page.
+
+        Sibling to `/api/events/stream` — this is the one-shot history the SPA
+        fetches on mount, then the SSE endpoint appends live events on top.
+        Filtering by `task_id` happens AFTER slicing so callers get up to
+        `limit` matching rows regardless of how noisy the run was overall.
+        """
+        events = load_recent_events(paths.state_dir, limit=limit)
+        if task_id:
+            events = [e for e in events if e["task_id"] == task_id]
+        return JSONResponse({"events": events, "count": len(events)})
+
     # ---- JSON APIs ---------------------------------------------------------
     @app.get("/api/tasks", name="api_tasks")
     def api_tasks(
@@ -700,6 +813,146 @@ def create_app(
             "by_day": [d.as_dict() for d in metrics_by_day(spends, pricing, days=14)],
             "estimate_hours_total": view["summary"].estimate_hours_total,
         })
+
+    @app.get("/api/config", name="api_config")
+    def api_config():
+        return JSONResponse(_load_project_config(app_state))
+
+    # ---- Architecture diagram (archify skill) ------------------------------
+    # Sprint E-4: read-only accessors over docs/architecture/ + a POST
+    # regenerate that fires `orch arch generate` as a fire-and-forget
+    # subprocess. The CLI owns lock/dispatch/archive semantics — these
+    # endpoints just surface state.
+    import subprocess
+    from orchestrator import arch as arch_mod
+    from fastapi.responses import FileResponse
+
+    def _arch_dir() -> Path:
+        return app_state.paths.project_root / arch_mod.ARCH_DIR
+
+    def _current_html_path() -> Path:
+        return _arch_dir() / arch_mod.CURRENT_FILENAME
+
+    def _load_arch_events():
+        return arch_mod.read_events(app_state.paths.state_dir)
+
+    def _current_source_hash() -> str | None:
+        """Recompute the hash against the live artifact tree.
+
+        Deliberately not cached: the dashboard needs to reflect edits to
+        docs/prd/ or specs/ the moment they land so operators can see
+        when the on-disk diagram has drifted from its sources.
+        """
+        sources = arch_mod.discover_sources(
+            app_state.paths.project_root, app_state.paths.tasks_json
+        )
+        return arch_mod.compute_source_hash(sources)
+
+    @app.get("/api/architecture/status", name="api_arch_status")
+    def api_arch_status():
+        current = _current_html_path()
+        events = _load_arch_events()
+        last = events[-1] if events else None
+        exists = current.exists()
+        return JSONResponse({
+            "exists": exists,
+            "generated_at": (last or {}).get("timestamp") if exists else None,
+            "source_hash": _current_source_hash() if exists else None,
+            "count": len(events),
+            "last_cost_usd": (last or {}).get("cost_usd") if last else None,
+            "regenerate_in_progress": arch_mod.read_lock(app_state.paths.state_dir) is not None,
+        })
+
+    @app.get("/api/architecture/current", name="api_arch_current")
+    def api_arch_current():
+        current = _current_html_path()
+        if not current.exists():
+            raise HTTPException(status_code=404, detail="no current architecture diagram")
+        return FileResponse(str(current), media_type="text/html")
+
+    @app.get("/api/architecture/history", name="api_arch_history")
+    def api_arch_history():
+        # 30 s TTL: history mutates on regeneration events only, not per
+        # request. AppState.cached() defaults to 2 s so we manage the slot
+        # directly to widen the window without disturbing other consumers.
+        import time
+        hit = app_state._cache.get("arch_history_30s")
+        if hit and (time.monotonic() - hit[0]) < 30.0:
+            return JSONResponse(hit[1])
+        events = _load_arch_events()
+        snapshots = [
+            {
+                "timestamp": ev.get("timestamp", ""),
+                "source_hash": ev.get("source_hash", ""),
+                "cost_usd": ev.get("cost_usd", 0.0),
+                "model": ev.get("model", ""),
+                "source_artifacts": ev.get("source_artifacts", {}),
+            }
+            for ev in events
+        ]
+        snapshots.sort(key=lambda r: r["timestamp"], reverse=True)
+        payload = {"snapshots": snapshots}
+        app_state._cache["arch_history_30s"] = (time.monotonic(), payload)
+        return JSONResponse(payload)
+
+    @app.get("/api/architecture/snapshot/{iso_ts}", name="api_arch_snapshot")
+    def api_arch_snapshot(iso_ts: str):
+        # `iso_ts` is the filename-safe token (colons replaced with dashes)
+        # emitted by `arch.archive_current`. We look up any archive file
+        # whose name starts with the token — the trailing `-<hash7>.html`
+        # varies per source_hash.
+        archive_dir = _arch_dir() / arch_mod.ARCHIVE_SUBDIR
+        if not archive_dir.is_dir():
+            raise HTTPException(status_code=404, detail="no snapshot archive")
+        # Reject any traversal attempts before touching the FS.
+        if "/" in iso_ts or ".." in iso_ts or iso_ts.startswith("."):
+            raise HTTPException(status_code=404, detail="invalid snapshot id")
+        matches = sorted(archive_dir.glob(f"{iso_ts}-*.html"))
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"snapshot not found: {iso_ts}")
+        return FileResponse(str(matches[0]), media_type="text/html")
+
+    @app.post("/api/architecture/regenerate", name="api_arch_regenerate", status_code=202)
+    def api_arch_regenerate():
+        if arch_mod.read_lock(app_state.paths.state_dir) is not None:
+            raise HTTPException(status_code=409, detail="regeneration already in progress")
+        from datetime import datetime, timezone
+        import shutil as _shutil
+        import uuid as _uuid
+        # Prefer the venv console-script — it uses the correct Python and
+        # avoids the PEP 420 namespace-package trap where cwd=project_root
+        # shadows the real `orchestrator` package with a scaffold dir that
+        # only holds config.yaml/state/. Fall back to `python -m` for envs
+        # where `orch` isn't on PATH.
+        orch_bin = _shutil.which("orch")
+        if orch_bin:
+            cmd = [orch_bin, "arch", "generate",
+                   "--project-root", str(app_state.paths.project_root)]
+        else:
+            cmd = [sys.executable, "-m", "orchestrator", "arch", "generate",
+                   "--project-root", str(app_state.paths.project_root)]
+        # Persist stdout+stderr to a log file so silent subprocess crashes are
+        # debuggable. Previously DEVNULL swallowed ImportErrors — cost us
+        # ~30 min hunting a namespace-package trap.
+        log_path = app_state.paths.state_dir / "arch-generate.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = open(log_path, "ab")  # noqa: SIM115 — child owns fd
+        try:
+            subprocess.Popen(  # noqa: S603 — argv locally constructed
+                cmd,
+                stdout=log_handle,
+                stderr=log_handle,
+                start_new_session=True,
+            )
+        finally:
+            log_handle.close()
+        return JSONResponse(
+            {
+                "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "run_id": _uuid.uuid4().hex[:8],
+            },
+            status_code=202,
+        )
 
     # ---- Snapshot export ---------------------------------------------------
     @app.get("/snapshot", name="snapshot")

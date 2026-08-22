@@ -1,0 +1,106 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { AppLayout } from "@/components/AppLayout"
+import { ProtectedRoute } from "@/components/ProtectedRoute"
+import { ArchitecturePage } from "@/pages/ArchitecturePage"
+import { BoardPage } from "@/pages/BoardPage"
+import { KanbanPage } from "@/pages/KanbanPage"
+import { ListPage } from "@/pages/ListPage"
+import { LoginPage } from "@/pages/LoginPage"
+import { LogsPage } from "@/pages/LogsPage"
+import { MetricsPage } from "@/pages/MetricsPage"
+import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <StakeholderSummaryPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/kanban"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <KanbanPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/list"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <ListPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/board"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <BoardPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/metrics"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <MetricsPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/logs"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <LogsPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/architecture"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <ArchitecturePage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+      <ReactQueryDevtools initialIsOpen={false} />
+    </QueryClientProvider>
+  )
+}

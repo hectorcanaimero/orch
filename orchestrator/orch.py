@@ -1939,6 +1939,7 @@ def _print_subcommand_list() -> int:
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
+    print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -3715,6 +3716,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_validate_subcommand(incoming[1:])
     if incoming and incoming[0] == "findings":
         return _run_findings_subcommand(incoming[1:])
+    if incoming and incoming[0] == "arch":
+        from orchestrator.arch import run_arch_cli
+
+        return run_arch_cli(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
