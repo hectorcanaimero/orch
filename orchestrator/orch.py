@@ -1905,6 +1905,7 @@ _SUBCOMMANDS = (
     "events",
     "logs",
     "graph",
+    "doctor",
 )
 
 
@@ -1926,6 +1927,7 @@ def _print_subcommand_list() -> int:
     print("  orch events ID [FLAGS]    Tail events for one task (--tail N / --json)")
     print("  orch logs ID [FLAGS]      Tail the per-task log file (default: --tail 200)")
     print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
+    print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -2661,6 +2663,249 @@ def _run_graph_subcommand(argv: list[str]) -> int:
     return 0
 
 
+def _run_doctor_subcommand(argv: list[str]) -> int:
+    """Handle `orch doctor [--json] [--only CHECK]` — read-only preflight.
+
+    Sprint D / Issue #9. Runs every environment probe (backends installed,
+    scripts executable, jq present, state dir writable, sqlite DB opens
+    when applicable) and prints a checklist. All checks are pure reads —
+    the doctor never mutates anything on disk.
+
+    Exit codes: 0 all ok, 1 warnings only, 2 any error.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch doctor",
+        description=(
+            "Read-only preflight: verify backends, scripts, jq, config, "
+            "and state backend are ready to dispatch."
+        ),
+    )
+    p.add_argument("--json", action="store_true",
+                   help="Emit the full check report as JSON on stdout.")
+    p.add_argument("--only", default=None, metavar="CHECK",
+                   help="Restrict to checks matching this substring (e.g. 'backend').")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    # Doctor should still work even when tasks.json/scripts are missing —
+    # that's precisely the failure mode operators call it for. Detect the
+    # layout status ourselves instead of raising via `ensure_valid`.
+    from orchestrator import preflight
+
+    checks: list[preflight.CheckResult] = []
+
+    # Config family — parse checks even if optional files are missing.
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        cfg = {}
+        checks.append(
+            preflight.CheckResult(
+                name="config.parse",
+                status="error",
+                detail=f"cannot load {paths.config_yaml}: {exc}",
+                remediation=f"Create {paths.config_yaml} (run `orch init` for a template).",
+            )
+        )
+
+    backend_kind = str(((cfg.get("state") or {}) or {}).get("backend", "file"))
+    budgets_preset = cfg.get("budgets_preset")
+    budgets_path = _resolve_budgets_path(paths, cfg)
+
+    if not any(c.name == "config.parse" for c in checks):
+        checks.extend(
+            preflight.check_config_files(
+                config_yaml=paths.config_yaml,
+                budgets_yaml=budgets_path,
+                router_yaml=paths.router_yaml,
+                tasks_json=paths.tasks_json,
+                budgets_preset=budgets_preset,
+            )
+        )
+
+    # Scripts + jq.
+    checks.extend(preflight.check_scripts(paths.scripts_dir))
+
+    # Backends. Loading tasks + router is best-effort — a broken tasks.json
+    # is already flagged above, so we still probe the standard CLIs to give
+    # the operator the environment picture.
+    tasks_list: list = []
+    router_map: dict = {}
+    try:
+        from orchestrator.state import load_tasks
+
+        tasks_list = load_tasks(paths.tasks_json)
+    except Exception:  # noqa: BLE001
+        tasks_list = []
+    try:
+        from orchestrator.router import load_router
+
+        router_map = load_router(paths.router_yaml)
+    except Exception:  # noqa: BLE001
+        router_map = {}
+    checks.extend(preflight.check_backends(tasks_list, router_map))
+
+    # models.resolve — every task.model must resolve to a route entry.
+    unresolved = [t for t in tasks_list if router_map and t.model not in router_map]
+    if not tasks_list:
+        checks.append(
+            preflight.CheckResult(
+                name="models.resolve",
+                status="skip",
+                detail="no tasks loaded — cannot check resolution",
+            )
+        )
+    elif not router_map:
+        checks.append(
+            preflight.CheckResult(
+                name="models.resolve",
+                status="skip",
+                detail="router did not load — cannot check resolution",
+            )
+        )
+    elif unresolved:
+        checks.append(
+            preflight.CheckResult(
+                name="models.resolve",
+                status="error",
+                detail=(
+                    f"{len(unresolved)} task(s) reference unroutable models "
+                    f"(first: {unresolved[0].id!r} -> {unresolved[0].model!r})"
+                ),
+                remediation="Add the missing entries to model_router.yaml.",
+            )
+        )
+    else:
+        checks.append(
+            preflight.CheckResult(
+                name="models.resolve",
+                status="ok",
+                detail=f"{len(tasks_list)} task(s) resolve",
+            )
+        )
+
+    # State backend probe (schema_version=1 == current at Sprint B).
+    checks.extend(
+        preflight.check_state_backend(
+            state_dir=paths.state_dir,
+            backend=backend_kind,
+            sqlite_path=_resolve_sqlite_path(paths, cfg),
+            expected_schema_version=1,
+        )
+    )
+
+    if args.only:
+        checks = [c for c in checks if args.only in c.name]
+
+    summary = preflight.summarize_checks(checks)
+    exit_code = preflight.exit_code_for_checks(checks)
+
+    payload = {
+        "project": {
+            "id": paths.project_id,
+            "root": str(paths.project_root),
+        },
+        "backend": backend_kind,
+        "checks": [c.as_json() for c in checks],
+        "summary": summary,
+        "exit_code": exit_code,
+    }
+
+    if args.json:
+        print(json.dumps(payload, default=str, separators=(",", ":")))
+        return exit_code
+
+    _render_doctor_report(payload)
+    return exit_code
+
+
+def _resolve_budgets_path(paths: "ProjectPaths", cfg: dict[str, Any]) -> Path | None:
+    """Mirror the resolution rules from the main loop for `budgets.yaml`.
+
+    Order of precedence:
+        1. Absolute path in config → use as-is.
+        2. Relative → try project_root first, then orchestrator/ subdir.
+    """
+    raw = cfg.get("budgets_config") or "budgets.yaml"
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate
+    for root in (paths.project_root, paths.project_root / "orchestrator"):
+        p = (root / candidate).resolve()
+        if p.exists():
+            return p
+    # Return the most likely path so callers get a helpful "not present" note.
+    return (paths.project_root / candidate).resolve()
+
+
+def _resolve_sqlite_path(paths: "ProjectPaths", cfg: dict[str, Any]) -> Path | None:
+    """Resolve `state.sqlite_path` (relative to state_dir, or absolute)."""
+    raw = ((cfg.get("state") or {}) or {}).get("sqlite_path")
+    if not raw:
+        return paths.state_dir / "orch.db"
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate
+    return (paths.state_dir / candidate).resolve()
+
+
+def _render_doctor_report(payload: dict[str, Any]) -> None:
+    """Human renderer for `orch doctor`. Rich when available."""
+    symbols = {"ok": "✓", "warn": "⚠", "error": "✗", "skip": "○"}
+    colors = {"ok": "green", "warn": "yellow", "error": "red", "skip": "dim"}
+
+    header = (
+        f"orch doctor · project={payload['project']['id']} · backend={payload['backend']}"
+    )
+    summary = payload["summary"]
+    summary_line = (
+        f"{summary['ok']} ok · {summary['warn']} warn · "
+        f"{summary['error']} error · {summary['skip']} skip"
+    )
+
+    if _HAVE_RICH:
+        table = Table(title=header, show_lines=False)
+        table.add_column("", width=2)
+        table.add_column("CHECK", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("DETAIL")
+        for c in payload["checks"]:
+            status = c["status"]
+            sym = symbols.get(status, "?")
+            color = colors.get(status, "white")
+            table.add_row(
+                f"[{color}]{sym}[/{color}]",
+                c["name"],
+                f"[{color}]{status}[/{color}]",
+                c["detail"],
+            )
+        _console.print(table)  # type: ignore[union-attr]
+        _console.print(f"[bold]{summary_line}[/bold]")  # type: ignore[union-attr]
+        # Remediation hints — grouped so noise stays low when things are fine.
+        remediation = [c for c in payload["checks"] if c.get("remediation")]
+        if remediation:
+            _console.print()  # type: ignore[union-attr]
+            _console.print("[bold]Remediation:[/bold]")  # type: ignore[union-attr]
+            for c in remediation:
+                _console.print(f"  {c['name']}: {c['remediation']}")  # type: ignore[union-attr]
+    else:  # pragma: no cover — rich is a hard dep in practice
+        print(header)
+        print("=" * len(header))
+        for c in payload["checks"]:
+            sym = symbols.get(c["status"], "?")
+            print(f"  {sym} {c['name']:<32} {c['status']:<6} {c['detail']}")
+        print(summary_line)
+        for c in payload["checks"]:
+            if c.get("remediation"):
+                print(f"  -> {c['name']}: {c['remediation']}")
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -2769,6 +3014,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_logs_subcommand(incoming[1:])
     if incoming and incoming[0] == "graph":
         return _run_graph_subcommand(incoming[1:])
+    if incoming and incoming[0] == "doctor":
+        return _run_doctor_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
