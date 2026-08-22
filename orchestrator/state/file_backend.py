@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ..models import Dispatch, EventEntry, Finding, RunState, SpendEntry, Status, Task
+from ..procutil import pid_alive
 from .shell import (
     _ensure_v2_cwd,
     _reset_task_in_place,
@@ -627,21 +628,6 @@ class SpendLog:
 # ---- Resume reconciliation ---------------------------------------------
 
 
-def _pid_alive(pid: int) -> bool:
-    """Return True if `pid` refers to a live process. `os.kill(pid, 0)` is
-    the classic POSIX aliveness probe — signal 0 is a no-op that only does
-    the permission/existence check.
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # PID exists but we can't signal it — treat as alive to be safe.
-        return True
-    return True
-
-
 def _git_diff_touches(files: list[str], project_root: Path | None = None) -> bool:
     """True if any of the given paths shows up in `git status --porcelain`.
 
@@ -695,7 +681,7 @@ def reconcile_run(
     # Snapshot the dict — we mutate `in_flight` inside the loop.
     for task_id, dispatch in list(run_file.state.in_flight.items()):
         try:
-            if _lookup_shell("_pid_alive", _pid_alive)(dispatch.pid):
+            if pid_alive(dispatch.pid):
                 event_log.emit(
                     "resume_adopt",
                     task_id,

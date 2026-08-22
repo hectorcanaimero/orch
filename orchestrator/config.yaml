@@ -76,3 +76,13 @@ findings:
   publish_rate_limit_per_hour: 3
   label: "auto-reported"
   min_publish_confidence: "medium"
+
+# Sprint E-2 / E-3 — dashboard client (SPA + FastAPI) knobs. All optional.
+# `profile` / `token` gate the middleware (operator|stakeholder|both — see
+# orchestrator/dashboard/dashboard_config.py). `board_url` is a PER-PROJECT
+# ExcaliDash canvas embedded in the Board tab of the SPA (surfaced via
+# GET /api/config, whitelisted so tokens NEVER leak).
+dashboard:
+  # profile: operator                                                     # operator | stakeholder | both
+  # token: ""                                                             # required when profile != operator
+  board_url: "https://draw.z0n.co/editor/4177cfa1-e629-4eb0-a0a8-de925cfaaf7b"                # optional — embed an ExcaliDash canvas in the Board tab

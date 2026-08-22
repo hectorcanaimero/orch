@@ -1939,6 +1939,7 @@ def _print_subcommand_list() -> int:
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
+    print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -2677,128 +2678,15 @@ def _run_doctor_subcommand(argv: list[str]) -> int:
         return 2
 
     # Doctor should still work even when tasks.json/scripts are missing —
-    # that's precisely the failure mode operators call it for. Detect the
-    # layout status ourselves instead of raising via `ensure_valid`.
-    from orchestrator import preflight
+    # that's precisely the failure mode operators call it for. The shared
+    # builder handles that: it swallows a config parse failure into a
+    # `config.parse` check and keeps probing the environment.
+    from orchestrator.doctor import build_doctor_report
 
-    checks: list[preflight.CheckResult] = []
-
-    # Config family — parse checks even if optional files are missing.
-    try:
-        cfg = _load_config(paths.config_yaml)
-    except Exception as exc:  # noqa: BLE001
-        cfg = {}
-        checks.append(
-            preflight.CheckResult(
-                name="config.parse",
-                status="error",
-                detail=f"cannot load {paths.config_yaml}: {exc}",
-                remediation=f"Create {paths.config_yaml} (run `orch init` for a template).",
-            )
-        )
-
-    backend_kind = str(((cfg.get("state") or {}) or {}).get("backend", "file"))
-    budgets_preset = cfg.get("budgets_preset")
-    budgets_path = _resolve_budgets_path(paths, cfg)
-
-    if not any(c.name == "config.parse" for c in checks):
-        checks.extend(
-            preflight.check_config_files(
-                config_yaml=paths.config_yaml,
-                budgets_yaml=budgets_path,
-                router_yaml=paths.router_yaml,
-                tasks_json=paths.tasks_json,
-                budgets_preset=budgets_preset,
-            )
-        )
-
-    # Scripts + jq.
-    checks.extend(preflight.check_scripts(paths.scripts_dir))
-
-    # Backends. Loading tasks + router is best-effort — a broken tasks.json
-    # is already flagged above, so we still probe the standard CLIs to give
-    # the operator the environment picture.
-    tasks_list: list = []
-    router_map: dict = {}
-    try:
-        from orchestrator.state import load_tasks
-
-        tasks_list = load_tasks(paths.tasks_json)
-    except Exception:  # noqa: BLE001
-        tasks_list = []
-    try:
-        from orchestrator.router import load_router
-
-        router_map = load_router(paths.router_yaml)
-    except Exception:  # noqa: BLE001
-        router_map = {}
-    checks.extend(preflight.check_backends(tasks_list, router_map))
-
-    # models.resolve — every task.model must resolve to a route entry.
-    unresolved = [t for t in tasks_list if router_map and t.model not in router_map]
-    if not tasks_list:
-        checks.append(
-            preflight.CheckResult(
-                name="models.resolve",
-                status="skip",
-                detail="no tasks loaded — cannot check resolution",
-            )
-        )
-    elif not router_map:
-        checks.append(
-            preflight.CheckResult(
-                name="models.resolve",
-                status="skip",
-                detail="router did not load — cannot check resolution",
-            )
-        )
-    elif unresolved:
-        checks.append(
-            preflight.CheckResult(
-                name="models.resolve",
-                status="error",
-                detail=(
-                    f"{len(unresolved)} task(s) reference unroutable models "
-                    f"(first: {unresolved[0].id!r} -> {unresolved[0].model!r})"
-                ),
-                remediation="Add the missing entries to model_router.yaml.",
-            )
-        )
-    else:
-        checks.append(
-            preflight.CheckResult(
-                name="models.resolve",
-                status="ok",
-                detail=f"{len(tasks_list)} task(s) resolve",
-            )
-        )
-
-    # State backend probe (schema_version=1 == current at Sprint B).
-    checks.extend(
-        preflight.check_state_backend(
-            state_dir=paths.state_dir,
-            backend=backend_kind,
-            sqlite_path=_resolve_sqlite_path(paths, cfg),
-            expected_schema_version=1,
-        )
+    payload = build_doctor_report(
+        paths, config_loader=_load_config, only=args.only,
     )
-
-    if args.only:
-        checks = [c for c in checks if args.only in c.name]
-
-    summary = preflight.summarize_checks(checks)
-    exit_code = preflight.exit_code_for_checks(checks)
-
-    payload = {
-        "project": {
-            "id": paths.project_id,
-            "root": str(paths.project_root),
-        },
-        "backend": backend_kind,
-        "checks": [c.as_json() for c in checks],
-        "summary": summary,
-        "exit_code": exit_code,
-    }
+    exit_code = int(payload["exit_code"])
 
     if args.json:
         print(json.dumps(payload, default=str, separators=(",", ":")))
@@ -3715,6 +3603,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_validate_subcommand(incoming[1:])
     if incoming and incoming[0] == "findings":
         return _run_findings_subcommand(incoming[1:])
+    if incoming and incoming[0] == "arch":
+        from orchestrator.arch import run_arch_cli
+
+        return run_arch_cli(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)

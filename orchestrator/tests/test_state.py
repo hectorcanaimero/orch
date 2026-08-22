@@ -469,7 +469,7 @@ def test_reconcile_dead_pid_no_files_reverts(tmp_path: Path) -> None:
 
     tasks_by_id = {"T-X": _mk_task("T-X", files=[])}
 
-    with patch("orchestrator.state._pid_alive", return_value=False), patch(
+    with patch("orchestrator.state.file_backend.pid_alive", return_value=False), patch(
         "orchestrator.state.call_task_block"
     ) as block_mock:
         report = reconcile_run(rf, ev, tasks_by_id)
@@ -493,7 +493,7 @@ def test_reconcile_dead_pid_with_dirty_files_adopts_as_done(tmp_path: Path) -> N
 
     tasks_by_id = {"T-Y": _mk_task("T-Y", files=["src/foo.ts"])}
 
-    with patch("orchestrator.state._pid_alive", return_value=False), patch(
+    with patch("orchestrator.state.file_backend.pid_alive", return_value=False), patch(
         "orchestrator.state._git_diff_touches", return_value=True
     ), patch("orchestrator.state.call_task_finish") as finish_mock:
         report = reconcile_run(rf, ev, tasks_by_id)
