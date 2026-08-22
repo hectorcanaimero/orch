@@ -30,8 +30,9 @@ def test_resolve_unknown_provider_raises_keyerror() -> None:
         resolve("ngrok")
 
 
-def test_known_providers_contains_only_autossh_in_v1() -> None:
-    assert known_providers() == ("autossh",)
+def test_known_providers_contains_autossh_and_bore() -> None:
+    # Order is registry-insertion order; autossh first (v1), bore second (v2).
+    assert known_providers() == ("autossh", "bore")
 
 
 def test_provider_registry_is_frozen_dataclass() -> None:
@@ -123,3 +124,71 @@ def test_providers_module_exposes_expected_symbols() -> None:
         "known_providers",
     ):
         assert hasattr(providers, name), f"missing symbol: {name}"
+
+
+# ---- bore provider (v2) --------------------------------------------------
+
+
+def test_bore_provider_registered() -> None:
+    spec = resolve("bore")
+    assert isinstance(spec, ProviderSpec)
+    assert spec.name == "bore"
+    assert spec.command == "bore"
+    # bore uses url_template because its stdout emits only "bore.pub:PORT",
+    # not a full URL. The template assembles the http:// scheme.
+    assert spec.url_template == "http://bore.pub:{port}"
+    # Default args target the free public bore.pub server on local :7420.
+    assert spec.default_args == ("local", "7420", "--to", "bore.pub")
+    # bore has no supervisor loop → no reconnect regex.
+    assert spec.autossh_reconnect_regex == ""
+
+
+def test_bore_url_extraction_produces_full_http_url() -> None:
+    spec = resolve("bore")
+    pattern = compile_url_regex(spec)
+    line = (
+        "2024-01-15T12:00:00.000000Z  INFO bore_cli::client: "
+        "listening at bore.pub:12345"
+    )
+    m = pattern.search(line)
+    assert m is not None
+    assert m.groupdict() == {"port": "12345"}
+    # This mirrors the manager: partial match + template → full URL.
+    assembled = spec.url_template.format_map(m.groupdict())
+    assert assembled == "http://bore.pub:12345"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "listening at bore.pub:1",
+        "prefix noise listening at bore.pub:65535 suffix",
+        "INFO bore_cli::client: listening at bore.pub:42",
+    ],
+)
+def test_bore_url_regex_captures_various_ports(line: str) -> None:
+    pattern = compile_url_regex(resolve("bore"))
+    m = pattern.search(line)
+    assert m is not None
+    assert m.group("port").isdigit()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "listening at example.com:12345",  # wrong host
+        "connecting to bore.pub:12345",     # wrong verb
+        "bore.pub:12345",                    # missing "listening at" prefix
+        "no port info here",
+    ],
+)
+def test_bore_url_regex_rejects_non_matching_lines(line: str) -> None:
+    pattern = compile_url_regex(resolve("bore"))
+    assert pattern.search(line) is None
+
+
+def test_url_template_defaults_to_none_for_legacy_providers() -> None:
+    # autossh emits a full URL in stdout — no template needed. The manager
+    # falls back to match.group(0) when this is None (backwards compat).
+    spec = resolve("autossh")
+    assert spec.url_template is None

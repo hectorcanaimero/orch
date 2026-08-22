@@ -16,7 +16,7 @@ kanban:
 # autossh`; Debian/Ubuntu: `sudo apt install autossh`).
 tunnel:
   enabled: false
-  provider: autossh         # v1 allowlist: only "autossh".
+  provider: autossh         # v1 allowlist: autossh, bore.
   command: autossh          # MUST equal the provider's pinned binary.
   # `args` forwarded verbatim to the subprocess. The default below fronts
   # Pinggy's free tier on port 443 → localhost:7420.
@@ -37,3 +37,30 @@ tunnel:
   auto_start: false         # true = self-probe + spawn on dashboard boot.
   startup_probe_timeout_s: 3   # 1..30 — self-probe timeout for auto_start.
   url_parse_timeout_s: 30      # 5..300 — how long we wait for the URL line.
+
+  # ------------------------------------------------------------------
+  # Alternative: bore (https://github.com/ekzhang/bore)
+  # No signup, no interstitial page. TCP raw (URL is http://, not https).
+  # bore.pub is a free public server; assigns a random port on connect.
+  # Install: `cargo install bore-cli` OR download a release binary from
+  #   https://github.com/ekzhang/bore/releases
+  #
+  # NOTE: bore has no supervisor-style reconnect loop — if the tunnel
+  # drops the process exits and the manager transitions to error. Restart
+  # via /api/tunnel/start (or `orch dashboard`) when that happens.
+  #
+  # To switch, replace the block above with:
+  #
+  # tunnel:
+  #   enabled: true
+  #   provider: bore
+  #   command: bore
+  #   args:
+  #     - "local"
+  #     - "7420"
+  #     - "--to"
+  #     - "bore.pub"
+  #   auto_start: false
+  #   startup_probe_timeout_s: 3
+  #   url_parse_timeout_s: 30
+  # ------------------------------------------------------------------

@@ -764,6 +764,7 @@ def check_tunnel(dashboard_yaml: Path) -> list[CheckResult]:
     spec = resolve(tcfg.provider)
     binary = spec.command
     binary_path = shutil.which(binary)
+    install_hint = _tunnel_install_hint(binary)
     if binary_path:
         results.append(
             CheckResult(
@@ -778,10 +779,7 @@ def check_tunnel(dashboard_yaml: Path) -> list[CheckResult]:
                 name="tunnel.binary",
                 status="error",
                 detail=f"{binary} not on PATH; tunnel.enabled is true",
-                remediation=(
-                    f"Install {binary} (`brew install {binary}` / "
-                    f"`apt install {binary}`)."
-                ),
+                remediation=f"Install {binary} ({install_hint}).",
             )
         )
     else:
@@ -794,11 +792,29 @@ def check_tunnel(dashboard_yaml: Path) -> list[CheckResult]:
                     f"still boots, but /start would fail if you enable it"
                 ),
                 remediation=(
-                    f"Install {binary} before flipping tunnel.enabled to true."
+                    f"Install {binary} ({install_hint}) before flipping "
+                    f"tunnel.enabled to true."
                 ),
             )
         )
     return results
+
+
+def _tunnel_install_hint(binary: str) -> str:
+    """Provider-aware install instructions for the tunnel.binary remediation.
+
+    autossh is packaged everywhere (brew, apt). bore ships as a Rust
+    cargo crate or a release binary from the upstream repo — no
+    system package. Anything unrecognized falls back to a generic hint.
+    """
+    if binary == "autossh":
+        return "`brew install autossh` / `apt install autossh`"
+    if binary == "bore":
+        return (
+            "`cargo install bore-cli` or download from "
+            "https://github.com/ekzhang/bore/releases"
+        )
+    return f"`brew install {binary}` / `apt install {binary}`"
 
 
 # ---------------------------------------------------------------------------

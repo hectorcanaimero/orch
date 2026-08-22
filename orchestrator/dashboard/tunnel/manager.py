@@ -435,7 +435,15 @@ class TunnelManager:
                     if not url_seen:
                         m = url_re.search(line)
                         if m:
-                            captured = m.group(0)
+                            if spec.url_template:
+                                # Named-group interpolation. bore-style:
+                                # partial URL in stdout (host:port) → assemble.
+                                captured = spec.url_template.format_map(
+                                    m.groupdict()
+                                )
+                            else:
+                                # Whole-match. autossh-style: URL emitted verbatim.
+                                captured = m.group(0)
                             with self._lock:
                                 self._state["url"] = captured
                                 self._state["url_at"] = _utc_iso()

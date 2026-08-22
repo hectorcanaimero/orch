@@ -411,3 +411,49 @@ def test_start_records_error_when_spawn_raises_filenotfound(tmp_path: Path) -> N
     snap = mgr.status()
     assert snap["state"] == STATE_ERROR
     assert snap["last_error"] and snap["last_error"].startswith("spawn_failed:")
+
+
+# ---- bore provider: partial-URL assembly (url_template) ------------------
+
+
+def test_bore_manager_captures_partial_url_via_template(tmp_path: Path) -> None:
+    """bore emits `listening at bore.pub:PORT` — the manager must assemble
+    the full `http://bore.pub:PORT` URL via the provider's url_template."""
+    script = [
+        b"2024-01-15T12:00:00.000000Z  INFO bore_cli::client: connecting to bore.pub\n",
+        b"2024-01-15T12:00:00.100000Z  INFO bore_cli::client: listening at bore.pub:12345\n",
+    ]
+    factory = _make_factory(script_lines=script, exit_after_lines=False)
+    mgr = TunnelManager(tmp_path, popen_factory=factory)
+    cfg = TunnelManagerConfig(provider="bore", command="bore")
+    mgr.start(cfg)
+    assert _wait_for(lambda: mgr.status().get("url") is not None, timeout=2.0)
+    snap = mgr.status()
+    # Assembled from named group ("port") via url_template — NOT match.group(0).
+    assert snap["url"] == "http://bore.pub:12345"
+    assert snap["state"] == STATE_RUNNING
+    assert snap["provider"] == "bore"
+
+
+def test_bore_manager_ignores_partial_matches_that_dont_fit_template(
+    tmp_path: Path,
+) -> None:
+    """Lines that don't match the regex at all leave url unset — no crash."""
+    script = [
+        b"unrelated noise\n",
+        b"connecting to bore.pub (not listening yet)\n",
+    ]
+    factory = _make_factory(
+        script_lines=script,
+        delay_after_line_s=0.05,
+        exit_after_lines=True,
+    )
+    mgr = TunnelManager(tmp_path, popen_factory=factory)
+    cfg = TunnelManagerConfig(
+        provider="bore", command="bore", url_parse_timeout_s=1
+    )
+    mgr.start(cfg)
+    # Give the reader a beat to consume the script + trip the timeout.
+    time.sleep(1.3)
+    snap = read_state(tmp_path) or mgr.status()
+    assert snap.get("url") is None
