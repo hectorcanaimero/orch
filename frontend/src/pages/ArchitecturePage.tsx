@@ -28,6 +28,19 @@ import type { ArchitectureSnapshot } from "@/lib/types"
 
 const CURRENT_KEY = "__current__"
 
+const PHASE_LABELS: Record<string, string> = {
+  dispatching: "starting up",
+  claude_working: "claude is generating the diagram",
+  finalizing: "archiving the result",
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}m ${secs.toString().padStart(2, "0")}s`
+}
+
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -100,16 +113,46 @@ export function ArchitecturePage() {
     regen.error instanceof ArchitectureAlreadyGeneratingError
 
   // Bridge the gap between the 202 response and the first status poll that
-  // reports `regenerate_in_progress: true`. Subprocess startup + our 3s poll
-  // interval leaves a ~1–3s window where the UI would otherwise look idle.
+  // reports `regenerate_in_progress: true`. Subprocess startup + our poll
+  // interval leaves a small window where the UI would otherwise look idle.
   // Once the poll confirms the run, we reset the mutation so `busy` collapses
   // back to `regenerating` alone.
   useEffect(() => {
     if (regenerating && regen.isSuccess) regen.reset()
   }, [regenerating, regen])
 
+  // Safety net: if the subprocess crashes fast (or finishes so quickly the
+  // poll never catches `regenerate_in_progress: true`), the bridge above
+  // never fires and the button stays "busy" forever. Force a reset 15s
+  // after mutation success if we still haven't observed a live run.
+  useEffect(() => {
+    if (!regen.isSuccess || regenerating) return
+    const t = setTimeout(() => regen.reset(), 15_000)
+    return () => clearTimeout(t)
+  }, [regen.isSuccess, regenerating, regen])
+
   const busy = regenerating || regen.isSuccess
   const disableRegenerate = busy || regen.isPending
+
+  // Local 1s ticker so the elapsed counter feels alive between polls. Off
+  // when nothing's running to avoid pointless renders.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!busy) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [busy])
+
+  const startedMs = status.data?.started_at
+    ? new Date(status.data.started_at).getTime()
+    : null
+  const elapsedS =
+    startedMs !== null && !Number.isNaN(startedMs)
+      ? Math.max(0, Math.floor((now - startedMs) / 1000))
+      : null
+  const phaseLabel = status.data?.phase
+    ? (PHASE_LABELS[status.data.phase] ?? status.data.phase)
+    : null
 
   const handleRegenerate = () => {
     if (disableRegenerate) return
@@ -268,9 +311,27 @@ export function ArchitecturePage() {
             role="status"
           >
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {regenerating
-              ? "Regenerating architecture… this may take a couple of minutes. The current diagram stays visible until the new one is ready."
-              : "Regeneration requested — waiting for the subprocess to start."}
+            {regenerating ? (
+              <span>
+                Regenerating architecture
+                {phaseLabel ? (
+                  <>
+                    {" · "}
+                    <span className="font-medium">{phaseLabel}</span>
+                  </>
+                ) : null}
+                {elapsedS !== null ? (
+                  <>
+                    {" · "}
+                    <span className="font-mono">{formatElapsed(elapsedS)}</span>
+                    {" elapsed"}
+                  </>
+                ) : null}
+                . The current diagram stays visible until the new one is ready.
+              </span>
+            ) : (
+              "Regeneration requested — waiting for the subprocess to start."
+            )}
           </div>
         ) : null}
 

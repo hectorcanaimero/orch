@@ -854,13 +854,21 @@ def create_app(
         events = _load_arch_events()
         last = events[-1] if events else None
         exists = current.exists()
+        lock = arch_mod.read_lock(app_state.paths.state_dir)
         return JSONResponse({
             "exists": exists,
             "generated_at": (last or {}).get("timestamp") if exists else None,
             "source_hash": _current_source_hash() if exists else None,
             "count": len(events),
             "last_cost_usd": (last or {}).get("cost_usd") if last else None,
-            "regenerate_in_progress": arch_mod.read_lock(app_state.paths.state_dir) is not None,
+            "regenerate_in_progress": lock is not None,
+            # Progress fields: null when idle, populated when a run is live.
+            # The frontend derives `elapsed_s` client-side from `started_at`
+            # so the counter ticks smoothly between polls without a wall
+            # of stale numbers.
+            "phase": (lock or {}).get("phase") if lock else None,
+            "phase_at": (lock or {}).get("phase_at") if lock else None,
+            "started_at": (lock or {}).get("started_at") if lock else None,
         })
 
     @app.get("/api/architecture/current", name="api_arch_current")

@@ -3,7 +3,9 @@ import { getArchitectureStatus } from "@/lib/api"
 import type { ArchitectureStatus } from "@/lib/types"
 
 const IDLE_INTERVAL_MS = 30_000
-const REGEN_INTERVAL_MS = 3_000
+// 1s while a run is live — matches the elapsed counter tick and keeps
+// phase transitions (dispatching → claude_working → finalizing) responsive.
+const REGEN_INTERVAL_MS = 1_000
 
 export function useArchitectureStatus() {
   return useQuery<ArchitectureStatus, Error>({

@@ -193,3 +193,32 @@ def test_stale_lock_is_ignored(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(arch_mod, "_run_claude", _fake_claude)
     rc = arch_mod.run_arch_cli(["generate", "--project-root", str(root)])
     assert rc == 0
+
+
+def test_acquire_lock_includes_initial_phase(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    payload = arch_mod.acquire_lock(state_dir)
+    assert payload["phase"] == "dispatching"
+    assert payload["phase_at"] == payload["started_at"]
+    on_disk = json.loads((state_dir / "arch-generate.lock").read_text())
+    assert on_disk["phase"] == "dispatching"
+
+
+def test_update_phase_preserves_pid_and_started_at(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    original = arch_mod.acquire_lock(state_dir)
+    arch_mod.update_phase(state_dir, "claude_working")
+    updated = json.loads((state_dir / "arch-generate.lock").read_text())
+    assert updated["phase"] == "claude_working"
+    assert updated["pid"] == original["pid"]
+    assert updated["started_at"] == original["started_at"]
+    # phase_at may equal started_at if the clock hasn't advanced past 1s
+    # resolution — we only assert it's a valid ISO string.
+    assert isinstance(updated["phase_at"], str) and updated["phase_at"]
+
+
+def test_update_phase_is_noop_when_lock_missing(tmp_path: Path) -> None:
+    # Must not raise when there's nothing to update — protects the
+    # generation flow from crashing on a transient FS race.
+    arch_mod.update_phase(tmp_path / "state", "claude_working")
+    assert not (tmp_path / "state" / "arch-generate.lock").exists()

@@ -197,6 +197,11 @@ export interface ArchitectureStatus {
   count: number
   last_cost_usd: number | null
   regenerate_in_progress: boolean
+  // Live progress fields — null when idle, populated during a run so the
+  // UI can show which phase is active + how long it's been going.
+  phase?: "dispatching" | "claude_working" | "finalizing" | null
+  phase_at?: string | null
+  started_at?: string | null
 }
 
 export interface ArchitectureSnapshot {

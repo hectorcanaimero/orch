@@ -161,14 +161,39 @@ def read_lock(state_dir: Path) -> dict[str, Any] | None:
     return data
 
 
-def acquire_lock(state_dir: Path) -> dict[str, Any]:
+def acquire_lock(state_dir: Path, phase: str = "dispatching") -> dict[str, Any]:
     state_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload = {
         "pid": os.getpid(),
-        "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "started_at": now,
+        "phase": phase,
+        "phase_at": now,
     }
     _lock_path(state_dir).write_text(json.dumps(payload), encoding="utf-8")
     return payload
+
+
+def update_phase(state_dir: Path, phase: str) -> None:
+    """Rewrite the lock file with a new phase marker.
+
+    Best-effort — a corrupt/absent lock is treated as "nothing to update"
+    so a phase update never crashes the generation flow. Preserves `pid`
+    and `started_at` from the existing payload.
+    """
+    path = _lock_path(state_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(data, dict):
+        return
+    data["phase"] = phase
+    data["phase_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def release_lock(state_dir: Path) -> None:
@@ -188,28 +213,31 @@ def build_prompt(
     sources: dict[str, Any],
     current_html: Path,
 ) -> str:
+    """Minimal prompt — trust the archify skill to know how to invoke itself.
+
+    Earlier revisions spelled out `node bin/archify.mjs deliver ...` which
+    the model interpreted as a path relative to cwd=project_root, where it
+    doesn't exist. The result: claude generated a valid JSON IR then stopped
+    without producing HTML. The skill's own SKILL.md already documents how
+    to invoke archify — we only need to specify the output path.
+    """
     prds = sources.get("prd") or []
     specs = sources.get("specs") or []
     tj = sources.get("tasks_json")
-    prd_str = ", ".join(str(p) for p in prds) or "(none found)"
-    spec_str = ", ".join(str(p) for p in specs) or "(none found)"
+    prd_str = "\n  - " + "\n  - ".join(str(p) for p in prds) if prds else " (none)"
+    spec_str = "\n  - " + "\n  - ".join(str(p) for p in specs) if specs else " (none)"
     tasks_str = str(tj) if tj else "(none)"
     return (
-        f"You are working in the project at {project_root}.\n\n"
-        "Generate an interactive runtime architecture diagram for this project "
-        "using the archify skill installed on your system.\n\n"
-        "Read these artifacts first to understand the system:\n"
-        f"- PRD documents: {prd_str}\n"
-        f"- Spec documents: {spec_str}\n"
-        f"- Task definitions: {tasks_str}\n\n"
-        "Then use archify to:\n"
-        "1. Choose the appropriate archify type (architecture, workflow, "
-        "sequence, dataflow, or lifecycle)\n"
-        "2. Author a JSON IR reflecting the system's real components and data flows\n"
-        "3. Validate with `node bin/archify.mjs validate ...`\n"
-        "4. Deliver with `node bin/archify.mjs deliver ... "
-        f"{current_html}`\n\n"
-        "Output ONLY the HTML file. Do not create additional files.\n"
+        f"Use the archify skill to generate an interactive architecture "
+        f"diagram for the project at {project_root}.\n\n"
+        f"Read these artifacts to ground the diagram in reality:\n"
+        f"- PRD:{prd_str}\n"
+        f"- Specs:{spec_str}\n"
+        f"- Tasks: {tasks_str}\n\n"
+        f"Write the final self-contained HTML to exactly this path:\n"
+        f"  {current_html}\n\n"
+        f"Do not leave intermediate JSON IR files in the project root — put "
+        f"any working files under {current_html.parent}.\n"
     )
 
 
@@ -217,7 +245,15 @@ def build_prompt(
 
 
 def _build_claude_argv(model: str) -> list[str]:
-    """Same shape as `dispatcher.ClaudeBackend.build_cmd`, minus the Task/Route deps."""
+    """Same shape as `dispatcher.ClaudeBackend.build_cmd`, minus the Task/Route deps.
+
+    `--permission-mode bypassPermissions`: archify needs to shell out to
+    `node bin/archify.mjs render ...` to produce the HTML. `acceptEdits`
+    (our old default) auto-accepts Write/Edit but NOT Bash, so archify's
+    render step ended up in `permission_denials` and returned an empty
+    result after burning ~$0.24 per run. This is a headless subprocess
+    we dispatch ourselves — no interactive user to prompt anyway.
+    """
     return [
         "claude",
         "-p",
@@ -230,7 +266,7 @@ def _build_claude_argv(model: str) -> list[str]:
         "--add-dir",
         ".",
         "--permission-mode",
-        "acceptEdits",
+        "bypassPermissions",
     ]
 
 
@@ -424,6 +460,7 @@ def _run_generate(argv: list[str]) -> int:
     argv_claude = _build_claude_argv(model)
 
     try:
+        update_phase(paths.state_dir, "claude_working")
         try:
             proc = _run_claude(argv_claude, prompt, paths.project_root, DEFAULT_TIMEOUT_S)
         except FileNotFoundError:
@@ -448,12 +485,15 @@ def _run_generate(argv: list[str]) -> int:
             return 1
 
         if not current_html.exists():
+            stdout_tail = (proc.stdout or b"").decode("utf-8", errors="replace")[-2000:]
             print(
-                f"archify did not produce {current_html} — check the sub-agent output",
+                f"archify did not produce {current_html}\n"
+                f"---last 2KB of claude stdout---\n{stdout_tail}",
                 file=sys.stderr,
             )
             return 1
 
+        update_phase(paths.state_dir, "finalizing")
         parsed = parse_claude_result(
             (proc.stdout or b"").decode("utf-8", errors="replace")
         )
