@@ -109,12 +109,34 @@ def test_config_stakeholder_routes_extends_but_never_shrinks(tmp_path: Path) -> 
 
 
 def test_stakeholder_route_matches_by_name_and_prefix() -> None:
-    allow = ("stakeholder_index", "/static/")
-    assert stakeholder_route_matches("/stakeholder", "stakeholder_index", allow) is True
-    assert stakeholder_route_matches("/static/main.css", None, allow) is True
+    allow = ("stakeholder_summary_json", "/assets/")
+    assert stakeholder_route_matches(
+        "/stakeholder/summary", "stakeholder_summary_json", allow
+    ) is True
+    assert stakeholder_route_matches("/assets/main.js", None, allow) is True
     assert stakeholder_route_matches("/api/tasks", "api_tasks", allow) is False
     # Named allow-list entry with no route.name attached → no match.
     assert stakeholder_route_matches("/x", None, allow) is False
+
+
+def test_stakeholder_route_matches_bare_slash_is_exact() -> None:
+    """Bare `/` must be an EXACT match — otherwise `path.startswith('/')`
+    would let every request through, including `/api/*`."""
+    allow = ("/",)
+    assert stakeholder_route_matches("/", None, allow) is True
+    assert stakeholder_route_matches("/api/tasks", "api_tasks", allow) is False
+    assert stakeholder_route_matches("/kanban", "spa", allow) is False
+
+
+def test_stakeholder_route_matches_spa_mount_name() -> None:
+    """Allow-listing the SPA mount name (`spa`) covers the SPA shell + every
+    React Router client route, without exposing named JSON APIs."""
+    allow = ("spa",)
+    assert stakeholder_route_matches("/", "spa", allow) is True
+    assert stakeholder_route_matches("/kanban", "spa", allow) is True
+    assert stakeholder_route_matches("/assets/main.js", "spa", allow) is True
+    # Named JSON API routes still 403.
+    assert stakeholder_route_matches("/api/tasks", "api_tasks", allow) is False
 
 
 # ---- Middleware — TokenAuth ------------------------------------------------
@@ -138,7 +160,12 @@ def _bare_app_with(middleware_layers):
     routes = [
         Route("/", _root, name="index"),
         Route("/snapshot", _snapshot, name="snapshot"),
-        Route("/stakeholder", _stakeholder, name="stakeholder_index"),
+        # `/stakeholder` used to be the Jinja index (removed). We keep a
+        # bare `_stakeholder` route to simulate the sub-tree so `both` mode
+        # gating still has a target to hit — but it's an OPERATOR-only name
+        # now, so stakeholder mode should 403 it (that's the assertion in
+        # `test_profile_guard_blocks_non_allow_listed_in_stakeholder_mode`).
+        Route("/stakeholder", _stakeholder, name="stakeholder_placeholder"),
         Route("/stakeholder/summary", _stakeholder, name="stakeholder_summary_json"),
     ]
     app = Starlette(routes=routes, middleware=middleware_layers)
@@ -280,8 +307,7 @@ def test_profile_guard_allows_listed_names_in_stakeholder_mode() -> None:
     cfg = DashboardConfig.load(profile_override="stakeholder", token_override="t")
     app = _bare_app_with([Middleware(ProfileGuardMiddleware, config=cfg)])
     client = _client(app)
-    # `stakeholder_index` is in DEFAULT_STAKEHOLDER_ROUTES.
-    assert client.get("/stakeholder").status_code == 200
+    # `stakeholder_summary_json` is in DEFAULT_STAKEHOLDER_ROUTES.
     assert client.get("/stakeholder/summary").status_code == 200
 
 
@@ -295,8 +321,8 @@ def test_profile_guard_both_mode_only_gates_stakeholder_prefix() -> None:
     client = _client(app)
     # Operator paths unblocked.
     assert client.get("/snapshot").status_code == 200
-    # Stakeholder allow-listed → still 200 (guard passes it through).
-    assert client.get("/stakeholder").status_code == 200
+    # Stakeholder allow-listed summary endpoint → still 200 (guard passes).
+    assert client.get("/stakeholder/summary").status_code == 200
 
 
 def test_profile_guard_403_body_hides_path_details() -> None:
@@ -332,7 +358,9 @@ def test_layered_middleware_auth_runs_before_guard() -> None:
         Middleware(TokenAuthMiddleware, config=cfg),
     ])
     client = _client(app)
-    r = client.get("/stakeholder")
+    # `/stakeholder/summary` is an allow-listed name — but auth still runs
+    # first, so a missing token yields 401 (not 403 from the guard).
+    r = client.get("/stakeholder/summary")
     assert r.status_code == 401
 
 

@@ -1,13 +1,10 @@
-"""Sprint E-2 security matrix — every operator-only route must 403 in
-stakeholder mode; the stakeholder allow-list must gate on the token.
+"""Security matrix — every operator-only route must 403 in stakeholder
+mode; the stakeholder allow-list must gate on the token.
 
-Route inventory (verified against server.py):
+Route inventory (verified against server.py after the SPA-at-root
+migration removed every legacy Jinja HTML route):
 
-    Operator-only (403 in stakeholder mode):
-      GET  /                             — index
-      GET  /kanban                       — kanban_page
-      GET  /metrics                      — metrics_page
-      GET  /logs                         — logs_page
+    Operator-only JSON/SSE (403 in stakeholder mode):
       GET  /logs/stream                  — logs_stream (SSE)
       GET  /api/events/stream            — api_events_stream (SSE)
       GET  /api/tasks                    — api_tasks
@@ -15,13 +12,11 @@ Route inventory (verified against server.py):
       GET  /api/budgets                  — api_budgets
       GET  /api/metrics                  — api_metrics
       GET  /snapshot                     — snapshot
-      GET  /partials/task-modal/{id}     — partial_task_modal
-      GET  /partials/task-row/{id}       — partial_task_row
 
     Stakeholder-safe (200 with valid token):
-      GET  /stakeholder                  — stakeholder_index
       GET  /stakeholder/summary          — stakeholder_summary_json
-      GET  /static/*                     — mounted StaticFiles
+      GET  /                             — SPA index (name="spa")
+      GET  /kanban , /metrics , /logs    — SPA client routes (name="spa")
 
 Also asserts information-hiding contracts: 401/403 bodies never leak
 the requested path or a stack trace, and no `WWW-Authenticate` header
@@ -37,10 +32,6 @@ import pytest
 
 
 OPERATOR_ONLY_ROUTES: list[tuple[str, str]] = [
-    ("GET", "/"),
-    ("GET", "/kanban"),
-    ("GET", "/metrics"),
-    ("GET", "/logs"),
     ("GET", "/logs/stream"),
     ("GET", "/api/events/stream"),
     ("GET", "/api/tasks"),
@@ -48,12 +39,9 @@ OPERATOR_ONLY_ROUTES: list[tuple[str, str]] = [
     ("GET", "/api/budgets"),
     ("GET", "/api/metrics"),
     ("GET", "/snapshot"),
-    ("GET", "/partials/task-modal/T-A"),
-    ("GET", "/partials/task-row/T-A"),
 ]
 
 STAKEHOLDER_SAFE_ROUTES: list[tuple[str, str]] = [
-    ("GET", "/stakeholder"),
     ("GET", "/stakeholder/summary"),
 ]
 
@@ -99,7 +87,6 @@ def _make_fixture_project(tmp_path: Path):
 
 
 def _client(tmp_path: Path, **override):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
@@ -167,40 +154,40 @@ def test_stakeholder_profile_accepts_curated_routes(
 
 def test_stakeholder_without_token_returns_401(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder")
+    r = client.get("/stakeholder/summary")
     assert r.status_code == 401
     assert r.text == "unauthorized"
 
 
 def test_stakeholder_wrong_token_returns_401(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder", headers={"Authorization": "Bearer wrong"})
+    r = client.get("/stakeholder/summary", headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
 
 
 def test_stakeholder_wrong_token_query_param_returns_401(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder?token=wrong")
+    r = client.get("/stakeholder/summary?token=wrong")
     assert r.status_code == 401
 
 
 def test_stakeholder_token_query_param_accepted(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder?token=s3cr3t")
+    r = client.get("/stakeholder/summary?token=s3cr3t")
     assert r.status_code == 200
 
 
 def test_stakeholder_401_does_not_leak_www_authenticate(tmp_path: Path) -> None:
     """No WWW-Authenticate header — that would tell scanners we use Bearer."""
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder")
+    r = client.get("/stakeholder/summary")
     assert r.status_code == 401
     assert "www-authenticate" not in {k.lower() for k in r.headers.keys()}
 
 
 def test_stakeholder_response_marked_no_store(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="stakeholder", token="s3cr3t")
-    r = client.get("/stakeholder")
+    r = client.get("/stakeholder/summary")
     assert r.headers.get("Cache-Control") == "no-store"
 
 
@@ -209,27 +196,49 @@ def test_stakeholder_response_marked_no_store(tmp_path: Path) -> None:
 
 def test_both_mode_operator_paths_no_auth(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="both", token="s3cr3t")
-    # Operator paths — no token required.
-    assert client.get("/").status_code == 200
+    # Operator JSON APIs — no token required.
     assert client.get("/api/tasks").status_code == 200
+    assert client.get("/api/metrics").status_code == 200
 
 
 def test_both_mode_stakeholder_path_requires_token(tmp_path: Path) -> None:
     client = _client(tmp_path, profile="both", token="s3cr3t")
-    assert client.get("/stakeholder").status_code == 401
-    assert client.get("/stakeholder?token=s3cr3t").status_code == 200
+    assert client.get("/stakeholder/summary").status_code == 401
+    assert client.get("/stakeholder/summary?token=s3cr3t").status_code == 200
 
 
-def test_both_mode_stakeholder_prefix_rejects_operator_child_routes(
+def test_both_mode_stakeholder_prefix_rejects_operator_api(
     tmp_path: Path,
 ) -> None:
-    """`/stakeholder/anything-not-allow-listed` should 403 (or 401 sans token)."""
+    """No operator JSON API leaks under `/stakeholder/*` in both mode.
+
+    The SPA StaticFiles mount at `/` intentionally serves `index.html`
+    for unknown client-side routes (so React Router hard-reloads work),
+    but the mount excludes `api/*` from the fallback — so hitting an
+    invented JSON endpoint under `/stakeholder/api/tasks` (which would
+    NEVER be a real API path — the real one is `/api/tasks`) must not
+    smuggle in operator data.
+
+    We also assert that the real `/api/tasks` (operator route) stays
+    accessible under the operator context — `both` mode leaves operator
+    paths open by design.
+    """
     client = _client(tmp_path, profile="both", token="s3cr3t")
-    r = client.get("/stakeholder/definitely-not-a-route",
-                   headers={"Authorization": "Bearer s3cr3t"})
-    # Under stakeholder guard the router would 404 but the guard 403s
-    # first (safer — no route-existence oracle).
-    assert r.status_code in (403, 404)
+    # Operator API still open in both mode (no /stakeholder prefix).
+    assert client.get("/api/tasks").status_code == 200
+    # `/stakeholder/summary` is the only allow-listed stakeholder JSON.
+    # Everything else under `/stakeholder/*` is either 401 (no token) or
+    # served by the SPA fallback (200 HTML — SPA does client-side auth).
+    r = client.get("/stakeholder/anything", headers={"Authorization": "Bearer s3cr3t"})
+    # SPA fallback OR 403 both acceptable — the invariant is that no JSON
+    # payload leaks. Assert the response is either HTML (SPA) or a status
+    # rejection, never operator JSON data.
+    ct = r.headers.get("content-type", "").lower()
+    assert r.status_code in (200, 403, 404)
+    if r.status_code == 200:
+        assert "text/html" in ct or "text/plain" in ct, (
+            f"expected HTML or plain body, got {ct}: {r.text[:200]}"
+        )
 
 
 # ---- Method fuzzing on control routes -------------------------------------

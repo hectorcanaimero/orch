@@ -1,17 +1,20 @@
-"""Curated-view tests for Sprint E-2.
+"""Curated-view tests for the stakeholder profile.
 
-Confirms that the stakeholder profile:
-    - Serves `/stakeholder` HTML with the curated progress partial.
-    - Serves `/stakeholder/summary` JSON with the same fields as the view.
-    - HIDES per-model spend, raw log content, per-task exit codes, and
-      granular last-updated timestamps.
-    - Operator profile (default) keeps rendering every sensitive field
-      exactly like before.
+Confirms that:
+    - `/stakeholder/summary` JSON contains only the curated fields
+      (project_id, summary, milestones, spend_rounded_usd, eta_hours,
+      refresh_interval_s).
+    - No per-task IDs, no per-model spend, no `task_id`, no `cost_usd`,
+      no provider identifiers ever leak in the JSON body.
 
 The middleware wiring is tested in `test_dashboard_middleware.py` and the
 security matrix (403 for every operator-only route in stakeholder mode)
 lives in `test_dashboard_security.py`. Here we focus on the CONTENT of
 the curated payload.
+
+The legacy `/stakeholder` HTML page (Jinja) was removed when the SPA
+became the sole UI — the SPA's `StakeholderSummaryPage` renders the
+same JSON payload directly.
 """
 
 from __future__ import annotations
@@ -27,9 +30,6 @@ from orchestrator.dashboard.metrics import (
     round_up_to_step,
 )
 from orchestrator.models import Task
-
-
-# ---- Reuse the fixture from test_dashboard.py --------------------------
 
 
 def _mk_task(**kw) -> Task:
@@ -99,15 +99,11 @@ def _make_fixture_project(tmp_path: Path):
 
 
 def _client_or_skip(tmp_path: Path, **override):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
 
     paths = _make_fixture_project(tmp_path)
-    # `profile_override` / `token_override` land in the app config BEFORE
-    # middleware registration — critical, because middleware only wires
-    # in when config.profile != "operator".
     app = create_app(
         paths=paths,
         profile_override=override.get("profile"),
@@ -169,45 +165,7 @@ def test_milestones_marks_fully_done_phases() -> None:
     ]
 
 
-# ---- Integration: stakeholder view --------------------------------------
-
-
-def test_stakeholder_index_renders_curated_partial(tmp_path: Path) -> None:
-    client, _ = _client_or_skip(tmp_path, profile="stakeholder", token="t")
-    r = client.get("/stakeholder", headers={"Authorization": "Bearer t"})
-    assert r.status_code == 200
-    body = r.text
-    assert 'data-role="stakeholder-progress"' in body
-    # Percent + milestones are safe to expose.
-    assert "% " in body or "%<" in body or "progress" in body.lower()
-    assert "Milestones" in body or "milestones" in body.lower()
-
-
-def test_stakeholder_index_hides_per_model_spend(tmp_path: Path) -> None:
-    """Sensitive fields banished from the curated HTML."""
-    client, _ = _client_or_skip(tmp_path, profile="stakeholder", token="t")
-    r = client.get("/stakeholder", headers={"Authorization": "Bearer t"})
-    assert r.status_code == 200
-    body = r.text
-    # Provider identifiers must never leak on the curated view.
-    assert "opencode-go" not in body
-    assert "claude-sonnet-4-6" not in body
-    # Per-model spend granularity — should NOT surface anywhere.
-    assert "$1.05" not in body
-    assert "$0.42" not in body
-
-
-def test_stakeholder_index_hides_raw_log_and_task_lists(tmp_path: Path) -> None:
-    client, _ = _client_or_skip(tmp_path, profile="stakeholder", token="t")
-    r = client.get("/stakeholder", headers={"Authorization": "Bearer t"})
-    assert r.status_code == 200
-    body = r.text
-    # No per-task IDs surface on the curated view — only aggregate counts.
-    assert ">T-A<" not in body
-    assert ">T-B<" not in body
-    assert ">T-C<" not in body
-    # No SSE event stream link either.
-    assert "/logs/stream" not in body
+# ---- Integration: curated JSON payload ----------------------------------
 
 
 def test_stakeholder_summary_json_shape(tmp_path: Path) -> None:
@@ -234,23 +192,18 @@ def test_stakeholder_summary_hides_per_task_details(tmp_path: Path) -> None:
     assert '"claude-sonnet' not in body
 
 
-# ---- Operator profile still shows everything ----------------------------
+# ---- Operator profile — JSON APIs still expose everything ---------------
 
 
-def test_operator_index_still_shows_model_column(tmp_path: Path) -> None:
+def test_operator_api_metrics_still_shows_per_model_breakdown(tmp_path: Path) -> None:
+    """Operator's /api/metrics keeps the per-model breakdown that the SPA
+    renders in the operator MetricsPage."""
     client, _ = _client_or_skip(tmp_path)  # default = operator
-    r = client.get("/")
+    r = client.get("/api/metrics")
     assert r.status_code == 200
-    body = r.text
-    assert "opencode-go" in body
-    assert "claude-sonnet-4-6" in body
-
-
-def test_operator_metrics_shows_per_model_breakdown(tmp_path: Path) -> None:
-    client, _ = _client_or_skip(tmp_path)
-    r = client.get("/metrics")
-    assert r.status_code == 200
-    body = r.text
-    assert "By model" in body
-    assert "opencode-go" in body
-    assert "$1.05" in body or "1.05" in body
+    payload = r.json()
+    assert "by_model" in payload
+    models = {row["model"] for row in payload["by_model"]}
+    # Both fixture models present.
+    assert "opencode-go/glm-5.1" in models
+    assert "claude-sonnet-4-6" in models

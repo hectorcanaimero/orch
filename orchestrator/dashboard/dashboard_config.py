@@ -52,18 +52,25 @@ STAKEHOLDER_PATH_PREFIX = "/stakeholder"
 # forms are permitted so we can express "any /static/* file" and "the
 # named `stakeholder_index` route" in one list.
 DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
-    "stakeholder_index",
     "stakeholder_summary_json",
-    "/static/",
     # Sprint E-5: capabilities is intentionally auth-free so the SPA can
     # decide whether to render the tunnel panel BEFORE requesting a token.
     "api_tunnel_capabilities",
-    # Sprint E-6 (SPA mount): the compiled Vite SPA lives under `/spa/` and
-    # its bundled assets are served from `/spa/assets/`. Stakeholder users
-    # need to load the SPA shell + JS/CSS bundles so the curated view can
-    # render outside the operator dashboard. Path-prefix match — catches
-    # `/spa`, `/spa/`, `/spa/kanban`, `/spa/assets/*.js`, etc.
-    "/spa/",
+    # SPA-at-root migration: the React SPA now lives at `/` (moved from
+    # `/spa/`) with its bundled assets under `/assets/*`. Two allow-list
+    # forms cover it:
+    #   - "spa" (the SPA StaticFiles mount name registered LAST in
+    #     create_app()) — matches any path that fell through the explicit
+    #     routes, so `/kanban`, `/metrics`, `/logs`, `/stakeholder`, and
+    #     every other React Router client route resolve to the SPA
+    #     fallback HTML.
+    #   - "/assets/" (path prefix) — belt-and-suspenders for the bundled
+    #     JS/CSS chunks: even if the SPA mount is absent (bare-source
+    #     checkout, no `pnpm build`) the middleware still lets the
+    #     request through so a probing client sees a 404, not a
+    #     mysterious 403.
+    "spa",
+    "/assets/",
 )
 
 
@@ -391,16 +398,28 @@ def stakeholder_route_matches(
     """True when the incoming request may be served under the stakeholder profile.
 
     Rules:
-        - Any entry starting with `/` is a path-prefix match against `path`.
+        - Bare `/` is an EXACT match (only the index). Otherwise a bare
+          slash would let every path through since they all start with `/`.
+        - Any other entry starting with `/` is a path-prefix match against
+          `path`.
         - Every other entry is a case-sensitive route-name match against
-          the FastAPI route's `.name` attribute.
+          the FastAPI route's `.name` attribute — the SPA StaticFiles
+          mount is registered as `name="spa"` so allow-listing that name
+          covers the SPA shell + every client-side React Router route
+          without also exposing the operator JSON APIs.
 
-    Both matches short-circuit — order in the allow-list doesn't matter.
+    Matches short-circuit — order in the allow-list doesn't matter.
     """
     for entry in allow_list:
         if not entry:
             continue
         if entry.startswith("/"):
+            # Special-case bare `/` — exact match only (SPA index HTML).
+            # Without this the middleware would leak `/api/*` etc.
+            if entry == "/":
+                if path == "/":
+                    return True
+                continue
             if path == entry.rstrip("/") or path.startswith(entry):
                 return True
         elif route_name and entry == route_name:

@@ -117,8 +117,20 @@ def _route_name(request: Request) -> str | None:
     hand. We only need the route name (not its handler) so this stays
     cheap even with a few dozen routes.
 
-    Falls back to `None` (path-prefix match still works) when no route
-    matches — typically for 404s.
+    Special-case for the SPA mount at `/`: because it matches EVERY
+    path with `Match.FULL`, a naive first-FULL-wins scan would return
+    `"spa"` for `HEAD /api/tasks` — the middleware would then see the
+    SPA name in the allow-list and let a method-fuzz probe through. We
+    fix this by:
+
+        1. Preferring a `Match.PARTIAL` from a *named* HTTP route (the
+           GET route where only the method didn't match) over a FULL
+           match on the SPA mount.
+        2. Only returning the SPA mount's name when NO named HTTP route
+           matched with FULL or PARTIAL.
+
+    Falls back to `None` when nothing matched — the caller then relies
+    on path-prefix allow-list entries.
     """
     app = request.scope.get("app")
     if app is None:
@@ -129,15 +141,31 @@ def _route_name(request: Request) -> str | None:
     routes = getattr(router, "routes", None) or []
     from starlette.routing import Match
 
+    partial_name: str | None = None
+    spa_mount_name: str | None = None
     for route in routes:
         try:
             match, _ = route.matches(request.scope)
         except (AttributeError, TypeError):
             continue
+        if match == Match.NONE:
+            continue
+        name = getattr(route, "name", None)
+        if not name:
+            continue
+        # Starlette's `Mount` (used for StaticFiles) always FULL-matches
+        # every path that starts with its prefix — including `/api/*`
+        # when the mount is at `/`. Defer the mount name so a real
+        # named route (FULL or PARTIAL) wins the resolution.
+        if name == "spa":
+            if spa_mount_name is None:
+                spa_mount_name = str(name)
+            continue
         if match == Match.FULL:
-            name = getattr(route, "name", None)
-            return str(name) if name else None
-    return None
+            return str(name)
+        if match == Match.PARTIAL and partial_name is None:
+            partial_name = str(name)
+    return partial_name or spa_mount_name
 
 
 # ---- Middlewares -----------------------------------------------------------

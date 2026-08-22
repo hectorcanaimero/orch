@@ -3,24 +3,28 @@
 Read-only surface. Never mutates `tasks.json` or state files.
 
 Endpoints:
-    GET  /                   — Jira-style task table (HTML)
-    GET  /metrics            — metrics tables (HTML)
-    GET  /logs               — logs page (HTML)
+    GET  /                   — React SPA (mounted last as a StaticFiles fallback)
     GET  /logs/stream        — SSE feed of live events (text/event-stream)
     GET  /api/tasks          — JSON dump of all tasks + filters applied
     GET  /api/task/{id}      — JSON detail for a single task
     GET  /api/metrics        — JSON dump of metrics (models + days + total)
     GET  /api/events/stream  — SSE feed (JSON payloads), alias of /logs/stream
-    GET  /partials/task-row/{id} — HTMX partial (single row refresh — MVP hook)
-    GET  /partials/task-modal/{id} — HTMX partial (modal detail)
+    GET  /api/events         — JSON list of recent events
+    GET  /api/config         — dashboard config snapshot
+    GET  /api/doctor         — doctor probe payload
+    GET  /api/architecture/* — architecture snapshot endpoints
+    GET  /api/tunnel/*       — tunnel supervisor endpoints
+    GET  /snapshot           — full JSON dump of project state
+    GET  /stakeholder/summary — curated JSON payload for stakeholder profile
 
 Design:
     - `AppState` holds `ProjectPaths` + a lazily-loaded `PricingTable`. Every
       request re-reads `tasks.json` and the JSONL logs from disk. That's
       acceptable at MVP scale (334 tasks, 20 event files ~10KB each) and
       keeps the code stateless / correct as new events land during a run.
-    - Jinja2 is imported lazily inside `create_app()` so unit tests that
-      exercise pure Python helpers don't require jinja2 to be installed.
+    - The React SPA (frontend/) is the sole UI — mounted at `/` so
+      `/`, `/kanban`, `/metrics`, `/logs`, `/stakeholder`, etc. all resolve
+      to the SPA's `index.html` (React Router owns the client route).
 """
 
 from __future__ import annotations
@@ -485,9 +489,8 @@ def create_app(
     # `Request` is imported at module scope (see top) to keep annotations
     # resolvable under `from __future__ import annotations`.
     from fastapi import Depends, FastAPI, HTTPException, Query
-    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+    from fastapi.responses import JSONResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
-    from fastapi.templating import Jinja2Templates
 
     if paths is None:
         paths = resolve_project_paths(
@@ -524,18 +527,12 @@ def create_app(
         )
         app_state.tunnel_manager = _tm
 
-    tpl_dir = Path(__file__).parent / "templates"
-    static_dir = Path(__file__).parent / "static"
-
     app = FastAPI(
         title="Orch Dashboard",
         description="Read-only view over tasks.json / events / spend.",
         version="0.1.0",
     )
     app.state.app_state = app_state
-    templates = Jinja2Templates(directory=str(tpl_dir))
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # ---- Sprint E-2 middleware: profile guard + token auth ---------------
     # FastAPI executes the LAST-added middleware FIRST on the wire, so add
@@ -574,269 +571,12 @@ def create_app(
             file=sys.stderr,
         )
 
-    # ---- Template context helper -----------------------------------------
-    # `profile` is injected into every template render so partials can
-    # feature-flag sensitive rows without each route re-passing it.
-    # `TemplateResponse` ignores unknown keys, so this is safe.
-    def _tpl_ctx(**kwargs: Any) -> dict[str, Any]:
-        base = {"profile": app_state.config.profile}
-        base.update(kwargs)
-        return base
-
-    # ---- Root: task table --------------------------------------------------
     # Route names are load-bearing: `ProfileGuardMiddleware` consults them
     # against `DashboardConfig.stakeholder_routes` to decide 200 vs 403.
-    # Every route below MUST declare `name=` or it stays operator-only.
-    @app.get("/", response_class=HTMLResponse, name="index")
-    def index(
-        request: Request,
-        phase: list[int] | None = Query(None),
-        status: str | None = Query(None),
-        model: str | None = Query(None),
-        q: str | None = Query(None),
-        group: str | None = Query(None,
-                                  description="'phase' groups the table rows by phase with collapse."),
-        parallelizable: int = Query(0),
-        has_comments: int = Query(0),
-        has_spec: int = Query(0),
-        blocked_since: int | None = Query(None, ge=0, le=365,
-                                          description="Blocked tasks stuck N+ days"),
-    ):
-        view = _load_project_view(app_state)
-        tasks_all = view["tasks"]
-        filtered = _apply_filters(
-            tasks_all,
-            phase=phase,
-            status=status,
-            model=model,
-            q=q,
-            only_parallelizable=bool(parallelizable),
-            parallelizable_ids=view["parallelizable_ids"],
-            has_comments=bool(has_comments),
-            has_spec=bool(has_spec),
-            blocked_since_days=blocked_since,
-            last_updated=view["last_updated"],
-        )
-        # Serialize once so both the template and downstream partials get the
-        # same shape (dicts, not Task instances).
-        rows = [_task_to_dict(t, view["human_hours"], view["last_updated"], view["impact"], view["critical_path"]) for t in filtered]
-        # Optional: group by phase for the collapsible-section render.
-        grouped_rows: list[dict] | None = None
-        if group == "phase":
-            buckets: dict[int, list] = {}
-            for r in rows:
-                buckets.setdefault(r["phase"], []).append(r)
-            grouped_rows = [
-                {"phase": p, "count": len(buckets[p]), "rows": buckets[p]}
-                for p in sorted(buckets)
-            ]
-        ctx = _tpl_ctx(
-            request=request,
-            summary=view["summary"].as_dict(),
-            phases=view["phases"],
-            models=view["models"],
-            rows=rows,
-            grouped_rows=grouped_rows,
-            row_count=len(rows),
-            total_count=len(tasks_all),
-            parallelizable_ids=list(view["parallelizable_ids"]),
-            project_id=view["project_id"],
-            project_root=view["project_root"],
-            state_layout=view["state_layout"],
-            filters={
-                "phase": phase or [], "status": status, "model": model,
-                "q": q, "group": group or "",
-                "parallelizable": bool(parallelizable),
-                "has_comments": bool(has_comments),
-                "has_spec": bool(has_spec),
-                "blocked_since": blocked_since,
-            },
-            orphans=view["orphans"],
-        )
-        return templates.TemplateResponse("index.html", ctx)
-
-    # ---- Kanban page -------------------------------------------------------
-    # Per-column hint shown in empty state. Kept as a constant so the
-    # template can stay dumb (no branching on column key).
-    _EMPTY_HINTS = {
-        "backlog": "Nothing in backlog. All planned work has moved forward.",
-        "todo": "No queued tasks. Add rows to tasks.json to see them here.",
-        "blocked": "Nothing blocked — every task has its deps clear.",
-        "in-progress": "No task currently in flight.",
-        "done": "No completions yet.",
-    }
-
-    @app.get("/kanban", response_class=HTMLResponse, name="kanban_page")
-    def kanban_page(
-        request: Request,
-        phase: int | None = Query(None),
-        model: str | None = Query(None),
-        q: str | None = Query(None),
-        parallelizable: int = Query(0),
-        # Sprint 2: visualization knobs. All optional, backwards-compatible.
-        wip: int | None = Query(None, ge=1, le=99,
-                                description="Per-column WIP limit. Warn when column count exceeds it."),
-        group: str | None = Query(None, pattern="^(phase)?$",
-                                  description="Group cards inside a column. Only 'phase' supported."),
-        # Sprint 3: sort strategy inside each column.
-        sort: str | None = Query(None, pattern="^(impact|phase)?$",
-                                 description="Sort within a column: 'impact' (bottlenecks first) | 'phase' (default)."),
-        # Sprint 3: partial=board returns just the <section> for HTMX polling.
-        partial: str | None = Query(None, pattern="^(board)?$",
-                                    description="'board' returns only the board section for HTMX polling."),
-        # Sprint 5: quality-of-life filters shared with `/`.
-        has_comments: int = Query(0),
-        has_spec: int = Query(0),
-        blocked_since: int | None = Query(None, ge=0, le=365),
-    ):
-        # Sprint 5: apply operator defaults from dashboard.yaml when the
-        # query didn't specify the knob. URL bookmarks always win.
-        kdefaults = app_state.config.kanban
-        if wip is None:
-            wip = kdefaults.wip_default
-        if sort is None:
-            sort = kdefaults.sort_default
-        if group is None:
-            group = kdefaults.group_default
-        view = _load_project_view(app_state)
-        filtered = _apply_filters(
-            view["tasks"],
-            phase=phase,
-            status=None,  # kanban shows all statuses as columns
-            model=model,
-            q=q,
-            only_parallelizable=bool(parallelizable),
-            parallelizable_ids=view["parallelizable_ids"],
-            has_comments=bool(has_comments),
-            has_spec=bool(has_spec),
-            blocked_since_days=blocked_since,
-            last_updated=view["last_updated"],
-        )
-        # Stable sort: phase asc, then id asc — makes bucket order
-        # predictable across page loads regardless of tasks.json ordering.
-        # When sort=impact, order by downstream_impact desc, then phase asc,
-        # then id asc as tiebreakers so the ordering is still deterministic.
-        impact_map = view["impact"]
-        if sort == "impact":
-            filtered = sorted(
-                filtered,
-                key=lambda t: (-impact_map.get(t.id, 0), t.phase, t.id),
-            )
-        else:
-            filtered = sorted(filtered, key=lambda t: (t.phase, t.id))
-
-        rows = [_task_to_dict(t, view["human_hours"], view["last_updated"], view["impact"], view["critical_path"]) for t in filtered]
-        # Buckets in a fixed visual order — todo/backlog on the left,
-        # done on the right. Tasks with unknown statuses fall into "todo"
-        # so the operator still sees them.
-        columns_order = ["backlog", "todo", "blocked", "in-progress", "done"]
-        buckets: dict[str, list[dict[str, Any]]] = {c: [] for c in columns_order}
-        for r in rows:
-            key = r["status"] if r["status"] in buckets else "todo"
-            r["parallelizable"] = r["id"] in view["parallelizable_ids"]
-            buckets[key].append(r)
-
-        # Optional phase grouping inside each column. When group=phase,
-        # `groups` is a list of {phase, cards} preserving the sort order
-        # above; otherwise it's a single synthetic group so the template
-        # can iterate uniformly.
-        def _phase_groups(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            if group != "phase":
-                return [{"phase": None, "cards": cards}]
-            out: dict[int, list[dict[str, Any]]] = {}
-            for c in cards:
-                out.setdefault(c["phase"], []).append(c)
-            return [{"phase": p, "cards": out[p]} for p in sorted(out.keys())]
-
-        columns = [
-            {
-                "key": k,
-                "label": k.replace("-", " "),
-                "cards": buckets[k],
-                "count": len(buckets[k]),
-                "over_wip": bool(wip) and len(buckets[k]) > wip,
-                "groups": _phase_groups(buckets[k]),
-                "empty_hint": _EMPTY_HINTS.get(k, ""),
-            }
-            for k in columns_order
-        ]
-        ctx = _tpl_ctx(
-            request=request,
-            summary=view["summary"].as_dict(),
-            phases=view["phases"],
-            models=view["models"],
-            columns=columns,
-            row_count=len(rows),
-            total_count=len(view["tasks"]),
-            project_id=view["project_id"],
-            project_root=view["project_root"],
-            state_layout=view["state_layout"],
-            filters={
-                "phase": phase, "model": model, "q": q,
-                "parallelizable": bool(parallelizable),
-                "wip": wip, "group": group, "sort": sort,
-                "has_comments": bool(has_comments),
-                "has_spec": bool(has_spec),
-                "blocked_since": blocked_since,
-            },
-            refresh_interval_s=app_state.config.kanban.refresh_interval_s,
-        )
-        # HTMX polling wants only the board section — same context, smaller
-        # template. Full page render is the default for browser navigation.
-        template_name = "partials/kanban_board.html" if partial == "board" else "kanban.html"
-        return templates.TemplateResponse(template_name, ctx)
-
-    # ---- Metrics page ------------------------------------------------------
-    @app.get("/metrics", response_class=HTMLResponse, name="metrics_page")
-    def metrics_page(request: Request):
-        view = _load_project_view(app_state)
-        spends = read_all_spends(paths.state_dir)
-        events = app_state.cached("events", lambda: read_all_events(paths.state_dir))
-        by_model = [m.as_dict() for m in metrics_by_model(spends, pricing)]
-        by_day = [d.as_dict() for d in metrics_by_day(spends, pricing, days=14)]
-        burndown = burndown_by_day(events, days=14)
-        total = total_cost(spends, pricing)
-        # Estimation vs actual: sum estimateHours across ALL tasks, sum
-        # human_hours across DONE tasks only (partial for in-flight would
-        # skew the projection).
-        done_hours = sum(
-            v for tid, v in view["human_hours"].items()
-            if any(t.id == tid and t.status == "done" for t in view["tasks"])
-        )
-        ctx = _tpl_ctx(
-            request=request,
-            summary=view["summary"].as_dict(),
-            project_id=view["project_id"],
-            project_root=view["project_root"],
-            by_model=by_model,
-            by_day=by_day,
-            burndown=burndown,
-            total_cost=round(total, 4),
-            done_hours=round(done_hours, 1),
-            estimate_hours_total=view["summary"].estimate_hours_total,
-        )
-        return templates.TemplateResponse("metrics.html", ctx)
-
-    # ---- Logs page ---------------------------------------------------------
-    @app.get("/logs", response_class=HTMLResponse, name="logs_page")
-    def logs_page(
-        request: Request,
-        task_id: str | None = Query(None),
-        limit: int = Query(100, ge=1, le=1000),
-    ):
-        view = _load_project_view(app_state)
-        events = load_recent_events(paths.state_dir, limit=limit)
-        if task_id:
-            events = [e for e in events if e["task_id"] == task_id]
-        ctx = _tpl_ctx(
-            request=request,
-            project_id=view["project_id"],
-            project_root=view["project_root"],
-            events=events,
-            task_id_filter=task_id or "",
-            limit=limit,
-        )
-        return templates.TemplateResponse("logs.html", ctx)
+    # Every JSON/SSE route below MUST declare `name=` or it stays
+    # operator-only. The React SPA (mounted at `/` at the end of this
+    # function) is the only user-facing surface — every HTML/Jinja route
+    # from the legacy dashboard has been removed.
 
     # ---- SSE stream --------------------------------------------------------
     def _stream(task_id: str | None):
@@ -1395,58 +1135,14 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    # ---- HTMX partials -----------------------------------------------------
-    @app.get("/partials/task-modal/{task_id}", response_class=HTMLResponse,
-             name="partial_task_modal")
-    def partial_task_modal(request: Request, task_id: str):
-        view = _load_project_view(app_state)
-        for t in view["tasks"]:
-            if t.id == task_id:
-                row = _task_to_dict(t, view["human_hours"], view["last_updated"], view["impact"], view["critical_path"])
-                # Enrich with dep status for the modal.
-                by_id = {tt.id: tt for tt in view["tasks"]}
-                row["dep_details"] = [
-                    {
-                        "id": did,
-                        "title": (by_id.get(did).title if did in by_id else "?"),
-                        "status": (by_id.get(did).status if did in by_id else "missing"),
-                    }
-                    for did in t.dependencies
-                ]
-                row["parallelizable"] = t.id in view["parallelizable_ids"]
-                # Sprint 3: read events lazily — only the modal needs them,
-                # not every /kanban render. Scoping to this task_id keeps
-                # the payload tiny even on projects with 20+ event files.
-                all_events = read_all_events(paths.state_dir)
-                row["timeline"] = events_for_task(all_events, task_id)
-                return templates.TemplateResponse(
-                    "partials/task_modal.html",
-                    _tpl_ctx(request=request, task=row),
-                )
-        raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-
-    @app.get("/partials/task-row/{task_id}", response_class=HTMLResponse,
-             name="partial_task_row")
-    def partial_task_row(request: Request, task_id: str):
-        view = _load_project_view(app_state)
-        for t in view["tasks"]:
-            if t.id == task_id:
-                row = _task_to_dict(t, view["human_hours"], view["last_updated"], view["impact"], view["critical_path"])
-                row["parallelizable"] = t.id in view["parallelizable_ids"]
-                return templates.TemplateResponse(
-                    "partials/task_row.html",
-                    _tpl_ctx(request=request, row=row),
-                )
-        raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-
     # ---- Stakeholder curated view -----------------------------------------
     def _stakeholder_payload() -> dict[str, Any]:
-        """Build the sanitized payload shared by /stakeholder + /stakeholder/summary.
+        """Build the sanitized payload consumed by /stakeholder/summary.
 
         Deliberately narrow: only phase progress, task counts, milestones,
         total spend (rounded up), and ETA. No per-model breakdown, no
-        raw log content, no per-task exit codes. Verified by the security
-        test suite in `test_dashboard_stakeholder_view.py`.
+        raw log content, no per-task exit codes. The SPA's
+        `StakeholderSummaryPage` renders it into the curated UI.
         """
         view = _load_project_view(app_state)
         spends = read_all_spends(paths.state_dir)
@@ -1460,50 +1156,35 @@ def create_app(
             "refresh_interval_s": app_state.config.kanban.refresh_interval_s or 30,
         }
 
-    @app.get("/stakeholder", response_class=HTMLResponse, name="stakeholder_index")
-    def stakeholder_index(request: Request):
-        payload = _stakeholder_payload()
-        ctx = _tpl_ctx(
-            request=request,
-            project_id=payload["project_id"],
-            project_root=paths.project_root,
-            state_layout=paths.state_layout,
-            summary=payload["summary"],
-            milestones=payload["milestones"],
-            spend_rounded_usd=payload["spend_rounded_usd"],
-            eta_hours=payload["eta_hours"],
-            refresh_interval_s=payload["refresh_interval_s"],
-        )
-        return templates.TemplateResponse("stakeholder.html", ctx)
-
     @app.get("/stakeholder/summary", name="stakeholder_summary_json")
     def stakeholder_summary_json():
-        """JSON version of the curated view — same fields, no HTML."""
+        """JSON version of the curated view — consumed by the SPA."""
         return JSONResponse(_stakeholder_payload())
 
-    # ---- SPA mount (Sprint E-6) -------------------------------------------
-    # Serve the compiled Vite React SPA if the operator ran `pnpm build`.
-    # Mounted at `/spa` so it coexists with the Jinja dashboard on `/` (no
-    # route collision on `/kanban`, `/metrics`, `/logs`, etc.).
+    # ---- SPA mount (root) --------------------------------------------------
+    # Serve the compiled Vite React SPA at `/`. Since removing the legacy
+    # Jinja dashboard, the SPA is the ONLY user-facing surface — every
+    # non-API URL (`/`, `/kanban`, `/metrics`, `/logs`, `/stakeholder`, …)
+    # is a client-side route owned by React Router.
     #
     # `html=True` on the base StaticFiles is not enough for a React Router
     # BrowserRouter: it only returns `index.html` when the URL resolves to
-    # a directory (e.g. `/spa/`), NOT for arbitrary nested client routes
-    # (e.g. `/spa/kanban`). We subclass to make ANY 404 under `/spa/*`
-    # fall back to `index.html` so hard-reloads on a client route work.
-    # Real 404s for missing bundled assets stay as 404 — we only rewrite
-    # when the asset doesn't exist on disk AND we have an index.html to
-    # serve, matching the standard SPA-hosting contract (nginx `try_files
-    # $uri /index.html;`).
+    # a directory (e.g. `/`), NOT for arbitrary nested client routes
+    # (e.g. `/kanban`). We subclass to make ANY 404 under `/` fall back
+    # to `index.html` so hard-reloads on a client route work. Real 404s
+    # for missing bundled assets under `/assets/*` stay as 404 — that
+    # matches the standard SPA-hosting contract (nginx `try_files $uri
+    # /index.html;`).
     #
     # The mount is OPTIONAL. If `frontend/dist/` doesn't exist we just log
-    # a friendly note to stderr and keep booting — nothing else depends on
-    # the SPA being present.
+    # a friendly note to stderr and keep booting — the JSON APIs stay
+    # available so integrations and tests still work in a bare-source
+    # checkout without a Node toolchain.
     #
     # NOTE: this MUST live at the end of `create_app()`, AFTER every
     # `@app.get(...)`. FastAPI resolves routes in registration order, so
-    # placing it last keeps the specific Jinja/JSON routes winning over
-    # the catch-all StaticFiles mount.
+    # placing it last keeps the specific JSON/SSE routes winning over the
+    # catch-all StaticFiles mount that answers everything else.
     resolved = _resolve_spa_dist(paths.project_root)
     if resolved is not None:
         spa_dist, source = resolved
@@ -1511,15 +1192,33 @@ def create_app(
         from starlette.responses import FileResponse
         from starlette.types import Scope
 
+        # Paths that should NEVER fall back to the SPA index.html —
+        # if the request landed on the SPA mount it means every earlier
+        # explicit route missed, and for these prefixes a real 404 is
+        # the correct answer (not a masking HTML shell). Includes:
+        #   - `assets/*` : bundled JS/CSS — a missing chunk is a build bug.
+        #   - `api/*`    : operator JSON APIs — a 404 here means bad path
+        #                  or path-parameter validation failure; masking
+        #                  it with HTML would hide bugs from callers.
+        #   - `snapshot`, `stakeholder/summary`, `logs/stream`,
+        #     `docs`, `openapi.json`, `redoc` — same reasoning.
+        _NO_FALLBACK_PREFIXES = (
+            "assets/", "assets",
+            "api/", "api",
+            "snapshot", "logs/stream",
+            "stakeholder/summary",
+            "docs", "openapi.json", "redoc",
+        )
+
         class SPAStaticFiles(StaticFiles):
             """StaticFiles subclass with true SPA fallback semantics.
 
             When a GET under the mount 404s, return `index.html` (200) so
             React Router can pick up the client-side route. Any other
-            error propagates unchanged. Bundled asset paths (`/assets/*`)
-            are excluded from the fallback so a missing JS file surfaces
-            as 404 rather than silently returning HTML (which would mask
-            build breakage).
+            error propagates unchanged. Bundled asset and JSON-API paths
+            are excluded from the fallback so a real 404 stays a 404
+            (masking bugs behind an HTML shell would break integrations
+            and hide build breakage).
             """
 
             async def get_response(self, path: str, scope: Scope):
@@ -1528,26 +1227,26 @@ def create_app(
                 except StarletteHTTPException as exc:
                     if exc.status_code != 404:
                         raise
-                    # Never rewrite bundled asset requests: a missing
-                    # JS/CSS file must stay 404 so devtools shows the
-                    # real error instead of an HTML shell.
-                    if path.startswith("assets/") or path.startswith("assets"):
-                        raise
+                    # See `_NO_FALLBACK_PREFIXES` above.
+                    for prefix in _NO_FALLBACK_PREFIXES:
+                        if path == prefix or path.startswith(prefix + "/") or path == prefix.rstrip("/"):
+                            raise
                     index = Path(self.directory) / "index.html"
                     if not index.is_file():
                         raise
                     return FileResponse(str(index))
 
         app.mount(
-            "/spa",
+            "/",
             SPAStaticFiles(directory=str(spa_dist), html=True),
             name="spa",
         )
-        print(f"SPA mounted at /spa → {spa_dist} ({source})", file=sys.stderr)
+        print(f"SPA mounted at / → {spa_dist} ({source})", file=sys.stderr)
     else:
         print(
             "SPA not mounted — run `pnpm build` in frontend/ (project-specific) "
-            "or reinstall via `pipx install --force ...` (packaged).",
+            "or reinstall via `pipx install --force ...` (packaged). "
+            "JSON APIs remain available.",
             file=sys.stderr,
         )
 

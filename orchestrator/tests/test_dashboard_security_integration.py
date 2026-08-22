@@ -110,7 +110,6 @@ def _write_sqlite_backend_spends(paths, cost: float = 1.75) -> None:
 
 
 def _client(paths, **override):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
@@ -150,8 +149,10 @@ def test_stakeholder_view_reads_from_both_backends(tmp_path: Path, backend: str)
 
 
 @pytest.mark.parametrize("backend", ["file", "sqlite"])
-def test_operator_index_reads_from_both_backends(tmp_path: Path, backend: str) -> None:
-    """Operator view continues to render tasks with either backend."""
+def test_operator_api_tasks_reads_from_both_backends(
+    tmp_path: Path, backend: str
+) -> None:
+    """Operator JSON API continues to expose tasks with either backend."""
     paths = _make_project(tmp_path)
     if backend == "file":
         _write_file_backend_spends(paths)
@@ -159,11 +160,11 @@ def test_operator_index_reads_from_both_backends(tmp_path: Path, backend: str) -
         _write_sqlite_backend_spends(paths)
 
     client = _client(paths)
-    r = client.get("/")
+    r = client.get("/api/tasks")
     assert r.status_code == 200
-    body = r.text
-    assert "T-A" in body
-    assert "T-B" in body
+    ids = {t["id"] for t in r.json()["tasks"]}
+    assert "T-A" in ids
+    assert "T-B" in ids
 
 
 # ---- Attack scenarios ---------------------------------------------------
@@ -174,7 +175,7 @@ def test_case_insensitive_authorization_header(tmp_path: Path) -> None:
     paths = _make_project(tmp_path)
     _write_file_backend_spends(paths)
     client = _client(paths, profile="stakeholder", token="s3cret")
-    r = client.get("/stakeholder", headers={"authorization": "bearer s3cret"})
+    r = client.get("/stakeholder/summary", headers={"authorization": "bearer s3cret"})
     assert r.status_code == 200
 
 
@@ -184,7 +185,7 @@ def test_multiple_authorization_headers_uses_first_valid(tmp_path: Path) -> None
     _write_file_backend_spends(paths)
     client = _client(paths, profile="stakeholder", token="s3cret")
     # Header = valid, query = invalid → should succeed (header wins).
-    r = client.get("/stakeholder?token=wrong",
+    r = client.get("/stakeholder/summary?token=wrong",
                    headers={"Authorization": "Bearer s3cret"})
     assert r.status_code == 200
 
@@ -194,7 +195,7 @@ def test_malformed_authorization_header_rejected(tmp_path: Path) -> None:
     _write_file_backend_spends(paths)
     client = _client(paths, profile="stakeholder", token="s3cret")
     for bogus in ("s3cret", "Basic s3cret", "Bearer", "Bearer  ", ""):
-        r = client.get("/stakeholder", headers={"Authorization": bogus})
+        r = client.get("/stakeholder/summary", headers={"Authorization": bogus})
         assert r.status_code == 401, f"accepted bogus Authorization: {bogus!r}"
 
 
@@ -202,25 +203,23 @@ def test_empty_token_query_param_rejected(tmp_path: Path) -> None:
     paths = _make_project(tmp_path)
     _write_file_backend_spends(paths)
     client = _client(paths, profile="stakeholder", token="s3cret")
-    r = client.get("/stakeholder?token=")
+    r = client.get("/stakeholder/summary?token=")
     assert r.status_code == 401
 
 
 @pytest.mark.parametrize("path", [
-    "/",
-    "/kanban",
-    "/metrics",
-    "/logs",
     "/api/tasks",
     "/api/task/T-A",
     "/api/metrics",
     "/api/budgets",
     "/snapshot",
-    "/partials/task-modal/T-A",
-    "/partials/task-row/T-A",
 ])
 def test_all_operator_routes_403_with_valid_token(tmp_path: Path, path: str) -> None:
-    """Even a valid token cannot unlock an operator-only path in stakeholder mode."""
+    """Even a valid token cannot unlock an operator-only JSON path in
+    stakeholder mode. The legacy Jinja UI routes (`/`, `/kanban`,
+    `/metrics`, `/logs`, `/partials/*`) were removed when the SPA became
+    the sole UI — client-side React Router paths are served by the SPA
+    mount (name="spa") which IS allow-listed."""
     paths = _make_project(tmp_path)
     _write_file_backend_spends(paths)
     client = _client(paths, profile="stakeholder", token="s3cret")
@@ -261,21 +260,22 @@ def test_path_traversal_stakeholder_mode_still_blocks_snapshot(tmp_path: Path) -
     assert "cost" not in body and "$" not in body
 
 
-def test_static_files_still_allowed_in_stakeholder_mode(tmp_path: Path) -> None:
-    """The `/static/` mount stays reachable so the curated view has CSS."""
+def test_spa_assets_still_allowed_in_stakeholder_mode(tmp_path: Path) -> None:
+    """The SPA's bundled `/assets/*` chunks stay reachable so the SPA can
+    hydrate under the stakeholder profile.
+
+    We don't build a real Vite bundle here — we just prove the middleware
+    doesn't 403 the request. Without a mount registered, starlette 404s
+    (StaticFiles isn't attached in this test fixture), and either outcome
+    proves the guard passed."""
     paths = _make_project(tmp_path)
     _write_file_backend_spends(paths)
-    # Drop a tiny asset so the mount has something to serve.
-    (paths.project_root / "orchestrator").mkdir(exist_ok=True)
-    static_dir = Path("/Volumes/PortableSSD/orch/orchestrator/dashboard/static")
-    # The dashboard mounts its own static/ (packaged). The test project
-    # doesn't need its own — request an obviously missing path and assert
-    # the guard did NOT 403 the mount (starlette 404 is fine).
     client = _client(paths, profile="stakeholder", token="s3cret")
-    r = client.get("/static/definitely-missing-file.css",
+    r = client.get("/assets/definitely-missing-chunk.js",
                    headers={"Authorization": "Bearer s3cret"})
-    assert r.status_code in (200, 404)
-    assert r.status_code != 403
+    # 200 (mount serves it) or 404 (nothing there) — both acceptable.
+    # 403 = middleware blocked the request → regression.
+    assert r.status_code != 403, r.text
 
 
 def test_stakeholder_summary_json_no_leak_of_evidence(tmp_path: Path) -> None:

@@ -25,7 +25,6 @@ from orchestrator.dashboard.dashboard_config import (
 
 
 pytest.importorskip("fastapi")
-pytest.importorskip("jinja2")
 from fastapi.testclient import TestClient  # noqa: E402
 
 

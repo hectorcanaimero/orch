@@ -8,11 +8,15 @@ Covers:
     - `metrics.parallelizable_tasks` (dep filter)
     - `metrics.project_summary` (header counts)
     - `log_stream.format_event` (severity + human formatting)
-    - `server.create_app` (smoke test; skipped if jinja2 missing)
-    - `GET /` renders + `GET /api/tasks` shape
+    - `server.create_app` (smoke test)
+    - `GET /api/tasks` shape
 
 We construct a self-contained fixture project under `tmp_path` so tests
 don't depend on the real orchestrator state directory.
+
+Jinja HTML routes (`/`, `/kanban`, `/metrics`, `/logs`, `/partials/*`,
+`/stakeholder`) were removed when the SPA became the sole UI — this
+module no longer exercises HTML rendering.
 """
 
 from __future__ import annotations
@@ -434,12 +438,11 @@ def test_read_all_spends_reads_multiple_days(tmp_path: Path) -> None:
     assert spends[0]["ts"] < spends[-1]["ts"]
 
 
-# ---- server smoke (skipped if jinja2 missing) ------------------------------
+# ---- server smoke ----------------------------------------------------------
 
 
 def _test_client_or_skip(tmp_path: Path):
-    """Build a TestClient; skip if fastapi/jinja2 aren't available."""
-    pytest.importorskip("jinja2")
+    """Build a TestClient; skip if fastapi isn't available."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
@@ -455,26 +458,6 @@ def test_server_starts(tmp_path: Path) -> None:
     # Ping the docs endpoint (FastAPI ships /docs by default).
     r = client.get("/docs")
     assert r.status_code == 200
-
-
-def test_index_renders(tmp_path: Path) -> None:
-    client, paths = _test_client_or_skip(tmp_path)
-    r = client.get("/")
-    assert r.status_code == 200
-    body = r.text
-    assert paths.project_id in body
-    assert "T-A" in body
-    assert "T-C" in body
-
-
-def test_index_filter_by_status(tmp_path: Path) -> None:
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/?status=done")
-    assert r.status_code == 200
-    body = r.text
-    assert "T-A" in body and "T-B" in body
-    # T-C is backlog → should not appear
-    assert ">T-C<" not in body
 
 
 def test_api_tasks_shape(tmp_path: Path) -> None:
@@ -560,33 +543,7 @@ def test_api_budgets_unknown_preset_returns_400(tmp_path: Path, monkeypatch) -> 
     assert "doesnotexist" in r.json()["detail"]
 
 
-def test_partial_task_modal_renders(tmp_path: Path) -> None:
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/partials/task-modal/T-C")
-    assert r.status_code == 200
-    body = r.text
-    assert "T-C" in body
-    assert "T-A" in body  # dep listed
-    assert "T-B" in body
-
-
-def test_metrics_page_renders(tmp_path: Path) -> None:
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/metrics")
-    assert r.status_code == 200
-    assert "By model" in r.text
-    assert "By day" in r.text
-
-
-def test_logs_page_renders(tmp_path: Path) -> None:
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/logs")
-    assert r.status_code == 200
-    # Recent events section is present.
-    assert "T-A" in r.text or "No events yet" in r.text
-
-
-# ---- Sprint 2/3: downstream_impact + events_for_task + kanban endpoint -----
+# ---- Sprint 2/3: downstream_impact + events_for_task ----------------------
 
 
 def test_downstream_impact_linear_chain() -> None:
@@ -659,66 +616,3 @@ def test_events_for_task_empty_when_no_matches() -> None:
     assert events_for_task(events, "T-Z") == []
 
 
-def test_kanban_page_renders_all_columns(tmp_path: Path) -> None:
-    """/kanban lays out all 5 status columns even when some are empty."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/kanban")
-    assert r.status_code == 200
-    body = r.text
-    for label in ("backlog", "todo", "blocked", "in progress", "done"):
-        assert label in body.lower()
-
-
-def test_kanban_partial_board_returns_only_section(tmp_path: Path) -> None:
-    """/kanban?partial=board omits the base layout — smaller payload."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r_full = client.get("/kanban")
-    r_partial = client.get("/kanban?partial=board")
-    assert r_partial.status_code == 200
-    # Partial must NOT include the base layout's <html> shell.
-    assert "<html" not in r_partial.text.lower()
-    # But must include the board section id (used by hx-swap outerHTML).
-    assert 'id="kanban-board"' in r_partial.text
-    # And be smaller than the full page.
-    assert len(r_partial.text) < len(r_full.text)
-
-
-def test_kanban_wip_marks_overflow(tmp_path: Path) -> None:
-    """?wip=1 marks any column with >1 card as over_wip (⚠ symbol in body)."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/kanban?wip=1")
-    assert r.status_code == 200
-    # Fixture has T-A + T-B done → done column has 2 cards, over WIP=1.
-    assert "⚠" in r.text
-
-
-def test_kanban_sort_impact_places_bottlenecks_first(tmp_path: Path) -> None:
-    """?sort=impact orders cards by downstream_impact desc within each column."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/kanban?sort=impact")
-    assert r.status_code == 200
-    body = r.text
-    # Fixture: T-A + T-B are done (impact = 1 each, both unblock T-C).
-    # T-C is backlog with 0 downstream. Impact badge appears as ↓N.
-    assert "↓1" in body
-
-
-def test_kanban_group_phase_emits_subheaders(tmp_path: Path) -> None:
-    """?group=phase renders 'Phase N' sub-headers inside columns."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/kanban?group=phase")
-    assert r.status_code == 200
-    # Fixture uses phases 1 and 2.
-    assert "Phase 1" in r.text
-    assert "Phase 2" in r.text
-
-
-def test_modal_includes_timeline_and_impact(tmp_path: Path) -> None:
-    """Sprint 3: modal partial exposes Activity + Downstream sections."""
-    client, _ = _test_client_or_skip(tmp_path)
-    r = client.get("/partials/task-modal/T-A")
-    assert r.status_code == 200
-    body = r.text
-    assert "Downstream" in body
-    # T-A has 2 events in the fixture → Activity section renders.
-    assert "Activity" in body

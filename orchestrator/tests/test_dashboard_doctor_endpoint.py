@@ -86,7 +86,6 @@ def _make_fixture_project(tmp_path: Path) -> "object":
 
 
 def _client_or_skip(tmp_path: Path):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     pytest.importorskip("yaml")
     from fastapi.testclient import TestClient

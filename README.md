@@ -418,9 +418,11 @@ exit) — hit `Ctrl-C` twice to force-kill.
 
 ## Dashboard
 
-Read-only FastAPI + SSE dashboard. Three profiles: `operator` (default,
-localhost, full access), `stakeholder` (token-gated curated view), and
-`both` (mixed — operator on `/`, stakeholder on `/stakeholder`).
+Read-only FastAPI + SSE dashboard. The UI is a single React SPA
+(Vite + shadcn) served at `/` — the legacy Jinja server-rendered pages
+were removed once the SPA reached feature parity. Three profiles:
+`operator` (default, localhost, full access), `stakeholder` (token-gated
+curated view), and `both` (mixed).
 
 ```bash
 # Default: operator profile, host 127.0.0.1, port 7420
@@ -435,27 +437,34 @@ orch dashboard --port 8080 --host 0.0.0.0            # expose on LAN (careful!)
 orch dashboard --reload                              # uvicorn --reload for dev
 orch dashboard --config /path/to/custom-config.yaml
 
-# Sprint E-2 — profile split for public stakeholder URLs
+# Profile split for public stakeholder URLs
 orch dashboard --profile stakeholder --token "$(openssl rand -hex 32)"
 orch dashboard --profile both        # operator + stakeholder on one port
 ```
 
-Endpoints:
+The SPA client-side routes (`/`, `/kanban`, `/metrics`, `/logs`,
+`/stakeholder`, `/architecture`, `/doctor`, `/tunnel`, `/list`, `/board`,
+`/login`) are React Router routes served by the SPA fallback — the
+server always returns `index.html` for unknown paths under `/`, and
+React Router picks up the client route.
+
+JSON / SSE endpoints (consumed by the SPA):
 
 | Path | Operator | Stakeholder | What |
 |---|:--:|:--:|---|
-| `/` | ✅ | ❌ 403 | task table (Jira-style) |
-| `/kanban` | ✅ | ❌ 403 | phase-grouped kanban view |
-| `/metrics` | ✅ | ❌ 403 | cost / spend metrics per model, per day |
-| `/logs` | ✅ | ❌ 403 | live event stream (SSE) |
 | `/api/tasks` | ✅ | ❌ 403 | JSON dump of all tasks |
 | `/api/task/{id}` | ✅ | ❌ 403 | JSON detail for one task |
-| `/api/metrics` | ✅ | ❌ 403 | JSON metrics |
+| `/api/metrics` | ✅ | ❌ 403 | JSON metrics (models + days + total) |
 | `/api/budgets` | ✅ | ❌ 403 | per-provider budget snapshot |
+| `/api/events` | ✅ | ❌ 403 | recent events (JSON) |
 | `/api/events/stream` | ✅ | ❌ 403 | SSE stream of events |
+| `/api/config` | ✅ | ❌ 403 | dashboard config snapshot |
+| `/api/doctor` | ✅ | ❌ 403 | environment probe payload |
+| `/api/architecture/*` | ✅ | ❌ 403 | architecture snapshots |
+| `/api/tunnel/*` | ✅ | ❌ 403 | tunnel supervisor endpoints |
+| `/logs/stream` | ✅ | ❌ 403 | SSE (alias of `/api/events/stream`) |
 | `/snapshot` | ✅ | ❌ 403 | full JSON dump, downloadable |
-| `/stakeholder` | ✅ (both) | ✅ | curated HTML — progress, milestones, ETA |
-| `/stakeholder/summary` | ✅ (both) | ✅ | curated JSON — same fields as HTML |
+| `/stakeholder/summary` | ✅ (both) | ✅ | curated JSON — progress, milestones, ETA |
 
 The dashboard reads `orchestrator/state/spend-*.jsonl` and
 `orchestrator/state/events-*.jsonl` directly — no separate DB, no writes.
@@ -678,7 +687,7 @@ cd orch
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
-# Full suite (301 tests + 19 skipped when jinja2 not installed)
+# Full suite
 pytest
 
 # Or via the helper

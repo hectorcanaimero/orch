@@ -1,21 +1,21 @@
-"""Sprint E-6 — SPA mount at /spa/ served by FastAPI.
+"""SPA mount at `/` served by FastAPI.
 
-Two invariants under test:
+The React SPA is the sole dashboard UI — the legacy Jinja routes were
+removed, and the SPA moved from `/spa/` to `/`. Four invariants:
 
-    A. When `<project_root>/frontend/dist/index.html` exists, `GET /spa/`
-       returns 200 and the served body contains the marker HTML we wrote
-       to the fixture. This proves the mount is wired and StaticFiles is
-       finding the file.
+    A. When `<project_root>/frontend/dist/index.html` exists, `GET /`
+       returns 200 and the served body contains the marker HTML from the
+       fixture — the mount is wired and StaticFiles finds the file.
+    B. Client-side React Router routes (`GET /kanban`, `GET /metrics`)
+       fall back to `index.html` — our SPAStaticFiles subclass rewrites
+       404s outside `/assets/*`.
+    C. When neither project dist nor packaged spa/ exists, the dashboard
+       still boots (no crash), `GET /` 404s, and the JSON APIs stay
+       reachable.
+    D. Project-tier build wins over packaged tier.
 
-    B. When `<project_root>/frontend/dist/` doesn't exist, the dashboard
-       still boots (no crash) and `GET /spa/` returns 404. This proves
-       the mount is OPTIONAL — a fresh checkout without `pnpm build`
-       keeps working.
-
-We deliberately don't test the full client-side routing fallback
-(`GET /spa/kanban` → index.html) here — that's `StaticFiles(html=True)`
-behavior which FastAPI/Starlette owns and covers in their own suite.
-The manual `curl` step in the deliverable verifies it end-to-end.
+The mount is optional so a bare-source checkout (no Node toolchain) still
+boots and serves the API surface for integrations + tests.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 
-# ---- Fixture builders (mirror the CORS test helpers) --------------------
+# ---- Fixture builders ----------------------------------------------------
 
 
 def _make_project(tmp_path: Path):
@@ -59,7 +59,6 @@ def _make_project(tmp_path: Path):
 
 
 def _client(paths):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
@@ -78,50 +77,53 @@ def _write_marker_dist(dist: Path, marker: str) -> None:
     )
 
 
-# ---- Test A: /spa/ returns 200 with the fixture body --------------------
+# ---- Test A + B: /  returns 200, /kanban falls back to index.html --------
 
 
 def test_spa_mount_serves_index_when_dist_exists(tmp_path: Path) -> None:
-    """With frontend/dist/index.html present, GET /spa/ returns it 200."""
+    """With frontend/dist/index.html present, GET / returns it 200."""
     paths = _make_project(tmp_path)
 
-    # Materialize a fake compiled SPA — one marker-bearing index.html is
-    # enough to prove the mount is wired. StaticFiles doesn't validate the
-    # bytes, so we don't need a real Vite bundle here.
     dist = paths.project_root / "frontend" / "dist"
-    dist.mkdir(parents=True)
     marker = "<!-- spa-mount-fixture-marker -->"
-    (dist / "index.html").write_text(
-        f"<!doctype html><html><body>{marker}</body></html>",
-        encoding="utf-8",
-    )
+    _write_marker_dist(dist, marker)
 
     client = _client(paths)
-    r = client.get("/spa/")
+    r = client.get("/")
     assert r.status_code == 200, r.text
     assert marker in r.text
 
-    # Client-side route fallback: React Router hard-reload on `/spa/kanban`
-    # must return `index.html` too — StaticFiles(html=True) alone doesn't
-    # do this, so we subclass. Missing bundled assets still stay 404.
-    r_route = client.get("/spa/kanban")
+    # Client-side route fallback: React Router hard-reload on `/kanban`
+    # must return `index.html` too. StaticFiles(html=True) alone doesn't
+    # do this so we subclass. Missing bundled assets still stay 404.
+    r_route = client.get("/kanban")
     assert r_route.status_code == 200, r_route.text
     assert marker in r_route.text
 
-    r_missing_asset = client.get("/spa/assets/does-not-exist.js")
+    # Fallback works for arbitrary client routes too — proves SPA "catch-all"
+    # semantics for the whole React Router surface, not just `/kanban`.
+    for path in ("/metrics", "/logs", "/stakeholder", "/architecture",
+                 "/doctor", "/tunnel", "/list", "/board", "/login"):
+        r_route = client.get(path)
+        assert r_route.status_code == 200, f"{path}: {r_route.text}"
+        assert marker in r_route.text
+
+    # Missing bundled assets must stay 404 to surface build breakage.
+    r_missing_asset = client.get("/assets/does-not-exist.js")
     assert r_missing_asset.status_code == 404, (
         "missing bundled asset must NOT fall back to index.html — "
         "that would mask build breakage"
     )
 
 
-# ---- Test B: absent dist → 404 but boot succeeds ------------------------
+# ---- Test C: absent dist → 404 on / but boot succeeds + APIs work --------
 
 
 def test_spa_mount_absent_does_not_crash_and_returns_404(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """No project dist AND no packaged spa → dashboard boots, /spa/ 404s."""
+    """No project dist AND no packaged spa → dashboard boots, GET / 404s,
+    JSON APIs still respond."""
     from orchestrator.dashboard import server as server_mod
 
     paths = _make_project(tmp_path)
@@ -138,17 +140,16 @@ def test_spa_mount_absent_does_not_crash_and_returns_404(
     # Boot must not raise — this is the "OPTIONAL mount" invariant.
     client = _client(paths)
 
-    # Jinja dashboard still works on `/` — the SPA absence doesn't break
-    # the app at large.
+    # `/` and other unclaimed paths return 404 (no SPA mount registered).
     r_root = client.get("/")
-    assert r_root.status_code == 200
+    assert r_root.status_code == 404
 
-    # /spa/ has nothing to serve → 404 (no mount registered).
-    r_spa = client.get("/spa/")
-    assert r_spa.status_code == 404
+    # JSON APIs still work — they don't depend on the SPA mount.
+    r_api = client.get("/api/tasks")
+    assert r_api.status_code == 200
 
 
-# ---- Test C: resolver — project wins over packaged ----------------------
+# ---- Test D: resolver — project wins over packaged ----------------------
 
 
 def test_resolve_spa_dist_project_wins_over_packaged(tmp_path: Path) -> None:
@@ -175,13 +176,13 @@ def test_resolve_spa_dist_project_wins_over_packaged(tmp_path: Path) -> None:
     assert path == project_root / "frontend" / "dist"
 
 
-# ---- Test D: packaged-only mounts and serves ----------------------------
+# ---- Test E: packaged-only mounts and serves ----------------------------
 
 
 def test_spa_mount_uses_packaged_when_project_absent(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """No project frontend/dist/ → packaged spa/ mounts and serves.
+    """No project frontend/dist/ → packaged spa/ mounts and serves at /.
 
     Simulates a `pipx install`d wheel running in an unrelated project
     directory. We fake the packaged tier by monkeypatching
@@ -191,7 +192,6 @@ def test_spa_mount_uses_packaged_when_project_absent(
     from orchestrator.dashboard import server as server_mod
 
     paths = _make_project(tmp_path)
-    # Deliberately do NOT create frontend/dist/ under project.
     assert not (paths.project_root / "frontend" / "dist").exists()
 
     fake_pkg_dir = tmp_path / "fake-pkg"
@@ -199,9 +199,6 @@ def test_spa_mount_uses_packaged_when_project_absent(
     marker = "<!-- packaged-spa-fixture-marker -->"
     _write_marker_dist(fake_pkg_dir / "spa", marker)
 
-    # Redirect the "packaged" tier at the tmp fixture. The parameter is
-    # exposed on `_resolve_spa_dist` precisely for this test — no
-    # `Path.__file__` shenanigans required.
     real_resolve = server_mod._resolve_spa_dist
 
     def _patched(project_root, package_dir=None):
@@ -211,11 +208,11 @@ def test_spa_mount_uses_packaged_when_project_absent(
 
     client = _client(paths)
 
-    r = client.get("/spa/")
+    r = client.get("/")
     assert r.status_code == 200, r.text
     assert marker in r.text
 
     # Client-side route fallback works against packaged tier too.
-    r_route = client.get("/spa/kanban")
+    r_route = client.get("/kanban")
     assert r_route.status_code == 200, r_route.text
     assert marker in r_route.text

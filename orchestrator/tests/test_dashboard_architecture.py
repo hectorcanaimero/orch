@@ -35,7 +35,6 @@ def _scaffold_project(tmp_path: Path):
 
 
 def _client(tmp_path: Path):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     pytest.importorskip("yaml")
     from fastapi.testclient import TestClient

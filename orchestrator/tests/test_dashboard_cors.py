@@ -59,7 +59,6 @@ def _make_project(tmp_path: Path):
 
 
 def _client(paths, **override):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app

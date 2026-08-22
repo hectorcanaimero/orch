@@ -50,7 +50,6 @@ def _make_fixture_project(tmp_path: Path):
 
 
 def _client_or_skip(tmp_path: Path):
-    pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from orchestrator.dashboard.server import create_app
