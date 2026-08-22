@@ -3267,9 +3267,98 @@ def _findings_list_cli(argv: list[str]) -> int:
     return 0
 
 
-def _findings_review_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 3
-    print("orch findings review — implemented in commit 3", file=sys.stderr)
-    return 1
+def _findings_review_cli(argv: list[str]) -> int:
+    """`orch findings review ID [--json]` — show a finding + GitHub dedup search.
+
+    Exit codes:
+      0 — rendered (even when GitHub search returns nothing)
+      2 — finding id not found
+    """
+    from dataclasses import asdict as _asdict
+
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings review",
+        description="Show a finding and search the target repo for possible duplicates.",
+    )
+    p.add_argument("finding_id",
+                   help="Finding id (prefix ok — as long as it's unique).")
+    p.add_argument("--repo", default=None,
+                   help="Override repo for the dedup search (default from config).")
+    p.add_argument("--json", action="store_true",
+                   help="Emit `{finding, matches}` as a single JSON object.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    repo = args.repo or (cfg.get("findings", {}) or {}).get(
+        "publish_repo", f_mod.DEFAULT_REPO
+    )
+    matches = f_mod.search_github_issues_for_duplicate(finding.summary, repo)
+
+    if args.json:
+        print(json.dumps({
+            "finding": _asdict(finding),
+            "repo": repo,
+            "matches": matches,
+        }, separators=(",", ":")))
+        return 0
+
+    print(f"Finding {finding.id}")
+    print(f"  created_at  {finding.created_at}")
+    print(f"  type        {finding.type}")
+    print(f"  about       {finding.about}")
+    print(f"  confidence  {finding.confidence}")
+    print(f"  status      {finding.status}")
+    if finding.published_url:
+        print(f"  published   {finding.published_url}")
+    print(f"  author      {finding.author}")
+    print(f"  summary     {finding.summary}")
+    print()
+    print("Evidence:")
+    if finding.evidence.strip():
+        for ln in finding.evidence.splitlines():
+            print(f"  {ln}")
+    else:
+        print("  (none)")
+    print()
+    print(f"GitHub dedup search on {repo}:")
+    if not matches:
+        print("  (no matching open issues)")
+    else:
+        for m in matches:
+            overlap = m.get("overlap", 0.0)
+            print(
+                f"  #{m.get('number')} · overlap={overlap:.2f} · "
+                f"{m.get('html_url')}"
+            )
+            print(f"      {m.get('title', '')}")
+    return 0
+
+
+def _find_finding_by_prefix(backend: Any, prefix: str) -> Any | None:
+    """Lookup helper — exact id match wins; else unique prefix match."""
+    exact = backend.get_finding(prefix)
+    if exact is not None:
+        return exact
+    matches = [f for f in backend.iter_findings() if f.id.startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _findings_publish_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 4
