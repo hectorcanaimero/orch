@@ -3534,6 +3534,15 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
     a completely different flag set (--port, --host, --reload) and mixing
     them would leak into the main-loop `--help`. Both parsers accept
     `--project-root`/`--project-id` so path resolution stays identical.
+
+    Sprint E-2 additions:
+      --profile   operator|stakeholder|both
+      --token     stakeholder shared secret (also settable via
+                  ORCH_DASHBOARD_TOKEN env var — flag wins when both set).
+
+    `--profile stakeholder` REQUIRES a token (via flag, env, or config).
+    Missing token → CLI errors out BEFORE uvicorn boots so the user sees
+    the misconfiguration immediately instead of hitting a live 401 wall.
     """
     p = argparse.ArgumentParser(
         prog="orch dashboard",
@@ -3549,7 +3558,40 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
                    help="Path to config.yaml (default: orchestrator/config.yaml)")
     p.add_argument("--reload", action="store_true",
                    help="Enable uvicorn --reload (dev only; watches for code changes).")
+    p.add_argument("--profile", default=None,
+                   choices=["operator", "stakeholder", "both"],
+                   help="Dashboard profile. Default: operator (or value from "
+                        "config.yaml's `dashboard.profile`).")
+    p.add_argument("--token", default=None, metavar="TOKEN",
+                   help="Shared secret for the stakeholder profile. Sets "
+                        "ORCH_DASHBOARD_TOKEN in-process. Env fallback: "
+                        "ORCH_DASHBOARD_TOKEN.")
     args = p.parse_args(argv)
+
+    # `--token` on the CLI wins over env. Set env before we import the
+    # server so `DashboardConfig.load(config_yaml=...)` picks it up when
+    # it reads `os.environ`.
+    if args.token:
+        os.environ["ORCH_DASHBOARD_TOKEN"] = args.token
+
+    # Fail fast if the caller asked for the stakeholder profile without
+    # supplying a token via any channel (flag > env > config). We validate
+    # BEFORE uvicorn boots so the operator sees the error immediately.
+    if args.profile == "stakeholder":
+        # Config-provided token is honored later; check env/flag first.
+        env_token = os.environ.get("ORCH_DASHBOARD_TOKEN")
+        if not env_token:
+            # Peek at config.yaml to see if a token is defined there.
+            token_in_config = _peek_dashboard_token_in_config(args.config)
+            if not token_in_config:
+                print(
+                    "error: --profile stakeholder requires a token. Provide one via:\n"
+                    "  --token TOKEN                   (CLI flag)\n"
+                    "  ORCH_DASHBOARD_TOKEN=TOKEN      (env var)\n"
+                    "  dashboard.token: TOKEN          (config.yaml)",
+                    file=sys.stderr,
+                )
+                return 2
 
     try:
         from orchestrator.dashboard.server import run as dashboard_run
@@ -3565,7 +3607,40 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
         project_id=args.project_id,
         config=args.config,
         reload=args.reload,
+        profile=args.profile,
+        token=args.token,
     )
+
+
+def _peek_dashboard_token_in_config(config_path: str) -> str | None:
+    """Best-effort lookup of `dashboard.token` from a config.yaml on disk.
+
+    Only used to preflight the stakeholder-mode requirement — never
+    fatal if the file is missing or malformed. Returns `None` in that
+    case, which triggers the error message with all three options.
+    """
+    from pathlib import Path
+    import yaml
+
+    p = Path(config_path)
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    if not p.exists():
+        return None
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    block = data.get("dashboard") or {}
+    if not isinstance(block, dict):
+        return None
+    tok = block.get("token")
+    if tok is None:
+        return None
+    tok = str(tok).strip()
+    return tok or None
 
 
 def _resolve_log_level(

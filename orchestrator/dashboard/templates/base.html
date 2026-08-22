@@ -14,6 +14,10 @@
         document.documentElement.setAttribute('data-theme', t);
       } catch (_) { /* localStorage disabled — stay on night */ }
     })();
+    // Stakeholder profile does NOT get /api/budgets access, so gate the
+    // periodic fetch here. Operator + both get it enabled (both mode
+    // renders the operator surface on non-/stakeholder paths).
+    window.orchAllowBudgetFetch = {{ 'false' if profile == 'stakeholder' else 'true' }};
   </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" />
   <script src="https://cdn.tailwindcss.com"></script>
@@ -82,14 +86,18 @@
 
     // Root Alpine shell — ONLY sidebar + budget state. Theme is managed
     // outside Alpine so it survives Alpine load failures.
+    // `orchAllowBudgetFetch` is set from base.html so the stakeholder
+    // profile never polls /api/budgets (would 403 every 15s otherwise).
     function rootShell() {
       return {
         sidebar: (localStorage.getItem('orch.sidebar') ?? 'open') === 'open',
         budget: null,
         init() {
           this.$watch('sidebar', v => localStorage.setItem('orch.sidebar', v ? 'open' : 'closed'));
-          this.refreshBudget();
-          setInterval(() => this.refreshBudget(), 15000);
+          if (window.orchAllowBudgetFetch) {
+            this.refreshBudget();
+            setInterval(() => this.refreshBudget(), 15000);
+          }
         },
         toggleSidebar() { this.sidebar = !this.sidebar; },
         async refreshBudget() {
@@ -224,6 +232,10 @@
           <div class="text-sm font-semibold truncate">{% block topbar_title %}{{ project_id }}{% endblock %}</div>
           <div class="text-xs opacity-60 truncate hidden sm:block"><code>{{ project_root }}</code></div>
         </div>
+        {# Sprint E-2 — hide sensitive chips in stakeholder mode. The
+           budget chip leaks per-provider spend granularity; the snapshot
+           button hands out the full raw dump. #}
+        {% if profile != 'stakeholder' %}
         <!-- budget chip -->
         <a href="/api/budgets" class="btn btn-sm btn-ghost gap-2"
            :class="{
@@ -246,6 +258,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
           <span class="text-xs">snapshot</span>
         </a>
+        {% endif %}
         <button type="button" onclick="orchToggleTheme()" class="btn btn-sm btn-ghost btn-square" title="Toggle theme">
           <!-- Sun (shows when current is night → click to go light) -->
           <svg data-theme-icon="night" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
@@ -289,6 +302,15 @@
         </div>
         <!-- nav -->
         <ul class="menu menu-sm p-2 gap-0.5 flex-1">
+          {% if profile == 'stakeholder' %}
+          <li class="menu-title opacity-60">Progress</li>
+          <li>
+            <a href="/stakeholder" class="{% if request.url.path == '/stakeholder' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              Overview
+            </a>
+          </li>
+          {% else %}
           <li class="menu-title opacity-60">Navigation</li>
           <li>
             <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
@@ -314,6 +336,14 @@
               Logs
             </a>
           </li>
+          {% if profile == 'both' %}
+          <li>
+            <a href="/stakeholder" class="{% if request.url.path == '/stakeholder' %}active{% endif %}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              Stakeholder view
+            </a>
+          </li>
+          {% endif %}
           <li class="menu-title opacity-60 pt-3">Export</li>
           <li>
             <a href="/snapshot">
@@ -339,6 +369,7 @@
               API · budgets
             </a>
           </li>
+          {% endif %}
         </ul>
         <!-- project footer -->
         <div class="px-4 py-3 border-t border-base-300 text-xs opacity-70">

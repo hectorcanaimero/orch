@@ -177,6 +177,29 @@ hash and a GitHub issue search catch duplicates before creating a new
 issue. See [docs/DOGFOODING.md](docs/DOGFOODING.md) for the full operator
 guide + a copy-pasteable agent prompt snippet.
 
+### Dashboard profiles — public URL for stakeholders
+
+The read-only dashboard now supports three profiles: `operator` (default,
+localhost, full access), `stakeholder` (token-gated curated view — phase
+progress, milestones, total spend, ETA), and `both` (mixed).
+
+```bash
+# One-off — token via flag.
+orch dashboard --profile stakeholder --token "$(openssl rand -hex 32)"
+
+# Mixed — operator on /, stakeholder on /stakeholder, one process.
+export ORCH_DASHBOARD_TOKEN=my-secret
+orch dashboard --profile both
+```
+
+Stakeholder sees phase % + task counts + milestones + total spend
+(rounded up to nearest $0.50) + ETA. It never sees per-model spend,
+raw logs, per-task exit codes, or provider identifiers. Every operator
+route returns 403 in stakeholder mode.
+
+Publish behind a Cloudflare Tunnel for a public HTTPS URL — step-by-step
+in [docs/DASHBOARD-PROFILES.md](docs/DASHBOARD-PROFILES.md).
+
 ---
 
 ## How orch thinks
@@ -366,13 +389,13 @@ exit) — hit `Ctrl-C` twice to force-kill.
 
 ## Dashboard
 
-Read-only FastAPI + SSE dashboard, no auth (bind to `127.0.0.1` by default).
+Read-only FastAPI + SSE dashboard. Three profiles: `operator` (default,
+localhost, full access), `stakeholder` (token-gated curated view), and
+`both` (mixed — operator on `/`, stakeholder on `/stakeholder`).
 
 ```bash
-# Default: host 127.0.0.1, port 7420
+# Default: operator profile, host 127.0.0.1, port 7420
 orch dashboard --project-root /path/to/your-project
-
-# Open in browser
 open http://127.0.0.1:7420
 ```
 
@@ -382,25 +405,34 @@ Flags:
 orch dashboard --port 8080 --host 0.0.0.0            # expose on LAN (careful!)
 orch dashboard --reload                              # uvicorn --reload for dev
 orch dashboard --config /path/to/custom-config.yaml
+
+# Sprint E-2 — profile split for public stakeholder URLs
+orch dashboard --profile stakeholder --token "$(openssl rand -hex 32)"
+orch dashboard --profile both        # operator + stakeholder on one port
 ```
 
 Endpoints:
 
-| Path | What |
-|---|---|
-| `/` | task table (Jira-style) |
-| `/kanban` | phase-grouped kanban view |
-| `/metrics` | cost / spend metrics per model, per day |
-| `/logs` | live event stream (SSE) |
-| `/api/tasks` | JSON dump of all tasks |
-| `/api/task/{id}` | JSON detail for one task |
-| `/api/metrics` | JSON metrics |
-| `/api/budgets` | **per-provider budget snapshot (Sprint 7)** |
-| `/api/events/stream` | SSE stream of events |
-| `/snapshot` | full JSON dump, downloadable (archive-in-git safe) |
+| Path | Operator | Stakeholder | What |
+|---|:--:|:--:|---|
+| `/` | ✅ | ❌ 403 | task table (Jira-style) |
+| `/kanban` | ✅ | ❌ 403 | phase-grouped kanban view |
+| `/metrics` | ✅ | ❌ 403 | cost / spend metrics per model, per day |
+| `/logs` | ✅ | ❌ 403 | live event stream (SSE) |
+| `/api/tasks` | ✅ | ❌ 403 | JSON dump of all tasks |
+| `/api/task/{id}` | ✅ | ❌ 403 | JSON detail for one task |
+| `/api/metrics` | ✅ | ❌ 403 | JSON metrics |
+| `/api/budgets` | ✅ | ❌ 403 | per-provider budget snapshot |
+| `/api/events/stream` | ✅ | ❌ 403 | SSE stream of events |
+| `/snapshot` | ✅ | ❌ 403 | full JSON dump, downloadable |
+| `/stakeholder` | ✅ (both) | ✅ | curated HTML — progress, milestones, ETA |
+| `/stakeholder/summary` | ✅ (both) | ✅ | curated JSON — same fields as HTML |
 
 The dashboard reads `orchestrator/state/spend-*.jsonl` and
 `orchestrator/state/events-*.jsonl` directly — no separate DB, no writes.
+
+Full stakeholder / Cloudflare Tunnel walkthrough:
+[docs/DASHBOARD-PROFILES.md](docs/DASHBOARD-PROFILES.md).
 
 ---
 

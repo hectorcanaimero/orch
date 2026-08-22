@@ -59,10 +59,16 @@
               </div>
             </div>
             <div class="text-sm font-medium mt-0.5 line-clamp-2">{{ card.title }}</div>
+            {% if profile != 'stakeholder' %}
             <div class="mt-2 flex items-center justify-between text-[0.7rem] opacity-70">
               <span class="font-mono">{{ card.model or '—' }}</span>
               <span>P{{ card.phase }}</span>
             </div>
+            {% else %}
+            <div class="mt-2 flex items-center justify-end text-[0.7rem] opacity-70">
+              <span>P{{ card.phase }}</span>
+            </div>
+            {% endif %}
             <div class="mt-1 flex items-center justify-between text-[0.7rem] opacity-70">
               <span title="{{ card.dependencies | join(', ') }}">{{ card.dep_count }} deps</span>
               <span>{{ card.estimate_hours }}h</span>

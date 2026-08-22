@@ -45,21 +45,31 @@ from orchestrator.dashboard.metrics import (
     burndown_by_day,
     critical_path,
     downstream_impact,
+    eta_hours_remaining,
     events_for_task,
     human_hours_by_task,
     last_updated_by_task,
     metrics_by_day,
     metrics_by_model,
+    milestones_from_phases,
     orphan_dependencies,
     parallelizable_tasks,
     phase_counts,
     project_summary,
     read_all_events,
     read_all_spends,
+    round_up_to_step,
     total_cost,
 )
 from orchestrator.budget import BudgetGate, load_budget_config
-from orchestrator.dashboard.dashboard_config import DashboardConfig
+from orchestrator.dashboard.dashboard_config import (
+    PROFILE_OPERATOR,
+    DashboardConfig,
+)
+from orchestrator.dashboard.middleware import (
+    ProfileGuardMiddleware,
+    TokenAuthMiddleware,
+)
 from orchestrator.dashboard.pricing import PricingTable
 from orchestrator.paths import ProjectPaths, resolve_project_paths
 from orchestrator.state import load_tasks
@@ -260,11 +270,17 @@ def create_app(
     project_root: str | None = None,
     project_id: str | None = None,
     config: str = "orchestrator/config.yaml",
+    profile_override: str | None = None,
+    token_override: str | None = None,
 ) -> Any:
     """Build and return the FastAPI application.
 
     Either pass `paths` directly (tests do this) or pass the CLI flags
     (`project_root` / `project_id`) and let this function resolve them.
+
+    `profile_override` / `token_override` map 1:1 to the `--profile` /
+    `--token` CLI flags. They win over env + config.yaml but only when
+    passed (typically wired by `run()` below).
     """
     # Lazy imports — the web stack only loads when we actually create the app.
     # `Request` is imported at module scope (see top) to keep annotations
@@ -282,7 +298,14 @@ def create_app(
         )
 
     pricing = PricingTable.load(paths.project_root)
-    dash_cfg = DashboardConfig.load(paths.project_root)
+    # Load DashboardConfig against paths.config_yaml so `dashboard:` block
+    # is honored. CLI overrides take precedence over env + config.
+    dash_cfg = DashboardConfig.load(
+        paths.project_root,
+        config_yaml=paths.config_yaml,
+        profile_override=profile_override,
+        token_override=token_override,
+    )
     app_state = AppState(paths=paths, pricing=pricing, config=dash_cfg)
 
     tpl_dir = Path(__file__).parent / "templates"
@@ -298,8 +321,29 @@ def create_app(
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # ---- Sprint E-2 middleware: profile guard + token auth ---------------
+    # FastAPI executes the LAST-added middleware FIRST on the wire, so add
+    # ProfileGuard first and TokenAuth second → on-wire order is
+    # `auth → guard → route`. Auth failing yields 401 before the guard
+    # even runs (no route-existence leak).
+    if dash_cfg.profile != PROFILE_OPERATOR:
+        app.add_middleware(ProfileGuardMiddleware, config=dash_cfg)
+        app.add_middleware(TokenAuthMiddleware, config=dash_cfg)
+
+    # ---- Template context helper -----------------------------------------
+    # `profile` is injected into every template render so partials can
+    # feature-flag sensitive rows without each route re-passing it.
+    # `TemplateResponse` ignores unknown keys, so this is safe.
+    def _tpl_ctx(**kwargs: Any) -> dict[str, Any]:
+        base = {"profile": app_state.config.profile}
+        base.update(kwargs)
+        return base
+
     # ---- Root: task table --------------------------------------------------
-    @app.get("/", response_class=HTMLResponse)
+    # Route names are load-bearing: `ProfileGuardMiddleware` consults them
+    # against `DashboardConfig.stakeholder_routes` to decide 200 vs 403.
+    # Every route below MUST declare `name=` or it stays operator-only.
+    @app.get("/", response_class=HTMLResponse, name="index")
     def index(
         request: Request,
         phase: list[int] | None = Query(None),
@@ -342,20 +386,20 @@ def create_app(
                 {"phase": p, "count": len(buckets[p]), "rows": buckets[p]}
                 for p in sorted(buckets)
             ]
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "phases": view["phases"],
-            "models": view["models"],
-            "rows": rows,
-            "grouped_rows": grouped_rows,
-            "row_count": len(rows),
-            "total_count": len(tasks_all),
-            "parallelizable_ids": list(view["parallelizable_ids"]),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "state_layout": view["state_layout"],
-            "filters": {
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            phases=view["phases"],
+            models=view["models"],
+            rows=rows,
+            grouped_rows=grouped_rows,
+            row_count=len(rows),
+            total_count=len(tasks_all),
+            parallelizable_ids=list(view["parallelizable_ids"]),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            state_layout=view["state_layout"],
+            filters={
                 "phase": phase or [], "status": status, "model": model,
                 "q": q, "group": group or "",
                 "parallelizable": bool(parallelizable),
@@ -363,8 +407,8 @@ def create_app(
                 "has_spec": bool(has_spec),
                 "blocked_since": blocked_since,
             },
-            "orphans": view["orphans"],
-        }
+            orphans=view["orphans"],
+        )
         return templates.TemplateResponse("index.html", ctx)
 
     # ---- Kanban page -------------------------------------------------------
@@ -378,7 +422,7 @@ def create_app(
         "done": "No completions yet.",
     }
 
-    @app.get("/kanban", response_class=HTMLResponse)
+    @app.get("/kanban", response_class=HTMLResponse, name="kanban_page")
     def kanban_page(
         request: Request,
         phase: int | None = Query(None),
@@ -472,18 +516,18 @@ def create_app(
             }
             for k in columns_order
         ]
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "phases": view["phases"],
-            "models": view["models"],
-            "columns": columns,
-            "row_count": len(rows),
-            "total_count": len(view["tasks"]),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "state_layout": view["state_layout"],
-            "filters": {
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            phases=view["phases"],
+            models=view["models"],
+            columns=columns,
+            row_count=len(rows),
+            total_count=len(view["tasks"]),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            state_layout=view["state_layout"],
+            filters={
                 "phase": phase, "model": model, "q": q,
                 "parallelizable": bool(parallelizable),
                 "wip": wip, "group": group, "sort": sort,
@@ -491,15 +535,15 @@ def create_app(
                 "has_spec": bool(has_spec),
                 "blocked_since": blocked_since,
             },
-            "refresh_interval_s": app_state.config.kanban.refresh_interval_s,
-        }
+            refresh_interval_s=app_state.config.kanban.refresh_interval_s,
+        )
         # HTMX polling wants only the board section — same context, smaller
         # template. Full page render is the default for browser navigation.
         template_name = "partials/kanban_board.html" if partial == "board" else "kanban.html"
         return templates.TemplateResponse(template_name, ctx)
 
     # ---- Metrics page ------------------------------------------------------
-    @app.get("/metrics", response_class=HTMLResponse)
+    @app.get("/metrics", response_class=HTMLResponse, name="metrics_page")
     def metrics_page(request: Request):
         view = _load_project_view(app_state)
         spends = read_all_spends(paths.state_dir)
@@ -515,22 +559,22 @@ def create_app(
             v for tid, v in view["human_hours"].items()
             if any(t.id == tid and t.status == "done" for t in view["tasks"])
         )
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "by_model": by_model,
-            "by_day": by_day,
-            "burndown": burndown,
-            "total_cost": round(total, 4),
-            "done_hours": round(done_hours, 1),
-            "estimate_hours_total": view["summary"].estimate_hours_total,
-        }
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            by_model=by_model,
+            by_day=by_day,
+            burndown=burndown,
+            total_cost=round(total, 4),
+            done_hours=round(done_hours, 1),
+            estimate_hours_total=view["summary"].estimate_hours_total,
+        )
         return templates.TemplateResponse("metrics.html", ctx)
 
     # ---- Logs page ---------------------------------------------------------
-    @app.get("/logs", response_class=HTMLResponse)
+    @app.get("/logs", response_class=HTMLResponse, name="logs_page")
     def logs_page(
         request: Request,
         task_id: str | None = Query(None),
@@ -540,14 +584,14 @@ def create_app(
         events = load_recent_events(paths.state_dir, limit=limit)
         if task_id:
             events = [e for e in events if e["task_id"] == task_id]
-        ctx = {
-            "request": request,
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "events": events,
-            "task_id_filter": task_id or "",
-            "limit": limit,
-        }
+        ctx = _tpl_ctx(
+            request=request,
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            events=events,
+            task_id_filter=task_id or "",
+            limit=limit,
+        )
         return templates.TemplateResponse("logs.html", ctx)
 
     # ---- SSE stream --------------------------------------------------------
@@ -556,7 +600,7 @@ def create_app(
         for ev in tail_events(paths.state_dir, task_id_filter=task_id):
             yield sse_frame(ev, event="event")
 
-    @app.get("/logs/stream")
+    @app.get("/logs/stream", name="logs_stream")
     def logs_stream(task_id: str | None = Query(None)):
         return StreamingResponse(
             _stream(task_id),
@@ -564,7 +608,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/events/stream")
+    @app.get("/api/events/stream", name="api_events_stream")
     def api_events_stream(task_id: str | None = Query(None)):
         # Alias — same payload, meant for programmatic consumers.
         return StreamingResponse(
@@ -574,7 +618,7 @@ def create_app(
         )
 
     # ---- JSON APIs ---------------------------------------------------------
-    @app.get("/api/tasks")
+    @app.get("/api/tasks", name="api_tasks")
     def api_tasks(
         phase: int | None = Query(None),
         status: str | None = Query(None),
@@ -599,7 +643,7 @@ def create_app(
             "total": len(view["tasks"]),
         })
 
-    @app.get("/api/task/{task_id}")
+    @app.get("/api/task/{task_id}", name="api_task_detail")
     def api_task_detail(task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
@@ -609,7 +653,7 @@ def create_app(
                 return JSONResponse(d)
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
-    @app.get("/api/budgets")
+    @app.get("/api/budgets", name="api_budgets")
     def api_budgets():
         """Sprint 7 — per-provider budget snapshot for the dashboard.
 
@@ -645,7 +689,7 @@ def create_app(
             "providers": gate.snapshot(),
         })
 
-    @app.get("/api/metrics")
+    @app.get("/api/metrics", name="api_metrics")
     def api_metrics():
         view = _load_project_view(app_state)
         spends = read_all_spends(paths.state_dir)
@@ -658,7 +702,7 @@ def create_app(
         })
 
     # ---- Snapshot export ---------------------------------------------------
-    @app.get("/snapshot")
+    @app.get("/snapshot", name="snapshot")
     def snapshot(request: Request):
         """One JSON dump of the project's current state — safe to archive in git.
 
@@ -700,7 +744,8 @@ def create_app(
         )
 
     # ---- HTMX partials -----------------------------------------------------
-    @app.get("/partials/task-modal/{task_id}", response_class=HTMLResponse)
+    @app.get("/partials/task-modal/{task_id}", response_class=HTMLResponse,
+             name="partial_task_modal")
     def partial_task_modal(request: Request, task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
@@ -724,11 +769,12 @@ def create_app(
                 row["timeline"] = events_for_task(all_events, task_id)
                 return templates.TemplateResponse(
                     "partials/task_modal.html",
-                    {"request": request, "task": row},
+                    _tpl_ctx(request=request, task=row),
                 )
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
-    @app.get("/partials/task-row/{task_id}", response_class=HTMLResponse)
+    @app.get("/partials/task-row/{task_id}", response_class=HTMLResponse,
+             name="partial_task_row")
     def partial_task_row(request: Request, task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
@@ -737,9 +783,51 @@ def create_app(
                 row["parallelizable"] = t.id in view["parallelizable_ids"]
                 return templates.TemplateResponse(
                     "partials/task_row.html",
-                    {"request": request, "row": row},
+                    _tpl_ctx(request=request, row=row),
                 )
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
+
+    # ---- Stakeholder curated view -----------------------------------------
+    def _stakeholder_payload() -> dict[str, Any]:
+        """Build the sanitized payload shared by /stakeholder + /stakeholder/summary.
+
+        Deliberately narrow: only phase progress, task counts, milestones,
+        total spend (rounded up), and ETA. No per-model breakdown, no
+        raw log content, no per-task exit codes. Verified by the security
+        test suite in `test_dashboard_stakeholder_view.py`.
+        """
+        view = _load_project_view(app_state)
+        spends = read_all_spends(paths.state_dir)
+        total = total_cost(spends, pricing)
+        return {
+            "project_id": view["project_id"],
+            "summary": view["summary"].as_dict(),
+            "milestones": milestones_from_phases(view["tasks"]),
+            "spend_rounded_usd": round_up_to_step(total, 0.50),
+            "eta_hours": eta_hours_remaining(view["tasks"], view["human_hours"]),
+            "refresh_interval_s": app_state.config.kanban.refresh_interval_s or 30,
+        }
+
+    @app.get("/stakeholder", response_class=HTMLResponse, name="stakeholder_index")
+    def stakeholder_index(request: Request):
+        payload = _stakeholder_payload()
+        ctx = _tpl_ctx(
+            request=request,
+            project_id=payload["project_id"],
+            project_root=paths.project_root,
+            state_layout=paths.state_layout,
+            summary=payload["summary"],
+            milestones=payload["milestones"],
+            spend_rounded_usd=payload["spend_rounded_usd"],
+            eta_hours=payload["eta_hours"],
+            refresh_interval_s=payload["refresh_interval_s"],
+        )
+        return templates.TemplateResponse("stakeholder.html", ctx)
+
+    @app.get("/stakeholder/summary", name="stakeholder_summary_json")
+    def stakeholder_summary_json():
+        """JSON version of the curated view — same fields, no HTML."""
+        return JSONResponse(_stakeholder_payload())
 
     return app
 
@@ -755,8 +843,15 @@ def run(
     project_id: str | None = None,
     config: str = "orchestrator/config.yaml",
     reload: bool = False,
+    profile: str | None = None,
+    token: str | None = None,
 ) -> int:
-    """Launch uvicorn in the foreground. Returns the process exit code."""
+    """Launch uvicorn in the foreground. Returns the process exit code.
+
+    `profile` / `token` map 1:1 to the `--profile` / `--token` CLI flags.
+    Both are optional — when omitted, DashboardConfig falls back to env +
+    config.yaml + defaults.
+    """
     try:
         import uvicorn
     except ImportError:
@@ -774,15 +869,27 @@ def run(
     if not paths.tasks_json.exists():
         print(f"[warn] {paths.tasks_json} does not exist — dashboard will show 0 tasks.")
 
-    app = create_app(paths=paths)
-
-    banner = (
-        f"Orch dashboard running on http://{host}:{port}\n"
-        f"Project: {paths.project_id} ({paths.project_root})\n"
-        f"State dir: {paths.state_dir}\n"
-        f"Ctrl+C to stop"
+    app = create_app(
+        paths=paths,
+        profile_override=profile,
+        token_override=token,
     )
-    print(banner)
+    resolved = app.state.app_state.config
+
+    banner_lines = [
+        f"Orch dashboard running on http://{host}:{port}",
+        f"Project: {paths.project_id} ({paths.project_root})",
+        f"State dir: {paths.state_dir}",
+        f"Profile: {resolved.profile}",
+    ]
+    if resolved.profile != PROFILE_OPERATOR:
+        banner_lines.append(
+            "Token auth: ENABLED"
+            if resolved.token
+            else "Token auth: MISCONFIGURED (no token set — every request 401s)"
+        )
+    banner_lines.append("Ctrl+C to stop")
+    print("\n".join(banner_lines))
 
     uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
     return 0
