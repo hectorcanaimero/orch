@@ -1371,3 +1371,202 @@ def test_escalation_respects_per_dispatch_budget(
     assert len(escalates) == 0, (
         f"budget cap → no escalate event; got {len(escalates)}"
     )
+
+
+# ---- Sprint A / Issue #11: budget deferral logging ---------------------
+
+
+def test_extract_usage_from_reason_parses_gate_string() -> None:
+    """`_extract_usage_from_reason` parses `(used, budget)` from the reason
+    string produced by BudgetGate.can_dispatch."""
+    reason = "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+    used, budget = orch_mod._extract_usage_from_reason(reason)
+    assert used == 367_000
+    assert budget == 400_000
+
+
+def test_extract_usage_from_reason_returns_zeros_on_garbage() -> None:
+    assert orch_mod._extract_usage_from_reason("") == (0, 0)
+    assert orch_mod._extract_usage_from_reason("nothing to see here") == (0, 0)
+
+
+def test_defer_emits_human_readable_log_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the budget gate blocks a dispatch, orch logs a compact line with
+    task_id, provider, window pct, and reset ETA — in addition to the
+    structured `budget_skip` event."""
+    from datetime import datetime, timedelta, timezone
+
+    task = Task.from_json(
+        {"id": "F0.6.T3", "phase": 0, "title": "t", "model": "opencode-go/glm-5.1"}
+    )
+    route = RouteEntry(
+        backend="codex",
+        cli_model="gpt-5.6-codex",
+        tier="premium",
+        is_premium=True,
+    )
+    # Fake budget gate: always blocks with a realistic reason + reset.
+    reset_at = datetime.now(timezone.utc) + timedelta(hours=2, minutes=14)
+
+    class _AlwaysBlocksGate:
+        def can_dispatch(self, provider: str):  # noqa: ARG002
+            reason = (
+                "codex over threshold: 367,000 tokens used, "
+                "cap 240,000 (60% of 400,000)"
+            )
+            return False, reason, reset_at
+
+    # Stub event log — records only what was emitted.
+    emitted_events: list[dict] = []
+
+    class _StubEventLog:
+        def emit(self, event_type, task_id, **extra):  # noqa: ANN001
+            emitted_events.append({"event_type": event_type, "task_id": task_id, **extra})
+
+    class _StubRunFile:
+        pass
+
+    class _StubQueue:
+        pass
+
+    gsem, psem = orch_mod._build_semaphores({
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+    })
+    cfg = {
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+        "strict_files_phases": [],
+        "default_timeout_multiplier": 1.5,
+        "budget": {"per_dispatch_usd": 5.0},
+        "retry": {"backoff_seconds": 5.0},
+        "spec_root": "specs",
+    }
+
+    defer_reasons: dict[str, str] = {}
+    with caplog.at_level("INFO", logger="orchestrator.orch"):
+        ok = orch_mod._spawn_one(
+            task=task,
+            route=route,
+            attempt=1,
+            cfg=cfg,
+            gsem=gsem,
+            psem=psem,
+            in_flight={},
+            run_file=_StubRunFile(),
+            event_log=_StubEventLog(),
+            run_id="test-run",
+            state_dir=tmp_path,
+            cwd=tmp_path,
+            queue=_StubQueue(),
+            use_task_locks=False,
+            budget_gate=_AlwaysBlocksGate(),
+            defer_reasons=defer_reasons,
+        )
+    assert ok is False
+
+    # Structured event was emitted.
+    budget_skips = [e for e in emitted_events if e["event_type"] == "budget_skip"]
+    assert len(budget_skips) == 1
+    assert budget_skips[0]["task_id"] == "F0.6.T3"
+    assert budget_skips[0]["backend"] == "codex"
+
+    # Human-readable log line contains the expected pieces.
+    log_lines = [r.getMessage() for r in caplog.records]
+    defer_lines = [line for line in log_lines if "deferred" in line and "F0.6.T3" in line]
+    assert defer_lines, f"no defer log line found; captured: {log_lines}"
+    line = defer_lines[0]
+    assert "F0.6.T3" in line
+    assert "codex" in line
+    assert "367k" in line  # tokens used, formatted short
+    assert "400k" in line  # token budget, formatted short
+    # ETA should look like `~2h 14m` (or `~2h 13m` if a second slipped by).
+    assert "2h" in line
+    assert "resets in" in line
+
+    # Defer-reasons side channel was populated so future `orch status` can see it.
+    assert defer_reasons.get("F0.6.T3", "").startswith("blocked-by-budget:")
+
+
+def test_defer_reason_cleared_when_gate_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the budget gate passes on a subsequent tick, the stale
+    `blocked-by-budget` marker for that task must be cleared."""
+
+    class _AllowingGate:
+        def can_dispatch(self, provider: str):  # noqa: ARG002
+            return True, None, None
+
+    # We only need the gate check to succeed; the spawn will then fail on
+    # the semaphore-less/skeletal environment, but the defer_reasons
+    # cleanup happens BEFORE the semaphore try_acquire — so we can assert
+    # against a partial-completion in _spawn_one.
+    #
+    # To keep the test tight, we shortcut: pre-populate the marker and
+    # monkeypatch out the semaphore path so the function returns early
+    # after clearing the marker.
+    task = Task.from_json(
+        {"id": "F0.6.T3", "phase": 0, "title": "t", "model": "opencode-go/glm-5.1"}
+    )
+    route = RouteEntry(
+        backend="codex",
+        cli_model="gpt-5.6-codex",
+        tier="premium",
+        is_premium=True,
+    )
+
+    # Force the psem check to fail so _spawn_one returns False right after
+    # clearing the defer marker — no need to build the rest of the world.
+    class _AlwaysFullSem:
+        def try_acquire(self):
+            return False
+
+        def release(self):
+            pass
+
+    gsem = _AlwaysFullSem()
+    psem = {"codex": _AlwaysFullSem()}
+    cfg = {
+        "concurrency": {"global_max": 1, "per_provider": {"codex": 1}},
+        "strict_files_phases": [],
+        "default_timeout_multiplier": 1.5,
+        "budget": {"per_dispatch_usd": 5.0},
+        "retry": {"backoff_seconds": 5.0},
+        "spec_root": "specs",
+    }
+    defer_reasons = {"F0.6.T3": "blocked-by-budget:codex"}
+
+    class _StubEventLog:
+        def emit(self, *_a, **_kw):  # noqa: ANN001
+            pass
+
+    class _StubRunFile:
+        pass
+
+    class _StubQueue:
+        pass
+
+    orch_mod._spawn_one(
+        task=task,
+        route=route,
+        attempt=1,
+        cfg=cfg,
+        gsem=gsem,
+        psem=psem,
+        in_flight={},
+        run_file=_StubRunFile(),
+        event_log=_StubEventLog(),
+        run_id="test-run",
+        state_dir=tmp_path,
+        cwd=tmp_path,
+        queue=_StubQueue(),
+        use_task_locks=False,
+        budget_gate=_AllowingGate(),
+        defer_reasons=defer_reasons,
+    )
+    # Gate said OK → stale marker cleared even though semaphore was full.
+    assert "F0.6.T3" not in defer_reasons

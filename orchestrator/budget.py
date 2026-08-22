@@ -26,10 +26,14 @@ Not in scope:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+
+log = logging.getLogger(__name__)
 
 
 # ---- Config -------------------------------------------------------------
@@ -79,6 +83,101 @@ def load_budget_config(path: Path, preset: str) -> BudgetConfig | None:
             threshold_pct=float(spec["threshold_pct"]),
         )
     return BudgetConfig(providers=providers)
+
+
+# ---- Formatting helpers -------------------------------------------------
+
+
+def _format_tokens_short(n: int | float) -> str:
+    """Format an integer token count as `k` / `m` / `b` for log lines.
+
+    Examples:
+        400        -> "400"
+        1_500      -> "1.5k"
+        400_000    -> "400k"
+        2_000_000  -> "2.0m"
+    """
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "0"
+    if n < 1_000:
+        return f"{int(n)}"
+    if n < 1_000_000:
+        val = n / 1_000
+        # No decimal when it's a clean whole number of k (e.g. 400k not 400.0k).
+        if val == int(val):
+            return f"{int(val)}k"
+        return f"{val:.1f}k"
+    if n < 1_000_000_000:
+        val = n / 1_000_000
+        if val == int(val):
+            return f"{int(val)}m"
+        return f"{val:.1f}m"
+    val = n / 1_000_000_000
+    if val == int(val):
+        return f"{int(val)}b"
+    return f"{val:.1f}b"
+
+
+def _format_reset_eta(reset_at: datetime | None, now: datetime | None = None) -> str:
+    """Human ETA string for a reset timestamp: `2h 14m` / `45m` / `now`.
+
+    Never raises; returns `"?"` on obviously bad input so the log line still
+    prints something useful.
+    """
+    if reset_at is None:
+        return "?"
+    if now is None:
+        now = datetime.now(timezone.utc)
+    delta_s = int((reset_at - now).total_seconds())
+    if delta_s <= 0:
+        return "now"
+    hours, rem = divmod(delta_s, 3600)
+    minutes = rem // 60
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m"
+    return f"{delta_s}s"
+
+
+# ---- Preset sanity ------------------------------------------------------
+
+
+def warn_undersized_presets(
+    config: BudgetConfig | None,
+    preset_name: str,
+    typical_dispatch_tokens: int,
+) -> list[str]:
+    """Emit one WARN per provider whose window can barely fit two dispatches.
+
+    Called once at startup from `orch.py`. Returns the list of warnings
+    emitted (for tests + so the caller can also print to stderr if desired).
+
+    A provider whose `token_budget < 2 * typical_dispatch_tokens` will
+    serialize dispatches: the second attempt sits in the budget queue until
+    the first one falls out of the rolling window. Almost always a
+    misconfiguration — either the preset numbers are stale or the
+    `typical_dispatch_tokens` estimate needs raising in `config.yaml`.
+    """
+    warnings_emitted: list[str] = []
+    if config is None or not config.providers:
+        return warnings_emitted
+    if typical_dispatch_tokens <= 0:
+        return warnings_emitted
+    two_x = 2 * typical_dispatch_tokens
+    for provider, pb in config.providers.items():
+        if pb.token_budget < two_x:
+            msg = (
+                f"WARN: budget preset {preset_name!r} provider {provider!r} "
+                f"window ({_format_tokens_short(pb.token_budget)}) is smaller "
+                f"than 2x typical dispatch ({_format_tokens_short(typical_dispatch_tokens)}) "
+                f"— dispatches will serialize"
+            )
+            log.warning(msg)
+            warnings_emitted.append(msg)
+    return warnings_emitted
 
 
 # ---- Gate ---------------------------------------------------------------

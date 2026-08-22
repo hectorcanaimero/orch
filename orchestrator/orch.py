@@ -64,7 +64,13 @@ if __package__ in (None, ""):  # pragma: no cover — invocation bootstrap
 from dataclasses import replace as _dc_replace  # noqa: E402
 
 from orchestrator import state as state_mod  # noqa: E402
-from orchestrator.budget import BudgetGate, load_budget_config  # noqa: E402
+from orchestrator.budget import (  # noqa: E402
+    BudgetGate,
+    _format_reset_eta,
+    _format_tokens_short,
+    load_budget_config,
+    warn_undersized_presets,
+)
 from orchestrator.checkpoints import SemiModeGate, is_critical  # noqa: E402
 from orchestrator.dispatcher import (  # noqa: E402
     Backend,
@@ -281,6 +287,10 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     # everything behaves like pre-Sprint 7 (backwards-compat).
     cfg.setdefault("budgets_config", "budgets.yaml")
     cfg.setdefault("budgets_preset", "conservative")
+    # Sprint A / Issue #11 — used by budget preset sanity check at startup.
+    # If a provider's window can't fit at least 2 x this many tokens, orch
+    # warns because dispatches will serialize inside the rolling window.
+    cfg.setdefault("typical_dispatch_tokens", 200_000)
     return cfg
 
 
@@ -333,6 +343,10 @@ def _load_budget_gate(
             preset,
             list(budget_cfg.providers.keys()),
         )
+        # Sprint A / Issue #11: warn once per undersized provider so operators
+        # know their window can't fit two dispatches back-to-back.
+        typical_tokens = int(cfg.get("typical_dispatch_tokens", 200_000) or 0)
+        warn_undersized_presets(budget_cfg, preset, typical_tokens)
     return BudgetGate(state_dir=state_dir, config=budget_cfg)
 
 
@@ -1114,6 +1128,7 @@ def _spawn_one(
     queue: TaskQueue,
     use_task_locks: bool = False,
     budget_gate: BudgetGate | None = None,
+    defer_reasons: dict[str, str] | None = None,
 ) -> bool:
     """Try to acquire semaphores and spawn one task; return True on success.
 
@@ -1150,7 +1165,30 @@ def _spawn_one(
                     if reset_at
                     else None,
                 )
+                # Sprint A / Issue #11: human-readable log line for the operator.
+                # `reason` from can_dispatch looks like:
+                #   "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+                # We reformat it compactly with the tokens_used/token_budget and ETA.
+                used_tokens, budget_tokens = _extract_usage_from_reason(reason)
+                eta = _format_reset_eta(reset_at)
+                log.info(
+                    "deferred %s (%s): window %s/%s, resets in ~%s",
+                    task.id,
+                    route.backend,
+                    _format_tokens_short(used_tokens) if used_tokens else "?",
+                    _format_tokens_short(budget_tokens) if budget_tokens else "?",
+                    eta,
+                )
+                # Populate the defer-reason side channel so callers (future
+                # `orch status`) can distinguish blocked-by-budget from
+                # not-ready-yet. Overwritten each tick — always current.
+                if defer_reasons is not None:
+                    defer_reasons[task.id] = f"blocked-by-budget:{route.backend}"
             return False
+        # If we DID pass the gate this tick, clear any stale deferral marker
+        # so `orch status` reflects the fresh state on the next look.
+        if defer_reasons is not None:
+            defer_reasons.pop(task.id, None)
 
     # ---- semaphore acquisition (non-blocking) -------------------------
     if not psem[route.backend].try_acquire():
@@ -1303,6 +1341,7 @@ def _refill(
     use_task_locks: bool = False,
     only: str | None = None,
     budget_gate: BudgetGate | None = None,
+    defer_reasons: dict[str, str] | None = None,
 ) -> int:
     """Try to dispatch as many ready tasks as capacity allows.
 
@@ -1352,6 +1391,7 @@ def _refill(
                 queue,
                 use_task_locks=use_task_locks,
                 budget_gate=budget_gate,
+                defer_reasons=defer_reasons,
             )
             if ok:
                 dispatched_count += 1
@@ -1423,6 +1463,7 @@ def _refill(
             queue,
             use_task_locks=use_task_locks,
             budget_gate=budget_gate,
+            defer_reasons=defer_reasons,
         )
         if ok:
             dispatched_count += 1
@@ -1476,6 +1517,37 @@ def _read_log_safely(path: str | Path) -> str:
         return Path(path).read_text(encoding="utf-8", errors="replace")
     except (OSError, FileNotFoundError):
         return ""
+
+
+def _extract_usage_from_reason(reason: str) -> tuple[int, int]:
+    """Parse `(tokens_used, token_budget)` out of the budget gate's reason string.
+
+    The reason string produced by `BudgetGate.can_dispatch` looks like:
+        "codex over threshold: 367,000 tokens used, cap 240,000 (60% of 400,000)"
+
+    We yank the first two comma-formatted integers as `(used, budget)` from
+    that pattern. Returns `(0, 0)` on any parse failure — the caller falls
+    back to `"?"` in the log line rather than crashing.
+    """
+    if not reason:
+        return 0, 0
+    # First integer: `tokens_used`. Third integer (after "of"): `token_budget`.
+    matches = re.findall(r"([\d,]+)", reason)
+    used = 0
+    budget_val = 0
+    if matches:
+        try:
+            used = int(matches[0].replace(",", ""))
+        except ValueError:
+            used = 0
+    # The `token_budget` is the last number in the parenthesized "of NNN" tail.
+    m = re.search(r"of\s+([\d,]+)", reason)
+    if m:
+        try:
+            budget_val = int(m.group(1).replace(",", ""))
+        except ValueError:
+            budget_val = 0
+    return used, budget_val
 
 
 def _completed_dep_tasks(queue: TaskQueue, task: Task) -> list[Task]:
@@ -1884,6 +1956,11 @@ def main(argv: list[str] | None = None) -> int:
         task_costs: dict[str, float] = {}
         drain = _DrainFlag()
         deferred: set[str] = set()
+        # Sprint A / Issue #11: in-memory map of task_id → defer reason
+        # (currently only "blocked-by-budget:<provider>"). Populated by
+        # `_spawn_one` when the budget gate blocks; consumed by future
+        # `orch status` reporting. Purely runtime — never persisted.
+        defer_reasons: dict[str, str] = {}
         gate: SemiModeGate | None = (
             SemiModeGate(router) if args.mode == "semi" else None
         )
@@ -1939,6 +2016,7 @@ def main(argv: list[str] | None = None) -> int:
                     use_task_locks=args.task_locks,
                     only=args.only,
                     budget_gate=budget_gate,
+                    defer_reasons=defer_reasons,
                 )
 
             # Sprint 7 — sleep-until-reset when every provider is capped.
