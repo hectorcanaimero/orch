@@ -15,6 +15,7 @@ Two modes, one entry point:
 Contract (both modes):
     - Creates the minimum layout orch needs: tasks.json, scripts/task-*.sh,
       orchestrator/{state, config.yaml, model_router.yaml, budgets.yaml},
+      dashboard.yaml (project-root override for the dashboard),
       specs/README.md, .gitignore (when absent).
     - Never writes AI. Never touches the network. Never installs anything.
     - Batch mode refuses to overwrite existing files without --force.
@@ -44,11 +45,17 @@ from typing import Callable
 _PKG_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PKG_DIR / "templates"
 
-# Files copied verbatim from the package root (shipped YAML defaults).
-_YAML_DEFAULTS: tuple[str, ...] = (
-    "config.yaml",
-    "model_router.yaml",
-    "budgets.yaml",
+# Files copied verbatim from the package (shipped YAML defaults).
+# Each tuple is (source path relative to _PKG_DIR, destination path
+# relative to project_path).
+_YAML_DEFAULTS: tuple[tuple[str, str], ...] = (
+    ("config.yaml", "orchestrator/config.yaml"),
+    ("model_router.yaml", "orchestrator/model_router.yaml"),
+    ("budgets.yaml", "orchestrator/budgets.yaml"),
+    # Dashboard config lives one level deeper in the package but the
+    # project override MUST sit at the project root (see
+    # orchestrator/dashboard/dashboard_config.py's loader). Preserve that.
+    ("dashboard/dashboard.yaml", "dashboard.yaml"),
 )
 
 # Files that would be clobbered — presence of ANY of these triggers the
@@ -61,6 +68,7 @@ _CONFLICT_MARKERS: tuple[str, ...] = (
     "orchestrator/config.yaml",
     "orchestrator/model_router.yaml",
     "orchestrator/budgets.yaml",
+    "dashboard.yaml",
 )
 
 
@@ -167,9 +175,11 @@ def orch_init(
     orch_dir = project_path / "orchestrator"
     (orch_dir / "state").mkdir(parents=True, exist_ok=True)
     (orch_dir / "state" / ".gitkeep").touch()
-    for name in _YAML_DEFAULTS:
-        src = _PKG_DIR / name
-        shutil.copyfile(src, orch_dir / name)
+    for src_rel, dst_rel in _YAML_DEFAULTS:
+        src = _PKG_DIR / src_rel
+        dst = project_path / dst_rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
 
     # ---- .gitignore (soft — only when absent) -----------------------
     gitignore_path = project_path / ".gitignore"

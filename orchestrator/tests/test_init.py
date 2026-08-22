@@ -92,12 +92,65 @@ def test_init_config_yamls_are_copies_of_packaged_defaults(tmp_path: Path) -> No
     dest = tmp_path / "proj"
     orch_init(dest)
 
-    for name in ("config.yaml", "model_router.yaml", "budgets.yaml"):
-        packaged = pkg_dir / name
-        copied = dest / "orchestrator" / name
+    pairs = (
+        ("config.yaml", "orchestrator/config.yaml"),
+        ("model_router.yaml", "orchestrator/model_router.yaml"),
+        ("budgets.yaml", "orchestrator/budgets.yaml"),
+        # Dashboard override lives at the project root — package source is
+        # one level deeper. Verified explicitly to lock the layout.
+        ("dashboard/dashboard.yaml", "dashboard.yaml"),
+    )
+    for src_rel, dst_rel in pairs:
+        packaged = pkg_dir / src_rel
+        copied = dest / dst_rel
         assert copied.read_bytes() == packaged.read_bytes(), (
-            f"{name} drift from packaged default"
+            f"{dst_rel} drift from packaged default"
         )
+
+
+def test_init_creates_dashboard_yaml_at_project_root(tmp_path: Path) -> None:
+    """dashboard.yaml MUST land at project root (not under orchestrator/).
+
+    The dashboard config loader looks for `<project_root>/dashboard.yaml`,
+    so if we put it anywhere else the operator can't actually override
+    settings (like flipping tunnel.enabled = true).
+    """
+    dest = tmp_path / "proj"
+    assert orch_init(dest) == 0
+    dashboard_yaml = dest / "dashboard.yaml"
+    assert dashboard_yaml.exists(), "dashboard.yaml must be scaffolded at project root"
+    # Sanity-check the schema: tunnel block must be present (shipped default).
+    text = dashboard_yaml.read_text(encoding="utf-8")
+    assert "tunnel:" in text, "shipped dashboard.yaml should include tunnel block"
+    # And it MUST NOT sit under orchestrator/ — that would silently break
+    # the loader while looking correct in a file listing.
+    assert not (dest / "orchestrator" / "dashboard.yaml").exists()
+
+
+def test_init_refuses_when_dest_has_dashboard_yaml(tmp_path: Path) -> None:
+    """Existing dashboard.yaml at project root must trigger the conflict gate."""
+    dest = tmp_path / "proj"
+    dest.mkdir()
+    original = "# operator-authored overrides\nkanban:\n  wip_default: 5\n"
+    (dest / "dashboard.yaml").write_text(original, encoding="utf-8")
+
+    exit_code = orch_init(dest, force=False)
+    assert exit_code == 1
+    # Existing file preserved and no partial write happened.
+    assert (dest / "dashboard.yaml").read_text(encoding="utf-8") == original
+    assert not (dest / "scripts").exists()
+
+
+def test_init_force_overwrites_existing_dashboard_yaml(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    dest.mkdir()
+    (dest / "dashboard.yaml").write_text(
+        "# stale operator overrides\n", encoding="utf-8"
+    )
+
+    assert orch_init(dest, force=True) == 0
+    # After --force, the file equals the shipped default (tunnel block back).
+    assert "tunnel:" in (dest / "dashboard.yaml").read_text(encoding="utf-8")
 
 
 # ---- Conflict handling -------------------------------------------------
