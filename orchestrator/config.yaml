@@ -38,6 +38,19 @@ retry:
 # esto (ej: `sdd/specs`, `docs/specs/`, `specs/`). Default: `specs`.
 spec_root: specs
 
+# Sprint B — pluggable state backend.
+# `state.backend`: "file" (default, JSONL/JSON in state/) or "sqlite".
+# `state.sqlite_path`: absolute path or relative-to-state_dir path to the DB
+# file. Defaults to `<state_dir>/orch.db`. Ignored when backend == "file".
+# `tasks_json_precedence`: how the orchestrator reconciles tasks.json status
+# vs backend status. "deps-only" (default) means the DB owns runtime status;
+# tasks.json is consulted only for the DAG + spec_ref fields. Any other
+# value falls back to the historic file-driven behavior.
+state:
+  backend: file
+  sqlite_path: null
+tasks_json_precedence: deps-only
+
 # Sprint 7 — provider budget guardrails.
 # `budgets_config` is the path (relative to the orchestrator package OR the
 # project root) to a `budgets.yaml` file. Absent/missing file → gate disabled
