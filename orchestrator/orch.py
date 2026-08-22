@@ -1906,6 +1906,7 @@ _SUBCOMMANDS = (
     "logs",
     "graph",
     "doctor",
+    "validate",
 )
 
 
@@ -1928,6 +1929,7 @@ def _print_subcommand_list() -> int:
     print("  orch logs ID [FLAGS]      Tail the per-task log file (default: --tail 200)")
     print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
+    print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -2906,6 +2908,212 @@ def _render_doctor_report(payload: dict[str, Any]) -> None:
                 print(f"  -> {c['name']}: {c['remediation']}")
 
 
+def _run_validate_subcommand(argv: list[str]) -> int:
+    """Handle `orch validate [--json] [--files]` — static graph validation.
+
+    Sprint D / Issue #10. Runs every whole-graph validator (schema, deps,
+    cycles, unresolved routes, undersized budgets, config shape) WITHOUT
+    dispatching any subprocesses or probing external binaries — the doctor
+    covers runtime probes.
+
+    Exit codes: 0 clean, 1 warnings only, 2 any error.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch validate",
+        description=(
+            "Static validation of tasks.json + config: schema, dependencies, "
+            "cycles, route resolution, budget preset sanity. No I/O beyond "
+            "reading the config files."
+        ),
+    )
+    p.add_argument("--json", action="store_true",
+                   help="Emit the full validation report as JSON on stdout.")
+    p.add_argument("--files", action="store_true",
+                   help="Also check that parent dirs of each task.files[] entry exist + are writable.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    from orchestrator import preflight
+
+    errors: list[preflight.ValidationError] = []
+
+    # Config shape — always runs.
+    errors.extend(preflight.validate_config_shape(paths.config_yaml))
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        cfg = {}
+        errors.append(
+            preflight.ValidationError(
+                task_id=None,
+                field="config",
+                kind="schema.config",
+                message=f"config load failed: {exc}",
+            )
+        )
+
+    # Router keys — load defensively so downstream validators can still run.
+    router_keys: list[str] = []
+    try:
+        from orchestrator.router import load_router
+
+        router = load_router(paths.router_yaml)
+        router_keys = list(router.keys())
+    except FileNotFoundError:
+        errors.append(
+            preflight.ValidationError(
+                task_id=None,
+                field="model_router.yaml",
+                kind="router.missing",
+                message=f"router file not found: {paths.router_yaml}",
+                remediation="Run `orch init` to scaffold, or create the file by hand.",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(
+            preflight.ValidationError(
+                task_id=None,
+                field="model_router.yaml",
+                kind="router.parse",
+                message=f"router load failed: {exc}",
+            )
+        )
+
+    # Tasks — same defensive load.
+    tasks_list: list = []
+    try:
+        from orchestrator.state import load_tasks
+
+        tasks_list = load_tasks(paths.tasks_json)
+    except FileNotFoundError:
+        errors.append(
+            preflight.ValidationError(
+                task_id=None,
+                field="tasks.json",
+                kind="tasks.missing",
+                message=f"tasks file not found: {paths.tasks_json}",
+                remediation="Run `orch init` to scaffold, or create tasks.json by hand.",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(
+            preflight.ValidationError(
+                task_id=None,
+                field="tasks.json",
+                kind="tasks.parse",
+                message=f"tasks load failed: {exc}",
+            )
+        )
+
+    if tasks_list:
+        errors.extend(preflight.validate_graph(
+            tasks_list,
+            router_keys=router_keys if router_keys else None,
+        ))
+        if args.files:
+            errors.extend(preflight.validate_files_writable(tasks_list, paths.project_root))
+
+    # Preset sanity — only meaningful if budgets file + preset resolved.
+    budgets_path = _resolve_budgets_path(paths, cfg)
+    budgets_preset = cfg.get("budgets_preset")
+    typical = int(cfg.get("typical_dispatch_tokens", 200_000) or 200_000)
+    errors.extend(preflight.validate_preset_sanity(
+        budgets_path if budgets_path and budgets_path.exists() else None,
+        budgets_preset,
+        typical,
+    ))
+
+    exit_code = preflight.exit_code_for_errors(errors)
+
+    # Group errors by kind for the summary payload.
+    summary: dict[str, int] = {}
+    for e in errors:
+        summary[e.kind] = summary.get(e.kind, 0) + 1
+
+    payload = {
+        "project": {
+            "id": paths.project_id,
+            "root": str(paths.project_root),
+        },
+        "errors": [e.as_json() for e in errors],
+        "summary": {
+            "total": len(errors),
+            "by_kind": summary,
+            "errors": sum(1 for e in errors if e.severity == "error"),
+            "warnings": sum(1 for e in errors if e.severity == "warn"),
+        },
+        "exit_code": exit_code,
+    }
+
+    if args.json:
+        print(json.dumps(payload, default=str, separators=(",", ":")))
+        return exit_code
+
+    _render_validate_report(payload)
+    return exit_code
+
+
+def _render_validate_report(payload: dict[str, Any]) -> None:
+    """Human renderer for `orch validate`. Rich when available."""
+    errors = payload["errors"]
+    header = f"orch validate · project={payload['project']['id']}"
+    summary = payload["summary"]
+    summary_line = (
+        f"{summary['errors']} error(s) · {summary['warnings']} warning(s) "
+        f"· {summary['total']} total"
+    )
+
+    if not errors:
+        if _HAVE_RICH:
+            _console.print(f"[bold green]✓ {header}: no issues found[/bold green]")  # type: ignore[union-attr]
+        else:  # pragma: no cover
+            print(f"✓ {header}: no issues found")
+        return
+
+    # Group by kind so the operator sees related rows together.
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for e in errors:
+        by_kind.setdefault(e["kind"], []).append(e)
+
+    if _HAVE_RICH:
+        _console.print(f"[bold]{header}[/bold]")  # type: ignore[union-attr]
+        for kind, rows in sorted(by_kind.items()):
+            table = Table(title=f"{kind} ({len(rows)})")
+            table.add_column("TASK", style="cyan")
+            table.add_column("FIELD")
+            table.add_column("MESSAGE")
+            for r in rows:
+                color = "red" if r["severity"] == "error" else "yellow"
+                table.add_row(
+                    r.get("task_id") or "-",
+                    r.get("field", ""),
+                    f"[{color}]{r['message']}[/{color}]",
+                )
+            _console.print(table)  # type: ignore[union-attr]
+        _console.print(f"[bold]{summary_line}[/bold]")  # type: ignore[union-attr]
+        remediation = [r for r in errors if r.get("remediation")]
+        if remediation:
+            _console.print()  # type: ignore[union-attr]
+            _console.print("[bold]Remediation:[/bold]")  # type: ignore[union-attr]
+            for r in remediation:
+                tag = r.get("task_id") or "-"
+                _console.print(f"  [{tag}] {r['kind']}: {r['remediation']}")  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(header)
+        for kind, rows in sorted(by_kind.items()):
+            print(f"\n[{kind}] ({len(rows)}):")
+            for r in rows:
+                print(f"  - {r.get('task_id') or '-'} · {r['field']}: {r['message']}")
+        print(summary_line)
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -3016,6 +3224,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_graph_subcommand(incoming[1:])
     if incoming and incoming[0] == "doctor":
         return _run_doctor_subcommand(incoming[1:])
+    if incoming and incoming[0] == "validate":
+        return _run_validate_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
