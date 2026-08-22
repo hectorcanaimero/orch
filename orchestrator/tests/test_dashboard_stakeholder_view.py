@@ -102,17 +102,17 @@ def _client_or_skip(tmp_path: Path, **override):
     pytest.importorskip("jinja2")
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
-    from orchestrator.dashboard.dashboard_config import DashboardConfig
     from orchestrator.dashboard.server import create_app
 
     paths = _make_fixture_project(tmp_path)
-    app = create_app(paths=paths)
-    # Rebind config so we can force a profile without needing config.yaml on disk.
-    if override:
-        app.state.app_state.config = DashboardConfig.load(
-            profile_override=override.get("profile"),
-            token_override=override.get("token"),
-        )
+    # `profile_override` / `token_override` land in the app config BEFORE
+    # middleware registration — critical, because middleware only wires
+    # in when config.profile != "operator".
+    app = create_app(
+        paths=paths,
+        profile_override=override.get("profile"),
+        token_override=override.get("token"),
+    )
     return TestClient(app), paths
 
 

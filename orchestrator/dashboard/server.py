@@ -62,7 +62,14 @@ from orchestrator.dashboard.metrics import (
     total_cost,
 )
 from orchestrator.budget import BudgetGate, load_budget_config
-from orchestrator.dashboard.dashboard_config import DashboardConfig
+from orchestrator.dashboard.dashboard_config import (
+    PROFILE_OPERATOR,
+    DashboardConfig,
+)
+from orchestrator.dashboard.middleware import (
+    ProfileGuardMiddleware,
+    TokenAuthMiddleware,
+)
 from orchestrator.dashboard.pricing import PricingTable
 from orchestrator.paths import ProjectPaths, resolve_project_paths
 from orchestrator.state import load_tasks
@@ -263,11 +270,17 @@ def create_app(
     project_root: str | None = None,
     project_id: str | None = None,
     config: str = "orchestrator/config.yaml",
+    profile_override: str | None = None,
+    token_override: str | None = None,
 ) -> Any:
     """Build and return the FastAPI application.
 
     Either pass `paths` directly (tests do this) or pass the CLI flags
     (`project_root` / `project_id`) and let this function resolve them.
+
+    `profile_override` / `token_override` map 1:1 to the `--profile` /
+    `--token` CLI flags. They win over env + config.yaml but only when
+    passed (typically wired by `run()` below).
     """
     # Lazy imports — the web stack only loads when we actually create the app.
     # `Request` is imported at module scope (see top) to keep annotations
@@ -285,7 +298,14 @@ def create_app(
         )
 
     pricing = PricingTable.load(paths.project_root)
-    dash_cfg = DashboardConfig.load(paths.project_root)
+    # Load DashboardConfig against paths.config_yaml so `dashboard:` block
+    # is honored. CLI overrides take precedence over env + config.
+    dash_cfg = DashboardConfig.load(
+        paths.project_root,
+        config_yaml=paths.config_yaml,
+        profile_override=profile_override,
+        token_override=token_override,
+    )
     app_state = AppState(paths=paths, pricing=pricing, config=dash_cfg)
 
     tpl_dir = Path(__file__).parent / "templates"
@@ -301,6 +321,15 @@ def create_app(
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # ---- Sprint E-2 middleware: profile guard + token auth ---------------
+    # FastAPI executes the LAST-added middleware FIRST on the wire, so add
+    # ProfileGuard first and TokenAuth second → on-wire order is
+    # `auth → guard → route`. Auth failing yields 401 before the guard
+    # even runs (no route-existence leak).
+    if dash_cfg.profile != PROFILE_OPERATOR:
+        app.add_middleware(ProfileGuardMiddleware, config=dash_cfg)
+        app.add_middleware(TokenAuthMiddleware, config=dash_cfg)
+
     # ---- Template context helper -----------------------------------------
     # `profile` is injected into every template render so partials can
     # feature-flag sensitive rows without each route re-passing it.
@@ -311,7 +340,10 @@ def create_app(
         return base
 
     # ---- Root: task table --------------------------------------------------
-    @app.get("/", response_class=HTMLResponse)
+    # Route names are load-bearing: `ProfileGuardMiddleware` consults them
+    # against `DashboardConfig.stakeholder_routes` to decide 200 vs 403.
+    # Every route below MUST declare `name=` or it stays operator-only.
+    @app.get("/", response_class=HTMLResponse, name="index")
     def index(
         request: Request,
         phase: list[int] | None = Query(None),
@@ -390,7 +422,7 @@ def create_app(
         "done": "No completions yet.",
     }
 
-    @app.get("/kanban", response_class=HTMLResponse)
+    @app.get("/kanban", response_class=HTMLResponse, name="kanban_page")
     def kanban_page(
         request: Request,
         phase: int | None = Query(None),
@@ -511,7 +543,7 @@ def create_app(
         return templates.TemplateResponse(template_name, ctx)
 
     # ---- Metrics page ------------------------------------------------------
-    @app.get("/metrics", response_class=HTMLResponse)
+    @app.get("/metrics", response_class=HTMLResponse, name="metrics_page")
     def metrics_page(request: Request):
         view = _load_project_view(app_state)
         spends = read_all_spends(paths.state_dir)
@@ -542,7 +574,7 @@ def create_app(
         return templates.TemplateResponse("metrics.html", ctx)
 
     # ---- Logs page ---------------------------------------------------------
-    @app.get("/logs", response_class=HTMLResponse)
+    @app.get("/logs", response_class=HTMLResponse, name="logs_page")
     def logs_page(
         request: Request,
         task_id: str | None = Query(None),
@@ -568,7 +600,7 @@ def create_app(
         for ev in tail_events(paths.state_dir, task_id_filter=task_id):
             yield sse_frame(ev, event="event")
 
-    @app.get("/logs/stream")
+    @app.get("/logs/stream", name="logs_stream")
     def logs_stream(task_id: str | None = Query(None)):
         return StreamingResponse(
             _stream(task_id),
@@ -576,7 +608,7 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/api/events/stream")
+    @app.get("/api/events/stream", name="api_events_stream")
     def api_events_stream(task_id: str | None = Query(None)):
         # Alias — same payload, meant for programmatic consumers.
         return StreamingResponse(
@@ -586,7 +618,7 @@ def create_app(
         )
 
     # ---- JSON APIs ---------------------------------------------------------
-    @app.get("/api/tasks")
+    @app.get("/api/tasks", name="api_tasks")
     def api_tasks(
         phase: int | None = Query(None),
         status: str | None = Query(None),
@@ -611,7 +643,7 @@ def create_app(
             "total": len(view["tasks"]),
         })
 
-    @app.get("/api/task/{task_id}")
+    @app.get("/api/task/{task_id}", name="api_task_detail")
     def api_task_detail(task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
@@ -621,7 +653,7 @@ def create_app(
                 return JSONResponse(d)
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
-    @app.get("/api/budgets")
+    @app.get("/api/budgets", name="api_budgets")
     def api_budgets():
         """Sprint 7 — per-provider budget snapshot for the dashboard.
 
@@ -657,7 +689,7 @@ def create_app(
             "providers": gate.snapshot(),
         })
 
-    @app.get("/api/metrics")
+    @app.get("/api/metrics", name="api_metrics")
     def api_metrics():
         view = _load_project_view(app_state)
         spends = read_all_spends(paths.state_dir)
@@ -670,7 +702,7 @@ def create_app(
         })
 
     # ---- Snapshot export ---------------------------------------------------
-    @app.get("/snapshot")
+    @app.get("/snapshot", name="snapshot")
     def snapshot(request: Request):
         """One JSON dump of the project's current state — safe to archive in git.
 
@@ -712,7 +744,8 @@ def create_app(
         )
 
     # ---- HTMX partials -----------------------------------------------------
-    @app.get("/partials/task-modal/{task_id}", response_class=HTMLResponse)
+    @app.get("/partials/task-modal/{task_id}", response_class=HTMLResponse,
+             name="partial_task_modal")
     def partial_task_modal(request: Request, task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
@@ -740,7 +773,8 @@ def create_app(
                 )
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
-    @app.get("/partials/task-row/{task_id}", response_class=HTMLResponse)
+    @app.get("/partials/task-row/{task_id}", response_class=HTMLResponse,
+             name="partial_task_row")
     def partial_task_row(request: Request, task_id: str):
         view = _load_project_view(app_state)
         for t in view["tasks"]:
