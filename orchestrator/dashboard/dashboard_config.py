@@ -58,6 +58,15 @@ DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
 )
 
 
+# ---- Errors ----------------------------------------------------------------
+
+
+class ConfigError(ValueError):
+    """Raised when `dashboard.yaml` contains an invalid value that MUST
+    prevent boot (per TUN-1 — bad tunnel config is a hard failure so
+    operators notice at startup rather than at first request)."""
+
+
 # ---- Dataclasses -----------------------------------------------------------
 
 
@@ -67,6 +76,25 @@ class KanbanDefaults:
     sort_default: str | None = None
     group_default: str | None = None
     refresh_interval_s: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class TunnelConfig:
+    """Tunnel supervisor config — Sprint E-5 TUN-1.
+
+    Defaults keep the feature OFF so existing dashboards boot unchanged.
+    `provider` and `command` are cross-checked against the provider
+    allowlist (TUN-2) at load time; a mismatch raises `ConfigError`.
+    """
+
+    enabled: bool = False
+    provider: str = "autossh"
+    command: str = "autossh"
+    args: tuple[str, ...] = ()
+    auto_start: bool = False
+    url_regex: str | None = None
+    startup_probe_timeout_s: int = 3
+    url_parse_timeout_s: int = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +111,7 @@ class DashboardConfig:
     profile: str = PROFILE_OPERATOR
     token: str | None = None
     stakeholder_routes: tuple[str, ...] = DEFAULT_STAKEHOLDER_ROUTES
+    tunnel: TunnelConfig = field(default_factory=TunnelConfig)
 
     @classmethod
     def load(
@@ -154,12 +183,14 @@ class DashboardConfig:
             from_config=cfg_block.get("token"),
         )
         routes = _resolve_routes(cfg_block.get("stakeholder_routes"))
+        tunnel = parse_tunnel_section(merged.get("tunnel"))
 
         return cls(
             kanban=kanban,
             profile=profile,
             token=token,
             stakeholder_routes=routes,
+            tunnel=tunnel,
         )
 
 
@@ -239,6 +270,108 @@ def _resolve_routes(from_config: Any) -> tuple[str, ...]:
         if s and s not in DEFAULT_STAKEHOLDER_ROUTES and s not in extra:
             extra.append(s)
     return DEFAULT_STAKEHOLDER_ROUTES + tuple(extra)
+
+
+def parse_tunnel_section(raw: Any) -> TunnelConfig:
+    """Parse the `tunnel:` block from `dashboard.yaml` into `TunnelConfig`.
+
+    Absent or empty → disabled default. Any validation error raises
+    `ConfigError` naming the offending key (TUN-1 requires dashboard boot
+    to fail loudly rather than silently disable the feature).
+    """
+    if raw is None:
+        return TunnelConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"tunnel: expected mapping, got {type(raw).__name__}"
+        )
+
+    # Lazy import so a config load doesn't force the tunnel subpackage on
+    # environments that never touch the feature.
+    from orchestrator.dashboard.tunnel.providers import PROVIDERS, resolve
+
+    enabled = bool(raw.get("enabled", False))
+    provider_raw = raw.get("provider", "autossh")
+    if not isinstance(provider_raw, str) or not provider_raw.strip():
+        raise ConfigError("tunnel.provider must be a non-empty string")
+    provider = provider_raw.strip()
+    try:
+        spec = resolve(provider)
+    except KeyError:
+        raise ConfigError(
+            f"tunnel.provider {provider!r} is not on the allowlist "
+            f"(known providers: {sorted(PROVIDERS.keys())})"
+        )
+
+    command_raw = raw.get("command", spec.command)
+    if not isinstance(command_raw, str) or not command_raw.strip():
+        raise ConfigError("tunnel.command must be a non-empty string")
+    command = command_raw.strip()
+    if command != spec.command:
+        raise ConfigError(
+            f'tunnel.command must equal "{spec.command}" for provider '
+            f'"{provider}" (got {command!r})'
+        )
+
+    args_raw = raw.get("args", None)
+    if args_raw is None:
+        args = spec.default_args
+    elif isinstance(args_raw, list):
+        if not all(isinstance(a, str) for a in args_raw):
+            raise ConfigError("tunnel.args must be a list of strings")
+        args = tuple(args_raw)
+    elif isinstance(args_raw, dict):
+        # Dict form is a shorthand — flatten into `--key value` argv fragments.
+        flat: list[str] = []
+        for k, v in args_raw.items():
+            flat.append(f"--{k}")
+            flat.append(str(v))
+        args = tuple(flat)
+    else:
+        raise ConfigError(
+            f"tunnel.args must be a list or mapping, got {type(args_raw).__name__}"
+        )
+
+    auto_start = bool(raw.get("auto_start", False))
+
+    url_regex_raw = raw.get("url_regex", None)
+    if url_regex_raw is not None and not isinstance(url_regex_raw, str):
+        raise ConfigError("tunnel.url_regex must be a string when provided")
+    url_regex = url_regex_raw if isinstance(url_regex_raw, str) else None
+
+    startup_probe_timeout_s = _coerce_bounded_int(
+        raw.get("startup_probe_timeout_s", 3),
+        key="tunnel.startup_probe_timeout_s",
+        low=1,
+        high=30,
+    )
+    url_parse_timeout_s = _coerce_bounded_int(
+        raw.get("url_parse_timeout_s", 30),
+        key="tunnel.url_parse_timeout_s",
+        low=5,
+        high=300,
+    )
+
+    return TunnelConfig(
+        enabled=enabled,
+        provider=provider,
+        command=command,
+        args=args,
+        auto_start=auto_start,
+        url_regex=url_regex,
+        startup_probe_timeout_s=startup_probe_timeout_s,
+        url_parse_timeout_s=url_parse_timeout_s,
+    )
+
+
+def _coerce_bounded_int(value: Any, *, key: str, low: int, high: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{key} must be an integer, got {value!r}")
+    if n < low or n > high:
+        raise ConfigError(f"{key} must be in [{low}, {high}], got {n}")
+    return n
 
 
 def stakeholder_route_matches(
