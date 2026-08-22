@@ -124,6 +124,12 @@ class SpendEntry:
     Fase 2: `project_id` opcional. Default None por retrocompatibilidad con
     filas escritas antes del refactor multi-proyecto — tolerado al leer.
     Sitios nuevos que construyen SpendEntry deben pasar `paths.project_id`.
+
+    Sprint A / Issue #8: `estimated` is True when the backend produced work
+    events but never reported usage (tokens_in/out both 0). Downstream
+    consumers (dashboard, budget report) can flag these rows so operators
+    know the number is not real telemetry. Default False keeps rows written
+    before the field existed backwards-compatible.
     """
 
     ts: str
@@ -135,6 +141,7 @@ class SpendEntry:
     cost_usd: float
     duration_s: float
     project_id: str | None = None
+    estimated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

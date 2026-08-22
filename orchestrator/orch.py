@@ -1528,6 +1528,7 @@ def _record_spend(
                 tokens_out=int(result.tokens_out or 0),
                 cost_usd=float(result.cost_usd or 0.0),
                 duration_s=float(duration_s),
+                estimated=bool(getattr(result, "estimated", False)),
             )
         )
     except Exception as exc:  # noqa: BLE001 — spend logging is best-effort
