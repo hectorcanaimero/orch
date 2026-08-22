@@ -181,6 +181,14 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="Enumerate the plan and exit 0. NO subprocess is spawned.",
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit the dry-run plan as JSON to stdout. Requires --dry-run "
+            "(this flag is a no-op outside dry-run mode)."
+        ),
+    )
+    parser.add_argument(
         "--config",
         default="orchestrator/config.yaml",
         help="Path to config.yaml (default: orchestrator/config.yaml)",
@@ -248,6 +256,18 @@ def _build_argparser() -> argparse.ArgumentParser:
             "Env fallback: ORCH_BUDGETS_PRESET. Config fallback: "
             "`budgets_preset` in config.yaml. Absent budgets.yaml → gate off."
         ),
+    )
+    # Sprint C: -v/-q for informational log control. Overrides ORCH_LOG_LEVEL
+    # (env) when explicitly set; otherwise the env var (or INFO default) wins.
+    parser.add_argument(
+        "-v", "--verbose",
+        action="count", default=0,
+        help="Increase log verbosity (-v = DEBUG). Overrides ORCH_LOG_LEVEL.",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Silence INFO/WARN output (only ERROR). Overrides ORCH_LOG_LEVEL.",
     )
     return parser
 
@@ -355,25 +375,46 @@ def _load_budget_gate(
 # ---- Fallback route WARN (FR-D-7) --------------------------------------
 
 
-def _warn_fallback_routes(router: dict[str, RouteEntry]) -> None:
-    """Emit exactly one WARN line per router entry with a `fallback_cli_model`.
+def _warn_fallback_routes(
+    router: dict[str, RouteEntry],
+    *,
+    verbose: bool = False,
+) -> None:
+    """Announce which router entries carry a `fallback_cli_model`.
 
-    FR-D-7 says the orchestrator "MUST emit exactly one WARN line per
-    substitution at startup." We chose Option A (no CLI probe): the WARN is
-    informational — it announces which routes are drift-resilient. The
-    actual fallback swap happens post-run in `_reap_once` when a dispatch
-    fails with a version-drift-shaped error message.
+    FR-D-7 said "MUST emit exactly one WARN line per substitution at
+    startup." Sprint C revises this: the announcement is INFORMATIONAL
+    (the actual fallback swap happens post-run in `_reap_once` when a
+    dispatch fails with a version-drift-shaped error). Emitting one WARN
+    per route AND also printing to stderr produces a double-emit that
+    spams the console every startup.
+
+    Behavior:
+      - Non-verbose (default): a single INFO summary line like
+        `N route(s) with fallback configured (use -v for detail)`.
+      - Verbose: one INFO line per route with the full substitution details.
+
+    Nothing writes to stderr directly anymore — logging owns the channel.
     """
-    for key, route in sorted(router.items()):
-        if route.fallback_cli_model:
-            msg = (
-                f"WARN: route {key!r} has fallback_cli_model={route.fallback_cli_model!r} "
-                f"— will substitute for {route.cli_model!r} on version-drift errors"
+    routes_with_fallback = [
+        (key, route)
+        for key, route in sorted(router.items())
+        if route.fallback_cli_model
+    ]
+    if not routes_with_fallback:
+        return
+    if verbose:
+        for key, route in routes_with_fallback:
+            log.info(
+                "route %r has fallback_cli_model=%r — will substitute "
+                "for %r on version-drift errors",
+                key, route.fallback_cli_model, route.cli_model,
             )
-            log.warning(msg)
-            # Also print so operators watching stdout see the notice even if
-            # logging is silenced.
-            print(msg, file=sys.stderr)
+        return
+    log.info(
+        "%d route(s) with fallback configured (use -v for detail)",
+        len(routes_with_fallback),
+    )
 
 
 # ---- Task filtering -----------------------------------------------------
@@ -389,51 +430,161 @@ def _filter_by_only(tasks: list[Task], only: str | None) -> list[Task]:
 # ---- Dry-run plan -------------------------------------------------------
 
 
-def _print_plan(
+def _build_plan_rows(
     queue: TaskQueue,
     router: dict[str, RouteEntry],
     max_tasks: int | None,
     only: str | None = None,
-) -> int:
-    """Print a `rich.Table` of the planned dispatches, return count printed.
+) -> list[dict[str, Any]]:
+    """Pure aggregator: return the plan rows the renderers consume.
 
-    Only enumerates the CURRENT ready-set, not the transitive one — the point
-    of --dry-run is to prove routes resolve and the first tick has work.
+    Extracted from the pre-Sprint-C `_print_plan` so both the human table
+    renderer and the JSON renderer share the same source of truth. Only
+    enumerates the CURRENT ready-set (see original docstring).
     """
     ready = queue.ready(in_flight_ids=[], only=only)
     if max_tasks is not None:
         ready = ready[:max_tasks]
 
+    rows: list[dict[str, Any]] = []
+    for t in ready:
+        route = router.get(t.model)
+        rows.append({
+            "task_id": t.id,
+            "phase": t.phase,
+            "backend": route.backend if route else "?",
+            "cli_model": route.cli_model if route else t.model,
+            "tier": route.tier if route else None,
+            "model": t.model,
+            "estimate_hours": t.estimate_hours,
+        })
+    return rows
+
+
+def _print_plan_table(rows: list[dict[str, Any]]) -> int:
+    """Human rich-table renderer for the dry-run plan."""
     if _HAVE_RICH:
-        table = Table(title=f"Dry-run plan ({len(ready)} ready)")
+        table = Table(title=f"Dry-run plan ({len(rows)} ready)")
         table.add_column("Task ID", style="cyan")
         table.add_column("Phase", justify="right")
         table.add_column("Backend", style="green")
         table.add_column("CLI Model")
         table.add_column("Tier")
         table.add_column("Est h", justify="right")
-        for t in ready:
-            route = router.get(t.model)
-            if route is None:
-                table.add_row(t.id, str(t.phase), "?", t.model, "?", str(t.estimate_hours))
-            else:
-                table.add_row(
-                    t.id,
-                    str(t.phase),
-                    route.backend,
-                    route.cli_model,
-                    route.tier,
-                    str(t.estimate_hours),
-                )
+        for r in rows:
+            table.add_row(
+                str(r["task_id"]),
+                str(r["phase"]),
+                str(r["backend"]),
+                str(r["cli_model"]),
+                str(r["tier"] or "?"),
+                str(r["estimate_hours"]),
+            )
         _console.print(table)  # type: ignore[union-attr]
     else:  # pragma: no cover
-        print(f"Dry-run plan ({len(ready)} ready)")
-        for t in ready:
-            route = router.get(t.model)
-            b = route.backend if route else "?"
-            m = route.cli_model if route else "?"
-            print(f"  {t.id}  [{t.phase}]  {b}/{m}  est={t.estimate_hours}h")
-    return len(ready)
+        print(f"Dry-run plan ({len(rows)} ready)")
+        for r in rows:
+            print(
+                f"  {r['task_id']}  [{r['phase']}]  {r['backend']}/{r['cli_model']}  "
+                f"est={r['estimate_hours']}h"
+            )
+    return len(rows)
+
+
+def _print_plan_json(rows: list[dict[str, Any]]) -> int:
+    """JSON renderer for `orch --dry-run --json`. Emits `{plan: [rows], count}`."""
+    payload = {"plan": rows, "count": len(rows)}
+    print(json.dumps(payload, default=str, separators=(",", ":")))
+    return len(rows)
+
+
+def _print_run_summary(
+    *,
+    run_id: str,
+    run_file: Any,
+    task_costs: dict[str, float] | None,
+    deferred: set[str] | None = None,
+    defer_reasons: dict[str, str] | None = None,
+) -> None:
+    """Sprint C end-of-run recap. Called once after the main loop drains.
+
+    Prints a compact table (rich when available) covering:
+      - Run id + counts (completed, blocked, deferred, still in-flight)
+      - Total cost across the in-memory `task_costs` dict
+      - Top 5 costliest tasks
+
+    We use the in-memory `task_costs` (populated in the reap loop) instead
+    of re-reading spend files because `SpendEntry` has no `run_id` column
+    yet (Sprint C decision #5 — schema bump deferred).
+    """
+    state = run_file.state
+    completed = list(state.completed or [])
+    blocked = list(state.blocked or [])
+    still_in_flight = list((state.in_flight or {}).keys())
+    deferred_list = sorted(deferred or [])
+
+    task_costs = task_costs or {}
+    total_cost = round(sum(task_costs.values()), 4)
+    top5 = sorted(task_costs.items(), key=lambda kv: kv[1], reverse=True)[:5]
+
+    header = (
+        f"Run summary · {run_id[:8]} · completed={len(completed)} "
+        f"blocked={len(blocked)} deferred={len(deferred_list)} "
+        f"in_flight={len(still_in_flight)} · cost=${total_cost:.4f}"
+    )
+
+    if _HAVE_RICH:
+        table = Table(title=header)
+        table.add_column("METRIC", style="cyan")
+        table.add_column("VALUE")
+        table.add_row("completed", ", ".join(completed) or "—")
+        if blocked:
+            table.add_row("blocked", ", ".join(blocked))
+        if deferred_list:
+            reasons = ", ".join(
+                f"{tid}({(defer_reasons or {}).get(tid, 'unknown')})"
+                for tid in deferred_list
+            )
+            table.add_row("deferred", reasons)
+        if still_in_flight:
+            table.add_row("still_in_flight", ", ".join(still_in_flight))
+        if top5:
+            top_rows = ", ".join(f"{tid}=${cost:.4f}" for tid, cost in top5)
+            table.add_row("top_costs", top_rows)
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(header)
+        print(f"  completed: {', '.join(completed) or '—'}")
+        if blocked:
+            print(f"  blocked  : {', '.join(blocked)}")
+        if deferred_list:
+            print(f"  deferred : {', '.join(deferred_list)}")
+        if still_in_flight:
+            print(f"  in_flight: {', '.join(still_in_flight)}")
+        if top5:
+            print("  top costs:")
+            for tid, cost in top5:
+                print(f"    {tid}  ${cost:.4f}")
+
+
+def _print_plan(
+    queue: TaskQueue,
+    router: dict[str, RouteEntry],
+    max_tasks: int | None,
+    only: str | None = None,
+    *,
+    as_json: bool = False,
+) -> int:
+    """Legacy façade — kept so old callers/tests still work.
+
+    New callers should use `_build_plan_rows` + `_print_plan_table` /
+    `_print_plan_json` directly. The `as_json` toggle here exists just to
+    make the main-loop wire-up in this file readable.
+    """
+    rows = _build_plan_rows(queue, router, max_tasks, only=only)
+    if as_json:
+        return _print_plan_json(rows)
+    return _print_plan_table(rows)
 
 
 # ---- In-flight bookkeeping ---------------------------------------------
@@ -1749,6 +1900,11 @@ _SUBCOMMANDS = (
     "migrate",
     "reset",
     "stop",
+    "status",
+    "tasks",
+    "events",
+    "logs",
+    "graph",
 )
 
 
@@ -1765,6 +1921,11 @@ def _print_subcommand_list() -> int:
     print("  orch migrate [FLAGS]      Migrate state/ JSONL → sqlite (backup + rollback)")
     print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
     print("  orch stop [FLAGS]         Signal a running orch to drain and exit")
+    print("  orch status [FLAGS]       Project status table (human or --json)")
+    print("  orch tasks [FLAGS]        Thin task listing (ID · STATUS · BACKEND · DEPS · PHASE)")
+    print("  orch events ID [FLAGS]    Tail events for one task (--tail N / --json)")
+    print("  orch logs ID [FLAGS]      Tail the per-task log file (default: --tail 200)")
+    print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -2065,6 +2226,441 @@ def _run_stop_subcommand(argv: list[str]) -> int:
     return 1
 
 
+_STATUS_CHOICES = ("backlog", "todo", "in-progress", "done", "blocked", "blocked-by-budget")
+
+
+def _parse_status_list(raw: str | None) -> set[str] | None:
+    """Turn `--status todo,done` into {"todo", "done"}. None → None."""
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return None
+    return set(parts)
+
+
+def _resolve_paths_from_argv(args: argparse.Namespace) -> ProjectPaths:
+    """Shared path-resolution helper for the read-only observability subcommands.
+
+    Every command in Sprint C carries the same `--project-root` /
+    `--project-id` / `--config` triple; extract the wiring here.
+    """
+    return resolve_project_paths(
+        project_root_arg=args.project_root,
+        project_id_arg=args.project_id,
+        config_arg=args.config,
+    )
+
+
+def _add_common_project_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--project-root", default=None, metavar="PATH",
+                   help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
+    p.add_argument("--project-id", default=None, metavar="ID",
+                   help="Project id override. Env fallback: ORCH_PROJECT_ID.")
+    p.add_argument("--config", default="orchestrator/config.yaml",
+                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+
+
+def _run_status_subcommand(argv: list[str]) -> int:
+    """Handle `orch status [--json] [--only GLOB] [--status STATUSES]`.
+
+    Prints a project status table (rich when available) or a compact JSON
+    object when `--json` is passed. Reads the aggregate via
+    `observability.build_status_snapshot`.
+
+    Exit codes:
+      0 — snapshot rendered
+      1 — project layout invalid / config load failed
+    """
+    p = argparse.ArgumentParser(
+        prog="orch status",
+        description="Project status: tasks · costs · last events · run summary.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit the raw snapshot as JSON.")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="Restrict task rows to ids matching this fnmatch glob.")
+    p.add_argument("--status", default=None, metavar="LIST",
+                   help="Comma-separated status filter (e.g. `todo,in-progress`).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(
+        paths,
+        cfg,
+        only=args.only,
+        status_filter=_parse_status_list(args.status),
+    )
+
+    if args.json:
+        print(json.dumps(snapshot, default=str, separators=(",", ":")))
+        return 0
+
+    _render_status_table(snapshot)
+    return 0
+
+
+def _render_status_table(snap: dict[str, Any]) -> None:
+    """Human renderer for `orch status`. Rich when available, plain otherwise."""
+    project = snap.get("project", {}) or {}
+    totals = snap.get("totals", {}) or {}
+    cost = snap.get("cost", {}) or {}
+    latest = snap.get("latest_run") or {}
+
+    total_n = totals.get("_total", 0)
+    non_meta = {k: v for k, v in totals.items() if not k.startswith("_")}
+    totals_str = ", ".join(f"{k}={v}" for k, v in sorted(non_meta.items())) or "0 tasks"
+    run_line = (
+        f"run {latest.get('run_id', '—')[:8]} · {latest.get('status', '—')} · "
+        f"in_flight={latest.get('in_flight_count', 0)}"
+    ) if latest else "no runs yet"
+
+    header = (
+        f"Project {project.get('project_id', '?')} · backend={project.get('backend', '?')} "
+        f"· {total_n} tasks ({totals_str}) · ${cost.get('project_total_usd', 0):.4f} · {run_line}"
+    )
+
+    rows = snap.get("tasks", []) or []
+    if _HAVE_RICH:
+        table = Table(title=header)
+        table.add_column("ID", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("BACKEND/MODEL", style="green")
+        table.add_column("LAST EVENT")
+        table.add_column("COST", justify="right")
+        table.add_column("PHASE", justify="right")
+        for r in rows:
+            table.add_row(
+                str(r.get("id", "")),
+                str(r.get("status", "")),
+                f"{r.get('backend', '?')}/{r.get('cli_model', '?')}",
+                r.get("last_event_human") or "—",
+                f"${float(r.get('cost_usd', 0.0)):.4f}",
+                str(r.get("phase", "")),
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover — rich is a hard dep in practice
+        print(header)
+        print(f"  {'ID':<20} {'STATUS':<16} {'BACKEND/MODEL':<28} {'LAST EVENT':<28} {'COST':>10}  PHASE")
+        for r in rows:
+            print(
+                f"  {str(r.get('id','')):<20} {str(r.get('status','')):<16} "
+                f"{(r.get('backend','?')+'/'+r.get('cli_model','?')):<28} "
+                f"{str(r.get('last_event_human') or '—'):<28} "
+                f"${float(r.get('cost_usd', 0.0)):>9.4f}  {r.get('phase','')}"
+            )
+
+
+def _run_tasks_subcommand(argv: list[str]) -> int:
+    """Handle `orch tasks [--status STATUSES] [--only GLOB] [--json]`.
+
+    Thinner cousin of `orch status`: columns are ID · STATUS · BACKEND/MODEL
+    · DEPS · PHASE. Same aggregation pipeline; different renderer.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch tasks",
+        description="List every task with status + routing + deps.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit as JSON array of rows.")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="Restrict task rows to ids matching this fnmatch glob.")
+    p.add_argument("--status", default=None, metavar="LIST",
+                   help="Comma-separated status filter (e.g. `todo,in-progress`).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(
+        paths,
+        cfg,
+        only=args.only,
+        status_filter=_parse_status_list(args.status),
+    )
+    rows = snapshot.get("tasks", []) or []
+
+    if args.json:
+        # Emit only the trimmed set of fields relevant to `orch tasks`.
+        trimmed = [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "backend": r["backend"],
+                "cli_model": r["cli_model"],
+                "phase": r["phase"],
+                "dependencies": r["dependencies"],
+            }
+            for r in rows
+        ]
+        print(json.dumps(trimmed, default=str, separators=(",", ":")))
+        return 0
+
+    if _HAVE_RICH:
+        table = Table(title=f"Tasks ({len(rows)} shown)")
+        table.add_column("ID", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("BACKEND/MODEL", style="green")
+        table.add_column("DEPS")
+        table.add_column("PHASE", justify="right")
+        for r in rows:
+            deps = ", ".join(r.get("dependencies", []) or []) or "—"
+            table.add_row(
+                str(r.get("id", "")),
+                str(r.get("status", "")),
+                f"{r.get('backend', '?')}/{r.get('cli_model', '?')}",
+                deps,
+                str(r.get("phase", "")),
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(f"Tasks ({len(rows)} shown)")
+        for r in rows:
+            deps = ",".join(r.get("dependencies", []) or []) or "-"
+            print(
+                f"  {r.get('id',''):<20} {r.get('status',''):<16} "
+                f"{r.get('backend','?')}/{r.get('cli_model','?'):<20} "
+                f"deps=[{deps}] phase={r.get('phase','')}"
+            )
+    return 0
+
+
+def _run_events_subcommand(argv: list[str]) -> int:
+    """Handle `orch events <task-id> [--tail N] [--json] [--run RUN_ID]`.
+
+    Streams the recorded event rows for a single task via
+    `StateBackend.iter_events(task_id=..., limit=..., run_id=...)`. The
+    file backend has no monotonic id → newest-N tail is buffered client
+    side; the sqlite backend uses ORDER BY id DESC LIMIT N (see commit 1).
+
+    Exit codes:
+      0 — rows emitted (including the empty case).
+      1 — config / layout error.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch events",
+        description="Tail event rows for one task (default: last 20).",
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument("--tail", type=int, default=20, metavar="N",
+                   help="Cap at the last N events (default: 20; 0 = all).")
+    p.add_argument("--run", default=None, metavar="RUN_ID",
+                   help="Restrict to one run id (default: every recorded run).")
+    p.add_argument("--json", action="store_true",
+                   help="Emit as a JSON array (one row per event).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.state import get_backend
+
+    backend = get_backend(paths, cfg)
+    limit = None if args.tail <= 0 else int(args.tail)
+    rows = list(
+        backend.iter_events(run_id=args.run, task_id=args.task_id, limit=limit)
+    )
+
+    if args.json:
+        print(json.dumps(rows, default=str, separators=(",", ":")))
+        return 0
+
+    if not rows:
+        print(f"(no events for task {args.task_id!r})")
+        return 0
+
+    if _HAVE_RICH:
+        table = Table(title=f"Events for {args.task_id} (showing {len(rows)})")
+        table.add_column("TS", style="cyan")
+        table.add_column("EVENT")
+        table.add_column("BACKEND")
+        table.add_column("RUN")
+        table.add_column("EXTRA")
+        for r in rows:
+            extra = r.get("extra") or {}
+            extra_str = ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
+            table.add_row(
+                str(r.get("ts", "")),
+                str(r.get("event_type", "")),
+                str(r.get("backend", "")),
+                str(r.get("run_id", ""))[:8],
+                extra_str,
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(f"Events for {args.task_id} (showing {len(rows)})")
+        for r in rows:
+            print(
+                f"  {r.get('ts','')}  {r.get('event_type','')}  "
+                f"backend={r.get('backend','')}  run={str(r.get('run_id',''))[:8]}"
+            )
+    return 0
+
+
+def _run_logs_subcommand(argv: list[str]) -> int:
+    """Handle `orch logs <task-id> [--tail N] [--all]`.
+
+    Reads the raw per-task log file at
+        `<state_dir>/logs/<task-id>.log`
+    and streams the tail. This is a plain file — backend-agnostic on
+    purpose (log content is written by the dispatched CLI subprocess,
+    not the state backend).
+
+    Exit codes:
+      0 — bytes emitted.
+      1 — config / layout error.
+      2 — log file does not exist.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch logs",
+        description="Tail the per-task log file (default: last 200 lines).",
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument("--tail", type=int, default=200, metavar="N",
+                   help="Cap at the last N lines (default: 200).")
+    p.add_argument("--all", action="store_true",
+                   help="Print the entire log (ignores --tail).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    log_path = paths.state_dir / "logs" / f"{args.task_id}.log"
+    if not log_path.exists():
+        print(
+            f"no log file for task {args.task_id!r} at {log_path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        print(f"could not read {log_path}: {exc}", file=sys.stderr)
+        return 1
+
+    if args.all or args.tail <= 0:
+        tail = lines
+    else:
+        tail = lines[-int(args.tail):]
+
+    # Preserve trailing newlines from the file — sys.stdout.write handles both.
+    for line in tail:
+        sys.stdout.write(line)
+    return 0
+
+
+def _run_graph_subcommand(argv: list[str]) -> int:
+    """Handle `orch graph [--out plan.html] [--only GLOB] [--open]`.
+
+    Renders a self-contained HTML/SVG plan graph using the shared
+    `observability.build_status_snapshot` aggregator + the pure
+    `orchestrator.graph.build_html` renderer. No CDN, no external CSS —
+    everything is inline so the output works offline.
+
+    Ceiling: ~500 tasks (documented in the module docstring). Beyond that,
+    pass `--only`.
+
+    Exit codes:
+      0 — HTML file written.
+      1 — config / layout error / write failure.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch graph",
+        description=(
+            "Render a self-contained HTML/SVG snapshot of the project DAG. "
+            "Zero external dependencies. Ceiling ~500 tasks — use --only "
+            "for larger projects."
+        ),
+    )
+    p.add_argument("--out", default="plan.html", metavar="PATH",
+                   help="Destination file (default: plan.html in cwd).")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="fnmatch glob restricting nodes rendered.")
+    p.add_argument("--open", action="store_true",
+                   help="Open the HTML in the default browser after writing.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.graph import build_html
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(paths, cfg, only=args.only)
+    html = build_html(snapshot)
+    out_path = Path(args.out)
+    try:
+        out_path.write_text(html, encoding="utf-8")
+    except OSError as exc:
+        print(f"could not write {out_path}: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {out_path} ({len(snapshot.get('tasks') or [])} nodes)")
+
+    if args.open:
+        try:
+            import webbrowser
+
+            webbrowser.open(out_path.resolve().as_uri())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not open browser: %s", exc)
+    return 0
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -2107,10 +2703,37 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
     )
 
 
+def _resolve_log_level(
+    *,
+    verbose: int = 0,
+    quiet: bool = False,
+    env_var: str | None = None,
+) -> str:
+    """Sprint C log-level resolution.
+
+    Precedence (highest → lowest):
+        1. `--quiet` / `--verbose` (CLI flags — explicit user intent).
+        2. `ORCH_LOG_LEVEL` env var when set to a non-empty string.
+        3. Code default (`INFO`).
+
+    `verbose=1` → DEBUG (single -v). `verbose>=2` currently caps at DEBUG
+    since Python's logging module has no lower level.
+    """
+    if quiet:
+        return "ERROR"
+    if verbose > 0:
+        return "DEBUG"
+    if env_var:
+        return env_var
+    return "INFO"
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Return the process exit code (FR-CLI-3)."""
+    # Provisional log setup so early subcommand paths still see logging.
+    # The main-loop path re-applies with `-v/-q` factored in below.
     logging.basicConfig(
-        level=os.environ.get("ORCH_LOG_LEVEL", "INFO"),
+        level=os.environ.get("ORCH_LOG_LEVEL") or "INFO",
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
@@ -2136,9 +2759,38 @@ def main(argv: list[str] | None = None) -> int:
         return _run_reset_subcommand(incoming[1:])
     if incoming and incoming[0] == "stop":
         return _run_stop_subcommand(incoming[1:])
+    if incoming and incoming[0] == "status":
+        return _run_status_subcommand(incoming[1:])
+    if incoming and incoming[0] == "tasks":
+        return _run_tasks_subcommand(incoming[1:])
+    if incoming and incoming[0] == "events":
+        return _run_events_subcommand(incoming[1:])
+    if incoming and incoming[0] == "logs":
+        return _run_logs_subcommand(incoming[1:])
+    if incoming and incoming[0] == "graph":
+        return _run_graph_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
+
+    # Sprint C: `--json` only means something in --dry-run mode. Enforce the
+    # constraint at parse time so operators get a clear error rather than a
+    # silent no-op deep in the main loop.
+    if getattr(args, "json", False) and not args.dry_run:
+        parser.error("--json requires --dry-run")
+
+    # Sprint C: reapply log level now that -v/-q have been parsed. `force=True`
+    # replaces the root handler installed by the provisional basicConfig above
+    # (Python 3.8+ semantics — noqa on py<3.8 unaffected here).
+    logging.basicConfig(
+        level=_resolve_log_level(
+            verbose=int(getattr(args, "verbose", 0) or 0),
+            quiet=bool(getattr(args, "quiet", False)),
+            env_var=os.environ.get("ORCH_LOG_LEVEL") or None,
+        ),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
 
     # ---- (1) Project path resolution + root contract ---------------------
     # Fase 1 multi-proyecto: `paths.project_root` centraliza la resolución
@@ -2197,7 +2849,7 @@ def main(argv: list[str] | None = None) -> int:
     # design closeout): the actual substitution fires post-run, when a
     # dispatch fails with a "model not found"-style error. The WARN lets the
     # operator see which routes are drift-resilient before any dispatch.
-    _warn_fallback_routes(router)
+    _warn_fallback_routes(router, verbose=bool(int(getattr(args, "verbose", 0) or 0)))
 
     try:
         tasks = load_tasks(paths.tasks_json)
@@ -2376,7 +3028,11 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- (8) --dry-run ------------------------------------------------
         if args.dry_run:
-            count = _print_plan(queue, router, args.max_tasks, only=args.only)
+            count = _print_plan(
+                queue, router, args.max_tasks,
+                only=args.only,
+                as_json=bool(getattr(args, "json", False)),
+            )
             # AS-08: NO run/spend/events files touched — but we already made
             # the run file above (create) which is a side effect. Remove it
             # so dry-run stays clean.
@@ -2531,6 +3187,23 @@ def main(argv: list[str] | None = None) -> int:
                 router=router, task_costs=task_costs,
             )
             return 130
+
+        # ---- Sprint C end-of-run summary --------------------------------
+        # Prints unconditionally after a clean drain (both success and
+        # blocked-tasks exit paths). Skipped on:
+        #   - `--dry-run` (already returned above)
+        #   - SIGINT drain (return 130 above)
+        #   - config-error early exits (return 1 before we reach here)
+        try:
+            _print_run_summary(
+                run_id=run_id,
+                run_file=run_file,
+                task_costs=task_costs,
+                deferred=deferred,
+                defer_reasons=defer_reasons,
+            )
+        except Exception as exc:  # noqa: BLE001 — summary must never crash orch
+            log.warning("end-of-run summary failed: %s", exc)
 
         # ---- exit code ---------------------------------------------------
         blocked_count = len(run_file.state.blocked)
