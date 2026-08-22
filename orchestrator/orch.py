@@ -2594,8 +2594,71 @@ def _run_logs_subcommand(argv: list[str]) -> int:
 
 
 def _run_graph_subcommand(argv: list[str]) -> int:
-    """Placeholder — implemented in commit 6."""
-    raise NotImplementedError("orch graph is implemented in commit 6")
+    """Handle `orch graph [--out plan.html] [--only GLOB] [--open]`.
+
+    Renders a self-contained HTML/SVG plan graph using the shared
+    `observability.build_status_snapshot` aggregator + the pure
+    `orchestrator.graph.build_html` renderer. No CDN, no external CSS —
+    everything is inline so the output works offline.
+
+    Ceiling: ~500 tasks (documented in the module docstring). Beyond that,
+    pass `--only`.
+
+    Exit codes:
+      0 — HTML file written.
+      1 — config / layout error / write failure.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch graph",
+        description=(
+            "Render a self-contained HTML/SVG snapshot of the project DAG. "
+            "Zero external dependencies. Ceiling ~500 tasks — use --only "
+            "for larger projects."
+        ),
+    )
+    p.add_argument("--out", default="plan.html", metavar="PATH",
+                   help="Destination file (default: plan.html in cwd).")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="fnmatch glob restricting nodes rendered.")
+    p.add_argument("--open", action="store_true",
+                   help="Open the HTML in the default browser after writing.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.graph import build_html
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(paths, cfg, only=args.only)
+    html = build_html(snapshot)
+    out_path = Path(args.out)
+    try:
+        out_path.write_text(html, encoding="utf-8")
+    except OSError as exc:
+        print(f"could not write {out_path}: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {out_path} ({len(snapshot.get('tasks') or [])} nodes)")
+
+    if args.open:
+        try:
+            import webbrowser
+
+            webbrowser.open(out_path.resolve().as_uri())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not open browser: %s", exc)
+    return 0
 
 
 def _run_dashboard_subcommand(argv: list[str]) -> int:
