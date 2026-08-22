@@ -1570,3 +1570,103 @@ def test_defer_reason_cleared_when_gate_passes(
     )
     # Gate said OK → stale marker cleared even though semaphore was full.
     assert "F0.6.T3" not in defer_reasons
+
+
+# ---- Sprint A / Issue #7: orch reset subcommand ------------------------
+
+
+def _stage_v2_with_status(tmp_path: Path, tasks: list[dict]) -> Path:
+    """Stage a minimal v2/-shaped project with the given tasks.json rows."""
+    v2 = tmp_path / "v2"
+    v2.mkdir()
+    (v2 / "scripts").mkdir()
+    (v2 / "orchestrator" / "state").mkdir(parents=True)
+    for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
+        p = v2 / "scripts" / name
+        p.write_text("#!/bin/sh\nexit 0\n")
+        p.chmod(0o755)
+    (v2 / "tasks.json").write_text(
+        json.dumps({"meta": {}, "phases": [], "tasks": tasks}, indent=2)
+    )
+    # config + router (minimal — reset subcommand doesn't need them but
+    # resolve_project_paths reads them).
+    shutil.copy(FIXTURES / "main_loop_config.yaml", v2 / "orchestrator" / "config.yaml")
+    shutil.copy(FIXTURES / "main_loop_router.yaml", v2 / "orchestrator" / "model_router.yaml")
+    return v2
+
+
+def test_reset_dry_run_prints_candidates_but_no_mutation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default reset (no --requeue) is dry-run: prints candidates, mutates nothing."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T2", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "F0.5.T1" in out
+    assert "would revert" in out.lower()
+
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    # Untouched — dry-run.
+    assert reloaded["tasks"][0]["status"] == "in-progress"
+
+
+def test_reset_requeue_reverts_all_in_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--requeue actually mutates tasks.json (all in-progress → todo)."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T2", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.5.T3", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset", "--requeue"])
+    assert rc == 0
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    statuses = {r["id"]: r["status"] for r in reloaded["tasks"]}
+    assert statuses["F0.5.T1"] == "todo"
+    assert statuses["F0.5.T2"] == "todo"
+    assert statuses["F0.5.T3"] == "done"  # untouched
+
+
+def test_reset_only_glob_narrows_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--only restricts to matching task ids (via fnmatch)."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+        {"id": "F0.6.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "in-progress", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset", "--requeue", "--only", "F0.5.*"])
+    assert rc == 0
+    reloaded = json.loads((v2 / "tasks.json").read_text())
+    statuses = {r["id"]: r["status"] for r in reloaded["tasks"]}
+    assert statuses["F0.5.T1"] == "todo"
+    # NOT matched by glob → still in-progress.
+    assert statuses["F0.6.T1"] == "in-progress"
+
+
+def test_reset_exits_0_when_nothing_to_do(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No in-progress tasks → prints friendly message, exits 0."""
+    v2 = _stage_v2_with_status(tmp_path, [
+        {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "done", "comments": []},
+    ])
+    monkeypatch.chdir(v2)
+    rc = orch_mod.main(["reset"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no in-progress" in out.lower()

@@ -141,6 +141,7 @@ Subcommands (run `orch <cmd> --help` for details):
   orch init PATH [FLAGS]    Scaffold a new orch project at PATH
   orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)
   orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard
+  orch reset [FLAGS]        Revert stuck in-progress tasks to todo
 
 Exit codes:
   0   clean drain (all reachable tasks done, none blocked)
@@ -1621,7 +1622,7 @@ def _run_atomize_subcommand(argv: list[str]) -> int:
     return atomize_main(argv)
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard")
+_SUBCOMMANDS = ("init", "atomize", "dashboard", "reset")
 
 
 def _print_subcommand_list() -> int:
@@ -1633,6 +1634,7 @@ def _print_subcommand_list() -> int:
     print("  orch init PATH [FLAGS]    Scaffold a new orch project at PATH")
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
+    print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -1677,6 +1679,126 @@ def _run_init_subcommand(argv: list[str]) -> int:
         sdd=args.sdd,
         project_name=args.project_name,
     )
+
+
+def _run_reset_subcommand(argv: list[str]) -> int:
+    """Handle `orch reset [--requeue] [--only GLOB] [--project-root PATH]`.
+
+    Sprint A / Issue #7: manual escape hatch for stuck in-progress tasks.
+
+    Modes:
+        (default)   dry-run — print what WOULD be reverted; touches nothing.
+        --requeue   nuclear — revert ALL in-progress tasks to todo (respects
+                    --only if set). No PID check; assumes the operator KNOWS
+                    the tasks are stuck.
+        --only GLOB restrict by fnmatch on task-id (both dry-run and requeue).
+
+    Returns 0 on success (even when dry-run finds zero candidates), 1 on I/O
+    error, 2 on invalid project layout (same as main-loop exit conventions).
+    """
+    import fnmatch as _fnmatch
+
+    p = argparse.ArgumentParser(
+        prog="orch reset",
+        description=(
+            "Revert stuck in-progress tasks to todo. Dry-run by default; "
+            "pass --requeue to actually mutate tasks.json."
+        ),
+    )
+    p.add_argument(
+        "--requeue",
+        action="store_true",
+        help="Actually revert (default is dry-run — print candidates only).",
+    )
+    p.add_argument(
+        "--only",
+        default=None,
+        metavar="GLOB",
+        help="Restrict to task ids matching this fnmatch glob.",
+    )
+    p.add_argument(
+        "--project-root",
+        default=None,
+        metavar="PATH",
+        help="Project root. Env fallback: ORCH_PROJECT_ROOT. Default: cwd.",
+    )
+    p.add_argument(
+        "--project-id",
+        default=None,
+        metavar="ID",
+        help="Project id override. Env fallback: ORCH_PROJECT_ID.",
+    )
+    p.add_argument(
+        "--config",
+        default="orchestrator/config.yaml",
+        help="Path to config.yaml (default: orchestrator/config.yaml)",
+    )
+    args = p.parse_args(argv)
+
+    try:
+        paths = resolve_project_paths(
+            project_root_arg=args.project_root,
+            project_id_arg=args.project_id,
+            config_arg=args.config,
+        )
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    # Read tasks.json fresh — read-only.
+    try:
+        with open(paths.tasks_json, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"could not read {paths.tasks_json}: {exc}", file=sys.stderr)
+        return 1
+
+    rows = raw.get("tasks") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        print(f"malformed tasks.json at {paths.tasks_json}", file=sys.stderr)
+        return 1
+
+    candidates: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") != "in-progress":
+            continue
+        tid = row.get("id")
+        if not isinstance(tid, str):
+            continue
+        if args.only and not _fnmatch.fnmatchcase(tid, args.only):
+            continue
+        candidates.append(tid)
+
+    if not candidates:
+        print("no in-progress tasks to reset.")
+        return 0
+
+    if not args.requeue:
+        # Dry-run mode — print candidates, exit 0.
+        print(f"would revert {len(candidates)} in-progress task(s) to todo:")
+        for tid in candidates:
+            print(f"  - {tid}")
+        print("\nRe-run with --requeue to actually mutate tasks.json.")
+        return 0
+
+    # Actual mutation — via call_task_reset (script preferred, fallback fine).
+    from orchestrator.state import call_task_reset
+
+    reverted: list[str] = []
+    for tid in candidates:
+        try:
+            if call_task_reset(tid, project_root=paths.project_root, author="orch-reset"):
+                reverted.append(tid)
+        except Exception as exc:  # noqa: BLE001
+            print(f"reset failed for {tid}: {exc}", file=sys.stderr)
+
+    print(f"reverted {len(reverted)} task(s) to todo:")
+    for tid in reverted:
+        print(f"  - {tid}")
+    return 0
 
 
 def _run_dashboard_subcommand(argv: list[str]) -> int:
@@ -1740,6 +1862,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_init_subcommand(incoming[1:])
     if incoming and incoming[0] == "atomize":
         return _run_atomize_subcommand(incoming[1:])
+    if incoming and incoming[0] == "reset":
+        return _run_reset_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
@@ -1871,13 +1995,23 @@ def main(argv: list[str] | None = None) -> int:
     # otherwise appear "live" in the dashboard forever. Sweep them once at
     # startup so we begin from a clean slate; the main loop below repeats
     # the sweep periodically. Never raises past its own boundary.
-    reap_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+    reap_report = reconcile_in_flight(
+        state_dir,
+        project_id=paths.project_id,
+        project_root=paths.project_root,
+    )
     if reap_report.get("reconciled"):
         log.info(
             "startup reconcile: reaped %d orphan(s) from %d in-flight entry(ies): %s",
             len(reap_report["reconciled"]),
             reap_report.get("checked", 0),
             reap_report["reconciled"],
+        )
+    if reap_report.get("reset"):
+        log.info(
+            "startup reconcile: reverted %d task(s) to todo: %s",
+            len(reap_report["reset"]),
+            reap_report["reset"],
         )
 
     # ---- (7) run-file (new or resumed) -----------------------------------
@@ -2064,7 +2198,11 @@ def main(argv: list[str] | None = None) -> int:
             now_mono = time.monotonic()
             if now_mono - last_reconcile_ts >= _RECONCILE_INTERVAL_SEC:
                 last_reconcile_ts = now_mono
-                tick_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+                tick_report = reconcile_in_flight(
+                    state_dir,
+                    project_id=paths.project_id,
+                    project_root=paths.project_root,
+                )
                 if tick_report.get("reconciled"):
                     log.info(
                         "tick reconcile: reaped %d orphan(s): %s",
