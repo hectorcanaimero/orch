@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from ..models import Dispatch, EventEntry, RunState, SpendEntry, Status, Task
+from ..models import Dispatch, EventEntry, Finding, RunState, SpendEntry, Status, Task
 from .shell import (
     _ensure_v2_cwd,
     _reset_task_in_place,
@@ -1098,3 +1098,133 @@ class FileBackend:
         rf.state.in_flight.clear()
         rf.save()
         return cleared
+
+    # ---- findings (Sprint E-1 / #17) -----------------------------------
+
+    def _findings_path(self) -> Path:
+        """Location of the per-project findings JSONL log."""
+        return self.state_dir / "findings.jsonl"
+
+    def _iter_findings_raw(self) -> Iterator[dict[str, Any]]:
+        path = self._findings_path()
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(obj, dict):
+                    yield obj
+
+    @staticmethod
+    def _row_to_finding(row: dict[str, Any]) -> Finding:
+        return Finding(
+            id=row["id"],
+            created_at=row["created_at"],
+            type=row["type"],
+            about=row["about"],
+            summary=row["summary"],
+            evidence=row.get("evidence", "") or "",
+            confidence=row["confidence"],
+            status=row.get("status", "pending"),
+            published_url=row.get("published_url"),
+            duplicate_of=row.get("duplicate_of"),
+            dedup_hash=row.get("dedup_hash", "") or "",
+            project_id=row.get("project_id", "") or "",
+            author=row.get("author", "agent") or "agent",
+            dismissed_reason=row.get("dismissed_reason"),
+        )
+
+    def append_finding(self, finding: Finding) -> None:
+        # Dedup guard: rewrite is expensive, but appending a duplicate hash
+        # would break every downstream lookup — refuse loudly.
+        existing = self.find_finding_by_dedup_hash(finding.dedup_hash)
+        if existing is not None and existing.id != finding.id:
+            raise ValueError(
+                f"finding with dedup_hash={finding.dedup_hash!r} already exists"
+                f" (id={existing.id})"
+            )
+        # Also refuse re-appending the same id.
+        if self.get_finding(finding.id) is not None:
+            raise ValueError(f"finding id={finding.id!r} already exists")
+        path = self._findings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Normalize project_id on write so downstream filters work.
+        payload = asdict(finding)
+        if not payload.get("project_id") and self.project_id:
+            payload["project_id"] = self.project_id
+        line = json.dumps(payload, separators=(",", ":"))
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+
+    def iter_findings(
+        self,
+        status: str | None = None,
+        about: str | None = None,
+    ) -> Iterator[Finding]:
+        for row in self._iter_findings_raw():
+            # Respect the per-project scoping: rows written under a different
+            # project_id are silently skipped (multitenant hygiene).
+            row_pid = row.get("project_id") or ""
+            if self.project_id and row_pid and row_pid != self.project_id:
+                continue
+            if status is not None and row.get("status", "pending") != status:
+                continue
+            if about is not None and row.get("about") != about:
+                continue
+            yield self._row_to_finding(row)
+
+    def get_finding(self, finding_id: str) -> Finding | None:
+        for row in self._iter_findings_raw():
+            if row.get("id") == finding_id:
+                row_pid = row.get("project_id") or ""
+                if self.project_id and row_pid and row_pid != self.project_id:
+                    continue
+                return self._row_to_finding(row)
+        return None
+
+    def update_finding(self, finding_id: str, **updates: Any) -> None:
+        allowed = {
+            "status",
+            "published_url",
+            "duplicate_of",
+            "dismissed_reason",
+            "summary",
+            "evidence",
+            "confidence",
+            "author",
+        }
+        clean = {k: v for k, v in updates.items() if k in allowed}
+        path = self._findings_path()
+        if not path.exists():
+            raise KeyError(finding_id)
+        rows: list[dict[str, Any]] = []
+        found = False
+        for row in self._iter_findings_raw():
+            if row.get("id") == finding_id:
+                row.update(clean)
+                found = True
+            rows.append(row)
+        if not found:
+            raise KeyError(finding_id)
+        payload = "\n".join(
+            json.dumps(r, separators=(",", ":")) for r in rows
+        ) + "\n"
+        _atomic_write(path, payload.encode("utf-8"))
+
+    def find_finding_by_dedup_hash(self, dedup_hash: str) -> Finding | None:
+        if not dedup_hash:
+            return None
+        for row in self._iter_findings_raw():
+            if row.get("dedup_hash") == dedup_hash:
+                row_pid = row.get("project_id") or ""
+                if self.project_id and row_pid and row_pid != self.project_id:
+                    continue
+                return self._row_to_finding(row)
+        return None

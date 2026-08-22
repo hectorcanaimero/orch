@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Protocol, runtime_checkable
 
-from ..models import Dispatch, EventEntry, RunState, SpendEntry, Status, Task
+from ..models import Dispatch, EventEntry, Finding, RunState, SpendEntry, Status, Task
 
 
 @runtime_checkable
@@ -175,6 +175,40 @@ class StateBackend(Protocol):
 
     def clear_in_flight_for_run(self, run_id: str) -> list[str]:
         """Remove every in-flight dispatch for the run. Returns the task_ids."""
+        ...
+
+    # ---- findings (Sprint E-1 / #17) -----------------------------------
+
+    def append_finding(self, finding: Finding) -> None:
+        """Persist a new finding. Raises `ValueError` on hash collision.
+
+        The dedup_hash is UNIQUE — callers should check `find_finding_by_dedup_hash`
+        first and short-circuit at the CLI layer with a friendly error.
+        """
+        ...
+
+    def iter_findings(
+        self,
+        status: str | None = None,
+        about: str | None = None,
+    ) -> Iterator[Finding]:
+        """Yield findings for this project, optionally filtered by status/about."""
+        ...
+
+    def get_finding(self, finding_id: str) -> Finding | None:
+        """Fetch one finding by id, or None if unknown."""
+        ...
+
+    def update_finding(self, finding_id: str, **updates: Any) -> None:
+        """Partial update — only the given fields are mutated.
+
+        Raises `KeyError` if the finding is unknown. Unknown field names are
+        silently ignored so the backend can evolve without breaking callers.
+        """
+        ...
+
+    def find_finding_by_dedup_hash(self, dedup_hash: str) -> Finding | None:
+        """Return the finding sharing this dedup_hash within the project (or None)."""
         ...
 
 

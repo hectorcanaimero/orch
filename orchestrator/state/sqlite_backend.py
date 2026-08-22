@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from ..models import Dispatch, EventEntry, RunState, SpendEntry, Status, Task
+from ..models import Dispatch, EventEntry, Finding, RunState, SpendEntry, Status, Task
 
 log = logging.getLogger(__name__)
 
@@ -959,6 +959,135 @@ class SqliteBackend:
                 (run_id,),
             )
         return cleared
+
+    # ---- findings (Sprint E-1 / #17) -----------------------------------
+
+    def _row_to_finding(self, row: sqlite3.Row) -> Finding:
+        return Finding(
+            id=row["id"],
+            created_at=row["created_at"],
+            type=row["type"],  # type: ignore[arg-type]
+            about=row["about"],  # type: ignore[arg-type]
+            summary=row["summary"],
+            evidence=row["evidence"] or "",
+            confidence=row["confidence"],  # type: ignore[arg-type]
+            status=row["status"],  # type: ignore[arg-type]
+            published_url=row["published_url"],
+            duplicate_of=row["duplicate_of"],
+            dedup_hash=row["dedup_hash"] or "",
+            project_id=row["project_id"] or "",
+            author=row["author"] or "agent",
+            dismissed_reason=row["dismissed_reason"],
+        )
+
+    def append_finding(self, finding: Finding) -> None:
+        with self._write() as conn:
+            try:
+                conn.execute(
+                    "INSERT INTO findings "
+                    "(id, project_id, created_at, type, about, summary, "
+                    " evidence, confidence, status, published_url, "
+                    " duplicate_of, dedup_hash, author, dismissed_reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        finding.id,
+                        finding.project_id or self.project_id,
+                        finding.created_at,
+                        finding.type,
+                        finding.about,
+                        finding.summary,
+                        finding.evidence or "",
+                        finding.confidence,
+                        finding.status,
+                        finding.published_url,
+                        finding.duplicate_of,
+                        finding.dedup_hash,
+                        finding.author or "agent",
+                        finding.dismissed_reason,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                # UNIQUE(dedup_hash) or PK collision — raise as ValueError so
+                # callers can present a clean "already captured" message.
+                raise ValueError(f"finding integrity error: {exc}") from exc
+
+    def iter_findings(
+        self,
+        status: str | None = None,
+        about: str | None = None,
+    ) -> Iterator[Finding]:
+        conn = self._conn()
+        try:
+            where = ["project_id = ?"]
+            params: list[Any] = [self.project_id]
+            if status is not None:
+                where.append("status = ?")
+                params.append(status)
+            if about is not None:
+                where.append("about = ?")
+                params.append(about)
+            sql = (
+                "SELECT * FROM findings "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY created_at ASC"
+            )
+            for row in conn.execute(sql, tuple(params)).fetchall():
+                yield self._row_to_finding(row)
+        finally:
+            conn.close()
+
+    def get_finding(self, finding_id: str) -> Finding | None:
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "SELECT * FROM findings WHERE project_id = ? AND id = ?",
+                (self.project_id, finding_id),
+            )
+            row = cur.fetchone()
+            return self._row_to_finding(row) if row else None
+        finally:
+            conn.close()
+
+    def update_finding(self, finding_id: str, **updates: Any) -> None:
+        allowed = {
+            "status",
+            "published_url",
+            "duplicate_of",
+            "dismissed_reason",
+            "summary",
+            "evidence",
+            "confidence",
+            "author",
+        }
+        clean = {k: v for k, v in updates.items() if k in allowed}
+        if not clean:
+            # Still validate the row exists so callers get consistent KeyError.
+            if self.get_finding(finding_id) is None:
+                raise KeyError(finding_id)
+            return
+        assignments = ", ".join(f"{k} = ?" for k in clean)
+        params: list[Any] = list(clean.values())
+        params.extend([self.project_id, finding_id])
+        with self._write() as conn:
+            cur = conn.execute(
+                f"UPDATE findings SET {assignments} "
+                "WHERE project_id = ? AND id = ?",
+                tuple(params),
+            )
+            if cur.rowcount == 0:
+                raise KeyError(finding_id)
+
+    def find_finding_by_dedup_hash(self, dedup_hash: str) -> Finding | None:
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "SELECT * FROM findings WHERE project_id = ? AND dedup_hash = ?",
+                (self.project_id, dedup_hash),
+            )
+            row = cur.fetchone()
+            return self._row_to_finding(row) if row else None
+        finally:
+            conn.close()
 
     # ---- introspection (used by migrate + tests) -----------------------
 

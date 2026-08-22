@@ -313,6 +313,13 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     # If a provider's window can't fit at least 2 x this many tokens, orch
     # warns because dispatches will serialize inside the rolling window.
     cfg.setdefault("typical_dispatch_tokens", 200_000)
+    # Sprint E-1 — dogfooding loop (issue #17). Any missing key falls back
+    # to the module defaults in `orchestrator.findings`.
+    cfg.setdefault("findings", {})
+    cfg["findings"].setdefault("publish_repo", "hectorcanaimero/orch")
+    cfg["findings"].setdefault("publish_rate_limit_per_hour", 3)
+    cfg["findings"].setdefault("label", "auto-reported")
+    cfg["findings"].setdefault("min_publish_confidence", "medium")
     return cfg
 
 
@@ -1907,6 +1914,7 @@ _SUBCOMMANDS = (
     "graph",
     "doctor",
     "validate",
+    "findings",
 )
 
 
@@ -1930,6 +1938,7 @@ def _print_subcommand_list() -> int:
     print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
+    print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -3086,6 +3095,437 @@ def _render_validate_report(payload: dict[str, Any]) -> None:
         print(summary_line)
 
 
+def _run_findings_subcommand(argv: list[str]) -> int:
+    """Handle `orch findings <verb> ...` — dogfooding loop dispatcher (Sprint E-1).
+
+    Sub-verbs: capture · list · review · publish · dismiss. Each sub-verb
+    has its own argparser; this shim only routes.
+
+    Exit codes are per-verb; see individual `_findings_*` functions.
+    """
+    if not argv or argv[0] in {"-h", "--help"}:
+        return _findings_print_help()
+    verb = argv[0]
+    rest = argv[1:]
+    if verb == "capture":
+        return _findings_capture_cli(rest)
+    if verb == "list":
+        return _findings_list_cli(rest)
+    if verb == "review":
+        return _findings_review_cli(rest)
+    if verb == "publish":
+        return _findings_publish_cli(rest)
+    if verb == "dismiss":
+        return _findings_dismiss_cli(rest)
+    print(f"unknown findings verb: {verb!r}", file=sys.stderr)
+    _findings_print_help()
+    return 2
+
+
+def _findings_print_help() -> int:
+    print("orch findings — dogfooding loop (Sprint E-1)")
+    print()
+    print("Verbs:")
+    print("  orch findings capture --type T --about (orch|project) --summary S ...")
+    print("  orch findings list [--status S] [--about A] [--json]")
+    print("  orch findings review ID [--json]")
+    print("  orch findings publish ID [--repo REPO] [--dry-run] [--yes] [--force]")
+    print("  orch findings dismiss ID --reason REASON")
+    return 0
+
+
+def _findings_backend(argv: list[str]) -> tuple[Any, dict[str, Any], Any]:
+    """Common bootstrap: parse project flags, load config, resolve backend.
+
+    Returns `(backend, cfg, paths)`. Raises SystemExit via argparse on bad
+    args. `argv` is the sub-verb's argv already parsed elsewhere — this only
+    reads --project-root/--project-id/--config, so callers stash them in a
+    small extra parser instance and pass the residue through.
+    """
+    from orchestrator.state import get_backend
+
+    p = argparse.ArgumentParser(add_help=False)
+    _add_common_project_flags(p)
+    args, _rest = p.parse_known_args(argv)
+    paths = _resolve_paths_from_argv(args)
+    cfg = _load_config(paths.config_yaml)
+    backend = get_backend(paths, cfg)
+    return backend, cfg, paths
+
+
+def _findings_capture_cli(argv: list[str]) -> int:
+    """`orch findings capture` — persist a new finding. Exit codes: 0/2/3."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings capture",
+        description="Capture a finding (bug/fix/feature) locally.",
+    )
+    p.add_argument("--type", dest="ftype", required=True,
+                   choices=sorted(f_mod._ALLOWED_TYPES))
+    p.add_argument("--about", required=True, choices=sorted(f_mod._ALLOWED_ABOUT))
+    p.add_argument("--summary", required=True,
+                   help="Single-line human title. Required.")
+    p.add_argument("--evidence", default="",
+                   help="Multi-line evidence (file:line / logs / repro).")
+    p.add_argument("--confidence", default="medium",
+                   choices=sorted(f_mod._ALLOWED_CONFIDENCE))
+    p.add_argument("--author", default="agent",
+                   help="Who captured this. Default: agent")
+    p.add_argument("--json", action="store_true",
+                   help="Emit the captured finding as JSON.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        finding = f_mod.capture(
+            backend,
+            finding_type=args.ftype,
+            about=args.about,
+            summary=args.summary,
+            evidence=args.evidence,
+            confidence=args.confidence,
+            author=args.author,
+        )
+    except f_mod.DuplicateFindingError as exc:
+        existing = exc.existing
+        print(
+            f"duplicate: same finding already captured as {existing.id} "
+            f"(status={existing.status})",
+            file=sys.stderr,
+        )
+        return 2
+    except f_mod.FindingValidationError as exc:
+        print(f"validation error: {exc}", file=sys.stderr)
+        return 3
+
+    if args.json:
+        from dataclasses import asdict as _asdict
+        print(json.dumps(_asdict(finding), separators=(",", ":")))
+    else:
+        print(f"captured {finding.id}")
+        print(f"  type       {finding.type}")
+        print(f"  about      {finding.about}")
+        print(f"  confidence {finding.confidence}")
+        print(f"  summary    {finding.summary}")
+    return 0
+
+
+def _findings_list_cli(argv: list[str]) -> int:
+    """`orch findings list` — human table or JSON array."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings list",
+        description="List findings for this project.",
+    )
+    p.add_argument("--status", default=None,
+                   choices=["pending", "published", "dismissed", "duplicate"])
+    p.add_argument("--about", default=None,
+                   choices=sorted(f_mod._ALLOWED_ABOUT))
+    p.add_argument("--json", action="store_true", help="Emit as JSON array.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    rows = f_mod.list_findings(backend, status=args.status, about=args.about)
+
+    if args.json:
+        from dataclasses import asdict as _asdict
+        print(json.dumps([_asdict(r) for r in rows], separators=(",", ":")))
+        return 0
+
+    if not rows:
+        print("(no findings)")
+        return 0
+    header = f"{'ID':<12} {'TYPE':<8} {'ABOUT':<8} {'CONF':<7} {'STATUS':<11} SUMMARY"
+    print(header)
+    for r in rows:
+        short_id = r.id[:8]
+        summary = r.summary if len(r.summary) <= 60 else r.summary[:57] + "..."
+        print(
+            f"{short_id:<12} {r.type:<8} {r.about:<8} {r.confidence:<7} "
+            f"{r.status:<11} {summary}"
+        )
+    return 0
+
+
+def _findings_review_cli(argv: list[str]) -> int:
+    """`orch findings review ID [--json]` — show a finding + GitHub dedup search.
+
+    Exit codes:
+      0 — rendered (even when GitHub search returns nothing)
+      2 — finding id not found
+    """
+    from dataclasses import asdict as _asdict
+
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings review",
+        description="Show a finding and search the target repo for possible duplicates.",
+    )
+    p.add_argument("finding_id",
+                   help="Finding id (prefix ok — as long as it's unique).")
+    p.add_argument("--repo", default=None,
+                   help="Override repo for the dedup search (default from config).")
+    p.add_argument("--json", action="store_true",
+                   help="Emit `{finding, matches}` as a single JSON object.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    repo = args.repo or (cfg.get("findings", {}) or {}).get(
+        "publish_repo", f_mod.DEFAULT_REPO
+    )
+    matches = f_mod.search_github_issues_for_duplicate(finding.summary, repo)
+
+    if args.json:
+        print(json.dumps({
+            "finding": _asdict(finding),
+            "repo": repo,
+            "matches": matches,
+        }, separators=(",", ":")))
+        return 0
+
+    print(f"Finding {finding.id}")
+    print(f"  created_at  {finding.created_at}")
+    print(f"  type        {finding.type}")
+    print(f"  about       {finding.about}")
+    print(f"  confidence  {finding.confidence}")
+    print(f"  status      {finding.status}")
+    if finding.published_url:
+        print(f"  published   {finding.published_url}")
+    print(f"  author      {finding.author}")
+    print(f"  summary     {finding.summary}")
+    print()
+    print("Evidence:")
+    if finding.evidence.strip():
+        for ln in finding.evidence.splitlines():
+            print(f"  {ln}")
+    else:
+        print("  (none)")
+    print()
+    print(f"GitHub dedup search on {repo}:")
+    if not matches:
+        print("  (no matching open issues)")
+    else:
+        for m in matches:
+            overlap = m.get("overlap", 0.0)
+            print(
+                f"  #{m.get('number')} · overlap={overlap:.2f} · "
+                f"{m.get('html_url')}"
+            )
+            print(f"      {m.get('title', '')}")
+    return 0
+
+
+def _find_finding_by_prefix(backend: Any, prefix: str) -> Any | None:
+    """Lookup helper — exact id match wins; else unique prefix match."""
+    exact = backend.get_finding(prefix)
+    if exact is not None:
+        return exact
+    matches = [f for f in backend.iter_findings() if f.id.startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _findings_publish_cli(argv: list[str]) -> int:
+    """`orch findings publish ID` — main publish flow with guardrails.
+
+    Exit codes (per Sprint E-1 spec):
+      0   published (or dry-run rendered)
+      1   rate-limited or a dedup match warned/blocked
+      2   refused (about=project OR confidence below floor)
+      130 user cancelled at the TTY consent prompt
+    """
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings publish",
+        description=(
+            "Publish a finding to a GitHub issue via the gh CLI. Runs every "
+            "guardrail (classification, confidence, rate limit, dedup) before "
+            "creating the issue."
+        ),
+    )
+    p.add_argument("finding_id", help="Finding id (prefix ok if unique).")
+    p.add_argument("--repo", default=None,
+                   help="Override target repo (default from config.yaml).")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show what would be published without creating an issue.")
+    p.add_argument("--yes", action="store_true",
+                   help="Skip the final TTY consent prompt (guardrails still run).")
+    p.add_argument("--force", action="store_true",
+                   help="Override confidence / dedup guardrails (still respects "
+                        "about=project and rate limit).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    fcfg = cfg.get("findings", {}) or {}
+    repo = args.repo or fcfg.get("publish_repo", f_mod.DEFAULT_REPO)
+    label = fcfg.get("label", f_mod.DEFAULT_LABEL)
+    rate = int(fcfg.get("publish_rate_limit_per_hour", f_mod.DEFAULT_RATE_LIMIT))
+    min_conf = fcfg.get(
+        "min_publish_confidence", f_mod.DEFAULT_MIN_PUBLISH_CONFIDENCE
+    )
+
+    # Build the consent callable. `--yes` short-circuits to True. Otherwise
+    # we ask via stdin when it's a TTY; on a non-TTY we refuse for safety.
+    def _consent(f) -> bool:
+        if args.yes:
+            return True
+        if not sys.stdin.isatty():
+            print(
+                "publish requires TTY confirmation (or --yes on non-interactive "
+                "shells)",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            resp = input(
+                f"Publish {f.id[:8]} to {repo}? [y/N] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return resp in {"y", "yes"}
+
+    try:
+        result = f_mod.publish(
+            backend,
+            finding.id,
+            repo=repo,
+            label=label,
+            rate_limit_per_hour=rate,
+            min_confidence=min_conf,
+            dry_run=args.dry_run,
+            force=args.force,
+            confirm=None if args.dry_run else _consent,
+        )
+    except f_mod.RateLimitExceeded as exc:
+        print(f"rate limit: {exc}", file=sys.stderr)
+        return 1
+    except f_mod.DuplicateIssueFound as exc:
+        print(f"duplicate: {exc}", file=sys.stderr)
+        return 1
+    except f_mod.PublishRefusedError as exc:
+        msg = str(exc)
+        if "cancelled" in msg.lower():
+            print(msg, file=sys.stderr)
+            return 130
+        # about=project or below min confidence.
+        if "about=project" in msg or "confidence" in msg:
+            print(f"refused: {msg}", file=sys.stderr)
+            return 2
+        print(f"publish failed: {msg}", file=sys.stderr)
+        return 1
+
+    status = result["status"]
+    if status == "dry_run":
+        print("[dry-run] would publish:")
+        print(f"  finding {finding.id}")
+        print(f"  repo    {repo}")
+        print(f"  label   {label}")
+        matches = result.get("dedup_matches") or []
+        if matches:
+            print(f"  dedup matches ({len(matches)}):")
+            for m in matches:
+                print(
+                    f"    #{m.get('number')} · overlap={m.get('overlap'):.2f} "
+                    f"· {m.get('html_url')}"
+                )
+        rl = result.get("rate_limit", {})
+        print(f"  rate    {rl.get('count')}/{rl.get('limit')} in last hour")
+        return 0
+    if status == "already_published":
+        print(f"already published: {result['published_url']}")
+        return 0
+    print(f"published: {result['published_url']}")
+    return 0
+
+
+def _findings_dismiss_cli(argv: list[str]) -> int:
+    """`orch findings dismiss ID --reason REASON`."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings dismiss",
+        description="Mark a finding as dismissed with a required reason.",
+    )
+    p.add_argument("finding_id", help="Finding id (prefix ok if unique).")
+    p.add_argument("--reason", required=True,
+                   help="Why this finding is being dismissed. Required.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    finding = _find_finding_by_prefix(backend, args.finding_id)
+    if finding is None:
+        print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
+        return 2
+
+    try:
+        f_mod.dismiss(backend, finding.id, args.reason)
+    except f_mod.PublishRefusedError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"dismissed {finding.id}")
+    return 0
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -3198,6 +3638,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_doctor_subcommand(incoming[1:])
     if incoming and incoming[0] == "validate":
         return _run_validate_subcommand(incoming[1:])
+    if incoming and incoming[0] == "findings":
+        return _run_findings_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)

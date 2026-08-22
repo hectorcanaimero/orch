@@ -150,6 +150,50 @@ class SpendEntry:
     estimated: bool = False
 
 
+@dataclass
+class Finding:
+    """A single dogfooding finding captured by an agent (Sprint E-1 / #17).
+
+    Findings are the seed of the orch → GitHub feedback loop: an agent working
+    on a project notices a bug/fix/feature idea (about orch itself OR about
+    the user's project), captures it via `orch findings capture`, and — after
+    a human review — publishes to a GitHub issue tracker via `orch findings
+    publish`.
+
+    Fields:
+        id            uuid4 hex — assigned at capture time.
+        created_at    ISO-8601 UTC.
+        type          bug | fix | feature.
+        about         orch (report upstream) | project (user's tracker only).
+        summary       Single-line human title. Required.
+        evidence      Multi-line: file:line refs, log excerpts, repro. Optional.
+        confidence    low | medium | high. `low` cannot publish (list-only).
+        status        pending | published | dismissed | duplicate.
+        published_url Populated on successful publish.
+        duplicate_of  URL of the matched issue (only when status=duplicate).
+        dedup_hash    sha256(type|about|normalized_summary) — enforces local
+                      dedup at capture time.
+        project_id    Multitenant scoping (matches backend project_id).
+        author        Who captured it (agent hint or "human").
+        dismissed_reason  Free-form note when status transitioned to dismissed.
+    """
+
+    id: str
+    created_at: str
+    type: Literal["bug", "fix", "feature"]
+    about: Literal["orch", "project"]
+    summary: str
+    evidence: str
+    confidence: Literal["low", "medium", "high"]
+    status: Literal["pending", "published", "dismissed", "duplicate"] = "pending"
+    published_url: str | None = None
+    duplicate_of: str | None = None
+    dedup_hash: str = ""
+    project_id: str = ""
+    author: str = "agent"
+    dismissed_reason: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class EventEntry:
     """One row appended to `state/events-<run-id>.jsonl` per state transition.
