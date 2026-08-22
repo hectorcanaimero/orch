@@ -39,6 +39,7 @@ frontend/.env.local
 frontend/*.log
 coverage/
 
-# Compiled SPA is committed intentionally so `pipx install git+...@main`
-# receives it in the git clone (pipx doesn't run our build script). Regen
-# via `bash scripts/build-spa.sh` before every release / SPA change.
+# Compiled SPA is built by CI (.github/workflows/release.yml) on tag
+# push and shipped inside the release wheel. Regen locally with
+# `bash scripts/build-spa.sh` if you need to test the packaged mount.
+orchestrator/spa/
