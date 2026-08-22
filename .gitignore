@@ -30,3 +30,11 @@ build/
 # Playwright preview screenshots (dev only)
 /*.png
 /tasks.json
+
+# Node / frontend
+node_modules/
+.vite/
+frontend/.env
+frontend/.env.local
+frontend/*.log
+coverage/
