@@ -141,12 +141,16 @@
             <th class="text-left px-3 py-2">ID</th>
             <th class="text-left px-3 py-2">Title</th>
             <th class="text-left px-3 py-2">Phase</th>
+            {% if profile != 'stakeholder' %}
             <th class="text-left px-3 py-2">Model</th>
+            {% endif %}
             <th class="text-left px-3 py-2">Status</th>
             <th class="text-left px-3 py-2">Deps</th>
             <th class="text-right px-3 py-2">Est. (h)</th>
+            {% if profile != 'stakeholder' %}
             <th class="text-right px-3 py-2">Human (h)</th>
             <th class="text-left px-3 py-2">Last updated</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody class="divide-y divide-base-300">
@@ -155,7 +159,7 @@
               <tr class="bg-base-200/70 border-y border-base-300 cursor-pointer select-none"
                   @click="togglePhase({{ group.phase }})"
                   :title="isPhaseCollapsed({{ group.phase }}) ? 'Expand' : 'Collapse'">
-                <td colspan="9" class="px-3 py-2 font-semibold text-sm">
+                <td colspan="{{ 6 if profile == 'stakeholder' else 9 }}" class="px-3 py-2 font-semibold text-sm">
                   <span class="inline-block w-4 text-center"
                         x-text="isPhaseCollapsed({{ group.phase }}) ? '▸' : '▾'"></span>
                   Phase {{ group.phase }}
@@ -169,7 +173,7 @@
               {% endfor %}
             {% else %}
               <tr>
-                <td colspan="9" class="text-center opacity-50 py-8">No tasks match the filters.</td>
+                <td colspan="{{ 6 if profile == 'stakeholder' else 9 }}" class="text-center opacity-50 py-8">No tasks match the filters.</td>
               </tr>
             {% endfor %}
           {% else %}
@@ -177,7 +181,7 @@
               {% include "partials/task_row.html" %}
             {% else %}
               <tr>
-                <td colspan="9" class="text-center opacity-50 py-8">No tasks match the filters.</td>
+                <td colspan="{{ 6 if profile == 'stakeholder' else 9 }}" class="text-center opacity-50 py-8">No tasks match the filters.</td>
               </tr>
             {% endfor %}
           {% endif %}

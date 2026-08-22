@@ -23,6 +23,9 @@
     </div>
   </section>
 
+  {# Per-model spend leaks provider selection + cost signals — stakeholder
+     hidden per Sprint E-2 spec. Operator sees the full breakdown. #}
+  {% if profile != 'stakeholder' %}
   <!-- By model -->
   <section class="bg-base-100 border border-base-300 rounded-lg shadow-sm">
     <div class="px-4 py-3 border-b border-base-300">
@@ -56,6 +59,7 @@
       </table>
     </div>
   </section>
+  {% endif %}
 
   <!-- Burndown -->
   <section class="bg-base-100 border border-base-300 rounded-lg shadow-sm">
@@ -92,6 +96,8 @@
     </div>
   </section>
 
+  {# Per-day cost detail — same rationale as by-model. #}
+  {% if profile != 'stakeholder' %}
   <!-- By day -->
   <section class="bg-base-100 border border-base-300 rounded-lg shadow-sm">
     <div class="px-4 py-3 border-b border-base-300">
@@ -124,6 +130,7 @@
       </table>
     </div>
   </section>
+  {% endif %}
 
   <!-- Projection -->
   <section class="bg-base-100 border border-base-300 rounded-lg shadow-sm p-4">

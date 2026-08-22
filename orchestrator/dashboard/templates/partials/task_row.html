@@ -11,7 +11,9 @@
   </td>
   <td class="px-3 py-2">{{ row.title }}</td>
   <td class="px-3 py-2 opacity-60">{{ row.phase }}</td>
+  {% if profile != 'stakeholder' %}
   <td class="px-3 py-2 font-mono text-xs opacity-70">{{ row.model }}</td>
+  {% endif %}
   <td class="px-3 py-2">
     <span class="badge status-{{ row.status }}">{{ row.status }}</span>
   </td>
@@ -19,6 +21,7 @@
     {{ row.dep_count }}
   </td>
   <td class="px-3 py-2 text-right opacity-70">{{ row.estimate_hours }}</td>
+  {% if profile != 'stakeholder' %}
   <td class="px-3 py-2 text-right opacity-70">
     {% if row.human_hours and row.human_hours > 0 %}
       {{ '%.1f'|format(row.human_hours) }}
@@ -30,4 +33,5 @@
       {% if row.last_updated %}data-ts="{{ row.last_updated }}" title="{{ row.last_updated }}"{% endif %}>
     {{ row.last_updated or '—' }}
   </td>
+  {% endif %}
 </tr>

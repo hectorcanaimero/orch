@@ -627,6 +627,95 @@ def burndown_by_day(events: Iterable[dict], days: int = 14) -> list[dict[str, An
     return out
 
 
+def round_up_to_step(value: float, step: float = 0.5) -> float:
+    """Round `value` UP to the nearest multiple of `step` (default $0.50).
+
+    Sprint E-2 uses this on the stakeholder view so displayed spend can't
+    accidentally under-report to the person we're briefing. Cheap + no
+    edge-case surprises because we snap non-negative floats.
+    """
+    if step <= 0:
+        return value
+    import math
+    if value <= 0:
+        return 0.0
+    return math.ceil(value / step) * step
+
+
+def eta_hours_remaining(
+    tasks: Iterable[Task],
+    human_hours_by_id: dict[str, float] | None = None,
+) -> float | None:
+    """Estimate remaining wall-clock hours from tasks + past pace.
+
+    Returns:
+        `None` when there's no signal (no done tasks or zero recorded
+        human hours) — the template renders `—` instead of misleading 0.
+
+    Rationale:
+        - Sum `estimate_hours` for non-done tasks → the plan's guess of
+          what remains.
+        - Compute the ratio of actual human hours spent on DONE tasks
+          against the plan's estimate for those same tasks (`efficiency`).
+          When people took 1.5x the estimate on average, remaining
+          estimates should also be scaled by 1.5.
+        - Fall back to raw remaining estimate when we can't compute a
+          ratio (no completions yet or zero human hours recorded).
+    """
+    tasks_list = list(tasks)
+    remaining_est = sum(
+        float(t.estimate_hours or 0.0)
+        for t in tasks_list
+        if t.status != "done"
+    )
+    if remaining_est <= 0:
+        return None
+    hours = human_hours_by_id or {}
+    done_est = 0.0
+    done_actual = 0.0
+    for t in tasks_list:
+        if t.status != "done":
+            continue
+        done_est += float(t.estimate_hours or 0.0)
+        done_actual += float(hours.get(t.id, 0.0))
+    if done_est <= 0 or done_actual <= 0:
+        return remaining_est
+    ratio = done_actual / done_est
+    return remaining_est * ratio
+
+
+def milestones_from_phases(
+    tasks: Iterable[Task],
+) -> list[dict[str, Any]]:
+    """Produce a stakeholder-friendly milestone list.
+
+    Each entry:
+        `{phase, total_count, done_count, done: bool}`
+
+    A phase is `done=True` when every task in that phase has status
+    "done". The list is sorted by phase — the template renders it as a
+    checklist so the stakeholder can see progress at a glance.
+    """
+    per_phase: dict[int, dict[str, int]] = defaultdict(
+        lambda: {"total_count": 0, "done_count": 0}
+    )
+    for t in tasks:
+        row = per_phase[t.phase]
+        row["total_count"] += 1
+        if t.status == "done":
+            row["done_count"] += 1
+    out: list[dict[str, Any]] = []
+    for phase in sorted(per_phase.keys()):
+        row = per_phase[phase]
+        out.append({
+            "phase": phase,
+            "total_count": row["total_count"],
+            "done_count": row["done_count"],
+            "done": row["total_count"] > 0 and row["done_count"] == row["total_count"],
+        })
+    return out
+
+
 def phase_counts(tasks: Iterable[Task]) -> list[dict[str, Any]]:
     """`[{phase, name, total, done}, ...]` for the sidebar. Sorted by phase."""
     per_phase: dict[int, dict[str, int]] = defaultdict(

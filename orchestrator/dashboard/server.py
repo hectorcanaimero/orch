@@ -45,17 +45,20 @@ from orchestrator.dashboard.metrics import (
     burndown_by_day,
     critical_path,
     downstream_impact,
+    eta_hours_remaining,
     events_for_task,
     human_hours_by_task,
     last_updated_by_task,
     metrics_by_day,
     metrics_by_model,
+    milestones_from_phases,
     orphan_dependencies,
     parallelizable_tasks,
     phase_counts,
     project_summary,
     read_all_events,
     read_all_spends,
+    round_up_to_step,
     total_cost,
 )
 from orchestrator.budget import BudgetGate, load_budget_config
@@ -298,6 +301,15 @@ def create_app(
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # ---- Template context helper -----------------------------------------
+    # `profile` is injected into every template render so partials can
+    # feature-flag sensitive rows without each route re-passing it.
+    # `TemplateResponse` ignores unknown keys, so this is safe.
+    def _tpl_ctx(**kwargs: Any) -> dict[str, Any]:
+        base = {"profile": app_state.config.profile}
+        base.update(kwargs)
+        return base
+
     # ---- Root: task table --------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -342,20 +354,20 @@ def create_app(
                 {"phase": p, "count": len(buckets[p]), "rows": buckets[p]}
                 for p in sorted(buckets)
             ]
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "phases": view["phases"],
-            "models": view["models"],
-            "rows": rows,
-            "grouped_rows": grouped_rows,
-            "row_count": len(rows),
-            "total_count": len(tasks_all),
-            "parallelizable_ids": list(view["parallelizable_ids"]),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "state_layout": view["state_layout"],
-            "filters": {
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            phases=view["phases"],
+            models=view["models"],
+            rows=rows,
+            grouped_rows=grouped_rows,
+            row_count=len(rows),
+            total_count=len(tasks_all),
+            parallelizable_ids=list(view["parallelizable_ids"]),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            state_layout=view["state_layout"],
+            filters={
                 "phase": phase or [], "status": status, "model": model,
                 "q": q, "group": group or "",
                 "parallelizable": bool(parallelizable),
@@ -363,8 +375,8 @@ def create_app(
                 "has_spec": bool(has_spec),
                 "blocked_since": blocked_since,
             },
-            "orphans": view["orphans"],
-        }
+            orphans=view["orphans"],
+        )
         return templates.TemplateResponse("index.html", ctx)
 
     # ---- Kanban page -------------------------------------------------------
@@ -472,18 +484,18 @@ def create_app(
             }
             for k in columns_order
         ]
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "phases": view["phases"],
-            "models": view["models"],
-            "columns": columns,
-            "row_count": len(rows),
-            "total_count": len(view["tasks"]),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "state_layout": view["state_layout"],
-            "filters": {
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            phases=view["phases"],
+            models=view["models"],
+            columns=columns,
+            row_count=len(rows),
+            total_count=len(view["tasks"]),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            state_layout=view["state_layout"],
+            filters={
                 "phase": phase, "model": model, "q": q,
                 "parallelizable": bool(parallelizable),
                 "wip": wip, "group": group, "sort": sort,
@@ -491,8 +503,8 @@ def create_app(
                 "has_spec": bool(has_spec),
                 "blocked_since": blocked_since,
             },
-            "refresh_interval_s": app_state.config.kanban.refresh_interval_s,
-        }
+            refresh_interval_s=app_state.config.kanban.refresh_interval_s,
+        )
         # HTMX polling wants only the board section — same context, smaller
         # template. Full page render is the default for browser navigation.
         template_name = "partials/kanban_board.html" if partial == "board" else "kanban.html"
@@ -515,18 +527,18 @@ def create_app(
             v for tid, v in view["human_hours"].items()
             if any(t.id == tid and t.status == "done" for t in view["tasks"])
         )
-        ctx = {
-            "request": request,
-            "summary": view["summary"].as_dict(),
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "by_model": by_model,
-            "by_day": by_day,
-            "burndown": burndown,
-            "total_cost": round(total, 4),
-            "done_hours": round(done_hours, 1),
-            "estimate_hours_total": view["summary"].estimate_hours_total,
-        }
+        ctx = _tpl_ctx(
+            request=request,
+            summary=view["summary"].as_dict(),
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            by_model=by_model,
+            by_day=by_day,
+            burndown=burndown,
+            total_cost=round(total, 4),
+            done_hours=round(done_hours, 1),
+            estimate_hours_total=view["summary"].estimate_hours_total,
+        )
         return templates.TemplateResponse("metrics.html", ctx)
 
     # ---- Logs page ---------------------------------------------------------
@@ -540,14 +552,14 @@ def create_app(
         events = load_recent_events(paths.state_dir, limit=limit)
         if task_id:
             events = [e for e in events if e["task_id"] == task_id]
-        ctx = {
-            "request": request,
-            "project_id": view["project_id"],
-            "project_root": view["project_root"],
-            "events": events,
-            "task_id_filter": task_id or "",
-            "limit": limit,
-        }
+        ctx = _tpl_ctx(
+            request=request,
+            project_id=view["project_id"],
+            project_root=view["project_root"],
+            events=events,
+            task_id_filter=task_id or "",
+            limit=limit,
+        )
         return templates.TemplateResponse("logs.html", ctx)
 
     # ---- SSE stream --------------------------------------------------------
@@ -724,7 +736,7 @@ def create_app(
                 row["timeline"] = events_for_task(all_events, task_id)
                 return templates.TemplateResponse(
                     "partials/task_modal.html",
-                    {"request": request, "task": row},
+                    _tpl_ctx(request=request, task=row),
                 )
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
@@ -737,9 +749,51 @@ def create_app(
                 row["parallelizable"] = t.id in view["parallelizable_ids"]
                 return templates.TemplateResponse(
                     "partials/task_row.html",
-                    {"request": request, "row": row},
+                    _tpl_ctx(request=request, row=row),
                 )
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
+
+    # ---- Stakeholder curated view -----------------------------------------
+    def _stakeholder_payload() -> dict[str, Any]:
+        """Build the sanitized payload shared by /stakeholder + /stakeholder/summary.
+
+        Deliberately narrow: only phase progress, task counts, milestones,
+        total spend (rounded up), and ETA. No per-model breakdown, no
+        raw log content, no per-task exit codes. Verified by the security
+        test suite in `test_dashboard_stakeholder_view.py`.
+        """
+        view = _load_project_view(app_state)
+        spends = read_all_spends(paths.state_dir)
+        total = total_cost(spends, pricing)
+        return {
+            "project_id": view["project_id"],
+            "summary": view["summary"].as_dict(),
+            "milestones": milestones_from_phases(view["tasks"]),
+            "spend_rounded_usd": round_up_to_step(total, 0.50),
+            "eta_hours": eta_hours_remaining(view["tasks"], view["human_hours"]),
+            "refresh_interval_s": app_state.config.kanban.refresh_interval_s or 30,
+        }
+
+    @app.get("/stakeholder", response_class=HTMLResponse, name="stakeholder_index")
+    def stakeholder_index(request: Request):
+        payload = _stakeholder_payload()
+        ctx = _tpl_ctx(
+            request=request,
+            project_id=payload["project_id"],
+            project_root=paths.project_root,
+            state_layout=paths.state_layout,
+            summary=payload["summary"],
+            milestones=payload["milestones"],
+            spend_rounded_usd=payload["spend_rounded_usd"],
+            eta_hours=payload["eta_hours"],
+            refresh_interval_s=payload["refresh_interval_s"],
+        )
+        return templates.TemplateResponse("stakeholder.html", ctx)
+
+    @app.get("/stakeholder/summary", name="stakeholder_summary_json")
+    def stakeholder_summary_json():
+        """JSON version of the curated view — same fields, no HTML."""
+        return JSONResponse(_stakeholder_payload())
 
     return app
 
