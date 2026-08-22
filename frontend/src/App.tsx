@@ -23,10 +23,16 @@ const queryClient = new QueryClient({
   },
 })
 
+// Derive the router basename from whatever Vite decided at build time:
+//   - dev  (base = "/")     → basename = ""     (React Router wants no trailing slash)
+//   - prod (base = "/spa/") → basename = "/spa"
+// Keeping this in one place avoids drift between vite.config.ts and the router.
+const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, "")
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={routerBasename}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route

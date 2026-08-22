@@ -1450,6 +1450,74 @@ def create_app(
         """JSON version of the curated view — same fields, no HTML."""
         return JSONResponse(_stakeholder_payload())
 
+    # ---- SPA mount (Sprint E-6) -------------------------------------------
+    # Serve the compiled Vite React SPA if the operator ran `pnpm build`.
+    # Mounted at `/spa` so it coexists with the Jinja dashboard on `/` (no
+    # route collision on `/kanban`, `/metrics`, `/logs`, etc.).
+    #
+    # `html=True` on the base StaticFiles is not enough for a React Router
+    # BrowserRouter: it only returns `index.html` when the URL resolves to
+    # a directory (e.g. `/spa/`), NOT for arbitrary nested client routes
+    # (e.g. `/spa/kanban`). We subclass to make ANY 404 under `/spa/*`
+    # fall back to `index.html` so hard-reloads on a client route work.
+    # Real 404s for missing bundled assets stay as 404 — we only rewrite
+    # when the asset doesn't exist on disk AND we have an index.html to
+    # serve, matching the standard SPA-hosting contract (nginx `try_files
+    # $uri /index.html;`).
+    #
+    # The mount is OPTIONAL. If `frontend/dist/` doesn't exist we just log
+    # a friendly note to stderr and keep booting — nothing else depends on
+    # the SPA being present.
+    #
+    # NOTE: this MUST live at the end of `create_app()`, AFTER every
+    # `@app.get(...)`. FastAPI resolves routes in registration order, so
+    # placing it last keeps the specific Jinja/JSON routes winning over
+    # the catch-all StaticFiles mount.
+    spa_dist = paths.project_root / "frontend" / "dist"
+    if spa_dist.is_dir():
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+        from starlette.responses import FileResponse
+        from starlette.types import Scope
+
+        class SPAStaticFiles(StaticFiles):
+            """StaticFiles subclass with true SPA fallback semantics.
+
+            When a GET under the mount 404s, return `index.html` (200) so
+            React Router can pick up the client-side route. Any other
+            error propagates unchanged. Bundled asset paths (`/assets/*`)
+            are excluded from the fallback so a missing JS file surfaces
+            as 404 rather than silently returning HTML (which would mask
+            build breakage).
+            """
+
+            async def get_response(self, path: str, scope: Scope):
+                try:
+                    return await super().get_response(path, scope)
+                except StarletteHTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    # Never rewrite bundled asset requests: a missing
+                    # JS/CSS file must stay 404 so devtools shows the
+                    # real error instead of an HTML shell.
+                    if path.startswith("assets/") or path.startswith("assets"):
+                        raise
+                    index = Path(self.directory) / "index.html"
+                    if not index.is_file():
+                        raise
+                    return FileResponse(str(index))
+
+        app.mount(
+            "/spa",
+            SPAStaticFiles(directory=str(spa_dist), html=True),
+            name="spa",
+        )
+        print(f"SPA mounted at /spa → {spa_dist}", file=sys.stderr)
+    else:
+        print(
+            f"SPA not mounted — run `pnpm build` in {spa_dist.parent} to enable /spa",
+            file=sys.stderr,
+        )
+
     return app
 
 

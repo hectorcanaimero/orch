@@ -58,6 +58,12 @@ DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
     # Sprint E-5: capabilities is intentionally auth-free so the SPA can
     # decide whether to render the tunnel panel BEFORE requesting a token.
     "api_tunnel_capabilities",
+    # Sprint E-6 (SPA mount): the compiled Vite SPA lives under `/spa/` and
+    # its bundled assets are served from `/spa/assets/`. Stakeholder users
+    # need to load the SPA shell + JS/CSS bundles so the curated view can
+    # render outside the operator dashboard. Path-prefix match — catches
+    # `/spa`, `/spa/`, `/spa/kanban`, `/spa/assets/*.js`, etc.
+    "/spa/",
 )
 
 
