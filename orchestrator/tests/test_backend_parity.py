@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.models import Dispatch, EventEntry, SpendEntry, Task
+from orchestrator.models import Dispatch, EventEntry, Finding, SpendEntry, Task
 from orchestrator.state import FileBackend
 from orchestrator.state.interface import StateBackend
 
@@ -298,6 +298,103 @@ def test_parity_reconcile_in_flight_smoke(backend: StateBackend, tmp_path: Path)
 
 
 # ---- bootstrap idempotency ---------------------------------------------
+
+
+# ---- findings (Sprint E-1 / #17) ----------------------------------------
+
+
+def _finding(
+    fid: str,
+    *,
+    ftype: str = "bug",
+    about: str = "orch",
+    summary: str = "sample finding",
+    dedup: str = "",
+    project_id: str = "",
+) -> Finding:
+    return Finding(
+        id=fid,
+        created_at="2026-08-21T00:00:00Z",
+        type=ftype,  # type: ignore[arg-type]
+        about=about,  # type: ignore[arg-type]
+        summary=summary,
+        evidence="",
+        confidence="medium",
+        dedup_hash=dedup or f"hash-{fid}",
+        project_id=project_id,
+    )
+
+
+def test_parity_findings_append_and_iter(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.append_finding(_finding("f-1", about="orch", dedup="h1"))
+    backend.append_finding(_finding("f-2", about="project", dedup="h2"))
+    backend.append_finding(_finding("f-3", ftype="feature", dedup="h3"))
+    all_ids = {f.id for f in backend.iter_findings()}
+    assert all_ids >= {"f-1", "f-2", "f-3"}
+
+
+def test_parity_findings_get_and_dedup_lookup(
+    backend: StateBackend, tmp_path: Path
+) -> None:
+    _seed_project(backend, tmp_path)
+    backend.append_finding(_finding("f-A", dedup="unique-hash"))
+    got = backend.get_finding("f-A")
+    assert got is not None and got.id == "f-A"
+    assert backend.get_finding("f-nope") is None
+    hit = backend.find_finding_by_dedup_hash("unique-hash")
+    assert hit is not None and hit.id == "f-A"
+    assert backend.find_finding_by_dedup_hash("no-such-hash") is None
+
+
+def test_parity_findings_filter_by_status_and_about(
+    backend: StateBackend, tmp_path: Path
+) -> None:
+    _seed_project(backend, tmp_path)
+    backend.append_finding(_finding("f-o1", about="orch", dedup="a1"))
+    backend.append_finding(_finding("f-p1", about="project", dedup="a2"))
+    backend.append_finding(_finding("f-o2", about="orch", dedup="a3"))
+    orch_ids = {f.id for f in backend.iter_findings(about="orch")}
+    project_ids = {f.id for f in backend.iter_findings(about="project")}
+    assert orch_ids == {"f-o1", "f-o2"}
+    assert project_ids == {"f-p1"}
+    # Update one to published, then filter by status.
+    backend.update_finding("f-o1", status="published", published_url="https://x/1")
+    pub_ids = {f.id for f in backend.iter_findings(status="published")}
+    assert pub_ids == {"f-o1"}
+
+
+def test_parity_findings_update_partial(backend: StateBackend, tmp_path: Path) -> None:
+    _seed_project(backend, tmp_path)
+    backend.append_finding(_finding("f-up", dedup="up-h"))
+    backend.update_finding(
+        "f-up", status="dismissed", dismissed_reason="not relevant"
+    )
+    got = backend.get_finding("f-up")
+    assert got is not None
+    assert got.status == "dismissed"
+    assert got.dismissed_reason == "not relevant"
+    # Unknown fields are ignored, not raised.
+    backend.update_finding("f-up", unknown_field="whatever")
+    still = backend.get_finding("f-up")
+    assert still is not None and still.status == "dismissed"
+
+
+def test_parity_findings_update_unknown_raises(
+    backend: StateBackend, tmp_path: Path
+) -> None:
+    _seed_project(backend, tmp_path)
+    with pytest.raises(KeyError):
+        backend.update_finding("does-not-exist", status="dismissed")
+
+
+def test_parity_findings_dedup_collision_rejected(
+    backend: StateBackend, tmp_path: Path
+) -> None:
+    _seed_project(backend, tmp_path)
+    backend.append_finding(_finding("f-first", dedup="collide"))
+    with pytest.raises(ValueError):
+        backend.append_finding(_finding("f-second", dedup="collide"))
 
 
 def test_parity_bootstrap_is_idempotent(backend: StateBackend, tmp_path: Path) -> None:
