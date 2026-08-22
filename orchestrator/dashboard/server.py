@@ -75,6 +75,16 @@ from orchestrator.paths import ProjectPaths, resolve_project_paths
 from orchestrator.state import load_tasks
 
 
+# Sprint E-5: server-side idle cutoff for `/api/tunnel/logs` (TUN-10 / D3).
+# Module-level so tests can shrink it; the endpoint reads through
+# `_get_sse_idle_cutoff_s()` on every stream open.
+TUNNEL_SSE_IDLE_CUTOFF_S = 30 * 60
+
+
+def _get_sse_idle_cutoff_s() -> float:
+    return float(TUNNEL_SSE_IDLE_CUTOFF_S)
+
+
 # ---- App state -------------------------------------------------------------
 
 
@@ -353,7 +363,7 @@ def create_app(
     # Lazy imports — the web stack only loads when we actually create the app.
     # `Request` is imported at module scope (see top) to keep annotations
     # resolvable under `from __future__ import annotations`.
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import Depends, FastAPI, HTTPException, Query
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
@@ -375,6 +385,21 @@ def create_app(
         token_override=token_override,
     )
     app_state = AppState(paths=paths, pricing=pricing, config=dash_cfg)
+    # Sprint E-5: attach the tunnel supervisor singleton when enabled.
+    # Kept absent (None) when disabled so nothing spawns/sweeps — TUN-NFR-3
+    # (rollback via config) plus TUN-8 (reconciler runs at boot only when
+    # the manager exists).
+    app_state.tunnel_manager = None
+    if dash_cfg.tunnel.enabled:
+        from orchestrator.dashboard.tunnel import TunnelManager, TunnelManagerConfig
+        _tm = TunnelManager(state_dir=paths.state_dir)
+        _tm.sweep_stale_lock(
+            TunnelManagerConfig(
+                provider=dash_cfg.tunnel.provider,
+                command=dash_cfg.tunnel.command,
+            )
+        )
+        app_state.tunnel_manager = _tm
 
     tpl_dir = Path(__file__).parent / "templates"
     static_dir = Path(__file__).parent / "static"
@@ -983,6 +1008,193 @@ def create_app(
                 "run_id": _uuid.uuid4().hex[:8],
             },
             status_code=202,
+        )
+
+    # ---- Tunnel supervisor (Sprint E-5) -----------------------------------
+    # Three gates run in fixed order per TUN-3: config (404) → operator
+    # profile (403) → loopback host (403). `/capabilities` is intentionally
+    # auth-free so the SPA can decide whether to render the panel BEFORE
+    # requesting a token (TUN-4).
+    from orchestrator.dashboard.tunnel import (
+        TunnelManagerConfig,
+        evaluate_capabilities,
+        require_loopback_host,
+        require_operator_profile,
+        require_tunnel_enabled,
+        REASON_CONFIG_DISABLED,
+        REASON_HOST_GATE,
+        REASON_PROFILE_GATE,
+    )
+
+    # Short-vocab mapping for the `reasons` list per the design doc
+    # (`disabled`/`not_operator`/`not_loopback`/`autossh_missing`). The
+    # single `reason` field keeps the TUN-4 spec vocab.
+    _CAPABILITY_REASON_SHORT = {
+        REASON_CONFIG_DISABLED: "disabled",
+        REASON_PROFILE_GATE: "not_operator",
+        REASON_HOST_GATE: "not_loopback",
+    }
+
+    def _tunnel_manager_or_500():
+        """Return the singleton manager or 500 — depends on `require_tunnel_enabled`
+        having passed, so absence here is a wiring bug, not a config gate.
+        """
+        mgr = getattr(app_state, "tunnel_manager", None)
+        if mgr is None:
+            raise HTTPException(500, "tunnel manager not initialized")
+        return mgr
+
+    def _tunnel_manager_config() -> "TunnelManagerConfig":
+        tcfg = app_state.config.tunnel
+        return TunnelManagerConfig(
+            provider=tcfg.provider,
+            command=tcfg.command,
+            args=tuple(tcfg.args or ()),
+            url_regex=tcfg.url_regex,
+            url_parse_timeout_s=int(tcfg.url_parse_timeout_s),
+        )
+
+    @app.get("/api/tunnel/capabilities", name="api_tunnel_capabilities")
+    def api_tunnel_capabilities(request: Request):
+        # Intentionally auth-free: always 200. When `tunnel.enabled: false`
+        # the manager is absent and `evaluate_capabilities` short-circuits
+        # on the config gate — no manager reference needed here.
+        tcfg = getattr(app_state.config, "tunnel", None)
+        enabled = bool(tcfg and tcfg.enabled)
+        provider = (tcfg.provider if tcfg else None) if enabled else None
+        can_control, reason = evaluate_capabilities(request, app_state.config)
+        reasons: list[str] = []
+        if not can_control:
+            short = _CAPABILITY_REASON_SHORT.get(reason)
+            if short:
+                reasons.append(short)
+        # Only consult PATH once every prior gate passes — matches the
+        # gate-order guarantee in TUN-4.
+        if can_control:
+            import shutil as _sh
+            binary = tcfg.command if tcfg else None
+            if binary and _sh.which(binary) is None:
+                can_control = False
+                reason = "autossh_missing"
+                reasons.append("autossh_missing")
+        return JSONResponse({
+            "enabled": enabled,
+            "provider": provider,
+            "can_control": can_control,
+            "reason": reason,
+            "reasons": reasons,
+        })
+
+    @app.get(
+        "/api/tunnel/status",
+        name="api_tunnel_status",
+        dependencies=[
+            Depends(require_tunnel_enabled),
+            Depends(require_operator_profile),
+            Depends(require_loopback_host),
+        ],
+    )
+    def api_tunnel_status():
+        mgr = _tunnel_manager_or_500()
+        return JSONResponse(mgr.status())
+
+    @app.post(
+        "/api/tunnel/start",
+        name="api_tunnel_start",
+        status_code=202,
+        dependencies=[
+            Depends(require_tunnel_enabled),
+            Depends(require_operator_profile),
+            Depends(require_loopback_host),
+        ],
+    )
+    def api_tunnel_start():
+        mgr = _tunnel_manager_or_500()
+        try:
+            snap = mgr.start(_tunnel_manager_config())
+        except RuntimeError as exc:
+            msg = str(exc)
+            if msg == "already_running":
+                return JSONResponse(
+                    {"error": "already_running", "state": mgr.status().get("state")},
+                    status_code=409,
+                )
+            if msg == "locked":
+                return JSONResponse({"error": "locked"}, status_code=409)
+            raise HTTPException(500, f"start_failed:{msg}")
+        return JSONResponse(snap, status_code=202)
+
+    @app.post(
+        "/api/tunnel/stop",
+        name="api_tunnel_stop",
+        status_code=202,
+        dependencies=[
+            Depends(require_tunnel_enabled),
+            Depends(require_operator_profile),
+            Depends(require_loopback_host),
+        ],
+    )
+    def api_tunnel_stop():
+        mgr = _tunnel_manager_or_500()
+        try:
+            snap = mgr.stop()
+        except RuntimeError as exc:
+            if str(exc) == "not_running":
+                return JSONResponse({"error": "not_running"}, status_code=409)
+            raise HTTPException(500, f"stop_failed:{exc}")
+        return JSONResponse(snap, status_code=202)
+
+    @app.get(
+        "/api/tunnel/logs",
+        name="api_tunnel_logs",
+        dependencies=[
+            Depends(require_tunnel_enabled),
+            Depends(require_operator_profile),
+            Depends(require_loopback_host),
+        ],
+    )
+    async def api_tunnel_logs():
+        import anyio
+        mgr = _tunnel_manager_or_500()
+
+        async def _emit():
+            # Replay the current tail once; the manager owns redaction so
+            # nothing here needs to touch token patterns (TUN-10).
+            for line in mgr.logs_iter():
+                yield f"data: {line}\n\n"
+            cutoff = _get_sse_idle_cutoff_s()
+            # Bounded live-tail: each cycle either yields new lines (resets
+            # the deadline) or waits `poll_interval` before checking again;
+            # after `cutoff` seconds of no activity we emit `retry:` and
+            # close so an EventSource client cleanly reconnects (D3).
+            deadline_task = anyio.current_time() + cutoff
+            poll_interval = 0.5
+            last_seen = list(mgr.logs_iter())
+            last_len = len(last_seen)
+            while True:
+                snap = list(mgr.logs_iter())
+                if len(snap) > last_len:
+                    for line in snap[last_len:]:
+                        yield f"data: {line}\n\n"
+                    last_len = len(snap)
+                    deadline_task = anyio.current_time() + cutoff
+                if anyio.current_time() >= deadline_task:
+                    yield "retry: 5000\n\n"
+                    return
+                # Also close cleanly when the child is gone AND the state
+                # is idle — otherwise the loop would spin forever on a
+                # long-dead tunnel with an empty buffer.
+                st = mgr.status().get("state")
+                if st == "idle":
+                    yield "event: idle\ndata: {}\n\n"
+                    return
+                with anyio.move_on_after(poll_interval):
+                    await anyio.sleep(poll_interval)
+
+        return StreamingResponse(
+            _emit(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     # ---- Snapshot export ---------------------------------------------------

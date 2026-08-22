@@ -55,6 +55,9 @@ DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
     "stakeholder_index",
     "stakeholder_summary_json",
     "/static/",
+    # Sprint E-5: capabilities is intentionally auth-free so the SPA can
+    # decide whether to render the tunnel panel BEFORE requesting a token.
+    "api_tunnel_capabilities",
 )
 
 
