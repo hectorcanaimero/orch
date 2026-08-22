@@ -257,6 +257,18 @@ def _build_argparser() -> argparse.ArgumentParser:
             "`budgets_preset` in config.yaml. Absent budgets.yaml → gate off."
         ),
     )
+    # Sprint C: -v/-q for informational log control. Overrides ORCH_LOG_LEVEL
+    # (env) when explicitly set; otherwise the env var (or INFO default) wins.
+    parser.add_argument(
+        "-v", "--verbose",
+        action="count", default=0,
+        help="Increase log verbosity (-v = DEBUG). Overrides ORCH_LOG_LEVEL.",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Silence INFO/WARN output (only ERROR). Overrides ORCH_LOG_LEVEL.",
+    )
     return parser
 
 
@@ -363,25 +375,46 @@ def _load_budget_gate(
 # ---- Fallback route WARN (FR-D-7) --------------------------------------
 
 
-def _warn_fallback_routes(router: dict[str, RouteEntry]) -> None:
-    """Emit exactly one WARN line per router entry with a `fallback_cli_model`.
+def _warn_fallback_routes(
+    router: dict[str, RouteEntry],
+    *,
+    verbose: bool = False,
+) -> None:
+    """Announce which router entries carry a `fallback_cli_model`.
 
-    FR-D-7 says the orchestrator "MUST emit exactly one WARN line per
-    substitution at startup." We chose Option A (no CLI probe): the WARN is
-    informational — it announces which routes are drift-resilient. The
-    actual fallback swap happens post-run in `_reap_once` when a dispatch
-    fails with a version-drift-shaped error message.
+    FR-D-7 said "MUST emit exactly one WARN line per substitution at
+    startup." Sprint C revises this: the announcement is INFORMATIONAL
+    (the actual fallback swap happens post-run in `_reap_once` when a
+    dispatch fails with a version-drift-shaped error). Emitting one WARN
+    per route AND also printing to stderr produces a double-emit that
+    spams the console every startup.
+
+    Behavior:
+      - Non-verbose (default): a single INFO summary line like
+        `N route(s) with fallback configured (use -v for detail)`.
+      - Verbose: one INFO line per route with the full substitution details.
+
+    Nothing writes to stderr directly anymore — logging owns the channel.
     """
-    for key, route in sorted(router.items()):
-        if route.fallback_cli_model:
-            msg = (
-                f"WARN: route {key!r} has fallback_cli_model={route.fallback_cli_model!r} "
-                f"— will substitute for {route.cli_model!r} on version-drift errors"
+    routes_with_fallback = [
+        (key, route)
+        for key, route in sorted(router.items())
+        if route.fallback_cli_model
+    ]
+    if not routes_with_fallback:
+        return
+    if verbose:
+        for key, route in routes_with_fallback:
+            log.info(
+                "route %r has fallback_cli_model=%r — will substitute "
+                "for %r on version-drift errors",
+                key, route.fallback_cli_model, route.cli_model,
             )
-            log.warning(msg)
-            # Also print so operators watching stdout see the notice even if
-            # logging is silenced.
-            print(msg, file=sys.stderr)
+        return
+    log.info(
+        "%d route(s) with fallback configured (use -v for detail)",
+        len(routes_with_fallback),
+    )
 
 
 # ---- Task filtering -----------------------------------------------------
@@ -2607,10 +2640,37 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
     )
 
 
+def _resolve_log_level(
+    *,
+    verbose: int = 0,
+    quiet: bool = False,
+    env_var: str | None = None,
+) -> str:
+    """Sprint C log-level resolution.
+
+    Precedence (highest → lowest):
+        1. `--quiet` / `--verbose` (CLI flags — explicit user intent).
+        2. `ORCH_LOG_LEVEL` env var when set to a non-empty string.
+        3. Code default (`INFO`).
+
+    `verbose=1` → DEBUG (single -v). `verbose>=2` currently caps at DEBUG
+    since Python's logging module has no lower level.
+    """
+    if quiet:
+        return "ERROR"
+    if verbose > 0:
+        return "DEBUG"
+    if env_var:
+        return env_var
+    return "INFO"
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Return the process exit code (FR-CLI-3)."""
+    # Provisional log setup so early subcommand paths still see logging.
+    # The main-loop path re-applies with `-v/-q` factored in below.
     logging.basicConfig(
-        level=os.environ.get("ORCH_LOG_LEVEL", "INFO"),
+        level=os.environ.get("ORCH_LOG_LEVEL") or "INFO",
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
@@ -2655,6 +2715,19 @@ def main(argv: list[str] | None = None) -> int:
     # silent no-op deep in the main loop.
     if getattr(args, "json", False) and not args.dry_run:
         parser.error("--json requires --dry-run")
+
+    # Sprint C: reapply log level now that -v/-q have been parsed. `force=True`
+    # replaces the root handler installed by the provisional basicConfig above
+    # (Python 3.8+ semantics — noqa on py<3.8 unaffected here).
+    logging.basicConfig(
+        level=_resolve_log_level(
+            verbose=int(getattr(args, "verbose", 0) or 0),
+            quiet=bool(getattr(args, "quiet", False)),
+            env_var=os.environ.get("ORCH_LOG_LEVEL") or None,
+        ),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
 
     # ---- (1) Project path resolution + root contract ---------------------
     # Fase 1 multi-proyecto: `paths.project_root` centraliza la resolución
@@ -2713,7 +2786,7 @@ def main(argv: list[str] | None = None) -> int:
     # design closeout): the actual substitution fires post-run, when a
     # dispatch fails with a "model not found"-style error. The WARN lets the
     # operator see which routes are drift-resilient before any dispatch.
-    _warn_fallback_routes(router)
+    _warn_fallback_routes(router, verbose=bool(int(getattr(args, "verbose", 0) or 0)))
 
     try:
         tasks = load_tasks(paths.tasks_json)
