@@ -1847,6 +1847,28 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    # ---- (5b) state backend selection (Sprint B) -------------------------
+    # `get_backend()` picks FileBackend or SqliteBackend based on cfg. For the
+    # sqlite backend, `bootstrap(tasks)` idempotently seeds the projects +
+    # tasks_runtime rows. For the file backend it's a no-op. Downstream code
+    # keeps using RunFile / EventLog / SpendLog surfaces — the adapter
+    # factories (`make_runfile` / `make_event_log` / `make_spend_log`) hand
+    # back sqlite-backed shims when the backend is sqlite, so callsites don't
+    # need to branch.
+    from orchestrator.state import (  # noqa: E402
+        get_backend,
+        make_event_log,
+        make_runfile,
+        make_spend_log,
+    )
+
+    try:
+        state_backend = get_backend(paths, cfg)
+        state_backend.bootstrap(tasks)
+    except Exception as exc:  # noqa: BLE001
+        print(f"state backend init failed: {exc}", file=sys.stderr)
+        return 1
+
     # ---- (6) flock -------------------------------------------------------
     state_dir = paths.state_dir
     lock_path = state_dir / ".lock"
@@ -1883,7 +1905,9 @@ def main(argv: list[str] | None = None) -> int:
     # otherwise appear "live" in the dashboard forever. Sweep them once at
     # startup so we begin from a clean slate; the main loop below repeats
     # the sweep periodically. Never raises past its own boundary.
-    reap_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+    # Sprint B: reconcile routes through the active backend so sqlite runs
+    # get the same orphan-reap semantics as the file backend.
+    reap_report = state_backend.reconcile_in_flight()
     if reap_report.get("reconciled"):
         log.info(
             "startup reconcile: reaped %d orphan(s) from %d in-flight entry(ies): %s",
@@ -1897,22 +1921,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.resume:
             run_id = args.resume
             run_path = state_dir / f"run-{run_id}.json"
-            if not run_path.exists():
+            # For sqlite backend the file may not exist; the adapter loads
+            # from the DB instead. Only enforce the file check on file backend.
+            from orchestrator.state.sqlite_backend import SqliteBackend
+
+            if not isinstance(state_backend, SqliteBackend) and not run_path.exists():
                 print(f"resume: no run file at {run_path}", file=sys.stderr)
                 if lock_fd is not None:
                     lock_fd.close()
                 return 1
-            run_file = RunFile.load(run_path)
+            run_file = make_runfile(
+                state_backend, state_dir, run_id=run_id, mode=args.mode, create=False,
+            )
         else:
             run_id = str(uuid.uuid4())
-            run_file = RunFile.create(state_dir, run_id=run_id, mode=args.mode)
+            run_file = make_runfile(
+                state_backend, state_dir, run_id=run_id, mode=args.mode, create=True,
+            )
 
         if lock_fd is not None:
             write_lock_holder(lock_fd, run_id=run_id, pid=os.getpid())
 
-        events_path = state_dir / f"events-{run_id}.jsonl"
-        event_log = EventLog(events_path, project_id=paths.project_id)
-        spend_log = SpendLog(state_dir, project_id=paths.project_id)
+        event_log = make_event_log(
+            state_backend, state_dir, run_id=run_id, project_id=paths.project_id,
+        )
+        spend_log = make_spend_log(
+            state_backend, state_dir, project_id=paths.project_id,
+        )
 
         # ---- resume reconciliation ---------------------------------------
         if args.resume:
@@ -1950,9 +1985,12 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
             # Also unlink the events file if we created one empty on init.
+            # (Only meaningful for the file backend; sqlite backend has no
+            # per-run JSONL file — the `.path` attribute is synthetic.)
             try:
-                if events_path.exists() and events_path.stat().st_size == 0:
-                    events_path.unlink()
+                ev_path = getattr(event_log, "path", None)
+                if ev_path is not None and ev_path.exists() and ev_path.stat().st_size == 0:
+                    ev_path.unlink()
             except OSError:
                 pass
             log.info("dry-run planned %d dispatches", count)
@@ -2070,7 +2108,7 @@ def main(argv: list[str] | None = None) -> int:
             now_mono = time.monotonic()
             if now_mono - last_reconcile_ts >= _RECONCILE_INTERVAL_SEC:
                 last_reconcile_ts = now_mono
-                tick_report = reconcile_in_flight(state_dir, project_id=paths.project_id)
+                tick_report = state_backend.reconcile_in_flight()
                 if tick_report.get("reconciled"):
                     log.info(
                         "tick reconcile: reaped %d orphan(s): %s",

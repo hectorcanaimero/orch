@@ -56,6 +56,10 @@ from .flock import (  # noqa: F401
     write_lock_holder,
 )
 from .interface import BackendFactoryError, StateBackend  # noqa: F401
+
+
+# Adapters are imported lazily below (they pull in sqlite_backend, which
+# should stay optional at package import time).
 from .shell import (  # noqa: F401
     CwdViolationError,
     _ensure_v2_cwd,
@@ -92,6 +96,9 @@ __all__ = [
     "ensure_project_root",
     "get_backend",
     "load_tasks",
+    "make_event_log",
+    "make_runfile",
+    "make_spend_log",
     "rebuild_index",
     "reconcile_in_flight",
     "reconcile_run",
@@ -171,3 +178,16 @@ def get_backend(paths: Any, cfg: dict[str, Any] | None = None) -> StateBackend:
 def _reset_backend_cache() -> None:
     """Test helper — drops the process-wide backend cache."""
     _BACKEND_CACHE.clear()
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy re-export of the adapter factories.
+
+    Keeps `orchestrator.state` import-cheap for callers that don't need
+    sqlite; only pays the sqlite import cost on first access.
+    """
+    if name in {"make_runfile", "make_event_log", "make_spend_log"}:
+        from . import adapters
+
+        return getattr(adapters, name)
+    raise AttributeError(f"module 'orchestrator.state' has no attribute {name!r}")

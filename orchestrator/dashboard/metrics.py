@@ -37,25 +37,94 @@ def read_all_events(state_dir: Path) -> list[dict]:
 
     Sort order: by `ts` ascending (chronological). Malformed lines and
     non-dict payloads are dropped without raising. Missing dir → empty list.
+
+    Sprint B: if `orch.db` is present alongside the JSONL files, its rows
+    are merged in too (so a project mid-migration surfaces both sources).
     """
-    if not state_dir.exists():
-        return []
     events: list[dict] = []
-    for path in sorted(state_dir.glob("events-*.jsonl")):
-        events.extend(_read_jsonl_dicts(path))
+    if state_dir.exists():
+        for path in sorted(state_dir.glob("events-*.jsonl")):
+            events.extend(_read_jsonl_dicts(path))
+    events.extend(_read_events_from_sqlite(state_dir))
     events.sort(key=lambda e: str(e.get("ts", "")))
     return events
 
 
 def read_all_spends(state_dir: Path) -> list[dict]:
-    """Slurp every `spend-*.jsonl` file under `state_dir`. Chronological."""
-    if not state_dir.exists():
-        return []
+    """Slurp every `spend-*.jsonl` file under `state_dir`. Chronological.
+
+    Sprint B: if `orch.db` is present it's read alongside the JSONL files.
+    """
     spends: list[dict] = []
-    for path in sorted(state_dir.glob("spend-*.jsonl")):
-        spends.extend(_read_jsonl_dicts(path))
+    if state_dir.exists():
+        for path in sorted(state_dir.glob("spend-*.jsonl")):
+            spends.extend(_read_jsonl_dicts(path))
+    spends.extend(_read_spends_from_sqlite(state_dir))
     spends.sort(key=lambda s: str(s.get("ts", "")))
     return spends
+
+
+def _read_events_from_sqlite(state_dir: Path) -> list[dict]:
+    """Yield event rows from `<state_dir>/orch.db`, if the DB exists.
+
+    Missing DB → empty list. Never raises past its own boundary — the
+    dashboard tolerates a broken DB by silently falling back to JSONL.
+    """
+    db_path = state_dir / "orch.db"
+    if not db_path.exists():
+        return []
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "SELECT id, project_id, run_id, event_type, task_id, "
+                "backend, ts, extra_json FROM events ORDER BY ts ASC"
+            )
+            out: list[dict] = []
+            for row in cur.fetchall():
+                try:
+                    extra = json.loads(row["extra_json"] or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    extra = {}
+                out.append({
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "task_id": row["task_id"],
+                    "backend": row["backend"] or "",
+                    "ts": row["ts"],
+                    "extra": extra,
+                    "project_id": row["project_id"],
+                    "run_id": row["run_id"],
+                })
+            return out
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — dashboard read must not crash
+        return []
+
+
+def _read_spends_from_sqlite(state_dir: Path) -> list[dict]:
+    db_path = state_dir / "orch.db"
+    if not db_path.exists():
+        return []
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "SELECT ts, task_id, backend, model, tokens_in, tokens_out, "
+                "cost_usd, duration_s, project_id FROM spend ORDER BY ts ASC"
+            )
+            return [dict(row) for row in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def _read_jsonl_dicts(path: Path) -> list[dict]:
