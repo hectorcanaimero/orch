@@ -1749,6 +1749,11 @@ _SUBCOMMANDS = (
     "migrate",
     "reset",
     "stop",
+    "status",
+    "tasks",
+    "events",
+    "logs",
+    "graph",
 )
 
 
@@ -1765,6 +1770,11 @@ def _print_subcommand_list() -> int:
     print("  orch migrate [FLAGS]      Migrate state/ JSONL → sqlite (backup + rollback)")
     print("  orch reset [FLAGS]        Revert stuck in-progress tasks to todo")
     print("  orch stop [FLAGS]         Signal a running orch to drain and exit")
+    print("  orch status [FLAGS]       Project status table (human or --json)")
+    print("  orch tasks [FLAGS]        Thin task listing (ID · STATUS · BACKEND · DEPS · PHASE)")
+    print("  orch events ID [FLAGS]    Tail events for one task (--tail N / --json)")
+    print("  orch logs ID [FLAGS]      Tail the per-task log file (default: --tail 200)")
+    print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -2065,6 +2075,246 @@ def _run_stop_subcommand(argv: list[str]) -> int:
     return 1
 
 
+_STATUS_CHOICES = ("backlog", "todo", "in-progress", "done", "blocked", "blocked-by-budget")
+
+
+def _parse_status_list(raw: str | None) -> set[str] | None:
+    """Turn `--status todo,done` into {"todo", "done"}. None → None."""
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return None
+    return set(parts)
+
+
+def _resolve_paths_from_argv(args: argparse.Namespace) -> ProjectPaths:
+    """Shared path-resolution helper for the read-only observability subcommands.
+
+    Every command in Sprint C carries the same `--project-root` /
+    `--project-id` / `--config` triple; extract the wiring here.
+    """
+    return resolve_project_paths(
+        project_root_arg=args.project_root,
+        project_id_arg=args.project_id,
+        config_arg=args.config,
+    )
+
+
+def _add_common_project_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--project-root", default=None, metavar="PATH",
+                   help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
+    p.add_argument("--project-id", default=None, metavar="ID",
+                   help="Project id override. Env fallback: ORCH_PROJECT_ID.")
+    p.add_argument("--config", default="orchestrator/config.yaml",
+                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+
+
+def _run_status_subcommand(argv: list[str]) -> int:
+    """Handle `orch status [--json] [--only GLOB] [--status STATUSES]`.
+
+    Prints a project status table (rich when available) or a compact JSON
+    object when `--json` is passed. Reads the aggregate via
+    `observability.build_status_snapshot`.
+
+    Exit codes:
+      0 — snapshot rendered
+      1 — project layout invalid / config load failed
+    """
+    p = argparse.ArgumentParser(
+        prog="orch status",
+        description="Project status: tasks · costs · last events · run summary.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit the raw snapshot as JSON.")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="Restrict task rows to ids matching this fnmatch glob.")
+    p.add_argument("--status", default=None, metavar="LIST",
+                   help="Comma-separated status filter (e.g. `todo,in-progress`).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(
+        paths,
+        cfg,
+        only=args.only,
+        status_filter=_parse_status_list(args.status),
+    )
+
+    if args.json:
+        print(json.dumps(snapshot, default=str, separators=(",", ":")))
+        return 0
+
+    _render_status_table(snapshot)
+    return 0
+
+
+def _render_status_table(snap: dict[str, Any]) -> None:
+    """Human renderer for `orch status`. Rich when available, plain otherwise."""
+    project = snap.get("project", {}) or {}
+    totals = snap.get("totals", {}) or {}
+    cost = snap.get("cost", {}) or {}
+    latest = snap.get("latest_run") or {}
+
+    total_n = totals.get("_total", 0)
+    non_meta = {k: v for k, v in totals.items() if not k.startswith("_")}
+    totals_str = ", ".join(f"{k}={v}" for k, v in sorted(non_meta.items())) or "0 tasks"
+    run_line = (
+        f"run {latest.get('run_id', '—')[:8]} · {latest.get('status', '—')} · "
+        f"in_flight={latest.get('in_flight_count', 0)}"
+    ) if latest else "no runs yet"
+
+    header = (
+        f"Project {project.get('project_id', '?')} · backend={project.get('backend', '?')} "
+        f"· {total_n} tasks ({totals_str}) · ${cost.get('project_total_usd', 0):.4f} · {run_line}"
+    )
+
+    rows = snap.get("tasks", []) or []
+    if _HAVE_RICH:
+        table = Table(title=header)
+        table.add_column("ID", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("BACKEND/MODEL", style="green")
+        table.add_column("LAST EVENT")
+        table.add_column("COST", justify="right")
+        table.add_column("PHASE", justify="right")
+        for r in rows:
+            table.add_row(
+                str(r.get("id", "")),
+                str(r.get("status", "")),
+                f"{r.get('backend', '?')}/{r.get('cli_model', '?')}",
+                r.get("last_event_human") or "—",
+                f"${float(r.get('cost_usd', 0.0)):.4f}",
+                str(r.get("phase", "")),
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover — rich is a hard dep in practice
+        print(header)
+        print(f"  {'ID':<20} {'STATUS':<16} {'BACKEND/MODEL':<28} {'LAST EVENT':<28} {'COST':>10}  PHASE")
+        for r in rows:
+            print(
+                f"  {str(r.get('id','')):<20} {str(r.get('status','')):<16} "
+                f"{(r.get('backend','?')+'/'+r.get('cli_model','?')):<28} "
+                f"{str(r.get('last_event_human') or '—'):<28} "
+                f"${float(r.get('cost_usd', 0.0)):>9.4f}  {r.get('phase','')}"
+            )
+
+
+def _run_tasks_subcommand(argv: list[str]) -> int:
+    """Handle `orch tasks [--status STATUSES] [--only GLOB] [--json]`.
+
+    Thinner cousin of `orch status`: columns are ID · STATUS · BACKEND/MODEL
+    · DEPS · PHASE. Same aggregation pipeline; different renderer.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch tasks",
+        description="List every task with status + routing + deps.",
+    )
+    p.add_argument("--json", action="store_true", help="Emit as JSON array of rows.")
+    p.add_argument("--only", default=None, metavar="GLOB",
+                   help="Restrict task rows to ids matching this fnmatch glob.")
+    p.add_argument("--status", default=None, metavar="LIST",
+                   help="Comma-separated status filter (e.g. `todo,in-progress`).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.observability import build_status_snapshot
+
+    snapshot = build_status_snapshot(
+        paths,
+        cfg,
+        only=args.only,
+        status_filter=_parse_status_list(args.status),
+    )
+    rows = snapshot.get("tasks", []) or []
+
+    if args.json:
+        # Emit only the trimmed set of fields relevant to `orch tasks`.
+        trimmed = [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "backend": r["backend"],
+                "cli_model": r["cli_model"],
+                "phase": r["phase"],
+                "dependencies": r["dependencies"],
+            }
+            for r in rows
+        ]
+        print(json.dumps(trimmed, default=str, separators=(",", ":")))
+        return 0
+
+    if _HAVE_RICH:
+        table = Table(title=f"Tasks ({len(rows)} shown)")
+        table.add_column("ID", style="cyan")
+        table.add_column("STATUS")
+        table.add_column("BACKEND/MODEL", style="green")
+        table.add_column("DEPS")
+        table.add_column("PHASE", justify="right")
+        for r in rows:
+            deps = ", ".join(r.get("dependencies", []) or []) or "—"
+            table.add_row(
+                str(r.get("id", "")),
+                str(r.get("status", "")),
+                f"{r.get('backend', '?')}/{r.get('cli_model', '?')}",
+                deps,
+                str(r.get("phase", "")),
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(f"Tasks ({len(rows)} shown)")
+        for r in rows:
+            deps = ",".join(r.get("dependencies", []) or []) or "-"
+            print(
+                f"  {r.get('id',''):<20} {r.get('status',''):<16} "
+                f"{r.get('backend','?')}/{r.get('cli_model','?'):<20} "
+                f"deps=[{deps}] phase={r.get('phase','')}"
+            )
+    return 0
+
+
+def _run_events_subcommand(argv: list[str]) -> int:
+    """Placeholder — implemented in commit 3."""
+    raise NotImplementedError("orch events is implemented in commit 3")
+
+
+def _run_logs_subcommand(argv: list[str]) -> int:
+    """Placeholder — implemented in commit 3."""
+    raise NotImplementedError("orch logs is implemented in commit 3")
+
+
+def _run_graph_subcommand(argv: list[str]) -> int:
+    """Placeholder — implemented in commit 6."""
+    raise NotImplementedError("orch graph is implemented in commit 6")
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -2136,6 +2386,16 @@ def main(argv: list[str] | None = None) -> int:
         return _run_reset_subcommand(incoming[1:])
     if incoming and incoming[0] == "stop":
         return _run_stop_subcommand(incoming[1:])
+    if incoming and incoming[0] == "status":
+        return _run_status_subcommand(incoming[1:])
+    if incoming and incoming[0] == "tasks":
+        return _run_tasks_subcommand(incoming[1:])
+    if incoming and incoming[0] == "events":
+        return _run_events_subcommand(incoming[1:])
+    if incoming and incoming[0] == "logs":
+        return _run_logs_subcommand(incoming[1:])
+    if incoming and incoming[0] == "graph":
+        return _run_graph_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
