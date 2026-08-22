@@ -9,6 +9,7 @@ import {
   LogOut,
   Network,
   PenTool,
+  Radio,
   ScrollText,
   Stethoscope,
 } from "lucide-react"
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
+  { to: "/tunnel", label: "Tunnel", icon: Radio },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/logs", label: "Logs", icon: ScrollText },
 ]
@@ -87,16 +89,23 @@ export function AppLayout({ children }: AppLayoutProps) {
           )}
         >
           {collapsed ? (
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-800 text-sm font-semibold tracking-tight text-white"
+            <img
+              src="/favicon.svg"
+              alt="Orch"
               aria-label="Orch"
-            >
-              O
-            </div>
+              className="h-9 w-9 shrink-0"
+            />
           ) : (
-            <div>
-              <div className="text-lg font-semibold tracking-tight">Orch</div>
-              <div className="text-xs text-zinc-400">Dashboard</div>
+            <div className="flex items-center gap-2.5">
+              <img
+                src="/favicon.svg"
+                alt="Orch"
+                className="h-8 w-8 shrink-0"
+              />
+              <div>
+                <div className="text-lg font-semibold tracking-tight">Orch</div>
+                <div className="text-xs text-zinc-400">Dashboard</div>
+              </div>
             </div>
           )}
         </div>

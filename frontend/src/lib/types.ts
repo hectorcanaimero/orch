@@ -9,12 +9,10 @@ export interface StakeholderSummaryStats {
 }
 
 export interface StakeholderMilestone {
-  id?: string
-  name: string
-  status?: string
-  eta_hours?: number | null
-  percent_done?: number
-  [key: string]: unknown
+  phase: number
+  total_count: number
+  done_count: number
+  done: boolean
 }
 
 export interface StakeholderSummary {
@@ -257,3 +255,69 @@ export interface DoctorReport {
   summary: DoctorSummary
   exit_code: number
 }
+
+/**
+ * Sprint E-5 — Tunnel manager types.
+ *
+ * Backend contract lives in `orchestrator/dashboard/tunnel/manager.py`
+ * (`_blank_state()` is the canonical shape returned by `/api/tunnel/status`)
+ * and `orchestrator/dashboard/server.py::api_tunnel_capabilities` (TUN-4).
+ * Keep these in lock-step — a drift here silently breaks the operator panel.
+ */
+export type TunnelState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "error"
+
+export type TunnelCapabilityReason =
+  | "ok"
+  | "config_disabled"
+  | "profile_gate"
+  | "host_gate"
+  | "autossh_missing"
+
+export interface TunnelCapabilities {
+  enabled: boolean
+  provider: string | null
+  can_control: boolean
+  reason: TunnelCapabilityReason
+  // Multi-reason list — backend appends short codes in gate order (see
+  // `_CAPABILITY_REASON_SHORT` in server.py). Prefer `reason` for single-cause
+  // UI copy; use `reasons` for aggregated debugging surfaces.
+  reasons: string[]
+}
+
+export interface TunnelStatus {
+  state: TunnelState
+  provider: string | null
+  pid: number | null
+  url: string | null
+  started_at: string | null
+  url_at: string | null
+  restart_count: number
+  // Autossh's own supervisor loop can reconnect the underlying `ssh` child
+  // without our supervisor noticing — this axis is separate from
+  // `restart_count` per design D2.
+  autossh_reconnects: number
+  last_error: string | null
+  last_exit_code: number | null
+  phase: TunnelState
+}
+
+export interface TunnelStartResponse extends TunnelStatus {}
+export interface TunnelStopResponse extends TunnelStatus {}
+
+/**
+ * 409 conflict envelope shapes returned by `/start` and `/stop`.
+ *
+ * Backend never mixes these codes:
+ *   POST /start when running   → { error: "already_running", state: TunnelState }
+ *   POST /start when locked    → { error: "locked" }
+ *   POST /stop when idle       → { error: "not_running" }
+ */
+export type TunnelConflictError =
+  | { error: "already_running"; state: TunnelState }
+  | { error: "locked" }
+  | { error: "not_running" }

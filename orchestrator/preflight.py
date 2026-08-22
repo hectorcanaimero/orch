@@ -651,6 +651,157 @@ def check_state_backend(
 
 
 # ---------------------------------------------------------------------------
+# Tunnel checks (Sprint E-5, TUN-11)
+# ---------------------------------------------------------------------------
+
+
+def check_tunnel(dashboard_yaml: Path) -> list[CheckResult]:
+    """Two checks: `tunnel.config` (parse dashboard.yaml → tunnel section)
+    and `tunnel.binary` (canonical provider binary on PATH when enabled).
+
+    Absent `dashboard.yaml` OR absent `tunnel:` block → both checks PASS
+    (feature disabled by default). Parse errors from `parse_tunnel_section`
+    surface as `tunnel.config` FAIL. Missing binary with `enabled:true`
+    surfaces as `tunnel.binary` FAIL; missing binary while disabled is a
+    WARN (users may be prepping config before install).
+    """
+    results: list[CheckResult] = []
+
+    # tunnel.config — parse the section (or observe its absence).
+    if not dashboard_yaml.exists():
+        results.append(
+            CheckResult(
+                name="tunnel.config",
+                status="ok",
+                detail=f"{dashboard_yaml.name} not present — tunnel disabled",
+            )
+        )
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="ok",
+                detail="tunnel disabled — provider binary not required",
+            )
+        )
+        return results
+
+    try:
+        raw_doc = yaml.safe_load(dashboard_yaml.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError) as exc:
+        results.append(
+            CheckResult(
+                name="tunnel.config",
+                status="error",
+                detail=f"{dashboard_yaml.name}: cannot read: {exc}",
+                remediation=f"Fix YAML syntax in {dashboard_yaml}.",
+            )
+        )
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="skip",
+                detail="tunnel.config failed — binary check skipped",
+            )
+        )
+        return results
+
+    raw_section = raw_doc.get("tunnel") if isinstance(raw_doc, dict) else None
+
+    # Lazy import — the tunnel package is only pulled in when needed so
+    # environments without the feature stay lean.
+    from orchestrator.dashboard.dashboard_config import (
+        ConfigError,
+        parse_tunnel_section,
+    )
+    from orchestrator.dashboard.tunnel.providers import resolve
+
+    try:
+        tcfg = parse_tunnel_section(raw_section)
+    except ConfigError as exc:
+        results.append(
+            CheckResult(
+                name="tunnel.config",
+                status="error",
+                detail=str(exc),
+                remediation=(
+                    f"Fix the offending key in {dashboard_yaml.name} tunnel section."
+                ),
+            )
+        )
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="skip",
+                detail="tunnel.config failed — binary check skipped",
+            )
+        )
+        return results
+
+    if raw_section is None:
+        results.append(
+            CheckResult(
+                name="tunnel.config",
+                status="ok",
+                detail=f"{dashboard_yaml.name}: no tunnel section — feature disabled",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="tunnel.config",
+                status="ok",
+                detail=(
+                    f"tunnel section valid (provider={tcfg.provider}, "
+                    f"enabled={tcfg.enabled})"
+                ),
+            )
+        )
+
+    # tunnel.binary — resolve the canonical command from provider allowlist,
+    # not the config field, so an operator can't hide a missing binary by
+    # overriding `command` (the allowlist forbids that anyway, but keep the
+    # doctor consistent with the runtime gate).
+    spec = resolve(tcfg.provider)
+    binary = spec.command
+    binary_path = shutil.which(binary)
+    if binary_path:
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="ok",
+                detail=f"{binary} at {binary_path}",
+            )
+        )
+    elif tcfg.enabled:
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="error",
+                detail=f"{binary} not on PATH; tunnel.enabled is true",
+                remediation=(
+                    f"Install {binary} (`brew install {binary}` / "
+                    f"`apt install {binary}`)."
+                ),
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="tunnel.binary",
+                status="warn",
+                detail=(
+                    f"{binary} not on PATH; tunnel.enabled is false so orch "
+                    f"still boots, but /start would fail if you enable it"
+                ),
+                remediation=(
+                    f"Install {binary} before flipping tunnel.enabled to true."
+                ),
+            )
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Static validators (validate)
 # ---------------------------------------------------------------------------
 

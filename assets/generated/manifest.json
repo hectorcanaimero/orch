@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "generated": [
+    {
+      "id": "e6935d1c-6e7a-413b-ad2e-2b5133a10e57",
+      "timestamp": "2026-08-22T15:32:50.052Z",
+      "prompt": "Flat vector logo icon for a developer tool named 'orch', a task orchestrator that executes a directed acyclic graph (DAG) of tasks. Minimal geometric mark: a clean ring formed by small rounded nodes connected by smooth directional arrows flowing clockwise, like an orchestration loop. Solid violet purple palette (#7e14ff deep, #aa3bff bright) on pure white background. Flat design, crisp edges, no gradients, no text, no letters, single centered mark, modern tech aesthetic.",
+      "provider": "fal",
+      "model": "recraft-v3",
+      "outputPath": "/Volumes/PortableSSD/orch/assets/generated/orch-icon-dag-ring.png",
+      "costUsd": 0.04,
+      "references": [],
+      "params": {
+        "aspect": "1:1",
+        "duration": "5",
+        "quality": "medium",
+        "n": "1"
+      }
+    },
+    {
+      "id": "f7c7500e-bb6e-43b6-9fb1-299511fe7e60",
+      "timestamp": "2026-08-22T15:32:51.500Z",
+      "prompt": "Flat vector logo icon for a developer tool named 'orch' (orchestrator). Minimal mark: a conductor's baton diagonal line whose tip emits small connected graph nodes trailing like a directed flow, suggesting one baton directing a network of tasks. Solid violet purple palette (#aa3bff bright, #7e14ff deep) on pure white background. Flat design, geometric, crisp edges, no gradients, no text, no letters, single centered mark, modern tech aesthetic.",
+      "provider": "fal",
+      "model": "recraft-v3",
+      "outputPath": "/Volumes/PortableSSD/orch/assets/generated/orch-icon-baton.png",
+      "costUsd": 0.04,
+      "references": [],
+      "params": {
+        "aspect": "1:1",
+        "duration": "5",
+        "quality": "medium",
+        "n": "1"
+      }
+    },
+    {
+      "id": "70e4eb97-e834-4279-a6fb-23959dbcb10e",
+      "timestamp": "2026-08-22T15:37:13.987Z",
+      "prompt": "Flat vector logo icon for 'orch', a task orchestrator that routes tasks like a network router. Minimal angular mark: one central square hub node with three straight directional arrows fanning out to three smaller square leaf nodes (upper-right, right, lower-right), like a hub distributing traffic to workers. Solid violet purple (#aa3bff bright, #7e14ff deep) on pure white. Flat design, geometric, straight lines only, no circles, no rings, no curves, no rounded corners, no text, no letters, centered.",
+      "provider": "fal",
+      "model": "recraft-v3",
+      "outputPath": "/Volumes/PortableSSD/orch/assets/generated/orch-icon-fanout.png",
+      "costUsd": 0.04,
+      "references": [],
+      "params": {
+        "aspect": "1:1",
+        "duration": "5",
+        "quality": "medium",
+        "n": "1"
+      }
+    },
+    {
+      "id": "4f18a6f7-82a8-4298-9962-eeefa35648e2",
+      "timestamp": "2026-08-22T15:37:15.150Z",
+      "prompt": "Flat vector logo icon for 'orch', a task router/orchestrator. Minimal mark: a single thick input line entering from the left that splits at a sharp angular fork into three directed branches, each ending in a small square node, like a signal splitter routing to three destinations. Solid violet purple (#aa3bff bright, #7e14ff deep) on pure white. Flat, angular, straight lines only, sharp corners, no circles, no rings, no curves, no text, centered.",
+      "provider": "fal",
+      "model": "recraft-v3",
+      "outputPath": "/Volumes/PortableSSD/orch/assets/generated/orch-icon-split.png",
+      "costUsd": 0.04,
+      "references": [],
+      "params": {
+        "aspect": "1:1",
+        "duration": "5",
+        "quality": "medium",
+        "n": "1"
+      }
+    },
+    {
+      "id": "fb6808e6-463d-4629-b0fe-c267b4d7adec",
+      "timestamp": "2026-08-22T15:37:17.172Z",
+      "prompt": "Flat vector logo icon for 'orch', a task orchestrator/router. Minimal mark: a vertical spine bar with three horizontal straight routing lines branching left and right to small square port nodes, like a network switchboard distributing connections. Solid violet purple (#aa3bff bright, #7e14ff deep) on pure white. Flat, angular, straight lines only, sharp corners, no circles, no rings, no curves, no text, centered.",
+      "provider": "fal",
+      "model": "recraft-v3",
+      "outputPath": "/Volumes/PortableSSD/orch/assets/generated/orch-icon-switch.png",
+      "costUsd": 0.04,
+      "references": [],
+      "params": {
+        "aspect": "1:1",
+        "duration": "5",
+        "quality": "medium",
+        "n": "1"
+      }
+    }
+  ]
+}

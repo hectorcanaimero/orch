@@ -16,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ProjectConfigWidget } from "@/components/ProjectConfigWidget"
@@ -63,31 +64,24 @@ function StatCard({
 }
 
 function MilestoneRow({ milestone }: { milestone: StakeholderMilestone }) {
+  const { phase, total_count, done_count, done } = milestone
+  // Guard against division by zero — an empty phase renders as 0%
+  // rather than NaN%. Backend shouldn't emit total_count=0, but the
+  // UI stays safe if it ever does.
   const pct =
-    typeof milestone.percent_done === "number"
-      ? Math.round(milestone.percent_done)
-      : null
+    total_count > 0 ? Math.round((done_count / total_count) * 100) : 0
   return (
     <li className="flex flex-col gap-2 rounded-md border p-4">
       <div className="flex items-center justify-between">
-        <div className="font-medium">{milestone.name}</div>
-        {milestone.status ? (
-          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-            {milestone.status}
-          </span>
-        ) : null}
+        <div className="font-mono font-semibold">Phase {phase}</div>
+        {done ? <Badge variant="success">Done</Badge> : null}
       </div>
-      {pct !== null ? (
-        <div className="flex items-center gap-3">
-          <Progress value={pct} className="h-1.5 flex-1" />
-          <span className="text-xs text-muted-foreground">{pct}%</span>
-        </div>
-      ) : null}
-      {milestone.eta_hours != null ? (
-        <div className="text-xs text-muted-foreground">
-          ETA: {milestone.eta_hours}h
-        </div>
-      ) : null}
+      <div className="flex items-center gap-3">
+        <Progress value={pct} className="h-1.5 flex-1" />
+        <span className="text-xs text-muted-foreground">
+          {done_count}/{total_count} tasks
+        </span>
+      </div>
     </li>
   )
 }
@@ -220,8 +214,8 @@ export function StakeholderSummaryPage() {
           </CardHeader>
           <CardContent>
             <ul className="space-y-3">
-              {milestones.map((m, i) => (
-                <MilestoneRow key={m.id ?? `${m.name}-${i}`} milestone={m} />
+              {milestones.map((m) => (
+                <MilestoneRow key={m.phase} milestone={m} />
               ))}
             </ul>
           </CardContent>

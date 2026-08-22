@@ -12,6 +12,7 @@ import { LoginPage } from "@/pages/LoginPage"
 import { LogsPage } from "@/pages/LogsPage"
 import { MetricsPage } from "@/pages/MetricsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
+import { TunnelPage } from "@/pages/TunnelPage"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -104,6 +105,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <DoctorPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tunnel"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <TunnelPage />
                 </AppLayout>
               </ProtectedRoute>
             }

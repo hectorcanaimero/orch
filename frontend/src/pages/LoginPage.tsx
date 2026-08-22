@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
-import { KeyRound } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -30,8 +29,8 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="space-y-2 text-center">
-          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900 text-white">
-            <KeyRound className="h-5 w-5" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center">
+            <img src="/favicon.svg" alt="Orch" className="h-12 w-12" />
           </div>
           <CardTitle>Orch Dashboard</CardTitle>
           <CardDescription>

@@ -172,6 +172,11 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         if not _is_stakeholder_context(cfg, path):
             return await call_next(request)
 
+        # Sprint E-5: capabilities is intentionally auth-free so the SPA can
+        # decide whether to render the tunnel panel BEFORE requesting a token.
+        if path == "/api/tunnel/capabilities":
+            return await call_next(request)
+
         expected = cfg.token
         if not expected:
             # Server misconfigured (profile=stakeholder but no token set).
