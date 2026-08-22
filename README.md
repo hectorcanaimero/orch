@@ -523,6 +523,13 @@ orchestrator/state/
 You can `rm -rf` the whole `state/` dir to reset (only tasks.json holds
 persistent progress).
 
+### Optional SQLite backend (Sprint B, v0.3+)
+
+Set `state.backend: sqlite` in `config.yaml` to swap the file layout for a
+single multitenant `orch.db` file. Full walk-through — including migration,
+rollback, and known limits — lives in
+[`docs/SQLITE-BACKEND.md`](docs/SQLITE-BACKEND.md).
+
 ---
 
 ## Concurrent instances on disjoint tasks
