@@ -1938,42 +1938,14 @@ def _print_subcommand_list() -> int:
 
 
 def _run_init_subcommand(argv: list[str]) -> int:
-    """Handle `orch init <path> [--force] [--sdd] [--project-name NAME]`.
+    """Handle `orch init [PATH] [flags]` — routes to batch or interactive.
 
-    Separate parser so the scaffolder flags don't leak into the main-loop
-    `--help`. See `orchestrator/init_cmd.py` for the actual scaffolder.
+    Actual parser + wizard implementation live in `orchestrator/init_cmd.py`
+    (`run_init_cli`) so the wizard logic stays alongside the scaffolder.
     """
-    p = argparse.ArgumentParser(
-        prog="orch init",
-        description="Scaffold a new orch project at PATH (batch mode, no prompts).",
-    )
-    p.add_argument("path", metavar="PATH", help="Destination directory (created if missing).")
-    p.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite existing files at PATH (default: refuse on conflict).",
-    )
-    p.add_argument(
-        "--sdd",
-        action="store_true",
-        help="Also scaffold openspec/ layout for Spec-Driven Development.",
-    )
-    p.add_argument(
-        "--project-name",
-        default=None,
-        metavar="NAME",
-        help="Sets `meta.project` in tasks.json. Default: basename of PATH.",
-    )
-    args = p.parse_args(argv)
+    from orchestrator.init_cmd import run_init_cli
 
-    from orchestrator.init_cmd import orch_init
-
-    return orch_init(
-        Path(args.path),
-        force=args.force,
-        sdd=args.sdd,
-        project_name=args.project_name,
-    )
+    return run_init_cli(argv)
 
 
 def _run_reset_subcommand(argv: list[str]) -> int:
