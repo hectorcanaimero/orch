@@ -64,3 +64,15 @@ tasks_json_precedence: deps-only
 budgets_config: budgets.yaml
 budgets_preset: conservative
 typical_dispatch_tokens: 200000
+
+# Sprint E-1 — dogfooding loop (issue #17).
+# `findings.publish_repo` is the default GitHub target for `orch findings publish`.
+# `publish_rate_limit_per_hour` caps the number of publishes in the last rolling
+# hour (0 disables). `label` is created on demand and applied to every published
+# issue. `min_publish_confidence` refuses publish for lower-ranked findings
+# unless the caller passes `--force`.
+findings:
+  publish_repo: "hectorcanaimero/orch"
+  publish_rate_limit_per_hour: 3
+  label: "auto-reported"
+  min_publish_confidence: "medium"

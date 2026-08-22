@@ -313,6 +313,13 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     # If a provider's window can't fit at least 2 x this many tokens, orch
     # warns because dispatches will serialize inside the rolling window.
     cfg.setdefault("typical_dispatch_tokens", 200_000)
+    # Sprint E-1 — dogfooding loop (issue #17). Any missing key falls back
+    # to the module defaults in `orchestrator.findings`.
+    cfg.setdefault("findings", {})
+    cfg["findings"].setdefault("publish_repo", "hectorcanaimero/orch")
+    cfg["findings"].setdefault("publish_rate_limit_per_hour", 3)
+    cfg["findings"].setdefault("label", "auto-reported")
+    cfg["findings"].setdefault("min_publish_confidence", "medium")
     return cfg
 
 
@@ -1907,6 +1914,7 @@ _SUBCOMMANDS = (
     "graph",
     "doctor",
     "validate",
+    "findings",
 )
 
 
@@ -1930,6 +1938,7 @@ def _print_subcommand_list() -> int:
     print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
+    print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -3086,6 +3095,193 @@ def _render_validate_report(payload: dict[str, Any]) -> None:
         print(summary_line)
 
 
+def _run_findings_subcommand(argv: list[str]) -> int:
+    """Handle `orch findings <verb> ...` — dogfooding loop dispatcher (Sprint E-1).
+
+    Sub-verbs: capture · list · review · publish · dismiss. Each sub-verb
+    has its own argparser; this shim only routes.
+
+    Exit codes are per-verb; see individual `_findings_*` functions.
+    """
+    if not argv or argv[0] in {"-h", "--help"}:
+        return _findings_print_help()
+    verb = argv[0]
+    rest = argv[1:]
+    if verb == "capture":
+        return _findings_capture_cli(rest)
+    if verb == "list":
+        return _findings_list_cli(rest)
+    if verb == "review":
+        return _findings_review_cli(rest)
+    if verb == "publish":
+        return _findings_publish_cli(rest)
+    if verb == "dismiss":
+        return _findings_dismiss_cli(rest)
+    print(f"unknown findings verb: {verb!r}", file=sys.stderr)
+    _findings_print_help()
+    return 2
+
+
+def _findings_print_help() -> int:
+    print("orch findings — dogfooding loop (Sprint E-1)")
+    print()
+    print("Verbs:")
+    print("  orch findings capture --type T --about (orch|project) --summary S ...")
+    print("  orch findings list [--status S] [--about A] [--json]")
+    print("  orch findings review ID [--json]")
+    print("  orch findings publish ID [--repo REPO] [--dry-run] [--yes] [--force]")
+    print("  orch findings dismiss ID --reason REASON")
+    return 0
+
+
+def _findings_backend(argv: list[str]) -> tuple[Any, dict[str, Any], Any]:
+    """Common bootstrap: parse project flags, load config, resolve backend.
+
+    Returns `(backend, cfg, paths)`. Raises SystemExit via argparse on bad
+    args. `argv` is the sub-verb's argv already parsed elsewhere — this only
+    reads --project-root/--project-id/--config, so callers stash them in a
+    small extra parser instance and pass the residue through.
+    """
+    from orchestrator.state import get_backend
+
+    p = argparse.ArgumentParser(add_help=False)
+    _add_common_project_flags(p)
+    args, _rest = p.parse_known_args(argv)
+    paths = _resolve_paths_from_argv(args)
+    cfg = _load_config(paths.config_yaml)
+    backend = get_backend(paths, cfg)
+    return backend, cfg, paths
+
+
+def _findings_capture_cli(argv: list[str]) -> int:
+    """`orch findings capture` — persist a new finding. Exit codes: 0/2/3."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings capture",
+        description="Capture a finding (bug/fix/feature) locally.",
+    )
+    p.add_argument("--type", dest="ftype", required=True,
+                   choices=sorted(f_mod._ALLOWED_TYPES))
+    p.add_argument("--about", required=True, choices=sorted(f_mod._ALLOWED_ABOUT))
+    p.add_argument("--summary", required=True,
+                   help="Single-line human title. Required.")
+    p.add_argument("--evidence", default="",
+                   help="Multi-line evidence (file:line / logs / repro).")
+    p.add_argument("--confidence", default="medium",
+                   choices=sorted(f_mod._ALLOWED_CONFIDENCE))
+    p.add_argument("--author", default="agent",
+                   help="Who captured this. Default: agent")
+    p.add_argument("--json", action="store_true",
+                   help="Emit the captured finding as JSON.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        finding = f_mod.capture(
+            backend,
+            finding_type=args.ftype,
+            about=args.about,
+            summary=args.summary,
+            evidence=args.evidence,
+            confidence=args.confidence,
+            author=args.author,
+        )
+    except f_mod.DuplicateFindingError as exc:
+        existing = exc.existing
+        print(
+            f"duplicate: same finding already captured as {existing.id} "
+            f"(status={existing.status})",
+            file=sys.stderr,
+        )
+        return 2
+    except f_mod.FindingValidationError as exc:
+        print(f"validation error: {exc}", file=sys.stderr)
+        return 3
+
+    if args.json:
+        from dataclasses import asdict as _asdict
+        print(json.dumps(_asdict(finding), separators=(",", ":")))
+    else:
+        print(f"captured {finding.id}")
+        print(f"  type       {finding.type}")
+        print(f"  about      {finding.about}")
+        print(f"  confidence {finding.confidence}")
+        print(f"  summary    {finding.summary}")
+    return 0
+
+
+def _findings_list_cli(argv: list[str]) -> int:
+    """`orch findings list` — human table or JSON array."""
+    from orchestrator import findings as f_mod
+
+    p = argparse.ArgumentParser(
+        prog="orch findings list",
+        description="List findings for this project.",
+    )
+    p.add_argument("--status", default=None,
+                   choices=["pending", "published", "dismissed", "duplicate"])
+    p.add_argument("--about", default=None,
+                   choices=sorted(f_mod._ALLOWED_ABOUT))
+    p.add_argument("--json", action="store_true", help="Emit as JSON array.")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        backend, _cfg, _paths = _findings_backend(argv)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    rows = f_mod.list_findings(backend, status=args.status, about=args.about)
+
+    if args.json:
+        from dataclasses import asdict as _asdict
+        print(json.dumps([_asdict(r) for r in rows], separators=(",", ":")))
+        return 0
+
+    if not rows:
+        print("(no findings)")
+        return 0
+    header = f"{'ID':<12} {'TYPE':<8} {'ABOUT':<8} {'CONF':<7} {'STATUS':<11} SUMMARY"
+    print(header)
+    for r in rows:
+        short_id = r.id[:8]
+        summary = r.summary if len(r.summary) <= 60 else r.summary[:57] + "..."
+        print(
+            f"{short_id:<12} {r.type:<8} {r.about:<8} {r.confidence:<7} "
+            f"{r.status:<11} {summary}"
+        )
+    return 0
+
+
+def _findings_review_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 3
+    print("orch findings review — implemented in commit 3", file=sys.stderr)
+    return 1
+
+
+def _findings_publish_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 4
+    print("orch findings publish — implemented in commit 4", file=sys.stderr)
+    return 1
+
+
+def _findings_dismiss_cli(argv: list[str]) -> int:  # noqa: ARG001 — commit 4
+    print("orch findings dismiss — implemented in commit 4", file=sys.stderr)
+    return 1
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -3198,6 +3394,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_doctor_subcommand(incoming[1:])
     if incoming and incoming[0] == "validate":
         return _run_validate_subcommand(incoming[1:])
+    if incoming and incoming[0] == "findings":
+        return _run_findings_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
