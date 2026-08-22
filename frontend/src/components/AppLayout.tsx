@@ -9,6 +9,7 @@ import {
   LogOut,
   Network,
   PenTool,
+  Radio,
   ScrollText,
   Stethoscope,
 } from "lucide-react"
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },
   { to: "/doctor", label: "Doctor", icon: Stethoscope },
+  { to: "/tunnel", label: "Tunnel", icon: Radio },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/logs", label: "Logs", icon: ScrollText },
 ]

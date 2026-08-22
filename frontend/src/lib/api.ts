@@ -5,6 +5,11 @@ import type {
   ArchitectureStatus,
   DoctorReport,
   ProjectConfig,
+  TunnelCapabilities,
+  TunnelConflictError,
+  TunnelStartResponse,
+  TunnelStatus,
+  TunnelStopResponse,
 } from "@/lib/types"
 
 const TOKEN_KEY = "orch_token"
@@ -121,6 +126,78 @@ export function buildArchitectureIframeUrl(
       : `/api/architecture/snapshot/${encodeURIComponent(variant.snapshot)}`
   const token = getToken()
   const url = new URL(path, API_BASE_URL)
+  if (token) url.searchParams.set("token", token)
+  return url.toString()
+}
+
+/**
+ * Sprint E-5 — Tunnel manager API surface.
+ *
+ * `/capabilities` is intentionally auth-free on the backend (always 200) so
+ * we surface it via `apiClient` without special-casing 401/403 — the axios
+ * interceptor still won't fire because the endpoint never returns those.
+ *
+ * `/start` and `/stop` return 202 on success and 409 on conflict; the
+ * `TunnelConflictError` union captures the three distinct 409 payloads the
+ * panel needs to render distinct toasts for (`already_running` / `locked` /
+ * `not_running`).
+ */
+export async function getTunnelCapabilities(): Promise<TunnelCapabilities> {
+  const { data } = await apiClient.get<TunnelCapabilities>(
+    "/api/tunnel/capabilities",
+  )
+  return data
+}
+
+export async function getTunnelStatus(): Promise<TunnelStatus> {
+  const { data } = await apiClient.get<TunnelStatus>("/api/tunnel/status")
+  return data
+}
+
+/**
+ * Thrown when POST /start or /stop returns 409. Carries the parsed body so
+ * the panel can distinguish `already_running` vs `locked` vs `not_running`
+ * without having to peel apart the axios error shape.
+ */
+export class TunnelConflictHttpError extends Error {
+  readonly body: TunnelConflictError
+  constructor(body: TunnelConflictError) {
+    super(`tunnel conflict: ${body.error}`)
+    this.name = "TunnelConflictHttpError"
+    this.body = body
+  }
+}
+
+async function postTunnelAction<T>(path: string): Promise<T> {
+  try {
+    const { data } = await apiClient.post<T>(path)
+    return data
+  } catch (err) {
+    const response = (err as { response?: { status?: number; data?: unknown } })
+      ?.response
+    if (response?.status === 409) {
+      throw new TunnelConflictHttpError(response.data as TunnelConflictError)
+    }
+    throw err
+  }
+}
+
+export function startTunnel(): Promise<TunnelStartResponse> {
+  return postTunnelAction<TunnelStartResponse>("/api/tunnel/start")
+}
+
+export function stopTunnel(): Promise<TunnelStopResponse> {
+  return postTunnelAction<TunnelStopResponse>("/api/tunnel/stop")
+}
+
+/**
+ * SSE-safe URL for the tunnel log stream. Mirrors `buildArchitectureIframeUrl`
+ * — EventSource can't send headers, so we forward the bearer as `?token=`
+ * (accepted by `TokenAuthMiddleware._extract_token`).
+ */
+export function buildTunnelLogsUrl(): string {
+  const token = getToken()
+  const url = new URL("/api/tunnel/logs", API_BASE_URL)
   if (token) url.searchParams.set("token", token)
   return url.toString()
 }
