@@ -2301,13 +2301,145 @@ def _run_tasks_subcommand(argv: list[str]) -> int:
 
 
 def _run_events_subcommand(argv: list[str]) -> int:
-    """Placeholder — implemented in commit 3."""
-    raise NotImplementedError("orch events is implemented in commit 3")
+    """Handle `orch events <task-id> [--tail N] [--json] [--run RUN_ID]`.
+
+    Streams the recorded event rows for a single task via
+    `StateBackend.iter_events(task_id=..., limit=..., run_id=...)`. The
+    file backend has no monotonic id → newest-N tail is buffered client
+    side; the sqlite backend uses ORDER BY id DESC LIMIT N (see commit 1).
+
+    Exit codes:
+      0 — rows emitted (including the empty case).
+      1 — config / layout error.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch events",
+        description="Tail event rows for one task (default: last 20).",
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument("--tail", type=int, default=20, metavar="N",
+                   help="Cap at the last N events (default: 20; 0 = all).")
+    p.add_argument("--run", default=None, metavar="RUN_ID",
+                   help="Restrict to one run id (default: every recorded run).")
+    p.add_argument("--json", action="store_true",
+                   help="Emit as a JSON array (one row per event).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.state import get_backend
+
+    backend = get_backend(paths, cfg)
+    limit = None if args.tail <= 0 else int(args.tail)
+    rows = list(
+        backend.iter_events(run_id=args.run, task_id=args.task_id, limit=limit)
+    )
+
+    if args.json:
+        print(json.dumps(rows, default=str, separators=(",", ":")))
+        return 0
+
+    if not rows:
+        print(f"(no events for task {args.task_id!r})")
+        return 0
+
+    if _HAVE_RICH:
+        table = Table(title=f"Events for {args.task_id} (showing {len(rows)})")
+        table.add_column("TS", style="cyan")
+        table.add_column("EVENT")
+        table.add_column("BACKEND")
+        table.add_column("RUN")
+        table.add_column("EXTRA")
+        for r in rows:
+            extra = r.get("extra") or {}
+            extra_str = ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
+            table.add_row(
+                str(r.get("ts", "")),
+                str(r.get("event_type", "")),
+                str(r.get("backend", "")),
+                str(r.get("run_id", ""))[:8],
+                extra_str,
+            )
+        _console.print(table)  # type: ignore[union-attr]
+    else:  # pragma: no cover
+        print(f"Events for {args.task_id} (showing {len(rows)})")
+        for r in rows:
+            print(
+                f"  {r.get('ts','')}  {r.get('event_type','')}  "
+                f"backend={r.get('backend','')}  run={str(r.get('run_id',''))[:8]}"
+            )
+    return 0
 
 
 def _run_logs_subcommand(argv: list[str]) -> int:
-    """Placeholder — implemented in commit 3."""
-    raise NotImplementedError("orch logs is implemented in commit 3")
+    """Handle `orch logs <task-id> [--tail N] [--all]`.
+
+    Reads the raw per-task log file at
+        `<state_dir>/logs/<task-id>.log`
+    and streams the tail. This is a plain file — backend-agnostic on
+    purpose (log content is written by the dispatched CLI subprocess,
+    not the state backend).
+
+    Exit codes:
+      0 — bytes emitted.
+      1 — config / layout error.
+      2 — log file does not exist.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch logs",
+        description="Tail the per-task log file (default: last 200 lines).",
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument("--tail", type=int, default=200, metavar="N",
+                   help="Cap at the last N lines (default: 200).")
+    p.add_argument("--all", action="store_true",
+                   help="Print the entire log (ignores --tail).")
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    log_path = paths.state_dir / "logs" / f"{args.task_id}.log"
+    if not log_path.exists():
+        print(
+            f"no log file for task {args.task_id!r} at {log_path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        print(f"could not read {log_path}: {exc}", file=sys.stderr)
+        return 1
+
+    if args.all or args.tail <= 0:
+        tail = lines
+    else:
+        tail = lines[-int(args.tail):]
+
+    # Preserve trailing newlines from the file — sys.stdout.write handles both.
+    for line in tail:
+        sys.stdout.write(line)
+    return 0
 
 
 def _run_graph_subcommand(argv: list[str]) -> int:
