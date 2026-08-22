@@ -153,6 +153,30 @@ orch validate     # tasks.json shape, dep cycles, unresolved routes, config sani
 Both accept `--json` for CI gates. Exit codes: `0` all ok, `1` warnings only,
 `2` any error. See [docs/PREFLIGHT.md](docs/PREFLIGHT.md) for the operator guide.
 
+### Dogfooding loop — `orch findings`
+
+Agents running on top of orch capture bugs / fixes / feature ideas locally,
+then a human reviews and publishes them to GitHub as issues on the orch
+repo.
+
+```bash
+orch findings capture --type bug --about orch \
+    --summary "Dashboard crashes on refresh" \
+    --evidence "orchestrator/dashboard/main.py:42 …" \
+    --confidence high
+
+orch findings list --status pending
+orch findings review <id>
+orch findings publish <id>            # asks for TTY confirmation
+orch findings dismiss <id> --reason "not actionable"
+```
+
+Publish is guarded: `about=project` findings can never publish upstream,
+`low` confidence needs `--force`, there's a rate limit, and both a local
+hash and a GitHub issue search catch duplicates before creating a new
+issue. See [docs/DOGFOODING.md](docs/DOGFOODING.md) for the full operator
+guide + a copy-pasteable agent prompt snippet.
+
 ---
 
 ## How orch thinks
