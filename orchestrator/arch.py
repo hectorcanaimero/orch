@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from orchestrator.procutil import pid_alive as _pid_alive
+
 
 ARCH_DIR = "docs/architecture"
 ARCHIVE_SUBDIR = "archive"
@@ -122,21 +124,6 @@ def compute_source_hash(sources: dict[str, Any]) -> str:
 
 def _lock_path(state_dir: Path) -> Path:
     return state_dir / LOCK_FILENAME
-
-
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Signal denied means the process exists but isn't ours — treat as alive.
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def read_lock(state_dir: Path) -> dict[str, Any] | None:
