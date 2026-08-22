@@ -843,8 +843,15 @@ def run(
     project_id: str | None = None,
     config: str = "orchestrator/config.yaml",
     reload: bool = False,
+    profile: str | None = None,
+    token: str | None = None,
 ) -> int:
-    """Launch uvicorn in the foreground. Returns the process exit code."""
+    """Launch uvicorn in the foreground. Returns the process exit code.
+
+    `profile` / `token` map 1:1 to the `--profile` / `--token` CLI flags.
+    Both are optional — when omitted, DashboardConfig falls back to env +
+    config.yaml + defaults.
+    """
     try:
         import uvicorn
     except ImportError:
@@ -862,15 +869,27 @@ def run(
     if not paths.tasks_json.exists():
         print(f"[warn] {paths.tasks_json} does not exist — dashboard will show 0 tasks.")
 
-    app = create_app(paths=paths)
-
-    banner = (
-        f"Orch dashboard running on http://{host}:{port}\n"
-        f"Project: {paths.project_id} ({paths.project_root})\n"
-        f"State dir: {paths.state_dir}\n"
-        f"Ctrl+C to stop"
+    app = create_app(
+        paths=paths,
+        profile_override=profile,
+        token_override=token,
     )
-    print(banner)
+    resolved = app.state.app_state.config
+
+    banner_lines = [
+        f"Orch dashboard running on http://{host}:{port}",
+        f"Project: {paths.project_id} ({paths.project_root})",
+        f"State dir: {paths.state_dir}",
+        f"Profile: {resolved.profile}",
+    ]
+    if resolved.profile != PROFILE_OPERATOR:
+        banner_lines.append(
+            "Token auth: ENABLED"
+            if resolved.token
+            else "Token auth: MISCONFIGURED (no token set — every request 401s)"
+        )
+    banner_lines.append("Ctrl+C to stop")
+    print("\n".join(banner_lines))
 
     uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
     return 0
