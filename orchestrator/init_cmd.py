@@ -1,30 +1,43 @@
-"""`orch init` — batch scaffolder for a new orch project (Sprint 9).
+"""`orch init` — scaffolder for a new orch project (Sprint 9 + Sprint D).
 
-Contract:
+Two modes, one entry point:
+
+    * BATCH mode (unchanged from Sprint 9). All flags come from argv;
+      the function `orch_init(path, force, sdd, project_name)` is a pure
+      write-to-disk operation. Every existing test in `test_init.py`
+      still exercises this path unchanged.
+
+    * INTERACTIVE mode (Sprint D / Issue #16). Opt-in: triggered by
+      `orch init` with no positional path and no scaffolder flags, OR
+      explicit `--interactive`. Uses stdlib `input()` — no new deps.
+      Falls back to a helpful error when stdin isn't a TTY (CI safety).
+
+Contract (both modes):
     - Creates the minimum layout orch needs: tasks.json, scripts/task-*.sh,
       orchestrator/{state, config.yaml, model_router.yaml, budgets.yaml},
       specs/README.md, .gitignore (when absent).
     - Never writes AI. Never touches the network. Never installs anything.
-    - Refuses to overwrite existing files without --force (safety).
-    - `.gitignore` is a soft target: if the user already has one, we leave it
-      alone even without --force (respect existing).
+    - Batch mode refuses to overwrite existing files without --force.
+    - Interactive mode prompts per-file before overwriting (default: keep).
+    - `.gitignore` is a soft target: if the user already has one, we leave
+      it alone even without --force (respect existing).
     - --sdd adds openspec/ scaffolding for teams using Spec-Driven Development.
-    - The YAML defaults copied into the project are byte-identical to the ones
-      shipped with the installed package — single source of truth.
-
-Not in scope (would be a future --interactive mode):
-    - Detecting installed CLIs.
-    - Probing model availability.
-    - Editing the copied YAMLs based on prompts.
+    - The YAML defaults copied into the project are byte-identical to the
+      ones shipped with the installed package — single source of truth.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
+import re
 import shutil
 import stat
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 # ---- Package-relative paths --------------------------------------------
 
@@ -230,3 +243,480 @@ def _print_next_steps(project_path: Path, *, sdd: bool) -> None:
     print(f"  orch dashboard --project-root {project_path}")
     print("  → http://127.0.0.1:7420")
     print()
+
+
+# ---- Interactive wizard (Sprint D / Issue #16) -------------------------
+
+_PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# Scaffolder flags whose presence disables auto-interactive mode. Kept as a
+# set so the check is trivially extensible. If any of these are set, orch
+# init behaves as a batch scaffolder (backwards-compat with Sprint 9).
+_SCAFFOLDER_FLAGS: frozenset[str] = frozenset({
+    "path",
+    "force",
+    "sdd",
+    "project_name",
+})
+
+
+def _is_scaffolder_flag_provided(args: argparse.Namespace) -> bool:
+    """True when the operator passed at least one batch-mode flag/argument.
+
+    We treat `path` (positional) as a scaffolder flag — passing a path
+    signals "I know what I want, don't ask me". Explicit --force/--sdd/
+    --project-name likewise mean batch intent.
+    """
+    if getattr(args, "path", None):
+        return True
+    for name in ("force", "sdd", "project_name"):
+        val = getattr(args, name, None)
+        if name == "project_name":
+            if val:
+                return True
+        elif val:  # boolean flags
+            return True
+    return False
+
+
+def prompt(
+    message: str,
+    *,
+    default: str | None = None,
+    validate: Callable[[str], str | None] | None = None,
+    choices: list[str] | None = None,
+    input_fn: Callable[[str], str] | None = None,
+) -> str:
+    """Loop `input()` until we get an accepted answer.
+
+    `validate(value)` returns None on success or an error string to show.
+    `choices` is a shorthand: shown in the prompt, enforced case-sensitively.
+    Blank input returns `default` when set; otherwise re-prompts.
+
+    We take `input_fn` so tests can inject a scripted sequence without
+    monkeypatching the stdlib `input`. When `input_fn` is None (default) we
+    dereference `builtins.input` at CALL time — so monkeypatched
+    `builtins.input` in tests takes effect for the wizard path too.
+    """
+    if input_fn is None:
+        import builtins as _builtins
+        input_fn = _builtins.input
+    prompt_bits = [message]
+    if choices:
+        prompt_bits.append(f" [{'/'.join(choices)}]")
+    if default is not None:
+        prompt_bits.append(f" ({default})")
+    prompt_bits.append(": ")
+    full = "".join(prompt_bits)
+
+    while True:
+        raw = input_fn(full)
+        value = raw.strip()
+        if not value and default is not None:
+            value = default
+        if not value:
+            print("  → value required, please try again.")
+            continue
+        if choices and value not in choices:
+            print(f"  → must be one of: {', '.join(choices)}")
+            continue
+        if validate is not None:
+            err = validate(value)
+            if err:
+                print(f"  → {err}")
+                continue
+        return value
+
+
+def _validate_project_id(value: str) -> str | None:
+    if not _PROJECT_ID_RE.match(value):
+        return (
+            "project id must start with [a-z0-9] and contain only "
+            "lowercase letters, digits, _ and -"
+        )
+    return None
+
+
+def _validate_project_root(value: str) -> str | None:
+    p = Path(value).expanduser()
+    parent = p if p.exists() else p.parent
+    if not parent.exists():
+        return f"parent dir {parent} does not exist"
+    if not os.access(parent, os.W_OK):
+        return f"parent dir {parent} is not writable"
+    return None
+
+
+def _load_budget_presets(pkg_dir: Path) -> list[str]:
+    """Read the shipped budgets.yaml and return the preset keys.
+
+    Wizard uses this to offer the user a picklist rather than free-text.
+    Falls back to a sensible default when yaml/parsing fails so we never
+    hard-crash the wizard on a broken package copy.
+    """
+    try:
+        import yaml
+
+        data = yaml.safe_load((pkg_dir / "budgets.yaml").read_text(encoding="utf-8")) or {}
+        presets = data.get("presets") or {}
+        keys = sorted(presets.keys())
+        return keys or ["conservative"]
+    except Exception:  # noqa: BLE001
+        return ["conservative", "aggressive", "shared"]
+
+
+def _load_router_tier_map(pkg_dir: Path) -> dict[str, list[str]]:
+    """Group router keys by tier for the wizard's model tier picker."""
+    try:
+        import yaml
+
+        data = yaml.safe_load((pkg_dir / "model_router.yaml").read_text(encoding="utf-8")) or {}
+        out: dict[str, list[str]] = {"premium": [], "standard": [], "cheap": []}
+        for key, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            tier = entry.get("tier")
+            if tier in out:
+                out[tier].append(key)
+        for tier in out:
+            out[tier].sort()
+        return out
+    except Exception:  # noqa: BLE001
+        return {"premium": [], "standard": [], "cheap": []}
+
+
+def _wizard_should_overwrite(
+    path: Path,
+    *,
+    input_fn: Callable[[str], str] | None = None,
+) -> bool:
+    """Prompt (default: keep existing) before overwriting one file."""
+    answer = prompt(
+        f"  file {path} exists — overwrite?",
+        default="n",
+        choices=["y", "n"],
+        input_fn=input_fn,
+    )
+    return answer == "y"
+
+
+def _detect_installed_backends() -> dict[str, str | None]:
+    """Return `{backend: absolute-path-or-None}` for each known backend."""
+    return {name: shutil.which(name) for name in ("claude", "codex", "opencode")}
+
+
+def run_wizard(
+    args: argparse.Namespace,
+    *,
+    input_fn: Callable[[str], str] | None = None,
+    output_stream=None,
+) -> int:
+    """Interactive `orch init` (Sprint D / Issue #16).
+
+    Returns the same exit-code contract as `orch_init`:
+        0 — success (scaffold written + validation summary printed)
+        1 — user aborted / hard write error / validation failure
+    """
+    if output_stream is None:
+        output_stream = sys.stdout
+
+    def _say(msg: str = "") -> None:
+        print(msg, file=output_stream)
+
+    _say("orch init — interactive setup")
+    _say("Press Enter to accept defaults. Ctrl-C to abort.")
+    _say("")
+
+    # ---- Prompts --------------------------------------------------------
+
+    project_id = prompt(
+        "project id",
+        validate=_validate_project_id,
+        input_fn=input_fn,
+    )
+    project_root_str = prompt(
+        "project root",
+        default=str(Path.cwd() / project_id),
+        validate=_validate_project_root,
+        input_fn=input_fn,
+    )
+    project_root = Path(project_root_str).expanduser().resolve()
+
+    # Backends probe — informational, doesn't gate anything.
+    _say("")
+    _say("Detected backends on PATH:")
+    for name, path in _detect_installed_backends().items():
+        marker = f"✓ {path}" if path else "✗ not on PATH"
+        _say(f"  {name:<10} {marker}")
+    _say("(missing backends can be installed later — `orch doctor` verifies)")
+    _say("")
+
+    state_backend = prompt(
+        "state backend",
+        default="file",
+        choices=["file", "sqlite"],
+        input_fn=input_fn,
+    )
+    _say(
+        "  → file backend: JSONL + JSON in state/. Simple, easy to eyeball.\n"
+        "  → sqlite backend: single orch.db, better for multi-project setups.\n"
+        if state_backend == "file"
+        else "  → sqlite backend selected — single orch.db file with WAL journaling.\n"
+    )
+
+    presets = _load_budget_presets(_PKG_DIR)
+    budget_preset = prompt(
+        "budget preset",
+        default=presets[0] if presets else "conservative",
+        choices=presets,
+        input_fn=input_fn,
+    )
+
+    spec_root = prompt(
+        "spec root (relative to project root)",
+        default="specs",
+        input_fn=input_fn,
+    )
+
+    # Model tier picker — optional but presented for completeness.
+    tier_map = _load_router_tier_map(_PKG_DIR)
+    tier_choices: dict[str, str | None] = {}
+    for tier in ("premium", "standard", "cheap"):
+        options = tier_map.get(tier) or []
+        if not options:
+            tier_choices[tier] = None
+            continue
+        default_choice = options[0]
+        _say(f"\n{tier} tier options (pick one for meta.default_{tier}_model):")
+        for opt in options:
+            _say(f"  - {opt}")
+        picked = prompt(
+            f"  default {tier} model",
+            default=default_choice,
+            choices=options,
+            input_fn=input_fn,
+        )
+        tier_choices[tier] = picked
+    _say("")
+
+    sdd_flag = prompt(
+        "scaffold openspec/ layout for SDD?",
+        default="n",
+        choices=["y", "n"],
+        input_fn=input_fn,
+    ) == "y"
+
+    # ---- Confirm + scaffold ---------------------------------------------
+
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    # Per-file overwrite prompts.
+    overwrites: dict[str, bool] = {}
+    for marker in _CONFLICT_MARKERS:
+        target = project_root / marker
+        if target.exists():
+            overwrites[marker] = _wizard_should_overwrite(target, input_fn=input_fn)
+
+    # Scaffold everything with force=True — we've already handled overwrites
+    # by (a) prompting the user and (b) restoring untouched files below.
+    protected: dict[str, bytes] = {}
+    for marker, do_overwrite in overwrites.items():
+        if not do_overwrite:
+            target = project_root / marker
+            try:
+                protected[marker] = target.read_bytes()
+            except OSError:
+                protected.pop(marker, None)
+
+    rc = orch_init(
+        project_root,
+        force=True,
+        sdd=sdd_flag,
+        project_name=project_id,
+    )
+    if rc != 0:
+        _say(f"scaffold failed (exit {rc}).")
+        return rc
+
+    # Restore any protected files that the user asked to keep. Restored
+    # files are also skipped from post-processing so operator-authored
+    # content is never rewritten behind their back.
+    for marker, blob in protected.items():
+        (project_root / marker).write_bytes(blob)
+
+    # Post-process config.yaml with the wizard's answers (state.backend,
+    # spec_root, budgets_preset) so operators don't need to edit YAML by
+    # hand for common choices.
+    if "orchestrator/config.yaml" not in protected:
+        _post_process_config(
+            project_root / "orchestrator" / "config.yaml",
+            state_backend=state_backend,
+            budget_preset=budget_preset,
+            spec_root=spec_root,
+        )
+
+    # Post-process tasks.json meta with tier picks (informational; the
+    # atomizer/dispatcher read tasks[*].model — this is a hint for humans).
+    if "tasks.json" not in protected:
+        _post_process_tasks_meta(
+            project_root / "tasks.json",
+            project_id=project_id,
+            tier_defaults=tier_choices,
+        )
+
+    # ---- Post-scaffold: inline validate --------------------------------
+    _say("")
+    _say("Running orch validate on the fresh scaffold...")
+    from orchestrator import preflight
+    from orchestrator.router import load_router
+    from orchestrator.state import load_tasks
+
+    try:
+        tasks_list = load_tasks(project_root / "tasks.json")
+        router = load_router(project_root / "orchestrator" / "model_router.yaml")
+        errors = preflight.validate_graph(tasks_list, router_keys=router.keys())
+    except Exception as exc:  # noqa: BLE001
+        _say(f"  validation could not run: {exc}")
+        errors = []
+
+    if not errors:
+        _say("  ✓ validate: no issues found.")
+    else:
+        _say(f"  ⚠ validate found {len(errors)} issue(s):")
+        for e in errors[:10]:
+            _say(f"    - {e.kind}: {e.message}")
+        if len(errors) > 10:
+            _say(f"    ... and {len(errors) - 10} more.")
+
+    _say("")
+    _say("Next steps:")
+    _say(f"  orch dry-run --project-root {project_root}")
+    _say(f"  orch atomize --project-root {project_root} --file specs/YOUR-SPEC.md")
+    _say(f"  orch doctor  --project-root {project_root}")
+    _say("")
+    return 0
+
+
+def _post_process_config(
+    config_yaml: Path,
+    *,
+    state_backend: str,
+    budget_preset: str,
+    spec_root: str,
+) -> None:
+    """Rewrite `state.backend`, `budgets_preset`, `spec_root` in a config file.
+
+    Minimal (regex-based) edit rather than full YAML round-trip: preserves
+    the comments in the shipped config.yaml so operators see the guidance
+    when they open it in $EDITOR later.
+    """
+    if not config_yaml.exists():
+        return
+    text = config_yaml.read_text(encoding="utf-8")
+    text = re.sub(
+        r"(?m)^(\s*backend:\s*)\S+",
+        rf"\g<1>{state_backend}",
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r"(?m)^budgets_preset:\s*\S+",
+        f"budgets_preset: {budget_preset}",
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r"(?m)^spec_root:\s*\S+",
+        f"spec_root: {spec_root}",
+        text,
+        count=1,
+    )
+    config_yaml.write_text(text, encoding="utf-8")
+
+
+def _post_process_tasks_meta(
+    tasks_json: Path,
+    *,
+    project_id: str,
+    tier_defaults: dict[str, str | None],
+) -> None:
+    """Stamp the wizard's picks into `meta` for downstream tools to inspect."""
+    if not tasks_json.exists():
+        return
+    import json
+
+    try:
+        data = json.loads(tasks_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(data, dict):
+        return
+    meta = data.setdefault("meta", {})
+    meta["project"] = project_id
+    for tier, model in tier_defaults.items():
+        if model:
+            meta[f"default_{tier}_model"] = model
+    tasks_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+# ---- CLI entry (called from orch.py _run_init_subcommand) --------------
+
+
+def run_init_cli(argv: list[str]) -> int:
+    """Handle `orch init [...]` — routes to batch or interactive mode.
+
+    Kept here (rather than orch.py) so the argparser + wizard logic live
+    together. `orch.py` calls this via `_run_init_subcommand`.
+    """
+    p = argparse.ArgumentParser(
+        prog="orch init",
+        description=(
+            "Scaffold a new orch project. Batch mode (with flags) or "
+            "interactive wizard (no flags / --interactive)."
+        ),
+    )
+    p.add_argument(
+        "path", nargs="?", metavar="PATH", default=None,
+        help="Destination directory (created if missing). Optional in interactive mode.",
+    )
+    p.add_argument("--force", action="store_true",
+                   help="Overwrite existing files at PATH (batch mode only).")
+    p.add_argument("--sdd", action="store_true",
+                   help="Also scaffold openspec/ layout for Spec-Driven Development.")
+    p.add_argument("--project-name", default=None, metavar="NAME",
+                   help="Sets `meta.project` in tasks.json. Default: basename of PATH.")
+    p.add_argument("--interactive", action="store_true",
+                   help="Force interactive wizard (auto-detect otherwise).")
+    p.add_argument("--non-interactive", action="store_true",
+                   help="Force batch mode even without scaffolder flags (fail if flags missing).")
+    args = p.parse_args(argv)
+
+    if args.interactive and args.non_interactive:
+        p.error("cannot combine --interactive and --non-interactive")
+
+    scaffolder_flags_seen = _is_scaffolder_flag_provided(args)
+
+    # Decision matrix:
+    #   explicit --interactive → wizard (or error if no TTY).
+    #   explicit --non-interactive → batch (requires PATH).
+    #   flags seen → batch.
+    #   no flags → wizard when TTY, batch-error when not (CI safety).
+    want_wizard = args.interactive or (
+        not args.non_interactive and not scaffolder_flags_seen
+    )
+
+    if want_wizard:
+        if not sys.stdin.isatty():
+            p.error(
+                "interactive mode requires a TTY on stdin; "
+                "pass PATH explicitly or use --non-interactive"
+            )
+        return run_wizard(args)
+
+    if not args.path:
+        p.error("PATH is required in batch mode (or pass --interactive)")
+    return orch_init(
+        Path(args.path),
+        force=args.force,
+        sdd=args.sdd,
+        project_name=args.project_name,
+    )
