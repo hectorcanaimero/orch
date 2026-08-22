@@ -3,6 +3,7 @@ import type {
   ArchitectureHistory,
   ArchitectureRegenerateResponse,
   ArchitectureStatus,
+  DoctorReport,
   ProjectConfig,
 } from "@/lib/types"
 
@@ -54,6 +55,11 @@ apiClient.interceptors.response.use(
 
 export async function getProjectConfig(): Promise<ProjectConfig> {
   const { data } = await apiClient.get<ProjectConfig>("/api/config")
+  return data
+}
+
+export async function getDoctorReport(): Promise<DoctorReport> {
+  const { data } = await apiClient.get<DoctorReport>("/api/doctor")
   return data
 }
 

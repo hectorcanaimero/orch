@@ -818,6 +818,29 @@ def create_app(
     def api_config():
         return JSONResponse(_load_project_config(app_state))
 
+    @app.get("/api/doctor", name="api_doctor")
+    def api_doctor():
+        # Reuse the same code path as `orch doctor --json` — never
+        # subprocess out to the CLI (a shell per request would be brutal
+        # on a page that offers a Re-run button). See ``orchestrator.doctor``.
+        #
+        # We deliberately DO NOT memoize into ``app_state._cache``: the
+        # operator expects a live-ish reading when they click "Re-run",
+        # and the probes already cap themselves at ~5s each via
+        # `preflight._PROBE_TIMEOUT_S`.
+        from orchestrator.doctor import build_doctor_report
+
+        def _loader(path: Path) -> dict[str, Any]:
+            # Slim config loader — parse-only, no default injection. The
+            # doctor's ``config.parse`` check is what surfaces a truly
+            # unreadable YAML; defaults would mask real issues here.
+            import yaml
+            with open(path, encoding="utf-8") as fh:
+                return yaml.safe_load(fh) or {}
+
+        payload = build_doctor_report(app_state.paths, config_loader=_loader)
+        return JSONResponse(payload)
+
     # ---- Architecture diagram (archify skill) ------------------------------
     # Sprint E-4: read-only accessors over docs/architecture/ + a POST
     # regenerate that fires `orch arch generate` as a fire-and-forget

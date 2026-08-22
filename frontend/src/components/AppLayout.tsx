@@ -10,6 +10,7 @@ import {
   Network,
   PenTool,
   ScrollText,
+  Stethoscope,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
@@ -34,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },
+  { to: "/doctor", label: "Doctor", icon: Stethoscope },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/logs", label: "Logs", icon: ScrollText },
 ]

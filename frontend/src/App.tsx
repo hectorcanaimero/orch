@@ -5,6 +5,7 @@ import { AppLayout } from "@/components/AppLayout"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { ArchitecturePage } from "@/pages/ArchitecturePage"
 import { BoardPage } from "@/pages/BoardPage"
+import { DoctorPage } from "@/pages/DoctorPage"
 import { KanbanPage } from "@/pages/KanbanPage"
 import { ListPage } from "@/pages/ListPage"
 import { LoginPage } from "@/pages/LoginPage"
@@ -93,6 +94,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <ArchitecturePage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/doctor"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <DoctorPage />
                 </AppLayout>
               </ProtectedRoute>
             }

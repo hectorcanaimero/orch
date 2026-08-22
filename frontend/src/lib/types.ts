@@ -224,3 +224,36 @@ export interface ArchitectureRegenerateResponse {
   started_at: string
   run_id: string
 }
+
+/**
+ * Sprint E-3 — Doctor view types.
+ *
+ * Matches the payload returned by `GET /api/doctor` (and by the CLI
+ * `orch doctor --json`). Both surfaces are built by
+ * `orchestrator/doctor.py::build_doctor_report`, so this type must stay in
+ * lock-step with the `CheckResult.as_json()` shape in
+ * `orchestrator/preflight.py`.
+ */
+export type DoctorStatus = "ok" | "warn" | "error" | "skip"
+
+export interface DoctorCheck {
+  name: string
+  status: DoctorStatus
+  detail: string
+  remediation: string | null
+}
+
+export interface DoctorSummary {
+  ok: number
+  warn: number
+  error: number
+  skip: number
+}
+
+export interface DoctorReport {
+  project: { id: string; root: string }
+  backend: string
+  checks: DoctorCheck[]
+  summary: DoctorSummary
+  exit_code: number
+}
