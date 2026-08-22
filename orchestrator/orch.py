@@ -1548,7 +1548,89 @@ def _run_atomize_subcommand(argv: list[str]) -> int:
     return atomize_main(argv)
 
 
-_SUBCOMMANDS = ("init", "atomize", "dashboard")
+def _run_task_status_subcommand(argv: list[str]) -> int:
+    """Handle `orch task-status <task_id> <status> [--author X] [--note Y]`.
+
+    Sprint B: single-writer helper the shell scripts (`task-{start,finish,
+    block,reset}.sh`) shell into. Preserves the single-writer contract while
+    routing through the active backend (file → tasks.json via legacy scripts;
+    sqlite → tasks_runtime row).
+
+    Exit codes:
+      0  success
+      1  config / project layout error
+      2  unknown task id
+      3  illegal transition
+    """
+    p = argparse.ArgumentParser(
+        prog="orch task-status",
+        description=(
+            "Single-writer helper. Updates task status via the active "
+            "state backend. Called by scripts/task-*.sh."
+        ),
+    )
+    p.add_argument("task_id", metavar="TASK_ID")
+    p.add_argument(
+        "status",
+        choices=["backlog", "todo", "in-progress", "done", "blocked"],
+    )
+    p.add_argument("--author", default="orch", help="Comment author (default: orch)")
+    p.add_argument("--note", default="", help="Free-form comment appended to the task")
+    p.add_argument("--project-root", default=None, metavar="PATH",
+                   help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
+    p.add_argument("--project-id", default=None, metavar="ID",
+                   help="Project id override. Env fallback: ORCH_PROJECT_ID.")
+    p.add_argument("--config", default="orchestrator/config.yaml",
+                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+    args = p.parse_args(argv)
+
+    paths = resolve_project_paths(
+        project_root_arg=args.project_root,
+        project_id_arg=args.project_id,
+        config_arg=args.config,
+    )
+    try:
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except (FileNotFoundError, Exception) as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.state import get_backend
+
+    backend = get_backend(paths, cfg)
+    # For sqlite, ensure bootstrap has been done so tasks_runtime is seeded.
+    try:
+        from orchestrator.state import load_tasks
+
+        tasks = load_tasks(paths.tasks_json)
+        backend.bootstrap(tasks)
+    except Exception:  # noqa: BLE001 — bootstrap is best-effort here
+        pass
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        backend.set_task_status(
+            args.task_id,
+            args.status,  # type: ignore[arg-type]
+            author=args.author,
+            note=args.note,
+            ts=ts,
+        )
+    except KeyError:
+        print(f"unknown task id: {args.task_id!r}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"illegal transition: {exc}", file=sys.stderr)
+        return 3
+    return 0
+
+
+_SUBCOMMANDS = ("init", "atomize", "dashboard", "task-status")
 
 
 def _print_subcommand_list() -> int:
@@ -1560,6 +1642,7 @@ def _print_subcommand_list() -> int:
     print("  orch init PATH [FLAGS]    Scaffold a new orch project at PATH")
     print("  orch atomize [FLAGS]      Convert markdown specs → tasks.json (diff-first)")
     print("  orch dashboard [FLAGS]    Launch the read-only FastAPI dashboard")
+    print("  orch task-status ID STATUS  Single-writer helper for scripts/task-*.sh")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
@@ -1667,6 +1750,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_init_subcommand(incoming[1:])
     if incoming and incoming[0] == "atomize":
         return _run_atomize_subcommand(incoming[1:])
+    if incoming and incoming[0] == "task-status":
+        return _run_task_status_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)

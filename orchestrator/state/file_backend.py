@@ -774,12 +774,17 @@ class FileBackend:
         # Validate the id up front so unknown tasks fail with KeyError.
         if self.get_task_status(task_id) is None and self.project_root is not None:
             raise KeyError(task_id)
+        # Route through package namespace so tests / monkeypatches on
+        # `orchestrator.state.call_task_*` propagate here too.
+        start = _lookup_shell("call_task_start", _call_task_start_direct)
+        finish = _lookup_shell("call_task_finish", _call_task_finish_direct)
+        block = _lookup_shell("call_task_block", _call_task_block_direct)
         if status == "in-progress":
-            call_task_start(task_id, author=author, project_root=self.project_root)
+            start(task_id, author=author, project_root=self.project_root)
         elif status == "done":
-            call_task_finish(task_id, note or "done", author, project_root=self.project_root)
+            finish(task_id, note or "done", author, project_root=self.project_root)
         elif status == "blocked":
-            call_task_block(task_id, note or "blocked", author, project_root=self.project_root)
+            block(task_id, note or "blocked", author, project_root=self.project_root)
         elif status == "todo":
             # No dedicated shell script for reset in the current templates.
             # Best effort: shell out if the operator added one, else no-op.
