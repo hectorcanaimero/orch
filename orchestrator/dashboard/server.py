@@ -706,6 +706,18 @@ def create_app(
     def api_config():
         return JSONResponse(_load_project_config(app_state))
 
+    @app.get("/api/whoami", name="api_whoami")
+    def api_whoami():
+        """Return the resolved dashboard profile for the current session.
+
+        Sprint E-6: the SPA uses this to hide operator-only nav items
+        (Doctor, Tunnel, Metrics, Logs) when running in stakeholder mode.
+        Deliberately NOT part of `/api/config` — that endpoint is on the
+        operator-only path and its payload would leak orchestrator knobs
+        (budgets, findings repo, state backend) to a stakeholder session.
+        """
+        return JSONResponse({"profile": app_state.config.profile})
+
     @app.get("/api/doctor", name="api_doctor")
     def api_doctor():
         # Reuse the same code path as `orch doctor --json` — never
