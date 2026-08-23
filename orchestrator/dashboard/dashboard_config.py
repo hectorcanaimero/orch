@@ -61,6 +61,11 @@ DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
     # (the token is); leaking the mode indicator is safe. Token auth still
     # applies via TokenAuthMiddleware — this only bypasses the profile guard.
     "api_whoami",
+    # Documents view: PRD / SPEC / arch markdown files are project artefacts
+    # stakeholders should be able to read. Listing and fetching content are
+    # both read-only and never expose runtime secrets.
+    "api_docs_list",
+    "api_docs_content",
     # SPA-at-root migration: the React SPA now lives at `/` (moved from
     # `/spa/`) with its bundled assets under `/assets/*`. Two allow-list
     # forms cover it:

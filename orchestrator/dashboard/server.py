@@ -718,6 +718,109 @@ def create_app(
         """
         return JSONResponse({"profile": app_state.config.profile})
 
+    # ------------------------------------------------------------------
+    # Documents API — read-only markdown file browser for stakeholders
+    # ------------------------------------------------------------------
+    _DOC_ROOTS = ("docs", "specs", "openspec")
+    _DOC_CATEGORY_LABELS: dict[str, str] = {
+        "docs": "Docs",
+        "specs": "Specs",
+        "openspec": "OpenSpec",
+    }
+    _MAX_DOC_BYTES = 512 * 1024  # 512 KB hard cap per file
+
+    def _extract_doc_title(path: Path) -> str:
+        """Return the first # heading in a markdown file or the stem."""
+        try:
+            for line in path.open(encoding="utf-8", errors="replace"):
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    return stripped[2:].strip()
+                if stripped:
+                    break  # non-blank, non-heading → fall through
+        except OSError:
+            pass
+        return path.stem.replace("-", " ").replace("_", " ").title()
+
+    def _is_safe_doc_path(rel: str, root: Path) -> bool:
+        """True iff rel resolves inside root and ends with .md."""
+        if not rel.endswith(".md"):
+            return False
+        try:
+            resolved = (root / rel).resolve()
+            return resolved.is_relative_to(root.resolve())
+        except (ValueError, OSError):
+            return False
+
+    @app.get("/api/docs", name="api_docs_list")
+    def api_docs_list():
+        """List all markdown documents grouped by top-level directory.
+
+        Scans docs/, specs/, and openspec/ under the project root.
+        Returns a JSON array of document descriptors. This endpoint is on
+        the stakeholder allow-list so operators and stakeholders alike can
+        browse project artefacts.
+        """
+        import os as _os
+
+        root = app_state.paths.project_root
+        items: list[dict[str, Any]] = []
+        for doc_root in _DOC_ROOTS:
+            base = root / doc_root
+            if not base.is_dir():
+                continue
+            category_label = _DOC_CATEGORY_LABELS.get(doc_root, doc_root.title())
+            for dirpath, _dirs, filenames in _os.walk(base):
+                for fname in sorted(filenames):
+                    if not fname.endswith(".md"):
+                        continue
+                    full = Path(dirpath) / fname
+                    try:
+                        stat = full.stat()
+                    except OSError:
+                        continue
+                    rel = full.relative_to(root).as_posix()
+                    # sub-category: second path component (e.g. docs/prd → "prd")
+                    parts = Path(rel).parts
+                    sub = parts[1].upper() if len(parts) > 2 else category_label
+                    items.append({
+                        "path": rel,
+                        "title": _extract_doc_title(full),
+                        "category": category_label,
+                        "sub_category": sub,
+                        "size_bytes": stat.st_size,
+                        "modified_iso": __import__("datetime").datetime.fromtimestamp(
+                            stat.st_mtime,
+                            tz=__import__("datetime").timezone.utc,
+                        ).isoformat(),
+                    })
+        return JSONResponse({"docs": items})
+
+    @app.get("/api/docs/content", name="api_docs_content")
+    def api_docs_content(path: str):
+        """Return the raw markdown content of a project document.
+
+        `path` must be relative to the project root and resolve within it
+        (path-traversal guard). Only .md files are served. Content is
+        returned as plain text so the SPA can render it with any MD library.
+        """
+        from fastapi.responses import PlainTextResponse
+
+        root = app_state.paths.project_root
+        if not _is_safe_doc_path(path, root):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="invalid document path")
+        full = root / path
+        try:
+            data = full.read_bytes()
+        except OSError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="document not found")
+        if len(data) > _MAX_DOC_BYTES:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=413, detail="document too large")
+        return PlainTextResponse(data.decode("utf-8", errors="replace"))
+
     @app.get("/api/doctor", name="api_doctor")
     def api_doctor():
         # Reuse the same code path as `orch doctor --json` — never
