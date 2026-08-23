@@ -15,6 +15,23 @@ export interface StakeholderMilestone {
   done: boolean
 }
 
+export interface StakeholderPhase {
+  phase: number
+  name: string
+  total: number
+  done: number
+  in_progress: number
+  blocked: number
+  backlog: number
+  estimate_hours: number
+  pct_done: number
+}
+
+export interface SpendByDay {
+  date: string
+  cost: number
+}
+
 export interface StakeholderSummary {
   project_id: string
   summary: StakeholderSummaryStats
@@ -22,6 +39,10 @@ export interface StakeholderSummary {
   spend_rounded_usd: number
   eta_hours: number | null
   refresh_interval_s: number
+  // Sprint E-7: enhanced stakeholder view
+  phases_timeline: StakeholderPhase[]
+  spend_by_day: SpendByDay[]
+  exec_summary: string
 }
 
 /**
