@@ -15,7 +15,8 @@ import type {
 const TOKEN_KEY = "orch_token"
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:7420"
+  import.meta.env.VITE_API_BASE_URL ??
+  (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:7420")
 
 /**
  * Returns the current bearer token from localStorage (or null).
