@@ -14,7 +14,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1031 passed + 2 skipped + 1 pre-existing failure (`test_router.py::test_validate_all_models_passes_on_shipping_router`, unrelated to sprint work). New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
+- **Tests**: `pytest` from repo root. Full suite is 1061 passed + 2 skipped + 1 pre-existing failure (`test_router.py::test_validate_all_models_passes_on_shipping_router`, unrelated to sprint work). New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
 - **Never build after changes.** Type-check / test only.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**

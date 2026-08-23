@@ -27,30 +27,30 @@ ROUTER_PATH = Path(__file__).parent.parent / "model_router.yaml"
 # 2026-08-20 (from user-provided audit). Provider-prefixed form matches how
 # they appear in `model_router.yaml`.
 ACCEPTED_OPENCODE_MODELS: set[str] = {
-    # xAI
-    "xai/grok-4.5",
-    # OpenAI (via opencode-go pass-through)
+    # xAI (normalized to opencode-go/ prefix)
+    "opencode-go/grok-4.5",
+    # OpenAI (via opencode-go pass-through — openai/ prefix works locally)
     "openai/gpt-5.6-luna",
-    # Z.ai GLM family
-    "zai/glm-5.3",
-    "zai/glm-5.2",
+    # Z.ai GLM family (normalized to opencode-go/ prefix)
+    "opencode-go/glm-5.3",
+    "opencode-go/glm-5.2",
     "opencode-go/glm-5.1",  # legacy key, still accepted
-    # Moonshot / Kimi
-    "moonshot/kimi-k3",
-    "moonshot/kimi-k2.7-code",
-    "moonshot/kimi-k2.6",
-    # Xiaomi MiMo
-    "xiaomi/mimo-v2.5-pro",
-    "xiaomi/mimo-v2.5",
-    # Alibaba Qwen
-    "alibaba/qwen3.8-max",
-    "alibaba/qwen3.7-max",
-    "alibaba/qwen3.7-plus",
-    "alibaba/qwen3.6-plus",
-    # MiniMax
-    "minimax/minimax-m3",
-    "minimax/minimax-m2.7",
-    # DeepSeek
+    # Moonshot / Kimi (normalized to opencode-go/ prefix)
+    "opencode-go/kimi-k3",
+    "opencode-go/kimi-k2.7-code",
+    "opencode-go/kimi-k2.6",
+    # Xiaomi MiMo (normalized to opencode-go/ prefix)
+    "opencode-go/mimo-v2.5-pro",
+    "opencode-go/mimo-v2.5",
+    # Alibaba Qwen (normalized to opencode-go/ prefix)
+    "opencode-go/qwen3.8-max",
+    "opencode-go/qwen3.7-max",
+    "opencode-go/qwen3.7-plus",
+    "opencode-go/qwen3.6-plus",
+    # MiniMax (normalized to opencode-go/ prefix)
+    "opencode-go/minimax-m3",
+    "opencode-go/minimax-m2.7",
+    # DeepSeek (deepseek/ prefix works locally — no change needed)
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     # (Muse Spark, Hy3 intentionally skipped — TODO block at end of yaml)
@@ -61,19 +61,19 @@ ACCEPTED_OPENCODE_MODELS: set[str] = {
 
 # For each stale route key, expected new `cli_model` value.
 EXPECTED_CLI_MODEL_RENAMES: dict[str, str] = {
-    "opencode-go/minimax-m2.5": "minimax/minimax-m2.7",
-    "opencode-go/grok-4.6": "xai/grok-4.5",
+    "opencode-go/minimax-m2.5": "opencode-go/minimax-m2.7",
+    "opencode-go/grok-4.6": "opencode-go/grok-4.5",
     "opencode-go/gemini-3.0-flash": "deepseek/deepseek-v4-flash",
-    "opencode/gemini-3.0-pro": "xai/grok-4.5",
-    "opencode-go/mimo-v2.5": "xiaomi/mimo-v2.5",
+    "opencode/gemini-3.0-pro": "opencode-go/grok-4.5",
+    "opencode-go/mimo-v2.5": "opencode-go/mimo-v2.5",
 }
 
 
 EXPECTED_FALLBACK_RENAMES: dict[str, str | None] = {
-    # opencode/gemini-3.0-pro rerouted to grok-4.5 → fallback = deepseek-v4-pro
+    # opencode/gemini-3.0-pro rerouted to opencode-go/grok-4.5 → fallback = deepseek-v4-pro
     "opencode/gemini-3.0-pro": "deepseek/deepseek-v4-pro",
-    # opencode-go/mimo-v2.5 restored → fallback = mimo-v2.5-pro
-    "opencode-go/mimo-v2.5": "xiaomi/mimo-v2.5-pro",
+    # opencode-go/mimo-v2.5 restored → fallback = opencode-go/mimo-v2.5-pro
+    "opencode-go/mimo-v2.5": "opencode-go/mimo-v2.5-pro",
     # gpt-5.6-codex fallback typo fix (WARN log said gpt-5.4)
     "opencode/gpt-5.6-codex": "gpt-5.4",
 }
