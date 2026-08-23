@@ -121,6 +121,12 @@ class DashboardConfig:
     need to touch config.yaml. Backwards-compatible: `profile` defaults to
     `operator`, `token` defaults to `None` (auth off), routes default to
     the built-in allow-list.
+
+    `server_port` / `server_host` come from an optional top-level
+    `server:` block in `dashboard.yaml`. Both default to `None` — the CLI
+    resolves the actual bind after applying the flag > env > config >
+    hardcoded-default precedence. Keeping them nullable here means an
+    absent block is trivially distinguishable from an explicit value.
     """
 
     kanban: KanbanDefaults
@@ -128,6 +134,8 @@ class DashboardConfig:
     token: str | None = None
     stakeholder_routes: tuple[str, ...] = DEFAULT_STAKEHOLDER_ROUTES
     tunnel: TunnelConfig = field(default_factory=TunnelConfig)
+    server_port: int | None = None
+    server_host: str | None = None
 
     @classmethod
     def load(
@@ -200,6 +208,7 @@ class DashboardConfig:
         )
         routes = _resolve_routes(cfg_block.get("stakeholder_routes"))
         tunnel = parse_tunnel_section(merged.get("tunnel"))
+        server_port, server_host = parse_server_section(merged.get("server"))
 
         return cls(
             kanban=kanban,
@@ -207,6 +216,8 @@ class DashboardConfig:
             token=token,
             stakeholder_routes=routes,
             tunnel=tunnel,
+            server_port=server_port,
+            server_host=server_host,
         )
 
 
@@ -378,6 +389,58 @@ def parse_tunnel_section(raw: Any) -> TunnelConfig:
         startup_probe_timeout_s=startup_probe_timeout_s,
         url_parse_timeout_s=url_parse_timeout_s,
     )
+
+
+def parse_server_section(raw: Any) -> tuple[int | None, str | None]:
+    """Parse the optional `server:` block from `dashboard.yaml`.
+
+    Returns `(port, host)` — either or both may be `None` if the block is
+    absent or only sets one field. On any invalid value we raise
+    `ConfigError`, matching the tunnel section's fail-loud stance (better
+    to surface a bad config at boot than silently ignore it and confuse
+    the operator later).
+
+    Validation:
+        - `server` must be a mapping.
+        - `port`, when present, must be an int in [1, 65535].
+        - `host`, when present, must be a non-empty string.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"server: expected mapping, got {type(raw).__name__}"
+        )
+
+    port: int | None = None
+    if "port" in raw and raw["port"] is not None:
+        port_raw = raw["port"]
+        # Reject bool (bool is a subclass of int but "port: true" is nonsense).
+        if isinstance(port_raw, bool):
+            raise ConfigError(
+                f"server.port must be an integer in [1, 65535], got {port_raw!r}"
+            )
+        try:
+            port = int(port_raw)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"server.port must be an integer in [1, 65535], got {port_raw!r}"
+            )
+        if port < 1 or port > 65535:
+            raise ConfigError(
+                f"server.port must be in [1, 65535], got {port}"
+            )
+
+    host: str | None = None
+    if "host" in raw and raw["host"] is not None:
+        host_raw = raw["host"]
+        if not isinstance(host_raw, str) or not host_raw.strip():
+            raise ConfigError(
+                "server.host must be a non-empty string"
+            )
+        host = host_raw.strip()
+
+    return port, host
 
 
 def _coerce_bounded_int(value: Any, *, key: str, low: int, high: int) -> int:

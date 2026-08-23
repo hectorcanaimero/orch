@@ -3,6 +3,15 @@
 #
 # Ship these defaults with the package; a project can override by dropping
 # `<project_root>/dashboard.yaml` — same schema.
+
+# Bind for `orch dashboard`. Handy when you run orch in multiple projects
+# simultaneously — set a distinct port per project so bookmarks stay stable.
+# CLI flags (--port / --host) override, then env (ORCH_DASHBOARD_PORT /
+# ORCH_DASHBOARD_HOST), then this block, then the hardcoded default.
+# server:
+#   port: 7420
+#   host: 127.0.0.1
+
 kanban:
   wip_default: null         # integer or null. null = no WIP badge unless ?wip=N.
   sort_default: null        # "impact" | null (default = phase asc + id asc).

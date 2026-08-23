@@ -25,13 +25,18 @@ def _restore_env(monkeypatch: pytest.MonkeyPatch):
     """`_run_dashboard_subcommand` mutates os.environ directly (that's the
     spec — CLI --token must survive through server.run into DashboardConfig
     lookups). Snapshot + restore per-test so no test leaks into a sibling.
+
+    Also cleans the bind-related env vars added by the per-project sticky
+    port feature so tests don't inherit host/port from the outer shell.
     """
-    prev = os.environ.get("ORCH_DASHBOARD_TOKEN")
+    keys = ("ORCH_DASHBOARD_TOKEN", "ORCH_DASHBOARD_PORT", "ORCH_DASHBOARD_HOST")
+    snapshot = {k: os.environ.get(k) for k in keys}
     yield
-    if prev is None:
-        os.environ.pop("ORCH_DASHBOARD_TOKEN", None)
-    else:
-        os.environ["ORCH_DASHBOARD_TOKEN"] = prev
+    for k, v in snapshot.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 def _run_dashboard(argv: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[int, MagicMock]:
