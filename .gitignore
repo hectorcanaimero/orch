@@ -27,6 +27,10 @@ build/
 .playwright-mcp/
 .mypy_cache/
 .ruff_cache/
+# SDD / brainstorm artifacts — local design docs, not part of the codebase
+docs/brainstorm/
+docs/design/
+
 # Playwright preview screenshots (dev only)
 /*.png
 /tasks.json
