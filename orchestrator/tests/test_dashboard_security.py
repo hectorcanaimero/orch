@@ -43,6 +43,10 @@ OPERATOR_ONLY_ROUTES: list[tuple[str, str]] = [
 
 STAKEHOLDER_SAFE_ROUTES: list[tuple[str, str]] = [
     ("GET", "/stakeholder/summary"),
+    # Sprint E-6 UX: the SPA reads its own profile to gate nav visibility.
+    # Must succeed in stakeholder mode with a valid token so the frontend
+    # can hide operator-only entries without hitting a 403.
+    ("GET", "/api/whoami"),
 ]
 
 

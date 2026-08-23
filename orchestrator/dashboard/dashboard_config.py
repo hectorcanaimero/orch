@@ -56,6 +56,11 @@ DEFAULT_STAKEHOLDER_ROUTES: tuple[str, ...] = (
     # Sprint E-5: capabilities is intentionally auth-free so the SPA can
     # decide whether to render the tunnel panel BEFORE requesting a token.
     "api_tunnel_capabilities",
+    # Sprint E-6 UX: the SPA reads its own profile from /api/whoami to hide
+    # operator-only nav items in stakeholder mode. Profile is not a secret
+    # (the token is); leaking the mode indicator is safe. Token auth still
+    # applies via TokenAuthMiddleware — this only bypasses the profile guard.
+    "api_whoami",
     # SPA-at-root migration: the React SPA now lives at `/` (moved from
     # `/spa/`) with its bundled assets under `/assets/*`. Two allow-list
     # forms cover it:

@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react"
-import { AlertTriangle } from "lucide-react"
+import { useMemo, useRef, useState } from "react"
+import { AlertTriangle, Maximize2, Minimize2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { KanbanColumn, type KanbanStatus } from "@/components/KanbanColumn"
 import { LiveStatusPill } from "@/components/LiveStatusPill"
@@ -12,7 +13,9 @@ import {
 } from "@/components/TaskFiltersBar"
 import { TaskDetailModal } from "@/components/TaskDetailModal"
 import { useEventStream } from "@/hooks/useEventStream"
+import { useFullscreen } from "@/hooks/useFullscreen"
 import { useTasks } from "@/hooks/useTasks"
+import { cn } from "@/lib/utils"
 import type { Task } from "@/lib/types"
 
 const STATUS_TO_COLUMN: Record<string, KanbanStatus> = {
@@ -54,6 +57,11 @@ export function KanbanPage() {
 
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
 
+  // Sprint E-6: fullscreen the board region (not the page shell) so operators
+  // can zoom the columns without losing the sidebar/nav on exit.
+  const boardRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, toggleFullscreen] = useFullscreen(boardRef)
+
   const backendFilters = useMemo(
     () =>
       toTaskFilters({
@@ -91,8 +99,14 @@ export function KanbanPage() {
   const grouped = data ? groupTasks(data.tasks) : null
 
   return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
+    // Fixed viewport column ONLY on xl (where all 4 columns fit in one row).
+    // On smaller breakpoints the columns stack and the page scrolls naturally
+    // — locking height there would push filters/header off-screen. `h-full`
+    // instead of `h-[calc(100vh-4rem)]` at xl doesn't work because AppLayout
+    // doesn't stretch this child; we need the explicit viewport calc.
+    // 4rem accounts for AppLayout's py-8 (2rem top + 2rem bottom).
+    <div className="flex flex-col gap-4 xl:h-[calc(100vh-4rem)]">
+      <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Kanban</h1>
           <p className="text-sm text-muted-foreground">
@@ -101,31 +115,49 @@ export function KanbanPage() {
               : "Loading tasks…"}
           </p>
         </div>
-        <LiveStatusPill status={streamStatus} lastEventAt={lastEventAt} />
+        <div className="flex items-center gap-2">
+          <LiveStatusPill status={streamStatus} lastEventAt={lastEventAt} />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {isFullscreen ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
       </header>
 
-      <TaskFiltersBar
-        value={filters}
-        onChange={setFilters}
-        phaseOptions={phaseOptions}
-        modelOptions={modelOptions}
-      />
+      <div className="flex-shrink-0">
+        <TaskFiltersBar
+          value={filters}
+          onChange={setFilters}
+          phaseOptions={phaseOptions}
+          modelOptions={modelOptions}
+        />
+      </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Skeleton className="h-80" />
-          <Skeleton className="h-80" />
-          <Skeleton className="h-80" />
-          <Skeleton className="h-80" />
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Skeleton className="h-full" />
+          <Skeleton className="h-full" />
+          <Skeleton className="h-full" />
+          <Skeleton className="h-full" />
         </div>
       ) : isError ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="flex-shrink-0">
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Failed to load tasks</AlertTitle>
           <AlertDescription>{error?.message ?? "Unknown error"}</AlertDescription>
         </Alert>
       ) : !data || data.tasks.length === 0 ? (
-        <div className="rounded-lg border border-dashed bg-white p-10 text-center">
+        <div className="flex-shrink-0 rounded-lg border border-dashed bg-white p-10 text-center">
           <h2 className="text-base font-medium">No tasks yet</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Run{" "}
@@ -140,7 +172,24 @@ export function KanbanPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        // `grid-rows-1` forces the single row to `1fr`, so columns get a
+        // bounded height and their inner `overflow-y-auto` finally has
+        // something to scroll against. `bg-background` + inner padding keep
+        // the fullscreen surface presentable when the browser hands us the
+        // whole viewport with no chrome.
+        <div
+          ref={boardRef}
+          className={cn(
+            "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4",
+            // xl-only: this row fills the parent's remaining height (1fr) so
+            // each KanbanColumn is bounded and its inner overflow-y-auto has
+            // something to scroll against. Below xl the row is `auto` and
+            // the page scrolls, matching the natural stacked layout.
+            "xl:min-h-0 xl:flex-1 xl:grid-rows-1",
+            "bg-background",
+            isFullscreen && "p-4",
+          )}
+        >
           {COLUMNS.map((col) => (
             <KanbanColumn
               key={col.status}

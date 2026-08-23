@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   Loader2,
+  Maximize2,
+  Minimize2,
   Network,
   RefreshCcw,
 } from "lucide-react"
@@ -18,6 +20,7 @@ import { Select } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useArchitectureHistory } from "@/hooks/useArchitectureHistory"
 import { useArchitectureStatus } from "@/hooks/useArchitectureStatus"
+import { useFullscreen } from "@/hooks/useFullscreen"
 import { useRegenerateArchitecture } from "@/hooks/useRegenerateArchitecture"
 import {
   ArchitectureAlreadyGeneratingError,
@@ -94,6 +97,8 @@ export function ArchitecturePage() {
   const regen = useRegenerateArchitecture()
 
   const [selected, setSelected] = useState<string>(CURRENT_KEY)
+  const viewerRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, toggleFullscreen] = useFullscreen(viewerRef)
 
   const iframeSrc = useMemo(() => {
     if (selected === CURRENT_KEY) return buildArchitectureIframeUrl("current")
@@ -295,6 +300,19 @@ export function ArchitecturePage() {
               </>
             )}
           </Button>
+          <Button
+            type="button"
+            onClick={toggleFullscreen}
+            variant="outline"
+            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {isFullscreen ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
+          </Button>
           <div className="text-xs text-muted-foreground">
             Last: {generatedRelative} · Source hash{" "}
             <span className="font-mono">{shortHash(data.source_hash)}</span> ·{" "}
@@ -355,8 +373,13 @@ export function ArchitecturePage() {
       </header>
 
       {/* Iframe body — min-h-0 lets the flex child shrink so the iframe
-          actually fills the remaining viewport height instead of overflowing. */}
-      <div className="relative flex min-h-0 flex-1 overflow-hidden rounded-md border bg-background">
+          actually fills the remaining viewport height instead of overflowing.
+          `viewerRef` is the fullscreen target — putting it here (not on the
+          outer flex column) keeps the header out of the fullscreen surface. */}
+      <div
+        ref={viewerRef}
+        className="relative flex min-h-0 flex-1 overflow-hidden rounded-md border bg-background"
+      >
         <iframe
           key={iframeKey}
           src={iframeSrc}
