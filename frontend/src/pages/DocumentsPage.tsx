@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { AlertTriangle, FileText, Loader2 } from "lucide-react"
+import { AlertTriangle, FileText } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { useDocContent, useDocs, type DocEntry } from "@/hooks/useDocs"
@@ -31,7 +30,7 @@ function DocSidebar({
   onSelect: (path: string) => void
 }) {
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto">
       <nav className="space-y-4 p-3">
         {Object.entries(grouped).map(([category, subs]) => (
           <div key={category}>
@@ -66,7 +65,7 @@ function DocSidebar({
           </div>
         ))}
       </nav>
-    </ScrollArea>
+    </div>
   )
 }
 
@@ -98,11 +97,11 @@ function MarkdownViewer({ path }: { path: string }) {
   }
 
   return (
-    <ScrollArea className="h-full">
+    <div className="h-full overflow-y-auto">
       <article className="prose prose-zinc max-w-none p-6 prose-headings:font-semibold prose-headings:tracking-tight prose-code:rounded prose-code:bg-zinc-100 prose-code:px-1 prose-code:py-0.5 prose-code:text-sm prose-pre:bg-zinc-100 prose-pre:text-sm">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{data ?? ""}</ReactMarkdown>
       </article>
-    </ScrollArea>
+    </div>
   )
 }
 
@@ -114,7 +113,8 @@ function EmptyState({ total }: { total: number }) {
           <FileText className="mx-auto h-10 w-10 text-muted-foreground/40" />
           <h2 className="mt-3 text-base font-medium">No documents found</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add markdown files to <code className="rounded bg-zinc-100 px-1 text-xs">docs/</code>,{" "}
+            Add markdown files to{" "}
+            <code className="rounded bg-zinc-100 px-1 text-xs">docs/</code>,{" "}
             <code className="rounded bg-zinc-100 px-1 text-xs">specs/</code>, or{" "}
             <code className="rounded bg-zinc-100 px-1 text-xs">openspec/</code>.
           </p>
@@ -176,7 +176,9 @@ export function DocumentsPage() {
       <header className="mb-4 flex-shrink-0">
         <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
         <p className="text-sm text-muted-foreground">
-          {total === 0 ? "No documents" : `${total} document${total !== 1 ? "s" : ""}`}
+          {total === 0
+            ? "No documents"
+            : `${total} document${total !== 1 ? "s" : ""}`}
         </p>
       </header>
 
