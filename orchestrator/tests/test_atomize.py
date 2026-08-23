@@ -10,6 +10,12 @@ Cobertura mínima MVP:
     - Merge: convive con IDs legacy sin tocarlos.
     - Diff: no crashea con distintos buckets.
     - Roundtrip: parse → merge → serializar → ``load_tasks`` carga OK.
+
+Cobertura orch-spec (issue #28):
+    - ``TestOrchSpecOutputFormat``: valida el output EXACTO que genera
+      ``orch-spec`` — frontmatter + labels acentuados ES (Estimación,
+      Razón, Modelo) + sub-bullets Files + descripción multiline.
+      Fixture: ``fixtures/atomize/orch_spec_output.md``.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import pytest
 
 from orchestrator.atomize import (
     MergeDiff,
+    ParseResult,
     ParsedTask,
     _iter_spec_files,
     load_raw_tasks_json,
@@ -594,9 +601,6 @@ class TestRenderDiff:
         merged, diff = merge_tasks(existing, [p])
         buf = io.StringIO()
         console = Console(file=buf, force_terminal=False, width=120)
-        # parse fake
-        from orchestrator.atomize import ParseResult
-
         parse = ParseResult(tasks=[p], files_scanned=[Path("x.md")])
         render_diff(diff, parse, console)
         out = buf.getvalue()
@@ -607,8 +611,6 @@ class TestRenderDiff:
 
     def test_render_list(self) -> None:
         p = _parsed()
-        from orchestrator.atomize import ParseResult
-
         parse = ParseResult(tasks=[p], files_scanned=[Path("x.md")])
         buf = io.StringIO()
         console = Console(file=buf, force_terminal=False, width=120)
@@ -712,3 +714,118 @@ class TestCliMain:
             ]
         )
         assert rc == 0
+
+
+# ---- orch-spec exact output format ---------------------------------------
+# These tests use a fixture that mirrors exactly what the orch-spec skill
+# generates: frontmatter + accented ES labels (Estimación, Razón, Modelo) +
+# sub-bullet Files. Guards against regressions where label mapping, accent
+# normalisation, or frontmatter parsing break the atomizer pipeline.
+
+ORCH_SPEC_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "atomize" / "orch_spec_output.md"
+)
+
+
+class TestOrchSpecOutputFormat:
+    """Parse a file that exactly mirrors orch-spec generated output."""
+
+    def _result(self) -> ParseResult:
+        return parse_spec_file(ORCH_SPEC_FIXTURE, ORCH_SPEC_FIXTURE.parent)
+
+    def test_frontmatter_parsed_no_warnings(self) -> None:
+        """Valid orch-spec frontmatter must not produce warnings."""
+        r = self._result()
+        # Only acceptable warning: consumed_by check passes because we include
+        # orch-atomizer. There should be zero warnings on a clean spec.
+        assert r.warnings == [], f"Unexpected warnings: {r.warnings}"
+
+    def test_all_three_tasks_extracted(self) -> None:
+        r = self._result()
+        ids = [t.id for t in r.tasks]
+        assert ids == ["F1.1.T1", "F1.1.T2", "F1.1.T3"]
+
+    def test_accented_estimacion_label_parsed(self) -> None:
+        """- **Estimación**: 4h must map to estimate_hours=4.0."""
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T1"].estimate_hours == 4.0
+        assert by_id["F1.1.T2"].estimate_hours == 8.0
+
+    def test_estimacion_days_converted(self) -> None:
+        """- **Estimación**: 2d must map to estimate_hours=16.0 (2×8h)."""
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T3"].estimate_hours == 16.0
+
+    def test_accented_razon_label_parsed(self) -> None:
+        """- **Razón**: ... must map to reason field."""
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T1"].reason == "Solo tipos, Sonnet alcanza."
+
+    def test_modelo_label_parsed(self) -> None:
+        """- **Modelo**: ... must map to model field."""
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T1"].model == "claude-sonnet-4-6"
+        assert by_id["F1.1.T3"].model == "claude-opus-4-7"
+
+    def test_dependencies_parsed(self) -> None:
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T1"].dependencies == ["F0.1.T1"]
+        assert by_id["F1.1.T3"].dependencies == ["F1.1.T2", "F1.1.T1"]
+
+    def test_files_sub_bullets_parsed(self) -> None:
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        assert by_id["F1.1.T1"].files == [
+            "lib/features/auth/domain/models/user.dart",
+            "lib/features/auth/domain/models/session.dart",
+        ]
+
+    def test_description_multiline_captured(self) -> None:
+        """Multiline description before first bullet must be captured."""
+        r = self._result()
+        by_id = {t.id: t for t in r.tasks}
+        desc = by_id["F1.1.T3"].description
+        assert "Como usuario" in desc
+        assert "Happy path" in desc
+        assert "red caída" in desc
+        # Field bullets must NOT bleed into description
+        assert "**Modelo**" not in desc
+
+    def test_phase_set_from_header(self) -> None:
+        r = self._result()
+        for t in r.tasks:
+            assert t.phase == 1
+
+    def test_full_roundtrip_with_frontmatter(self, tmp_path: Path) -> None:
+        """Full parse → merge → write → load roundtrip for orch-spec output."""
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "spec.md").write_text(
+            ORCH_SPEC_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        parse = parse_specs(
+            _iter_spec_files(docs, None),
+            docs,
+            expected_project_id="sample-project",
+        )
+        assert len(parse.tasks) == 3
+        assert parse.warnings == []
+
+        tasks_json = tmp_path / "tasks.json"
+        existing = load_raw_tasks_json(tasks_json)
+        merged, diff = merge_tasks(existing, parse.tasks)
+        assert len(diff.new_tasks) == 3
+
+        write_tasks_json(tasks_json, merged, make_backup=False)
+
+        tasks = load_tasks(tasks_json)
+        by_id = {t.id: t for t in tasks}
+        assert by_id["F1.1.T3"].estimate_hours == 16.0
+        assert by_id["F1.1.T3"].dependencies == ["F1.1.T2", "F1.1.T1"]
+        assert by_id["F1.1.T3"].status == "backlog"
