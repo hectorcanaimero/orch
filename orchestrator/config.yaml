@@ -85,4 +85,4 @@ findings:
 dashboard:
   # profile: operator                                                     # operator | stakeholder | both
   # token: ""                                                             # required when profile != operator
-  board_url: "https://draw.z0n.co/editor/4177cfa1-e629-4eb0-a0a8-de925cfaaf7b"                # optional — embed an ExcaliDash canvas in the Board tab
+  # board_url: "https://draw.z0n.co/editor/YOUR-CANVAS-ID"                # optional — embed an ExcaliDash canvas in the Board tab (unset → empty-state prompt)
