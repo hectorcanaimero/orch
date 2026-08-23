@@ -11,6 +11,7 @@ import { ListPage } from "@/pages/ListPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { LogsPage } from "@/pages/LogsPage"
 import { MetricsPage } from "@/pages/MetricsPage"
+import { DocumentsPage } from "@/pages/DocumentsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
 
@@ -99,6 +100,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <ArchitecturePage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/docs"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <DocumentsPage />
                 </AppLayout>
               </ProtectedRoute>
             }

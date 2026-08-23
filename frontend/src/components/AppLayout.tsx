@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom"
 import {
   BarChart3,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   KanbanSquare,
@@ -41,6 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },
+  { to: "/docs", label: "Documents", icon: BookOpen },
   { to: "/doctor", label: "Doctor", icon: Stethoscope, operatorOnly: true },
   { to: "/tunnel", label: "Tunnel", icon: Radio, operatorOnly: true },
   { to: "/metrics", label: "Metrics", icon: BarChart3, operatorOnly: true },
