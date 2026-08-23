@@ -1940,11 +1940,91 @@ def _print_subcommand_list() -> int:
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch arch <verb>          Architecture diagram generation via archify skill")
+    print("  orch upgrade [--check]    Self-update to the latest GitHub release")
     print("  orch list                 Print this list")
     print("  orch --help               Full main-loop help (flags, exit codes)")
     print()
     print("Docs: https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.md")
     return 0
+
+
+def _run_upgrade_subcommand(argv: list[str]) -> int:
+    """Handle `orch upgrade [--check]` — self-update via pipx or pip."""
+    import importlib.metadata
+    import shutil
+    import urllib.request
+    from argparse import ArgumentParser
+
+    ap = ArgumentParser(prog="orch upgrade", description="Upgrade orch to the latest release.")
+    ap.add_argument("--check", action="store_true", help="Only report whether an upgrade is available; don't install.")
+    opts = ap.parse_args(argv)
+
+    # Current installed version.
+    try:
+        current = importlib.metadata.version("orchestrator")
+    except importlib.metadata.PackageNotFoundError:
+        print("error: cannot determine installed version", file=sys.stderr)
+        return 1
+
+    # Latest release from GitHub.
+    api_url = "https://api.github.com/repos/hectorcanaimero/orch/releases/latest"
+    try:
+        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": "orch-upgrade"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            import json as _json
+            data = _json.loads(resp.read())
+    except Exception as exc:
+        print(f"error: could not reach GitHub ({exc})", file=sys.stderr)
+        return 1
+
+    latest_tag = data.get("tag_name", "").lstrip("v")
+    assets = data.get("assets", [])
+    wheel_url = next((a["browser_download_url"] for a in assets if a["name"].endswith(".whl")), None)
+
+    if not latest_tag or not wheel_url:
+        print("error: could not parse latest release metadata", file=sys.stderr)
+        return 1
+
+    from packaging.version import Version  # noqa: PLC0415 — stdlib-like, always available via pip
+
+    try:
+        is_newer = Version(latest_tag) > Version(current)
+    except Exception:
+        is_newer = latest_tag != current
+
+    if not is_newer:
+        print(f"orch {current} is already the latest release.")
+        return 0
+
+    print(f"New release available: {current} → {latest_tag}")
+
+    if opts.check:
+        print(f"  Install with: orch upgrade")
+        return 0
+
+    # Detect install method: pipx venv path contains "pipx/venvs".
+    using_pipx = "pipx" in sys.executable
+
+    if using_pipx:
+        pipx_bin = shutil.which("pipx")
+        if not pipx_bin:
+            print("error: pipx not found in PATH", file=sys.stderr)
+            return 1
+        print(f"Upgrading via pipx → {wheel_url}")
+        result = subprocess.run([pipx_bin, "install", "--force", wheel_url])
+    else:
+        pip_bin = shutil.which("pip3") or shutil.which("pip")
+        if not pip_bin:
+            print("error: pip not found in PATH", file=sys.stderr)
+            return 1
+        print(f"Upgrading via pip → {wheel_url}")
+        result = subprocess.run([pip_bin, "install", "--force-reinstall", wheel_url])
+
+    if result.returncode == 0:
+        print(f"\norch upgraded to {latest_tag}.")
+    else:
+        print("error: upgrade command failed", file=sys.stderr)
+    return result.returncode
 
 
 def _run_init_subcommand(argv: list[str]) -> int:
@@ -3704,6 +3784,8 @@ def main(argv: list[str] | None = None) -> int:
         from orchestrator.arch import run_arch_cli
 
         return run_arch_cli(incoming[1:])
+    if incoming and incoming[0] == "upgrade":
+        return _run_upgrade_subcommand(incoming[1:])
 
     parser = _build_argparser()
     args = parser.parse_args(argv)
