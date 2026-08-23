@@ -3436,8 +3436,14 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
         prog="orch dashboard",
         description="Local read-only dashboard over tasks.json / events / spend.",
     )
-    p.add_argument("--port", type=int, default=7420, help="Bind port (default: 7420)")
-    p.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    # Both default to None on purpose — we can't distinguish "user typed
+    # --port 7420" from "user passed nothing" if the default were literal.
+    # The resolution ladder below (flag > env > dashboard.yaml server.* >
+    # hardcoded default) picks the final values after parsing.
+    p.add_argument("--port", type=int, default=None,
+                   help="Bind port (default: 7420 or dashboard.yaml server.port)")
+    p.add_argument("--host", default=None,
+                   help="Bind host (default: 127.0.0.1 or dashboard.yaml server.host)")
     p.add_argument("--project-root", default=None, metavar="PATH",
                    help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
     p.add_argument("--project-id", default=None, metavar="ID",
@@ -3488,9 +3494,26 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
         print("Install: fastapi >= 0.115, uvicorn[standard] >= 0.30, jinja2 >= 3.1",
               file=sys.stderr)
         return 1
+
+    # Resolve bind (port, host) precedence: CLI flag > env > dashboard.yaml
+    # server.* > hardcoded default. We load the config here (best-effort)
+    # so per-project sticky ports work without any flags. Bad `server:`
+    # blocks fail loudly, same policy as tunnel config.
+    resolved_port, resolved_host = _resolve_dashboard_bind(
+        cli_port=args.port,
+        cli_host=args.host,
+        project_root=args.project_root,
+    )
+
+    # One-line resolution summary so operators running multiple orch
+    # dashboards in parallel see immediately which port/project they got.
+    from pathlib import Path
+    _proj_hint = Path(args.project_root).resolve().name if args.project_root else Path.cwd().name
+    print(f"Dashboard: http://{resolved_host}:{resolved_port} (project={_proj_hint})")
+
     return dashboard_run(
-        port=args.port,
-        host=args.host,
+        port=resolved_port,
+        host=resolved_host,
         project_root=args.project_root,
         project_id=args.project_id,
         config=args.config,
@@ -3498,6 +3521,80 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
         profile=args.profile,
         token=args.token,
     )
+
+
+def _resolve_dashboard_bind(
+    *,
+    cli_port: int | None,
+    cli_host: str | None,
+    project_root: str | None,
+) -> tuple[int, str]:
+    """Apply the bind precedence for `orch dashboard`.
+
+    Order (highest wins):
+        1. CLI flag (only when actually supplied — `None` means absent).
+        2. Env var (`ORCH_DASHBOARD_PORT` / `ORCH_DASHBOARD_HOST`).
+        3. `server.port` / `server.host` in the project `dashboard.yaml`.
+        4. Hardcoded defaults: `7420` / `127.0.0.1`.
+
+    Each channel is resolved independently — a CLI `--port` combined with
+    a config-only `host` yields (flag_port, config_host).
+    """
+    from pathlib import Path
+
+    HARD_PORT = 7420
+    HARD_HOST = "127.0.0.1"
+
+    # Best-effort dashboard.yaml load. If it blows up with a real
+    # ConfigError (bad server block), let it propagate — the operator
+    # needs to see that.
+    cfg_port: int | None = None
+    cfg_host: str | None = None
+    root = Path(project_root).resolve() if project_root else Path.cwd()
+    try:
+        from orchestrator.dashboard.dashboard_config import DashboardConfig
+        cfg = DashboardConfig.load(root)
+        cfg_port = cfg.server_port
+        cfg_host = cfg.server_host
+    except ImportError:
+        # Dashboard deps not installed; the caller already handles that path.
+        pass
+
+    # Port
+    if cli_port is not None:
+        port = cli_port
+    else:
+        env_port = os.environ.get("ORCH_DASHBOARD_PORT")
+        if env_port:
+            try:
+                port = int(env_port)
+                if port < 1 or port > 65535:
+                    raise ValueError
+            except ValueError:
+                print(
+                    f"warning: ORCH_DASHBOARD_PORT={env_port!r} is not a valid "
+                    f"port; falling back to config/default.",
+                    file=sys.stderr,
+                )
+                port = cfg_port if cfg_port is not None else HARD_PORT
+        elif cfg_port is not None:
+            port = cfg_port
+        else:
+            port = HARD_PORT
+
+    # Host
+    if cli_host is not None:
+        host = cli_host
+    else:
+        env_host = os.environ.get("ORCH_DASHBOARD_HOST")
+        if env_host and env_host.strip():
+            host = env_host.strip()
+        elif cfg_host is not None:
+            host = cfg_host
+        else:
+            host = HARD_HOST
+
+    return port, host
 
 
 def _peek_dashboard_token_in_config(config_path: str) -> str | None:

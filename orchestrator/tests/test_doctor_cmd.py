@@ -262,7 +262,7 @@ def test_doctor_reports_state_db_ok_for_sqlite(
     _run_doctor_subcommand([*_common_args(root), "--json"])
     payload = json.loads(capsys.readouterr().out)
     db_check = next(c for c in payload["checks"] if c["name"] == "state.db.accessible")
-    # Fresh DB — schema version 0, expected 1 → warn.
+    # Fresh DB — schema version 0, expected 2 → warn.
     assert db_check["status"] in ("ok", "warn")
 
 
