@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
+import { useWhoami } from "@/hooks/useWhoami"
 import { cn } from "@/lib/utils"
 import type { ReactNode } from "react"
 
@@ -28,6 +29,10 @@ interface NavItem {
   label: string
   icon: typeof LayoutDashboard
   end?: boolean
+  // Sprint E-6 UX: routes fenced off by the backend's ProfileGuard for
+  // stakeholder sessions. Hiding them client-side avoids the 403 dead-end
+  // clicks and gives the curated view a cleaner sidebar.
+  operatorOnly?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -36,21 +41,31 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },
-  { to: "/doctor", label: "Doctor", icon: Stethoscope },
-  { to: "/tunnel", label: "Tunnel", icon: Radio },
-  { to: "/metrics", label: "Metrics", icon: BarChart3 },
-  { to: "/logs", label: "Logs", icon: ScrollText },
+  { to: "/doctor", label: "Doctor", icon: Stethoscope, operatorOnly: true },
+  { to: "/tunnel", label: "Tunnel", icon: Radio, operatorOnly: true },
+  { to: "/metrics", label: "Metrics", icon: BarChart3, operatorOnly: true },
+  { to: "/logs", label: "Logs", icon: ScrollText, operatorOnly: true },
 ]
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { clearToken } = useAuth()
   const navigate = useNavigate()
   const [collapsed, , toggle] = useSidebarCollapsed()
+  const { data: whoami } = useWhoami()
 
   const handleLogout = () => {
     clearToken()
     navigate("/login", { replace: true })
   }
+
+  // Sprint E-6: fail-open. If /api/whoami hasn't answered yet (undefined) OR
+  // errored out, assume operator so we never hide UI from an operator who
+  // hit a transient hiccup. Stakeholder gating only kicks in on an EXPLICIT
+  // "stakeholder" answer.
+  const isStakeholder = whoami?.profile === "stakeholder"
+  const visibleNav = isStakeholder
+    ? NAV_ITEMS.filter((item) => !item.operatorOnly)
+    : NAV_ITEMS
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -117,7 +132,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             collapsed ? "px-2" : "px-3",
           )}
         >
-          {NAV_ITEMS.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon
             return (
               <NavLink
