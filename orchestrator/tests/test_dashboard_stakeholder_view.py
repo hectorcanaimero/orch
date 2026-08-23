@@ -177,6 +177,8 @@ def test_stakeholder_summary_json_shape(tmp_path: Path) -> None:
     assert set(payload.keys()) == {
         "project_id", "summary", "milestones",
         "spend_rounded_usd", "eta_hours", "refresh_interval_s",
+        # Sprint E-7: enhanced stakeholder view
+        "phases_timeline", "spend_by_day", "exec_summary",
     }
     # Spend is rounded up in $0.50 increments.
     assert payload["spend_rounded_usd"] == pytest.approx(1.5)

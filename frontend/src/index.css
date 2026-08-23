@@ -85,3 +85,30 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* Print / PDF export — stakeholder summary */
+@media print {
+  /* Hide sidebar, nav, and non-content chrome */
+  aside,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Reset margins so content fills the page */
+  main {
+    margin-left: 0 !important;
+    padding: 1.5rem !important;
+  }
+
+  /* Ensure cards don't break across pages */
+  .card,
+  [class*="rounded-"] {
+    break-inside: avoid;
+  }
+
+  /* Remove shadow/border radius for cleaner print */
+  * {
+    box-shadow: none !important;
+  }
+}

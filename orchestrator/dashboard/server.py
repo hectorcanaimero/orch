@@ -1255,20 +1255,125 @@ def create_app(
         """Build the sanitized payload consumed by /stakeholder/summary.
 
         Deliberately narrow: only phase progress, task counts, milestones,
-        total spend (rounded up), and ETA. No per-model breakdown, no
-        raw log content, no per-task exit codes. The SPA's
-        `StakeholderSummaryPage` renders it into the curated UI.
+        total spend (rounded up), ETA, spend-by-day sparkline, phase timeline,
+        and a computed executive summary. No per-model breakdown, no raw log
+        content, no per-task exit codes.
         """
+        import datetime as _dt
+
         view = _load_project_view(app_state)
+        tasks = list(view["tasks"])
         spends = read_all_spends(paths.state_dir)
         total = total_cost(spends, pricing)
+        eta_h = eta_hours_remaining(tasks, view["human_hours"])
+
+        # ---- phase timeline --------------------------------------------------
+        # For each phase: task counts by status + estimate hours.
+        # The SPA renders this as proportional horizontal bars (Gantt-like).
+        # We use the task JSON phases list to get phase names when available.
+        raw_tasks_json: dict[str, Any] = {}
+        try:
+            import json as _json
+            raw_tasks_json = _json.loads(paths.project_root.joinpath("tasks.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        phase_name_map: dict[int, str] = {
+            int(p.get("id", 0)): str(p.get("name", f"Phase {p.get('id', 0)}"))
+            for p in raw_tasks_json.get("phases", [])
+            if isinstance(p, dict)
+        }
+
+        per_phase: dict[int, dict[str, Any]] = {}
+        for t in tasks:
+            p = t.phase
+            if p not in per_phase:
+                per_phase[p] = {
+                    "phase": p,
+                    "name": phase_name_map.get(p, f"Phase {p}"),
+                    "total": 0, "done": 0, "in_progress": 0,
+                    "blocked": 0, "backlog": 0,
+                    "estimate_hours": 0.0,
+                }
+            row = per_phase[p]
+            row["total"] += 1
+            row["estimate_hours"] = round(row["estimate_hours"] + (t.estimate_hours or 0.0), 2)
+            s = t.status
+            if s == "done":
+                row["done"] += 1
+            elif s == "in-progress":
+                row["in_progress"] += 1
+            elif s == "blocked":
+                row["blocked"] += 1
+            else:
+                row["backlog"] += 1
+
+        phases_timeline = [
+            {**row, "pct_done": round(row["done"] / row["total"] * 100) if row["total"] else 0}
+            for row in (per_phase[k] for k in sorted(per_phase))
+        ]
+
+        # ---- spend by day (last 14 days) ------------------------------------
+        # Grouped daily totals — safe to show because we never break down by model.
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=14)).date()
+        daily: dict[str, float] = {}
+        for s in spends:
+            ts_str = str(s.get("ts", ""))[:10]
+            try:
+                day = _dt.date.fromisoformat(ts_str)
+            except ValueError:
+                continue
+            if day < cutoff:
+                continue
+            cost = float(s.get("cost_usd", 0) or 0)
+            daily[ts_str] = daily.get(ts_str, 0.0) + cost
+        spend_by_day = [
+            {"date": d, "cost": round(v, 4)}
+            for d, v in sorted(daily.items())
+        ]
+
+        # ---- executive summary (computed, no LLM) ---------------------------
+        summ = view["summary"]
+        in_prog = getattr(summ, "in_progress", 0)
+        blocked = getattr(summ, "blocked", 0)
+        done = getattr(summ, "done", 0)
+        total_tasks = getattr(summ, "total", 0)
+        pct = round(getattr(summ, "percent_done", 0))
+
+        parts: list[str] = []
+        parts.append(f"Project is {pct}% complete — {done} of {total_tasks} tasks done.")
+        if in_prog:
+            parts.append(f"{in_prog} task{'s' if in_prog != 1 else ''} currently in progress.")
+        if blocked:
+            parts.append(f"{blocked} task{'s' if blocked != 1 else ''} blocked and need attention.")
+
+        # Blocked task reasons (from comments) — first comment of each blocked task.
+        blocked_reasons: list[str] = []
+        for t in tasks:
+            if t.status == "blocked" and t.comments:
+                body = t.comments[0].get("body", "").strip()
+                if body:
+                    blocked_reasons.append(f"• {t.title}: {body[:120]}")
+        if blocked_reasons:
+            parts.append("Blocked:\n" + "\n".join(blocked_reasons[:3]))
+
+        if eta_h is not None:
+            parts.append(f"Estimated {eta_h}h remaining at current pace.")
+        parts.append(f"Total AI spend to date: {round_up_to_step(total, 0.50):.2f} USD.")
+        exec_summary = " ".join(parts[:3]) + (
+            "\n\n" + "\n".join(parts[3:]) if len(parts) > 3 else ""
+        )
+
         return {
             "project_id": view["project_id"],
-            "summary": view["summary"].as_dict(),
-            "milestones": milestones_from_phases(view["tasks"]),
+            "summary": summ.as_dict(),
+            "milestones": milestones_from_phases(tasks),
             "spend_rounded_usd": round_up_to_step(total, 0.50),
-            "eta_hours": eta_hours_remaining(view["tasks"], view["human_hours"]),
+            "eta_hours": eta_h,
             "refresh_interval_s": app_state.config.kanban.refresh_interval_s or 30,
+            # New fields (Sprint E-7):
+            "phases_timeline": phases_timeline,
+            "spend_by_day": spend_by_day,
+            "exec_summary": exec_summary,
         }
 
     @app.get("/stakeholder/summary", name="stakeholder_summary_json")
