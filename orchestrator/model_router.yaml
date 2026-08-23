@@ -83,7 +83,7 @@ opencode/gemini-3.0-pro:
   # escalate to opencode/deepseek-v4-pro — different backend cli_model +
   # different family, breaks provider-level rate-limit sticky failures.
   backend: opencode
-  cli_model: xai/grok-4.5
+  cli_model: opencode-go/grok-4.5
   tier: premium
   is_premium: true
   fallback_cli_model: deepseek/deepseek-v4-pro
@@ -94,7 +94,7 @@ opencode/deepseek-v4-pro:
   cli_model: deepseek/deepseek-v4-pro
   tier: premium
   is_premium: true
-  fallback_cli_model: xiaomi/mimo-v2.5-pro
+  fallback_cli_model: opencode-go/mimo-v2.5-pro
 
 opencode-go/deepseek-v4-flash:
   backend: opencode
@@ -123,16 +123,16 @@ opencode-go/grok-4.6:
   # Renamed 2026-08-20: `xai/grok-4.6` was superseded by `xai/grok-4.5` (the
   # 4.6 slug never shipped to opencode-go; audit found this was stale).
   backend: opencode
-  cli_model: xai/grok-4.5
+  cli_model: opencode-go/grok-4.5
   tier: cheap
   is_premium: false
 
 opencode-go/kimi-k3:
   backend: opencode
-  cli_model: moonshot/kimi-k3
+  cli_model: opencode-go/kimi-k3
   tier: cheap
   is_premium: false
-  fallback_cli_model: moonshot/kimi-k2.7-code
+  fallback_cli_model: opencode-go/kimi-k2.7-code
 
 opencode-go/mimo-v2.5:
   # Restored 2026-08-20: temp claude patch (2026-08-20 earlier) is reverted
@@ -141,26 +141,26 @@ opencode-go/mimo-v2.5:
   # Escalation 2026-08 (FR-D-8): opencode-go/qwen3.7-plus (alibaba family,
   # same cheap tier) — used on attempt 3 after retryable failures.
   backend: opencode
-  cli_model: xiaomi/mimo-v2.5
+  cli_model: opencode-go/mimo-v2.5
   tier: cheap
   is_premium: false
-  fallback_cli_model: xiaomi/mimo-v2.5-pro
+  fallback_cli_model: opencode-go/mimo-v2.5-pro
   escalation_model: opencode-go/qwen3.7-plus
 
 opencode-go/minimax-m2.5:
   # Renamed 2026-08-20: `minimax/minimax-m2.5` was superseded by `-m2.7`.
   backend: opencode
-  cli_model: minimax/minimax-m2.7
+  cli_model: opencode-go/minimax-m2.7
   tier: cheap
   is_premium: false
-  fallback_cli_model: minimax/minimax-m3
+  fallback_cli_model: opencode-go/minimax-m3
 
 opencode-go/qwen3.8-max:
   backend: opencode
-  cli_model: alibaba/qwen3.8-max
+  cli_model: opencode-go/qwen3.8-max
   tier: cheap
   is_premium: false
-  fallback_cli_model: alibaba/qwen3.7-max
+  fallback_cli_model: opencode-go/qwen3.7-max
 
 # ----- NEW routes added 2026-08-20 for accepted models -----
 # Premium tier — frontier-class, long-context, high-cost.
@@ -170,88 +170,88 @@ opencode/gpt-5.6-luna:
   cli_model: openai/gpt-5.6-luna
   tier: premium
   is_premium: true
-  fallback_cli_model: xai/grok-4.5
+  fallback_cli_model: opencode-go/grok-4.5
 
 opencode/glm-5.3:
   backend: opencode
-  cli_model: zai/glm-5.3
+  cli_model: opencode-go/glm-5.3
   tier: premium
   is_premium: true
-  fallback_cli_model: zai/glm-5.2
+  fallback_cli_model: opencode-go/glm-5.2
 
 opencode/kimi-k3:
   backend: opencode
-  cli_model: moonshot/kimi-k3
+  cli_model: opencode-go/kimi-k3
   tier: premium
   is_premium: true
-  fallback_cli_model: moonshot/kimi-k2.7-code
+  fallback_cli_model: opencode-go/kimi-k2.7-code
 
 opencode/minimax-m3:
   backend: opencode
-  cli_model: minimax/minimax-m3
+  cli_model: opencode-go/minimax-m3
   tier: premium
   is_premium: true
-  fallback_cli_model: minimax/minimax-m2.7
+  fallback_cli_model: opencode-go/minimax-m2.7
 
 opencode/mimo-v2.5-pro:
   backend: opencode
-  cli_model: xiaomi/mimo-v2.5-pro
+  cli_model: opencode-go/mimo-v2.5-pro
   tier: premium
   is_premium: true
-  fallback_cli_model: xiaomi/mimo-v2.5
+  fallback_cli_model: opencode-go/mimo-v2.5
 
 # Standard tier — mid-range general-purpose.
 
 opencode/glm-5.2:
   backend: opencode
-  cli_model: zai/glm-5.2
+  cli_model: opencode-go/glm-5.2
   tier: standard
   is_premium: false
   fallback_cli_model: opencode-go/glm-5.1
 
 opencode/kimi-k2.7-code:
   backend: opencode
-  cli_model: moonshot/kimi-k2.7-code
+  cli_model: opencode-go/kimi-k2.7-code
   tier: standard
   is_premium: false
-  fallback_cli_model: moonshot/kimi-k2.6
+  fallback_cli_model: opencode-go/kimi-k2.6
 
 opencode/qwen3.7-max:
   backend: opencode
-  cli_model: alibaba/qwen3.7-max
+  cli_model: opencode-go/qwen3.7-max
   tier: standard
   is_premium: false
-  fallback_cli_model: alibaba/qwen3.7-plus
+  fallback_cli_model: opencode-go/qwen3.7-plus
 
 opencode/minimax-m2.7:
   backend: opencode
-  cli_model: minimax/minimax-m2.7
+  cli_model: opencode-go/minimax-m2.7
   tier: standard
   is_premium: false
-  fallback_cli_model: minimax/minimax-m3
+  fallback_cli_model: opencode-go/minimax-m3
 
 # Cheap tier — fast + inexpensive.
 
 opencode-go/kimi-k2.6:
   backend: opencode
-  cli_model: moonshot/kimi-k2.6
+  cli_model: opencode-go/kimi-k2.6
   tier: cheap
   is_premium: false
-  fallback_cli_model: moonshot/kimi-k2.7-code
+  fallback_cli_model: opencode-go/kimi-k2.7-code
 
 opencode-go/qwen3.7-plus:
   backend: opencode
-  cli_model: alibaba/qwen3.7-plus
+  cli_model: opencode-go/qwen3.7-plus
   tier: cheap
   is_premium: false
-  fallback_cli_model: alibaba/qwen3.6-plus
+  fallback_cli_model: opencode-go/qwen3.6-plus
 
 opencode-go/qwen3.6-plus:
   backend: opencode
-  cli_model: alibaba/qwen3.6-plus
+  cli_model: opencode-go/qwen3.6-plus
   tier: cheap
   is_premium: false
-  fallback_cli_model: alibaba/qwen3.7-plus
+  fallback_cli_model: opencode-go/qwen3.7-plus
 
 # ----- TODO: evaluate ---------------------------------------------------
 # The following models are in the opencode-go accepted list but have not

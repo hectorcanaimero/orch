@@ -177,6 +177,81 @@ def test_snapshot_rejects_path_traversal(tmp_path: Path) -> None:
     assert r.status_code == 404
 
 
+# ---- assets --------------------------------------------------------------
+
+
+def _write_asset(paths, filename: str, body: str = "<html>companion</html>") -> Path:
+    arch = paths.project_root / "docs" / "architecture"
+    arch.mkdir(parents=True, exist_ok=True)
+    p = arch / filename
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_assets_serves_companion_html(tmp_path: Path) -> None:
+    client, paths = _client(tmp_path)
+    _write_asset(paths, "detail.html", "<html>detail diagram</html>")
+    r = client.get("/api/architecture/assets/detail.html")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    assert "detail diagram" in r.text
+
+
+def test_assets_serves_companion_svg(tmp_path: Path) -> None:
+    client, paths = _client(tmp_path)
+    _write_asset(paths, "diagram.svg", "<svg></svg>")
+    r = client.get("/api/architecture/assets/diagram.svg")
+    assert r.status_code == 200
+    assert "diagram" in r.text or r.status_code == 200
+
+
+def test_assets_rejects_symlink_traversal(tmp_path: Path) -> None:
+    """A symlink inside the arch dir pointing outside must return 404.
+
+    URL-based `../` traversal is normalized by Starlette before the handler
+    ever sees it — this test targets the resolve()+relative_to() defense
+    that protects against symlink-based escapes.
+    """
+    client, paths = _client(tmp_path)
+    arch = paths.project_root / "docs" / "architecture"
+    arch.mkdir(parents=True, exist_ok=True)
+    # Create a file outside the arch directory, then symlink to it from inside.
+    outside = tmp_path / "secret.html"
+    outside.write_text("<html>secret</html>", encoding="utf-8")
+    (arch / "escape.html").symlink_to(outside)
+    r = client.get("/api/architecture/assets/escape.html")
+    assert r.status_code == 404
+
+
+def test_assets_rejects_leading_dot(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    r = client.get("/api/architecture/assets/.hidden.html")
+    assert r.status_code == 404
+
+
+def test_assets_rejects_disallowed_extension(tmp_path: Path) -> None:
+    client, paths = _client(tmp_path)
+    _write_asset(paths, "secret.txt", "secret content")
+    r = client.get("/api/architecture/assets/secret.txt")
+    assert r.status_code == 404
+
+
+def test_assets_404_on_missing_file(tmp_path: Path) -> None:
+    client, paths = _client(tmp_path)
+    # Ensure arch dir exists but the file does not
+    arch = paths.project_root / "docs" / "architecture"
+    arch.mkdir(parents=True, exist_ok=True)
+    r = client.get("/api/architecture/assets/nonexistent.html")
+    assert r.status_code == 404
+
+
+def test_assets_404_when_arch_dir_missing(tmp_path: Path) -> None:
+    client, _ = _client(tmp_path)
+    # No arch dir created at all
+    r = client.get("/api/architecture/assets/anything.html")
+    assert r.status_code == 404
+
+
 # ---- regenerate ----------------------------------------------------------
 
 

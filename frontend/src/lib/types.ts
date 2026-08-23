@@ -342,3 +342,23 @@ export type TunnelConflictError =
   | { error: "already_running"; state: TunnelState }
   | { error: "locked" }
   | { error: "not_running" }
+
+// ---- Graph view (Sprint E-6 / issue #13) -----------------------------------
+
+export interface GraphNode {
+  id: string
+  label: string
+  status: string
+  phase: number
+  on_critical_path: boolean
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
