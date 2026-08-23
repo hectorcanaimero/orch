@@ -77,7 +77,7 @@ from orchestrator.dashboard.middleware import (
 )
 from orchestrator.dashboard.pricing import PricingTable
 from orchestrator.paths import ProjectPaths, resolve_project_paths
-from orchestrator.state import load_tasks
+from orchestrator.state import get_backend as _get_state_backend, load_tasks
 
 
 # Sprint E-5: server-side idle cutoff for `/api/tunnel/logs` (TUN-10 / D3).
@@ -269,9 +269,33 @@ def _load_project_view(state: AppState) -> dict[str, Any]:
     paths = state.paths
     def _load_tasks():
         try:
-            return load_tasks(paths.tasks_json)
+            tasks = load_tasks(paths.tasks_json)
         except (OSError, ValueError):
             return []
+        # Overlay live statuses from the configured state backend.
+        # When `tasks_json_precedence: deps-only` + sqlite, orch never writes
+        # status back to tasks.json — the DB is the authoritative source.
+        # Task is frozen, so we rebuild via dataclasses.replace().
+        try:
+            import yaml
+            from dataclasses import replace as _replace
+            raw_cfg: dict[str, Any] = {}
+            try:
+                raw_cfg = yaml.safe_load(
+                    paths.config_yaml.read_text(encoding="utf-8")
+                ) or {}
+            except Exception:  # noqa: BLE001
+                pass
+            if isinstance(raw_cfg, dict):
+                runtime = _get_state_backend(paths, raw_cfg).get_all_task_status()
+                if runtime:
+                    tasks = [
+                        _replace(t, status=runtime[t.id]) if t.id in runtime else t
+                        for t in tasks
+                    ]
+        except Exception:  # noqa: BLE001 — fall back to tasks.json statuses
+            pass
+        return tasks
 
     tasks = state.cached("tasks", _load_tasks)
     events = state.cached("events", lambda: read_all_events(paths.state_dir))
