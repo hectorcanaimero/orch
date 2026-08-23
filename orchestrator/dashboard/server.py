@@ -678,6 +678,39 @@ def create_app(
                 return JSONResponse(d)
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
 
+    @app.get("/api/graph", name="api_graph")
+    def api_graph():
+        """Return the task dependency graph as nodes + edges.
+
+        Operator-only. The Graph page in the SPA uses this to render a visual
+        DAG view of the task dependency tree via Mermaid.js (CDN).
+
+        Response shape:
+            {
+                "nodes": [{"id": "T-1", "label": "…", "status": "done",
+                           "phase": 1, "on_critical_path": true}],
+                "edges": [{"source": "T-1", "target": "T-2"}]
+            }
+        """
+        view = _load_project_view(app_state)
+        critical_ids = view["critical_path"]
+        nodes = [
+            {
+                "id": t.id,
+                "label": t.title or t.id,
+                "status": t.status,
+                "phase": t.phase,
+                "on_critical_path": t.id in critical_ids,
+            }
+            for t in view["tasks"]
+        ]
+        edges = [
+            {"source": dep, "target": t.id}
+            for t in view["tasks"]
+            for dep in t.dependencies
+        ]
+        return JSONResponse({"nodes": nodes, "edges": edges})
+
     @app.get("/api/budgets", name="api_budgets")
     def api_budgets():
         """Sprint 7 — per-provider budget snapshot for the dashboard.
@@ -927,6 +960,29 @@ def create_app(
         if not current.exists():
             raise HTTPException(status_code=404, detail="no current architecture diagram")
         return FileResponse(str(current), media_type="text/html")
+
+    _ARCH_ASSET_EXTS = {".html", ".css", ".js", ".svg", ".png", ".jpg", ".json"}
+
+    @app.get("/api/architecture/assets/{path:path}", name="api_arch_assets")
+    def api_arch_assets(path: str):
+        if path.startswith("."):
+            raise HTTPException(status_code=404, detail="invalid asset path")
+        suffix = Path(path).suffix.lower()
+        if suffix not in _ARCH_ASSET_EXTS:
+            raise HTTPException(status_code=404, detail="file type not allowed")
+        arch = _arch_dir()
+        if not arch.exists():
+            raise HTTPException(status_code=404, detail="no architecture directory")
+        # resolve() + relative_to() guards against symlink-based traversal.
+        # URL-encoded `..` segments are normalized by Starlette before routing.
+        try:
+            target = (arch / path).resolve()
+            target.relative_to(arch.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail="invalid asset path")
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="asset not found")
+        return FileResponse(str(target))
 
     @app.get("/api/architecture/history", name="api_arch_history")
     def api_arch_history():
