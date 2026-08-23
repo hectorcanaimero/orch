@@ -174,13 +174,14 @@ def build_doctor_report(
             )
         )
 
-    # State backend probe (schema_version=1 == current at Sprint B).
+    # State backend probe. Bump this when a new sqlite_migrations/NNN_*.sql
+    # ships — it must equal the highest migration number in that directory.
     checks.extend(
         preflight.check_state_backend(
             state_dir=paths.state_dir,
             backend=backend_kind,
             sqlite_path=_resolve_sqlite_path(paths, cfg),
-            expected_schema_version=1,
+            expected_schema_version=2,
         )
     )
 

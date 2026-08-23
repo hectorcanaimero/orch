@@ -456,7 +456,7 @@ def test_check_state_backend_sqlite_wrong_schema(tmp_path: Path) -> None:
     results = check_state_backend(
         state_dir=state,
         backend="sqlite",
-        expected_schema_version=1,
+        expected_schema_version=2,
     )
     names = {r.name: r for r in results}
     assert names["state.db.accessible"].status == "warn"
