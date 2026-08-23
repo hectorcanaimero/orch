@@ -48,18 +48,22 @@ export function KanbanColumn({
   return (
     <section
       className={cn(
-        "flex min-h-[240px] flex-1 flex-col rounded-lg border",
+        // `h-full` (not `flex-1`) so the section fills its grid cell's
+        // height — flex-1 only means anything inside a flex container, but
+        // KanbanPage now hands us a grid row. Min height keeps the empty
+        // state readable when the viewport is tiny.
+        "flex h-full min-h-[240px] flex-col overflow-hidden rounded-lg border",
         styles.bg,
       )}
       aria-label={title}
     >
-      <header className="flex items-center justify-between border-b bg-white/60 px-3 py-2">
+      <header className="flex flex-shrink-0 items-center justify-between border-b bg-white/60 px-3 py-2">
         <div className={cn("text-sm font-semibold", styles.header)}>
           {title}
         </div>
         <Badge variant={styles.badge}>{tasks.length}</Badge>
       </header>
-      <div className="flex-1 space-y-2 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {tasks.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">
             No tasks
