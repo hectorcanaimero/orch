@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
@@ -57,6 +57,8 @@ const STATE_META: Record<
   error: { label: "Error", badge: "danger", dotClass: "text-red-500" },
 }
 
+const TUNNEL_URL_KEY = "orch_tunnel_last_url"
+
 interface TunnelPanelProps {
   capabilities: TunnelCapabilities
 }
@@ -81,6 +83,22 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
   const [logsOpen, setLogsOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [conflict, setConflict] = useState<TunnelConflictError | null>(null)
+
+  // Persist the last known URL across page refreshes. We save it when the
+  // backend returns one and clear it only when the tunnel goes back to idle.
+  const [cachedUrl, setCachedUrl] = useState<string | null>(
+    () => window.localStorage.getItem(TUNNEL_URL_KEY),
+  )
+
+  useEffect(() => {
+    if (status?.url) {
+      window.localStorage.setItem(TUNNEL_URL_KEY, status.url)
+      setCachedUrl(status.url)
+    } else if (status?.state === "idle") {
+      window.localStorage.removeItem(TUNNEL_URL_KEY)
+      setCachedUrl(null)
+    }
+  }, [status?.url, status?.state])
 
   const startMutation = useMutation({
     mutationFn: startTunnel,
@@ -111,6 +129,9 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
   const state: TunnelState = status?.state ?? "idle"
   const meta = STATE_META[state] ?? STATE_META.idle
   const running = state === "running" || state === "starting"
+
+  // Live URL takes priority; fall back to cached only while tunnel is not idle
+  const displayUrl = status?.url ?? (state !== "idle" ? cachedUrl : null)
   const transitioning =
     state === "starting" ||
     state === "stopping" ||
@@ -124,9 +145,9 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
   const conflictCopy = useMemo(() => conflictMessage(conflict), [conflict])
 
   const handleCopy = async () => {
-    if (!status?.url) return
+    if (!displayUrl) return
     try {
-      await navigator.clipboard.writeText(status.url)
+      await navigator.clipboard.writeText(displayUrl)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -222,7 +243,7 @@ export function TunnelPanel({ capabilities }: TunnelPanelProps) {
 
         {status ? (
           <>
-            <UrlRow url={status.url} onCopy={handleCopy} copied={copied} />
+            <UrlRow url={displayUrl} onCopy={handleCopy} copied={copied} />
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Restarts" value={status.restart_count} />

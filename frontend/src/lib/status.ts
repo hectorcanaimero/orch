@@ -11,6 +11,7 @@ export function statusBadgeVariant(
   switch (status) {
     case "done":
       return "success"
+    case "in-progress":
     case "in_progress":
       return "warning"
     case "blocked":

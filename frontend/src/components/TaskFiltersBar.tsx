@@ -8,6 +8,7 @@ export interface TaskFiltersBarValue {
   phase: string
   model: string
   search: string
+  status: string
 }
 
 export interface TaskFiltersBarProps {
@@ -18,11 +19,17 @@ export interface TaskFiltersBarProps {
   modelOptions: string[]
 }
 
+const STATUS_OPTIONS = [
+  { value: "backlog", label: "Backlog" },
+  { value: "todo", label: "Todo" },
+  { value: "in-progress", label: "In progress" },
+  { value: "blocked", label: "Blocked" },
+  { value: "done", label: "Done" },
+]
+
 /**
- * Shared filters bar used by Kanban + List pages. Owns only presentation —
- * the parent owns the `TaskFilters` state and the debounce mapping. Callers
- * that need to debounce the search input should debounce `value.search`
- * externally before feeding it into `useTasks`.
+ * Shared filters bar used by Kanban + Tasks pages. Owns only presentation —
+ * the parent owns the `TaskFilters` state and the debounce mapping.
  */
 export function TaskFiltersBar({
   value,
@@ -31,17 +38,30 @@ export function TaskFiltersBar({
   modelOptions,
 }: TaskFiltersBarProps) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-3">
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-zinc-50 p-3">
       <div className="relative min-w-[220px] flex-1">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={value.search}
           onChange={(e) => onChange({ ...value, search: e.target.value })}
-          placeholder="Search tasks…"
+          placeholder="Search by title, description, ID…"
           className="pl-9"
         />
       </div>
-      <div className="w-40">
+      <div className="w-36">
+        <Select
+          value={value.status}
+          onChange={(e) => onChange({ ...value, status: e.target.value })}
+        >
+          <option value="">All statuses</option>
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="w-36">
         <Select
           value={value.phase}
           onChange={(e) => onChange({ ...value, phase: e.target.value })}
@@ -54,7 +74,7 @@ export function TaskFiltersBar({
           ))}
         </Select>
       </div>
-      <div className="w-56">
+      <div className="w-52">
         <Select
           value={value.model}
           onChange={(e) => onChange({ ...value, model: e.target.value })}
@@ -72,9 +92,7 @@ export function TaskFiltersBar({
 }
 
 /**
- * Debounce a value by `delayMs`. Kept alongside the filters bar because it's
- * the only common consumer — but exported so ListPage/KanbanPage can debounce
- * the search string before it hits the backend.
+ * Debounce a value by `delayMs`.
  */
 export function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -86,14 +104,13 @@ export function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 /**
- * Map the local `TaskFiltersBarValue` to the backend `TaskFilters` shape.
- * Extracted so Kanban + List behave identically (empty string means "no
- * filter", search is trimmed, phase is coerced to number).
+ * Map `TaskFiltersBarValue` to the backend `TaskFilters` shape.
  */
 export function toTaskFilters(v: TaskFiltersBarValue): TaskFilters {
   const f: TaskFilters = {}
   if (v.phase) f.phase = Number(v.phase)
   if (v.model) f.model = v.model
   if (v.search.trim()) f.q = v.search.trim()
+  if (v.status) f.status = v.status
   return f
 }

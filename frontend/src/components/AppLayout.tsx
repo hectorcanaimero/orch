@@ -39,7 +39,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Summary", icon: LayoutDashboard, end: true },
-  { to: "/list", label: "List", icon: ListIcon },
+  { to: "/list", label: "Tasks", icon: ListIcon },
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/board", label: "Board", icon: PenTool },
   { to: "/architecture", label: "Architecture", icon: Network },

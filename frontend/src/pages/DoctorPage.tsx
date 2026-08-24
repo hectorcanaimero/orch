@@ -97,9 +97,8 @@ function remediationAccentClass(status: DoctorStatus): string {
 }
 
 /**
- * Compact KPI-style pill used in the summary strip. Clicking a pill toggles a
- * status filter on the checks table below. Selected pills get a ring so the
- * active filter is obvious at a glance.
+ * Compact inline pill used in the filter bar. Clicking toggles a status
+ * filter on the checks table. Active pills get a colored ring.
  */
 function StatusPill({
   status,
@@ -121,20 +120,16 @@ function StatusPill({
       aria-pressed={active}
       aria-label={`Filter by ${meta.label.toLowerCase()} (${count})`}
       className={cn(
-        "flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-all",
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all",
         meta.pillBg,
         meta.pillText,
-        "hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-        active && "ring-2 ring-ring ring-offset-1",
+        "hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+        active ? "ring-2 ring-ring ring-offset-1 shadow-sm" : "opacity-80 hover:opacity-100",
       )}
     >
-      <span className="flex items-center gap-2">
-        <Icon className={cn("h-4 w-4 shrink-0", meta.pillIconClass)} />
-        <span className="text-xs font-semibold uppercase tracking-wide">
-          {meta.label}
-        </span>
-      </span>
-      <span className="text-lg font-semibold tabular-nums">{count}</span>
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", meta.pillIconClass)} />
+      <span className="uppercase tracking-wide">{meta.label}</span>
+      <span className="tabular-nums font-semibold">{count}</span>
     </button>
   )
 }
@@ -293,12 +288,13 @@ export function DoctorPage() {
 
       {isLoading ? (
         <>
-          <div className="grid grid-cols-4 gap-3">
-            {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-16" />
-            ))}
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-8 w-16" />
           </div>
-          <Skeleton className="h-10 w-full max-w-sm" />
           <Card>
             <div className="divide-y">
               {[0, 1, 2, 3, 4, 5].map((i) => (
@@ -316,7 +312,16 @@ export function DoctorPage() {
 
       {data ? (
         <>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="search"
+              placeholder="Filter by name…"
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              className="h-8 w-48"
+              aria-label="Filter checks by name"
+            />
+            <div className="h-4 w-px bg-zinc-200" aria-hidden />
             {STATUS_ORDER.map((s) => (
               <StatusPill
                 key={s}
@@ -328,25 +333,15 @@ export function DoctorPage() {
                 }
               />
             ))}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Input
-              type="search"
-              placeholder="Filter checks by name…"
-              value={nameFilter}
-              onChange={(e) => setNameFilter(e.target.value)}
-              className="max-w-sm"
-              aria-label="Filter checks by name"
-            />
             {statusFilter ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground"
                 onClick={() => setStatusFilter(null)}
               >
-                Clear status filter
+                Clear
               </Button>
             ) : null}
           </div>

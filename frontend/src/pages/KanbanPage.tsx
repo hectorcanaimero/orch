@@ -20,15 +20,16 @@ import type { Task } from "@/lib/types"
 
 const STATUS_TO_COLUMN: Record<string, KanbanStatus> = {
   backlog: "backlog",
-  todo: "backlog",
-  in_progress: "in_progress",
+  todo: "todo",
+  "in-progress": "in_progress",
   blocked: "blocked",
   done: "done",
 }
 
 const COLUMNS: { title: string; status: KanbanStatus }[] = [
   { title: "Backlog", status: "backlog" },
-  { title: "In progress", status: "in_progress" },
+  { title: "Todo", status: "todo" },
+  { title: "In Progress", status: "in_progress" },
   { title: "Blocked", status: "blocked" },
   { title: "Done", status: "done" },
 ]
@@ -36,6 +37,7 @@ const COLUMNS: { title: string; status: KanbanStatus }[] = [
 function groupTasks(tasks: Task[]): Record<KanbanStatus, Task[]> {
   const buckets: Record<KanbanStatus, Task[]> = {
     backlog: [],
+    todo: [],
     in_progress: [],
     blocked: [],
     done: [],
@@ -52,6 +54,7 @@ export function KanbanPage() {
     phase: "",
     model: "",
     search: "",
+    status: "",
   })
   const debouncedSearch = useDebouncedValue(filters.search, 250)
 
@@ -68,8 +71,9 @@ export function KanbanPage() {
         phase: filters.phase,
         model: filters.model,
         search: debouncedSearch,
+        status: filters.status,
       }),
-    [filters.phase, filters.model, debouncedSearch],
+    [filters.phase, filters.model, debouncedSearch, filters.status],
   )
 
   const { data, isLoading, isError, error } = useTasks(backendFilters)
@@ -97,6 +101,11 @@ export function KanbanPage() {
   const { status: streamStatus, lastEventAt } = useEventStream()
 
   const grouped = data ? groupTasks(data.tasks) : null
+
+  const taskStatusMap = useMemo(() => {
+    if (!data) return {} as Record<string, string>
+    return Object.fromEntries(data.tasks.map((t) => [t.id, t.status]))
+  }, [data])
 
   return (
     // Fixed viewport column ONLY on xl (where all 4 columns fit in one row).
@@ -144,11 +153,10 @@ export function KanbanPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Skeleton className="h-full" />
-          <Skeleton className="h-full" />
-          <Skeleton className="h-full" />
-          <Skeleton className="h-full" />
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-full" />
+          ))}
         </div>
       ) : isError ? (
         <Alert variant="destructive" className="flex-shrink-0">
@@ -180,7 +188,7 @@ export function KanbanPage() {
         <div
           ref={boardRef}
           className={cn(
-            "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4",
+            "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5",
             // xl-only: this row fills the parent's remaining height (1fr) so
             // each KanbanColumn is bounded and its inner overflow-y-auto has
             // something to scroll against. Below xl the row is `auto` and
@@ -196,6 +204,7 @@ export function KanbanPage() {
               title={col.title}
               status={col.status}
               tasks={grouped ? grouped[col.status] : []}
+              taskStatusMap={taskStatusMap}
               onCardClick={(id) => setOpenTaskId(id)}
             />
           ))}
