@@ -18,5 +18,22 @@ export default defineConfig(() => ({
   },
   server: {
     port: 5173,
+    proxy: {
+      // Proxy /api requests to the FastAPI backend during dev
+      '/api': {
+        target: 'http://127.0.0.1:7420',
+        changeOrigin: true,
+      },
+      // Proxy /logs/stream (SSE) to the FastAPI backend
+      '/logs/stream': {
+        target: 'http://127.0.0.1:7420',
+        changeOrigin: true,
+      },
+      // Proxy tunnel logs endpoint (SSE)
+      '/api/tunnel/logs': {
+        target: 'http://127.0.0.1:7420',
+        changeOrigin: true,
+      },
+    },
   },
 }))

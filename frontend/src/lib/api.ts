@@ -14,6 +14,14 @@ import type {
 
 const TOKEN_KEY = "orch_token"
 
+// API base URL resolution:
+// 1. If VITE_API_BASE_URL is set in .env.local (dev split-origin): use it
+// 2. Otherwise (production): use window.location.origin (same-origin, port-agnostic)
+// 3. Server-side fallback (for build-time or non-browser contexts): use 7420
+//
+// IMPORTANT: .env.local should ONLY be used for development. The production
+// build must NOT have VITE_API_BASE_URL set to prevent hardcoding 7420 into
+// the bundle (which breaks multi-port and cross-origin scenarios).
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ??
   (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:7420")
