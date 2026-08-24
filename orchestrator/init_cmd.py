@@ -598,10 +598,26 @@ def run_wizard(
             _say(f"    ... and {len(errors) - 10} more.")
 
     _say("")
+    _say("Setup complete! 🎉")
+    _say("")
     _say("Next steps:")
     _say(f"  orch dry-run --project-root {project_root}")
     _say(f"  orch atomize --project-root {project_root} --file specs/YOUR-SPEC.md")
     _say(f"  orch doctor  --project-root {project_root}")
+    _say("")
+
+    # Offer to launch dashboard
+    open_dashboard = prompt(
+        "Open dashboard in browser?",
+        default="y",
+        choices=["y", "n"],
+        input_fn=input_fn,
+    ) == "y"
+
+    if open_dashboard:
+        _say("")
+        start_dashboard_background(project_root)
+
     _say("")
     return 0
 
@@ -730,3 +746,72 @@ def run_init_cli(argv: list[str]) -> int:
         sdd=args.sdd,
         project_name=args.project_name,
     )
+
+
+# ---- Dashboard launcher (background) -----
+
+def _open_browser(url: str) -> None:
+    """Open a URL in the default browser (best-effort, non-blocking)."""
+    import subprocess
+    import platform
+
+    try:
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", url])
+        elif platform.system() == "Windows":
+            subprocess.Popen(["start", url], shell=True)
+        else:
+            subprocess.Popen(["xdg-open", url])
+    except Exception:
+        pass
+
+
+def start_dashboard_background(
+    project_root: Path,
+    port: int = 7420,
+    host: str = "127.0.0.1",
+) -> int | None:
+    """Start the dashboard in a background process.
+
+    Returns the process PID if successful, None otherwise.
+    Prints the dashboard URL to stdout so the user knows where to go.
+    """
+    import subprocess
+    import time
+
+    try:
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "orchestrator.orch",
+                "dashboard",
+                "--project-root",
+                str(project_root),
+                "--port",
+                str(port),
+                "--host",
+                host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # Detach from current session
+        )
+
+        # Give the server a moment to start
+        time.sleep(1)
+
+        # Check if process is still running
+        if proc.poll() is None:
+            url = f"http://{host}:{port}/setup"
+            print(f"\n✓ Dashboard started in background")
+            print(f"  → {url}")
+            print()
+            _open_browser(url)
+            return proc.pid
+
+        return None
+    except Exception as e:
+        print(f"⚠ Could not start dashboard: {e}", file=sys.stderr)
+        return None

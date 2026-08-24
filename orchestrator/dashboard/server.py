@@ -765,6 +765,93 @@ def create_app(
     def api_config():
         return JSONResponse(_load_project_config(app_state))
 
+    @app.get("/api/config/status", name="api_config_status")
+    def api_config_status():
+        """Check if the project configuration is complete.
+
+        Returns whether a setup wizard needs to be shown. A project is considered
+        "setup" when it has required config fields populated.
+        """
+        import json
+        try:
+            config_data = _load_project_config(app_state)
+            tasks_data = app_state.paths.tasks_json.read_text(encoding="utf-8")
+            tasks_json = json.loads(tasks_data)
+            meta = tasks_json.get("meta", {})
+            project_id = meta.get("project")
+
+            is_setup = bool(
+                project_id
+                and config_data.get("spec_root")
+                and config_data.get("state", {}).get("backend")
+                and config_data.get("budgets", {}).get("preset")
+            )
+            return JSONResponse({
+                "is_setup": is_setup,
+                "project_id": project_id,
+                "spec_root": config_data.get("spec_root"),
+                "backend": config_data.get("state", {}).get("backend"),
+                "budget_preset": config_data.get("budgets", {}).get("preset"),
+            })
+        except Exception as e:
+            return JSONResponse({"is_setup": False, "error": str(e)})
+
+    @app.post("/api/config/setup", name="api_config_setup")
+    async def api_config_setup(request: Request):
+        """Save the initial setup configuration from the wizard."""
+        try:
+            import json
+            import yaml
+            from pathlib import Path
+
+            body = await request.json()
+
+            # Validate required fields
+            if not body.get("project_id") or not body.get("project_root"):
+                return JSONResponse(
+                    {"error": "project_id and project_root are required"},
+                    status_code=400
+                )
+
+            project_root = Path(body.get("project_root")).expanduser().resolve()
+            config_yaml = project_root / "orchestrator" / "config.yaml"
+            tasks_json = project_root / "tasks.json"
+
+            # Update tasks.json meta
+            if tasks_json.exists():
+                tasks_data = json.loads(tasks_json.read_text(encoding="utf-8"))
+                meta = tasks_data.setdefault("meta", {})
+                meta["project"] = body.get("project_id")
+                # Add model tier choices if provided
+                for tier in ["premium", "standard", "cheap"]:
+                    if body.get("model_choices", {}).get(tier):
+                        meta[f"default_{tier}_model"] = body["model_choices"][tier]
+                tasks_json.write_text(json.dumps(tasks_data, indent=2) + "\n")
+
+            # Update config.yaml
+            if config_yaml.exists():
+                config_data = yaml.safe_load(config_yaml.read_text(encoding="utf-8")) or {}
+
+                # Update state backend
+                if "state" not in config_data:
+                    config_data["state"] = {}
+                config_data["state"]["backend"] = body.get("state_backend", "file")
+
+                # Update budget preset
+                config_data["budgets_preset"] = body.get("budget_preset", "conservative")
+
+                # Update spec root
+                config_data["spec_root"] = body.get("spec_root", "specs")
+
+                config_yaml.write_text(yaml.dump(config_data, default_flow_style=False))
+
+            return JSONResponse({"success": True, "message": "Configuration saved successfully"})
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Setup failed: {str(e)}"},
+                status_code=500
+            )
+
     @app.get("/api/whoami", name="api_whoami")
     def api_whoami():
         """Return the resolved dashboard profile for the current session.
