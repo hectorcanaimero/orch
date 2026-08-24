@@ -808,9 +808,9 @@ def create_app(
 
             # Validate required fields
             if not body.get("project_id") or not body.get("project_root"):
-                return JSONResponse(
-                    {"error": "project_id and project_root are required"},
-                    status_code=400
+                raise HTTPException(
+                    status_code=400,
+                    detail="project_id and project_root are required"
                 )
 
             project_root = Path(body.get("project_root")).expanduser().resolve()
@@ -846,10 +846,12 @@ def create_app(
                 config_yaml.write_text(yaml.dump(config_data, default_flow_style=False))
 
             return JSONResponse({"success": True, "message": "Configuration saved successfully"})
+        except HTTPException:
+            raise
         except Exception as e:
-            return JSONResponse(
-                {"error": f"Setup failed: {str(e)}"},
-                status_code=500
+            raise HTTPException(
+                status_code=500,
+                detail=f"Setup failed: {str(e)}"
             )
 
     @app.get("/api/whoami", name="api_whoami")
