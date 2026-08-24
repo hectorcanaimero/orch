@@ -3,38 +3,54 @@ import { TaskCard } from "@/components/TaskCard"
 import { cn } from "@/lib/utils"
 import type { Task } from "@/lib/types"
 
-export type KanbanStatus = "backlog" | "in_progress" | "blocked" | "done"
+export type KanbanStatus = "backlog" | "todo" | "in_progress" | "blocked" | "done"
 
 export interface KanbanColumnProps {
   title: string
   status: KanbanStatus
   tasks: Task[]
+  taskStatusMap?: Record<string, string>
   onCardClick?: (taskId: string) => void
 }
 
 const STATUS_STYLES: Record<
   KanbanStatus,
-  { bg: string; header: string; badge: Parameters<typeof Badge>[0]["variant"] }
+  {
+    bg: string
+    header: string
+    badge: Parameters<typeof Badge>[0]["variant"]
+    topBorder: string
+  }
 > = {
   backlog: {
     bg: "bg-zinc-50",
-    header: "text-zinc-700",
+    header: "text-zinc-500",
     badge: "muted",
+    topBorder: "border-t-zinc-400",
+  },
+  todo: {
+    bg: "bg-sky-50",
+    header: "text-sky-700",
+    badge: "info",
+    topBorder: "border-t-sky-400",
   },
   in_progress: {
-    bg: "bg-amber-50",
-    header: "text-amber-900",
+    bg: "bg-violet-50",
+    header: "text-violet-700",
     badge: "warning",
+    topBorder: "border-t-violet-500",
   },
   blocked: {
-    bg: "bg-red-50",
-    header: "text-red-900",
+    bg: "bg-rose-50",
+    header: "text-rose-700",
     badge: "danger",
+    topBorder: "border-t-rose-500",
   },
   done: {
     bg: "bg-emerald-50",
-    header: "text-emerald-900",
+    header: "text-emerald-700",
     badge: "success",
+    topBorder: "border-t-emerald-500",
   },
 }
 
@@ -42,23 +58,22 @@ export function KanbanColumn({
   title,
   status,
   tasks,
+  taskStatusMap,
   onCardClick,
 }: KanbanColumnProps) {
   const styles = STATUS_STYLES[status]
   return (
     <section
       className={cn(
-        // `h-full` (not `flex-1`) so the section fills its grid cell's
-        // height — flex-1 only means anything inside a flex container, but
-        // KanbanPage now hands us a grid row. Min height keeps the empty
-        // state readable when the viewport is tiny.
-        "flex h-full min-h-[240px] flex-col overflow-hidden rounded-lg border",
+        "flex h-full min-h-[240px] flex-col overflow-hidden rounded-lg",
+        "border border-zinc-200 border-t-4",
         styles.bg,
+        styles.topBorder,
       )}
       aria-label={title}
     >
-      <header className="flex flex-shrink-0 items-center justify-between border-b bg-white/60 px-3 py-2">
-        <div className={cn("text-sm font-semibold", styles.header)}>
+      <header className="flex flex-shrink-0 items-center justify-between border-b border-zinc-200 bg-white/70 px-3 py-2.5">
+        <div className={cn("text-xs font-semibold uppercase tracking-wider", styles.header)}>
           {title}
         </div>
         <Badge variant={styles.badge}>{tasks.length}</Badge>
@@ -70,7 +85,7 @@ export function KanbanColumn({
           </p>
         ) : (
           tasks.map((t) => (
-            <TaskCard key={t.id} task={t} onClick={onCardClick} />
+            <TaskCard key={t.id} task={t} taskStatusMap={taskStatusMap} onClick={onCardClick} />
           ))
         )}
       </div>

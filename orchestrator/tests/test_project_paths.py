@@ -247,6 +247,67 @@ def test_ensure_v2_cwd_without_arg_uses_cwd(tmp_path: Path, monkeypatch) -> None
         _ensure_v2_cwd()
 
 
+# ---- Auto-detect namespaced layout when state already exists -------------
+
+
+def test_autodetect_namespaced_when_orch_db_in_subdir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No --project-root but namespaced orch.db exists → auto-upgrade to namespaced."""
+    monkeypatch.delenv("ORCH_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    project_id = tmp_path.name
+    namespaced_state = tmp_path / "orchestrator" / "state" / project_id
+    namespaced_state.mkdir(parents=True)
+    (namespaced_state / "orch.db").touch()
+
+    paths = resolve_project_paths(
+        project_root_arg=None,
+        project_id_arg=None,
+        config_arg="config.yaml",
+    )
+    assert paths.state_layout == "namespaced"
+    assert paths.state_dir == namespaced_state
+    assert paths.explicit_root is False
+
+
+def test_autodetect_namespaced_when_spend_jsonl_in_subdir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No --project-root but namespaced spend-*.jsonl exists → auto-upgrade."""
+    monkeypatch.delenv("ORCH_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    project_id = tmp_path.name
+    namespaced_state = tmp_path / "orchestrator" / "state" / project_id
+    namespaced_state.mkdir(parents=True)
+    (namespaced_state / "spend-2026-08-23.jsonl").touch()
+
+    paths = resolve_project_paths(
+        project_root_arg=None,
+        project_id_arg=None,
+        config_arg="config.yaml",
+    )
+    assert paths.state_layout == "namespaced"
+
+
+def test_no_autodetect_when_namespaced_subdir_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No --project-root, no namespaced state dir → stays legacy."""
+    monkeypatch.delenv("ORCH_PROJECT_ROOT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    paths = resolve_project_paths(
+        project_root_arg=None,
+        project_id_arg=None,
+        config_arg="config.yaml",
+    )
+    assert paths.state_layout == "legacy"
+    assert paths.explicit_root is False
+
+
 # ---- Fase 2: state_layout / explicit_root ------------------------------
 
 

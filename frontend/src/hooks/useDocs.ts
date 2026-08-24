@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { apiClient, getToken } from "@/lib/api"
+import { apiClient, getToken, API_BASE_URL } from "@/lib/api"
 
 export interface DocEntry {
   path: string
@@ -33,7 +33,7 @@ export function useDocContent(path: string | null) {
       const token = getToken()
       const url = new URL(
         `/api/docs/content?path=${encodeURIComponent(path)}`,
-        window.location.origin,
+        API_BASE_URL,
       )
       if (token) url.searchParams.set("token", token)
       const res = await fetch(url.toString())

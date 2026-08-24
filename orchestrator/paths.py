@@ -202,6 +202,20 @@ def resolve_project_paths(
 
     state_layout: StateLayout = "namespaced" if explicit_root else "legacy"
 
+    # Auto-detect namespaced layout when the legacy default is chosen but
+    # the project has already been run with --project-root (which creates
+    # `orchestrator/state/<project_id>/`). Without this, `orch dashboard`
+    # started from the project dir without --project-root reads the empty
+    # legacy DB instead of the real namespaced one.
+    if state_layout == "legacy":
+        namespaced_state = root / "orchestrator" / "state" / pid
+        if namespaced_state.is_dir() and (
+            (namespaced_state / "orch.db").exists()
+            or any(namespaced_state.glob("spend-*.jsonl"))
+            or any(namespaced_state.glob("events-*.jsonl"))
+        ):
+            state_layout = "namespaced"
+
     return ProjectPaths(
         project_root=root,
         project_id=pid,

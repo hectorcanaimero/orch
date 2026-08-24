@@ -140,11 +140,47 @@ def _is_num(x: Any) -> bool:
         return False
 
 
+def _load_events_from_sqlite(state_dir: Path) -> list[dict]:
+    """Read event rows from <state_dir>/orch.db. Empty list on any error."""
+    db_path = state_dir / "orch.db"
+    if not db_path.exists():
+        return []
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(
+                "SELECT event_type, task_id, backend, ts, extra_json "
+                "FROM events ORDER BY ts ASC"
+            )
+            out: list[dict] = []
+            for row in cur.fetchall():
+                try:
+                    extra = json.loads(row["extra_json"] or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    extra = {}
+                out.append({
+                    "event_type": row["event_type"],
+                    "task_id": row["task_id"],
+                    "backend": row["backend"] or "",
+                    "ts": row["ts"],
+                    "extra": extra,
+                })
+            return out
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def load_recent_events(state_dir: Path, limit: int = 100) -> list[dict[str, Any]]:
-    """Return the last `limit` formatted events across all events-*.jsonl.
+    """Return the last `limit` formatted events from JSONL files and/or SQLite.
 
     Used by the initial page load of `/logs` — the SSE stream then appends
-    live events as they arrive.
+    live events as they arrive. Reads both sources so projects using
+    ``orch migrate`` (SQLite backend) work alongside JSONL-only projects.
     """
     if not state_dir.exists():
         return []
@@ -164,6 +200,7 @@ def load_recent_events(state_dir: Path, limit: int = 100) -> list[dict[str, Any]
                         all_events.append(obj)
         except OSError:
             continue
+    all_events.extend(_load_events_from_sqlite(state_dir))
     all_events.sort(key=lambda e: str(e.get("ts", "")))
     tail = all_events[-limit:]
     return [format_event(e) for e in tail]
@@ -179,6 +216,61 @@ def newest_events_file(state_dir: Path) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def _tail_events_sqlite(
+    db_path: Path,
+    poll_interval_s: float,
+    task_id_filter: str | None,
+    max_iterations: int | None,
+) -> Iterator[dict[str, Any]]:
+    """Poll orch.db for new events, yielding formatted rows as they appear."""
+    import sqlite3
+
+    last_ts: str = ""
+    iterations = 0
+
+    while True:
+        if max_iterations is not None:
+            iterations += 1
+            if iterations > max_iterations:
+                return
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                if task_id_filter:
+                    cur = conn.execute(
+                        "SELECT event_type, task_id, backend, ts, extra_json "
+                        "FROM events WHERE ts > ? AND task_id = ? ORDER BY ts ASC",
+                        (last_ts, task_id_filter),
+                    )
+                else:
+                    cur = conn.execute(
+                        "SELECT event_type, task_id, backend, ts, extra_json "
+                        "FROM events WHERE ts > ? ORDER BY ts ASC",
+                        (last_ts,),
+                    )
+                for row in cur.fetchall():
+                    try:
+                        extra = json.loads(row["extra_json"] or "{}")
+                    except (json.JSONDecodeError, ValueError):
+                        extra = {}
+                    ev = {
+                        "event_type": row["event_type"],
+                        "task_id": row["task_id"],
+                        "backend": row["backend"] or "",
+                        "ts": row["ts"],
+                        "extra": extra,
+                    }
+                    if row["ts"] > last_ts:
+                        last_ts = row["ts"]
+                    yield format_event(ev)
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(poll_interval_s)
+
+
 def tail_events(
     state_dir: Path,
     poll_interval_s: float = 0.5,
@@ -188,12 +280,24 @@ def tail_events(
     """Yield newly-appended events forever (until the client disconnects).
 
     Parameters:
-        state_dir       — where events-*.jsonl files live
+        state_dir       — where events-*.jsonl files live (or orch.db)
         poll_interval_s — sleep between polls
         task_id_filter  — if set, only yield events with matching `task_id`
         max_iterations  — TEST HOOK: cap total loop iterations before exit.
                           `None` means run forever (the real server behavior).
+
+    Supports both file backend (events-*.jsonl) and SQLite backend (orch.db).
+    When orch.db is present it is preferred: SqliteEventLog writes there and
+    no JSONL files are created, so polling them would yield nothing.
     """
+    db_path = state_dir / "orch.db"
+    if db_path.exists():
+        yield from _tail_events_sqlite(
+            db_path, poll_interval_s, task_id_filter, max_iterations
+        )
+        return
+
+    # --- JSONL fallback (file backend) ---
     current_path: Path | None = None
     current_pos: int = 0
     iterations = 0

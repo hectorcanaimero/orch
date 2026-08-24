@@ -362,7 +362,9 @@ def _apply_filters(
         q_low = q.lower()
         out = [
             t for t in out
-            if q_low in t.id.lower() or q_low in (t.title or "").lower()
+            if q_low in t.id.lower()
+            or q_low in (t.title or "").lower()
+            or q_low in (t.description or "").lower()
         ]
     if only_parallelizable:
         out = [t for t in out if t.id in parallelizable_ids]
