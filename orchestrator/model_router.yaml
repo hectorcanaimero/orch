@@ -90,18 +90,27 @@ gemini/gemini-2.5-flash:
 
 # ----- Anything else via opencode CLI pass-through -----
 
-opencode/gemini-3.0-pro:
-  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list. The
-  # closest premium-tier substitute is xAI's Grok 4.5 (also frontier-class,
-  # long-context). Fallback to deepseek-v4-pro (premium-tier, same tier).
-  # Escalation 2026-08 (FR-D-8): on attempt-3 after retryable failure,
-  # escalate to opencode/deepseek-v4-pro — different backend cli_model +
-  # different family, breaks provider-level rate-limit sticky failures.
+opencode/gemini-2.5-pro:
   backend: opencode
-  cli_model: opencode-go/grok-4.5
+  cli_model: google/gemini-2.5-pro
   tier: premium
   is_premium: true
-  fallback_cli_model: deepseek/deepseek-v4-pro
+  fallback_cli_model: google/gemini-2.5-flash
+
+opencode/gemini-2.5-flash:
+  backend: opencode
+  cli_model: google/gemini-2.5-flash
+  tier: cheap
+  is_premium: false
+
+opencode/gemini-3.0-pro:
+  # Updated 2026-08-25: Gemini is now available in OpenCode via google/ prefix.
+  # Restored to real Google model; escalation to DeepSeek as cross-family failover.
+  backend: opencode
+  cli_model: google/gemini-2.5-pro
+  tier: premium
+  is_premium: true
+  fallback_cli_model: google/gemini-2.5-flash
   escalation_model: opencode/deepseek-v4-pro
 
 opencode/deepseek-v4-pro:
@@ -118,10 +127,9 @@ opencode-go/deepseek-v4-flash:
   is_premium: false
 
 opencode-go/gemini-3.0-flash:
-  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list.
-  # Substituted with DeepSeek V4 Flash (same cheap tier, same-family speed).
+  # Updated 2026-08-25: Gemini now available in OpenCode via google/ prefix.
   backend: opencode
-  cli_model: deepseek/deepseek-v4-flash
+  cli_model: google/gemini-2.5-flash
   tier: cheap
   is_premium: false
 

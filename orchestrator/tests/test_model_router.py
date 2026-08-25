@@ -53,6 +53,9 @@ ACCEPTED_OPENCODE_MODELS: set[str] = {
     # DeepSeek (deepseek/ prefix works locally — no change needed)
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
+    # Google Gemini (via opencode google/ prefix — now available in OpenCode)
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
     # (Muse Spark, Hy3 intentionally skipped — TODO block at end of yaml)
 }
 
@@ -63,15 +66,15 @@ ACCEPTED_OPENCODE_MODELS: set[str] = {
 EXPECTED_CLI_MODEL_RENAMES: dict[str, str] = {
     "opencode-go/minimax-m2.5": "opencode-go/minimax-m2.7",
     "opencode-go/grok-4.6": "opencode-go/grok-4.5",
-    "opencode-go/gemini-3.0-flash": "deepseek/deepseek-v4-flash",
-    "opencode/gemini-3.0-pro": "opencode-go/grok-4.5",
+    "opencode-go/gemini-3.0-flash": "google/gemini-2.5-flash",
+    "opencode/gemini-3.0-pro": "google/gemini-2.5-pro",
     "opencode-go/mimo-v2.5": "opencode-go/mimo-v2.5",
 }
 
 
 EXPECTED_FALLBACK_RENAMES: dict[str, str | None] = {
-    # opencode/gemini-3.0-pro rerouted to opencode-go/grok-4.5 → fallback = deepseek-v4-pro
-    "opencode/gemini-3.0-pro": "deepseek/deepseek-v4-pro",
+    # opencode/gemini-3.0-pro now routes to real Google model → fallback = gemini-2.5-flash
+    "opencode/gemini-3.0-pro": "google/gemini-2.5-flash",
     # opencode-go/mimo-v2.5 restored → fallback = opencode-go/mimo-v2.5-pro
     "opencode-go/mimo-v2.5": "opencode-go/mimo-v2.5-pro",
     # codex/gpt-5.6 fallback typo fix (WARN log said gpt-5.4); key renamed from opencode/gpt-5.6-codex
