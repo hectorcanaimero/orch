@@ -15,6 +15,7 @@ import { MetricsPage } from "@/pages/MetricsPage"
 import { DocumentsPage } from "@/pages/DocumentsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
+import { SetupWizardPage } from "@/pages/SetupWizardPage"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +35,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          <Route path="/setup" element={<SetupWizardPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/"

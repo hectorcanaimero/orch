@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { Select } from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { TaskFilters } from "@/lib/types"
 
 export interface TaskFiltersBarValue {
@@ -49,42 +49,36 @@ export function TaskFiltersBar({
         />
       </div>
       <div className="w-36">
-        <Select
-          value={value.status}
-          onChange={(e) => onChange({ ...value, status: e.target.value })}
-        >
-          <option value="">All statuses</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
+        <Select value={value.status} onValueChange={(v) => onChange({ ...value, status: v })}>
+          <SelectTrigger><SelectValue placeholder="All statuses" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All statuses</SelectItem>
+            {STATUS_OPTIONS.map((s) => (
+              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+            ))}
+          </SelectContent>
         </Select>
       </div>
       <div className="w-36">
-        <Select
-          value={value.phase}
-          onChange={(e) => onChange({ ...value, phase: e.target.value })}
-        >
-          <option value="">All phases</option>
-          {phaseOptions.map((p) => (
-            <option key={p} value={p}>
-              Phase {p}
-            </option>
-          ))}
+        <Select value={value.phase} onValueChange={(v) => onChange({ ...value, phase: v })}>
+          <SelectTrigger><SelectValue placeholder="All phases" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All phases</SelectItem>
+            {phaseOptions.map((p) => (
+              <SelectItem key={p} value={String(p)}>Phase {p}</SelectItem>
+            ))}
+          </SelectContent>
         </Select>
       </div>
       <div className="w-52">
-        <Select
-          value={value.model}
-          onChange={(e) => onChange({ ...value, model: e.target.value })}
-        >
-          <option value="">All models</option>
-          {modelOptions.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
+        <Select value={value.model} onValueChange={(v) => onChange({ ...value, model: v })}>
+          <SelectTrigger><SelectValue placeholder="All models" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">All models</SelectItem>
+            {modelOptions.map((m) => (
+              <SelectItem key={m} value={m}>{m}</SelectItem>
+            ))}
+          </SelectContent>
         </Select>
       </div>
     </div>
