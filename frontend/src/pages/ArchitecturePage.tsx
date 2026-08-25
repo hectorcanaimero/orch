@@ -16,7 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Select } from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useArchitectureHistory } from "@/hooks/useArchitectureHistory"
 import { useArchitectureStatus } from "@/hooks/useArchitectureStatus"
@@ -268,18 +268,16 @@ export function ArchitecturePage() {
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-[280px] flex-1 sm:flex-none sm:w-[360px]">
-            <Select
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-              aria-label="Architecture snapshot"
-              disabled={history.isLoading}
-            >
-              <option value={CURRENT_KEY}>Current</option>
-              {snapshots.map((snap) => (
-                <option key={snap.timestamp} value={snap.timestamp}>
-                  {snapshotLabel(snap)}
-                </option>
-              ))}
+            <Select value={selected} onValueChange={setSelected} disabled={history.isLoading}>
+              <SelectTrigger aria-label="Architecture snapshot"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={CURRENT_KEY}>Current</SelectItem>
+                {snapshots.map((snap) => (
+                  <SelectItem key={snap.timestamp} value={snap.timestamp}>
+                    {snapshotLabel(snap)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
           <Button
