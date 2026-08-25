@@ -74,8 +74,8 @@ EXPECTED_FALLBACK_RENAMES: dict[str, str | None] = {
     "opencode/gemini-3.0-pro": "deepseek/deepseek-v4-pro",
     # opencode-go/mimo-v2.5 restored → fallback = opencode-go/mimo-v2.5-pro
     "opencode-go/mimo-v2.5": "opencode-go/mimo-v2.5-pro",
-    # gpt-5.6-codex fallback typo fix (WARN log said gpt-5.4)
-    "opencode/gpt-5.6-codex": "gpt-5.4",
+    # codex/gpt-5.6 fallback typo fix (WARN log said gpt-5.4); key renamed from opencode/gpt-5.6-codex
+    "codex/gpt-5.6": "gpt-5.4",
 }
 
 
@@ -99,9 +99,9 @@ EXPECTED_NEW_ROUTES: set[str] = {
 }
 
 
-# Route keys that use a NATIVE CLI (claude/codex) and therefore reference
+# Route keys that use a NATIVE CLI (claude/codex/gemini) and therefore reference
 # a model outside opencode-go's accepted list — exempt from the check.
-NATIVE_BACKENDS: set[str] = {"claude", "codex"}
+NATIVE_BACKENDS: set[str] = {"claude", "codex", "gemini"}
 
 
 def test_rename_targets_present_with_expected_cli_model() -> None:
@@ -201,7 +201,7 @@ def test_codex_gpt56_routes_use_verified_luna_model() -> None:
     Fallback stays at `gpt-5.4` for version-drift safety.
     """
     router = load_router(ROUTER_PATH)
-    for route_key in ("opencode/gpt-5.5-codex", "opencode/gpt-5.6-codex"):
+    for route_key in ("codex/gpt-5.5", "codex/gpt-5.6"):
         assert route_key in router, f"route {route_key!r} missing"
         entry = router[route_key]
         assert entry.cli_model == "gpt-5.6-luna", (

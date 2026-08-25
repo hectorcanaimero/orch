@@ -3,10 +3,11 @@
 Contracts respected here (from `orchestrator/spec.md` §1.3 and
 `orchestrator/design.md` §5):
 
-- Three concrete adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`)
-  implement a common `Backend` `Protocol`. The main loop (R-017/R-018)
-  never imports the concrete classes — it dispatches on `route.backend`.
-- **Prompt delivery is stdin for all three CLIs** (approved decision, see
+- Four concrete adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`,
+  `GeminiBackend`) implement a common `Backend` `Protocol`. The main loop
+  (R-017/R-018) never imports the concrete classes — it dispatches on
+  `route.backend`.
+- **Prompt delivery**: stdin for claude/codex/opencode; `-p <text>` arg for gemini (approved decision, see
   `design.md OPEN`). `spawn` opens the prompt file and pipes its bytes to
   `subprocess.Popen(..., stdin=PIPE)`. We never embed the 1-2 KB prompt in
   the argv or via `@file` — that route hit escaping edge-cases in practice.
@@ -1120,6 +1121,106 @@ def _sum_codex_usage(events: list[dict[str, Any]]) -> tuple[float, int, int]:
     return 0.0, tokens_in, tokens_out
 
 
+# ---- GeminiBackend -------------------------------------------------------
+
+
+class GeminiBackend:
+    """Adapter for the `gemini` CLI (Google Gemini native).
+
+    Non-interactive mode: ``gemini -p <prompt> --model <cli_model>``.
+    Unlike the other backends, the prompt is passed as a CLI argument rather
+    than via stdin (the gemini CLI does not read prompts from a pipe).
+
+    Success: exit_code == 0. The gemini CLI outputs plain text; there is no
+    structured cost envelope so cost/token fields are always zero.
+    """
+
+    name = "gemini"
+
+    def build_cmd(self, task: Task, route: RouteEntry, prompt_text: str) -> list[str]:
+        return [
+            "gemini",
+            "-p",
+            prompt_text,
+            "--model",
+            route.cli_model,
+        ]
+
+    def spawn(
+        self,
+        task: Task,
+        route: RouteEntry,
+        prompt_path: Path,
+        log_path: Path,
+        cwd: Path,
+    ) -> Dispatch:
+        _ensure_logs_dir(log_path.parent.parent)
+        prompt_text = prompt_path.read_text(encoding="utf-8", errors="replace")
+        cmd = self.build_cmd(task, route, prompt_text)
+        log_fh = log_path.open("ab")
+        env = {**os.environ, "PWD": str(cwd)}
+        try:
+            popen = subprocess.Popen(  # noqa: S603
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                cwd=str(cwd),
+                env=env,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except (FileNotFoundError, OSError):
+            log_fh.close()
+            raise
+
+        dispatch = Dispatch(
+            task_id=task.id,
+            backend=self.name,  # type: ignore[arg-type]
+            pid=popen.pid,
+            session_id="",
+            started_at=_utc_now_iso(),
+            prompt_path=str(prompt_path),
+            log_path=str(log_path),
+            output_path="",
+        )
+        dispatch._popen = popen  # type: ignore[attr-defined]
+        dispatch._fhs = (log_fh,)  # type: ignore[attr-defined]
+        dispatch.extra = {}  # type: ignore[attr-defined]
+        return dispatch
+
+    def wait_result(self, dispatch: Dispatch, timeout_s: float) -> DispatchResult:
+        exit_code, err_msg, timed_out = _wait_with_timeout(dispatch, timeout_s)
+        log_text = _read_log(dispatch.log_path)
+        result = self.parse_result(exit_code, log_text)
+        if timed_out:
+            result.success = False
+            result.error_message = err_msg
+        return result
+
+    def parse_result(
+        self, exit_code: int, log_text: str, extra: dict[str, Any] | None = None
+    ) -> DispatchResult:
+        success = exit_code == 0
+        error_message: str | None = None
+        if not success:
+            lines = [ln.strip() for ln in log_text.splitlines() if ln.strip()]
+            error_message = lines[-1] if lines else f"gemini exited with code {exit_code}"
+        return DispatchResult(
+            exit_code=exit_code,
+            success=success,
+            cost_usd=0.0,
+            tokens_in=0,
+            tokens_out=0,
+            stdout=log_text,
+            stderr="",
+            error_message=error_message,
+        )
+
+    def extract_cost(self, log_text: str) -> tuple[float, int, int]:
+        return 0.0, 0, 0
+
+
 # ---- Backend registry ----------------------------------------------------
 
 
@@ -1127,6 +1228,7 @@ _BACKENDS: dict[str, type[Backend]] = {
     "claude": ClaudeBackend,
     "codex": CodexBackend,
     "opencode": OpencodeBackend,
+    "gemini": GeminiBackend,
 }
 
 
@@ -1152,6 +1254,7 @@ __all__ = [
     "ClaudeBackend",
     "CodexBackend",
     "OpencodeBackend",
+    "GeminiBackend",
     "classify_failure",
     "get_backend",
     "is_version_drift_error",

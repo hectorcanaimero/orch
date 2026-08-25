@@ -54,7 +54,7 @@ def test_load_router_shipping_file() -> None:
     # equality, so future adds don't break this test.
     assert len(router) >= 16
     # Spot-check a premium entry.
-    opus = router["opencode/claude-opus-4-7"]
+    opus = router["claude/claude-opus-4-7"]
     assert opus.backend == "claude"
     assert opus.tier == "premium"
     assert opus.is_premium is True
