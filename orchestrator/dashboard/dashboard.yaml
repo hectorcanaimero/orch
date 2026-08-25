@@ -8,9 +8,20 @@
 # simultaneously — set a distinct port per project so bookmarks stay stable.
 # CLI flags (--port / --host) override, then env (ORCH_DASHBOARD_PORT /
 # ORCH_DASHBOARD_HOST), then this block, then the hardcoded default.
+#
+# To make the dashboard reachable from other machines on your network (VPN,
+# LAN, remote devbox), set host to 0.0.0.0 so uvicorn binds all interfaces.
+# The startup banner will print the actual LAN IP alongside the localhost URL.
+# WARNING: this exposes the dashboard to anyone on the same network — only
+# use it on trusted networks. Prefer the tunnel manager for remote access.
+#
+# Alternatives (no file edit needed):
+#   orch dashboard --host 0.0.0.0
+#   ORCH_DASHBOARD_HOST=0.0.0.0 orch dashboard
 # server:
 #   port: 7420
-#   host: 127.0.0.1
+#   host: 0.0.0.0   # all interfaces — reachable from VPN / LAN
+#   # host: 127.0.0.1  # loopback only (default)
 
 kanban:
   wip_default: null         # integer or null. null = no WIP badge unless ?wip=N.

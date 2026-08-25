@@ -1691,6 +1691,17 @@ def run(
 
     banner_lines = [
         f"Orch dashboard running on http://{host}:{port}",
+    ]
+    if host in ("0.0.0.0", "::"):
+        import socket as _socket
+        try:
+            lan_ip = _socket.gethostbyname(_socket.gethostname())
+        except OSError:
+            lan_ip = None
+        if lan_ip and lan_ip != "127.0.0.1":
+            banner_lines.append(f"  LAN/VPN: http://{lan_ip}:{port}")
+        banner_lines.append(f"  localhost: http://127.0.0.1:{port}")
+    banner_lines += [
         f"Project: {paths.project_id} ({paths.project_root})",
         f"State dir: {paths.state_dir}",
         f"Profile: {resolved.profile}",
