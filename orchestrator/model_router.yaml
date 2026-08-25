@@ -1,9 +1,10 @@
 # model_router.yaml — maps every `tasks.json` model string to a backend CLI
 # invocation. Keyed by the EXACT string that appears in `tasks.json` (do NOT
-# rename keys — the router validator does an exact match; see AS-06).
+# rename keys without updating all tasks.json files — the router validator
+# does an exact match; see AS-06).
 #
 # Fields (per orchestrator/models.py::RouteEntry):
-#   backend             : one of {claude, codex, opencode}
+#   backend             : one of {claude, codex, opencode, gemini}
 #   cli_model           : native model string the chosen CLI expects
 #   tier                : one of {premium, standard, cheap} — drives semi gate
 #   is_premium          : cached tier == "premium" (denormalized for hot path)
@@ -11,11 +12,12 @@
 #                         local registry lacks `cli_model` (FR-D-7). Emit ONE
 #                         WARN per substitution at startup.
 #
-# Routing rules (approved in proposal Q1):
-#   opencode/claude-*      → claude CLI (Anthropic-native)
-#   opencode-go/claude-*   → claude CLI
-#   opencode/gpt-*         → codex CLI (OpenAI-native)
-#   opencode/{deepseek,gemini}-*, opencode-go/<non-claude> → opencode CLI
+# Routing rules:
+#   claude/*               → claude CLI (Anthropic-native)
+#   codex/*                → codex CLI (OpenAI-native)
+#   gemini/*               → gemini CLI (Google-native)
+#   opencode/*             → opencode CLI pass-through (DeepSeek, Qwen, GLM…)
+#   opencode-go/*          → opencode CLI pass-through (legacy cheap routes)
 #
 # Premium tier assigned per spec FR-C-1a:
 #   opus, gpt-5.6, gemini-3.0-pro, deepseek-v4-pro.
@@ -28,21 +30,21 @@
 
 # ----- Anthropic-family via claude CLI -----
 
-opencode/claude-opus-4-7:
+claude/claude-opus-4-7:
   backend: claude
   cli_model: claude-opus-4-7
   tier: premium
   is_premium: true
   fallback_cli_model: claude-opus-4-5
 
-opencode/claude-sonnet-4-6:
+claude/claude-sonnet-4-6:
   backend: claude
   cli_model: claude-sonnet-4-6
   tier: standard
   is_premium: false
   fallback_cli_model: claude-sonnet-4-5
 
-opencode-go/claude-haiku-4-5:
+claude/claude-haiku-4-5:
   backend: claude
   cli_model: claude-haiku-4-5
   tier: cheap
@@ -50,43 +52,65 @@ opencode-go/claude-haiku-4-5:
 
 # ----- OpenAI-family via codex CLI -----
 
-opencode/gpt-5.4:
+codex/gpt-5.4:
   backend: codex
   cli_model: gpt-5.4
   tier: standard
   is_premium: false
   fallback_cli_model: gpt-5
 
-opencode/gpt-5.5-codex:
+codex/gpt-5.5:
   backend: codex
-  # verified 2026-08-20: codex exec -m gpt-5.6-luna works
   cli_model: gpt-5.6-luna
   fallback_cli_model: gpt-5.4
   tier: standard
   is_premium: false
 
-opencode/gpt-5.6-codex:
+codex/gpt-5.6:
   backend: codex
-  # verified 2026-08-20: codex exec -m gpt-5.6-luna works
   cli_model: gpt-5.6-luna
   tier: premium
   is_premium: true
   fallback_cli_model: gpt-5.4
 
-# ----- Anything else via opencode CLI pass-through -----
+# ----- Google-family via gemini CLI -----
 
-opencode/gemini-3.0-pro:
-  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list. The
-  # closest premium-tier substitute is xAI's Grok 4.5 (also frontier-class,
-  # long-context). Fallback to deepseek-v4-pro (premium-tier, same tier).
-  # Escalation 2026-08 (FR-D-8): on attempt-3 after retryable failure,
-  # escalate to opencode/deepseek-v4-pro — different backend cli_model +
-  # different family, breaks provider-level rate-limit sticky failures.
-  backend: opencode
-  cli_model: opencode-go/grok-4.5
+gemini/gemini-2.5-pro:
+  backend: gemini
+  cli_model: gemini-2.5-pro
   tier: premium
   is_premium: true
-  fallback_cli_model: deepseek/deepseek-v4-pro
+  fallback_cli_model: gemini-2.5-flash
+
+gemini/gemini-2.5-flash:
+  backend: gemini
+  cli_model: gemini-2.5-flash
+  tier: cheap
+  is_premium: false
+
+# ----- Anything else via opencode CLI pass-through -----
+
+opencode/gemini-2.5-pro:
+  backend: opencode
+  cli_model: google/gemini-2.5-pro
+  tier: premium
+  is_premium: true
+  fallback_cli_model: google/gemini-2.5-flash
+
+opencode/gemini-2.5-flash:
+  backend: opencode
+  cli_model: google/gemini-2.5-flash
+  tier: cheap
+  is_premium: false
+
+opencode/gemini-3.0-pro:
+  # Updated 2026-08-25: Gemini is now available in OpenCode via google/ prefix.
+  # Restored to real Google model; escalation to DeepSeek as cross-family failover.
+  backend: opencode
+  cli_model: google/gemini-2.5-pro
+  tier: premium
+  is_premium: true
+  fallback_cli_model: google/gemini-2.5-flash
   escalation_model: opencode/deepseek-v4-pro
 
 opencode/deepseek-v4-pro:
@@ -103,10 +127,9 @@ opencode-go/deepseek-v4-flash:
   is_premium: false
 
 opencode-go/gemini-3.0-flash:
-  # Rerouted 2026-08-20: Gemini is NOT in the opencode-go accepted list.
-  # Substituted with DeepSeek V4 Flash (same cheap tier, same-family speed).
+  # Updated 2026-08-25: Gemini now available in OpenCode via google/ prefix.
   backend: opencode
-  cli_model: deepseek/deepseek-v4-flash
+  cli_model: google/gemini-2.5-flash
   tier: cheap
   is_premium: false
 
