@@ -88,7 +88,8 @@ def test_schema_bootstrap_sets_user_version(tmp_path: Path) -> None:
         names = {r[0] for r in rows}
     finally:
         conn.close()
-    assert {"projects", "tasks_runtime", "runs", "dispatches", "events", "spend"} <= names
+    assert {"projects", "tasks_runtime", "runs", "dispatches", "events", "spend",
+            "tasks_definition"} <= names
 
 
 def test_migration_files_discovered() -> None:
@@ -628,6 +629,16 @@ def test_set_task_model_raises_on_missing_task(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError, match="MISSING"):
         sb.set_task_model("MISSING", "claude")
+
+
+def test_set_task_backend_raises_on_missing_task(tmp_path: Path) -> None:
+    """set_task_backend() must raise KeyError when task not in tasks_definition."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    sb.bootstrap([])
+
+    with pytest.raises(KeyError, match="MISSING"):
+        sb.set_task_backend("MISSING", "opencode")
 
 
 def test_set_task_backend_updates_definition(tmp_path: Path) -> None:
