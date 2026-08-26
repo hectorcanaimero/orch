@@ -286,3 +286,10 @@ def test_init_agents_md_not_overwritten_without_force(tmp_path: Path) -> None:
 
     content = (tmp_path / "AGENTS.md").read_text()
     assert content == "custom content", "AGENTS.md must not be overwritten without --force"
+
+
+def test_init_gitignore_includes_worktrees(tmp_path: Path) -> None:
+    """orch init must gitignore .worktrees/ so git worktree dirs aren't committed."""
+    orch_init(tmp_path)
+    gitignore = (tmp_path / ".gitignore").read_text()
+    assert ".worktrees/" in gitignore
