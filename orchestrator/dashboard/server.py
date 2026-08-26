@@ -475,8 +475,9 @@ def _load_project_config(state: AppState) -> dict[str, Any]:
             # Sprint E-3 — per-project SPA client config. Only surface public,
             # non-secret keys here (profile/token stay OUT: the middleware
             # already gates auth, and echoing the token would defeat it).
-            "dashboard": {
-                "board_url": dashboard_raw.get("board_url"),
+            "dashboard": {},
+            "presentation": {
+                "status_labels": raw.get("presentation", {}).get("status_labels") or {},
             },
             "strict_files_phases": raw.get("strict_files_phases") or [],
             "default_timeout_multiplier": raw.get("default_timeout_multiplier"),
@@ -756,6 +757,23 @@ def create_app(
             "by_day": [d.as_dict() for d in metrics_by_day(spends, pricing, days=14)],
             "estimate_hours_total": view["summary"].estimate_hours_total,
         })
+
+    @app.get("/api/milestones", name="api_milestones")
+    def api_milestones():
+        """Return all milestones with task progress. Requires SQLite backend."""
+        import yaml
+        from orchestrator.state.sqlite_backend import SqliteBackend
+
+        cfg_path = app_state.paths.config_yaml
+        try:
+            raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            raw_cfg = {}
+
+        backend = _get_state_backend(app_state.paths, raw_cfg)
+        if not isinstance(backend, SqliteBackend):
+            return JSONResponse({"milestones": [], "backend": "file"})
+        return JSONResponse({"milestones": backend.get_milestones()})
 
     @app.get("/api/config", name="api_config")
     def api_config():

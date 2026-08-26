@@ -275,52 +275,10 @@ def _build_argparser() -> argparse.ArgumentParser:
 # ---- Config load --------------------------------------------------------
 
 
-def _load_config(path: str | Path) -> dict[str, Any]:
-    """Load config.yaml with sane defaults for missing keys."""
-    import yaml
-
-    from orchestrator.prompt_builder import DEFAULT_SPEC_ROOT
-
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"config file not found: {p}")
-    with open(p, encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh) or {}
-
-    # Fill in defaults so downstream code doesn't need .get() everywhere.
-    cfg.setdefault("concurrency", {})
-    cfg["concurrency"].setdefault("global_max", 6)
-    cfg["concurrency"].setdefault(
-        "per_provider", {"claude": 3, "codex": 2, "opencode": 3}
-    )
-    cfg.setdefault("strict_files_phases", [])
-    cfg.setdefault("default_timeout_multiplier", 1.5)
-    cfg.setdefault("budget", {"per_dispatch_usd": 5.0})
-    # FR-D-4 (design.md §5): 5s wall-clock backoff between a failed dispatch
-    # and its retry. Config knob so tests can override to 0 for determinism.
-    cfg.setdefault("retry", {})
-    cfg["retry"].setdefault("backoff_seconds", 5.0)
-    # Fase 3: `spec_root` es el prefijo aplicado a `Task.spec_ref` para
-    # armar la línea `Spec ref (READ FIRST):` del prompt. Cada proyecto
-    # puede pisar el default rupies (`docs/rewrite-plan`) desde su config.yaml.
-    cfg.setdefault("spec_root", DEFAULT_SPEC_ROOT)
-    # Sprint 7 — budget guardrails. Both keys optional; when the resolved
-    # `budgets.yaml` path doesn't exist, `BudgetGate` runs disabled and
-    # everything behaves like pre-Sprint 7 (backwards-compat).
-    cfg.setdefault("budgets_config", "budgets.yaml")
-    cfg.setdefault("budgets_preset", "conservative")
-    # Sprint A / Issue #11 — used by budget preset sanity check at startup.
-    # If a provider's window can't fit at least 2 x this many tokens, orch
-    # warns because dispatches will serialize inside the rolling window.
-    cfg.setdefault("typical_dispatch_tokens", 200_000)
-    # Sprint E-1 — dogfooding loop (issue #17). Any missing key falls back
-    # to the module defaults in `orchestrator.findings`.
-    cfg.setdefault("findings", {})
-    cfg["findings"].setdefault("publish_repo", "hectorcanaimero/orch")
-    cfg["findings"].setdefault("publish_rate_limit_per_hour", 3)
-    cfg["findings"].setdefault("label", "auto-reported")
-    cfg["findings"].setdefault("min_publish_confidence", "medium")
-    return cfg
+def _load_config(path: str | Path, project_root: str | Path | None = None) -> dict[str, Any]:
+    """Load config.yaml via config_loader (Sprint F-3: deep-merge override support)."""
+    from orchestrator.config_loader import load_config
+    return load_config(path, project_root=project_root)
 
 
 def _load_budget_gate(
@@ -1145,7 +1103,9 @@ def _reap_once(
                 budget_cap <= 0.0 or spent_so_far < budget_cap
             )
 
-            max_attempts = 3 if escalation_allowed else 2
+            retry_cfg = cfg.get("retry", {})
+            _base_attempts = int(retry_cfg.get("max_attempts", 2))
+            max_attempts = _base_attempts + 1 if escalation_allowed else _base_attempts
             can_retry = (
                 retry_queue is not None
                 and entry.dispatch.attempt < max_attempts
@@ -1930,7 +1890,7 @@ def _run_task_status_subcommand(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except (FileNotFoundError, Exception) as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2213,7 +2173,7 @@ def _run_reset_subcommand(argv: list[str]) -> int:
     # (or the _reset_task_in_place Python fallback). For sqlite it hits
     # tasks_runtime directly.
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2408,7 +2368,7 @@ def _run_task_subcommand(args: list[str]) -> int:
 
 
 def _run_task_set_subcommand(argv: list[str]) -> int:
-    """Handle `orch task set --id TASK [--model MODEL] [--status STATUS] [--backend BACKEND]`.
+    """Handle `orch task set --id TASK [--model MODEL] [--status STATUS] [--backend BACKEND] [--milestone MILESTONE]`.
 
     Writes directly to the SQLite `tasks_definition` and `tasks_runtime` tables.
     Requires state.backend = sqlite.
@@ -2427,12 +2387,18 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
                    help="Set the task status (e.g. done, in-progress, blocked).")
     p.add_argument("--backend", default=None, dest="task_backend",
                    help="Override the backend for this task in tasks_definition.")
+    p.add_argument(
+        "--milestone",
+        default=None,
+        dest="task_milestone",
+        help="Assign the task to a milestone ID.",
+    )
     _add_common_project_flags(p)
     parsed = p.parse_args(argv)
 
-    if not any([parsed.model, parsed.status, parsed.task_backend]):
+    if not any([parsed.model, parsed.status, parsed.task_backend, parsed.task_milestone]):
         print(
-            "error: at least one of --model, --status, --backend is required",
+            "error: at least one of --model, --status, --backend, --milestone is required",
             file=sys.stderr,
         )
         return 1
@@ -2445,7 +2411,7 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2469,6 +2435,10 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
         if parsed.task_backend:
             backend.set_task_backend(parsed.task_id, parsed.task_backend)
             print(f"task {parsed.task_id}: backend -> {parsed.task_backend}")
+
+        if parsed.task_milestone:
+            backend.set_task_milestone(parsed.task_id, parsed.task_milestone)
+            print(f"task {parsed.task_id}: milestone -> {parsed.task_milestone}")
 
         if parsed.status:
             import datetime as _dt
@@ -2523,7 +2493,7 @@ def _run_status_subcommand(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2622,7 +2592,7 @@ def _run_tasks_subcommand(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2716,7 +2686,7 @@ def _run_events_subcommand(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -2864,7 +2834,7 @@ def _run_graph_subcommand(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1
@@ -3061,7 +3031,7 @@ def _run_validate_subcommand(argv: list[str]) -> int:
     errors.extend(preflight.validate_config_shape(paths.config_yaml))
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         cfg = {}
         errors.append(
@@ -3281,7 +3251,7 @@ def _findings_backend(argv: list[str]) -> tuple[Any, dict[str, Any], Any]:
     _add_common_project_flags(p)
     args, _rest = p.parse_known_args(argv)
     paths = _resolve_paths_from_argv(args)
-    cfg = _load_config(paths.config_yaml)
+    cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     backend = get_backend(paths, cfg)
     return backend, cfg, paths
 
@@ -4014,7 +3984,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- (2) config + router + tasks -------------------------------------
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except FileNotFoundError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 1

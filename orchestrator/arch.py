@@ -397,7 +397,7 @@ def _run_generate(argv: list[str]) -> int:
         return 1
 
     try:
-        cfg = _load_config(paths.config_yaml)
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
     except Exception as exc:  # noqa: BLE001
         print(f"config load failed: {exc}", file=sys.stderr)
         return 1

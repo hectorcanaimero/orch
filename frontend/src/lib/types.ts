@@ -196,6 +196,10 @@ export interface ProjectConfigDashboard {
   board_url?: string | null
 }
 
+export interface ProjectConfigPresentation {
+  status_labels?: Record<string, string>
+}
+
 export interface ProjectConfig {
   concurrency?: ProjectConfigConcurrency
   budget?: ProjectConfigBudget
@@ -205,6 +209,7 @@ export interface ProjectConfig {
   budgets?: ProjectConfigBudgets
   findings?: ProjectConfigFindings
   dashboard?: ProjectConfigDashboard
+  presentation?: ProjectConfigPresentation
   strict_files_phases?: number[]
   default_timeout_multiplier?: number
 }

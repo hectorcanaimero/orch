@@ -92,3 +92,15 @@ dashboard:
 dispatch:
   worktree_mode: false   # opt-in — set to true to enable per-task git isolation
   base_branch: main      # branch new worktrees are based on
+
+# Presentation layer — labels shown in the dashboard UI.
+# Override any key to use your own language. Internal status values never change.
+presentation:
+  status_labels:
+    backlog:     "Planificado"
+    todo:        "Por hacer"
+    in_progress: "En progreso"
+    in-progress: "En progreso"
+    done:        "Entregado"
+    blocked:     "Bloqueado"
+    skipped:     "Omitido"
