@@ -135,6 +135,7 @@ def test_wizard_scaffold_passes_validate(
         "",  # standard (default)
         "",  # cheap (default)
         "n",  # sdd
+        "n",  # open dashboard in browser?
     ])
     args = argparse.Namespace()
     rc = run_wizard(
