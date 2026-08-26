@@ -137,10 +137,27 @@ def test_task_status_unknown_raises_key_error(tmp_path: Path) -> None:
 
 def test_task_status_illegal_transition_raises_value_error(tmp_path: Path) -> None:
     be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
-    be.bootstrap([_task("T-A")])
-    # todo → done directly is illegal (must go through in-progress).
+    be.bootstrap([_task("T-A", status="blocked")])
+    # blocked → done directly is illegal (must go through in-progress or todo first).
     with pytest.raises(ValueError, match="illegal transition"):
         be.set_task_status("T-A", "done", author="x", note="", ts="2026-08-19T12:00:00Z")
+
+
+def test_status_transition_todo_to_done_allowed(tmp_path: Path) -> None:
+    """todo → done must be a valid transition (manual completion without dispatch)."""
+    be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
+    be.bootstrap([_task("T-A")])
+
+    # Must not raise — this is the manual completion path.
+    be.set_task_status("T-A", "done", author="operator", note="manual done", ts="2026-08-19T12:00:00Z")
+
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(str(tmp_path / "orch.db"))
+    status = conn.execute(
+        "SELECT status FROM tasks_runtime WHERE project_id='p1' AND task_id='T-A'"
+    ).fetchone()[0]
+    conn.close()
+    assert status == "done"
 
 
 def test_task_status_comments_round_trip(tmp_path: Path) -> None:

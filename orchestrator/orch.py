@@ -2327,6 +2327,105 @@ def _add_common_project_flags(p: argparse.ArgumentParser) -> None:
                    help="Path to config.yaml (default: .orchestrator/config.yaml)")
 
 
+def _run_task_subcommand(args: list[str]) -> int:
+    """Dispatch `orch task <subcommand>`.
+
+    Sub-commands: set
+    """
+    if not args or args[0] not in ("set",):
+        print("usage: orch task <subcommand>")
+        print("subcommands: set")
+        return 1
+    if args[0] == "set":
+        return _run_task_set_subcommand(args[1:])
+    return 1
+
+
+def _run_task_set_subcommand(argv: list[str]) -> int:
+    """Handle `orch task set --id TASK [--model MODEL] [--status STATUS] [--backend BACKEND]`.
+
+    Writes directly to the SQLite `tasks_definition` and `tasks_runtime` tables.
+    Requires state.backend = sqlite.
+
+    Exit codes:
+      0 — all mutations applied
+      1 — missing flags / file backend
+      3 — illegal status transition (ValueError from SqliteBackend)
+    """
+    p = argparse.ArgumentParser(prog="orch task set")
+    p.add_argument("--id", required=True, dest="task_id",
+                   help="Task ID, e.g. F1.1.T3")
+    p.add_argument("--model", default=None,
+                   help="Override the model for this task in tasks_definition.")
+    p.add_argument("--status", default=None,
+                   help="Set the task status (e.g. done, in-progress, blocked).")
+    p.add_argument("--backend", default=None, dest="task_backend",
+                   help="Override the backend for this task in tasks_definition.")
+    _add_common_project_flags(p)
+    parsed = p.parse_args(argv)
+
+    if not any([parsed.model, parsed.status, parsed.task_backend]):
+        print(
+            "error: at least one of --model, --status, --backend is required",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        paths = _resolve_paths_from_argv(parsed)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        cfg = _load_config(paths.config_yaml)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    from orchestrator.state import get_backend
+    from orchestrator.state.sqlite_backend import SqliteBackend
+
+    backend = get_backend(paths, cfg)
+    if not isinstance(backend, SqliteBackend):
+        print(
+            "error: orch task set requires state.backend = sqlite",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        if parsed.model:
+            backend.set_task_model(parsed.task_id, parsed.model)
+            print(f"task {parsed.task_id}: model -> {parsed.model}")
+
+        if parsed.task_backend:
+            backend.set_task_backend(parsed.task_id, parsed.task_backend)
+            print(f"task {parsed.task_id}: backend -> {parsed.task_backend}")
+
+        if parsed.status:
+            import datetime as _dt
+            ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            backend.set_task_status(
+                parsed.task_id,
+                parsed.status,  # type: ignore[arg-type]
+                author="operator",
+                note=f"manual set via orch task set",
+                ts=ts,
+            )
+            print(f"task {parsed.task_id}: status -> {parsed.status}")
+
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
+
+    return 0
+
+
 def _run_status_subcommand(argv: list[str]) -> int:
     """Handle `orch status [--json] [--only GLOB] [--status STATUSES]`.
 
@@ -3756,6 +3855,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_atomize_subcommand(incoming[1:])
     if incoming and incoming[0] == "task-status":
         return _run_task_status_subcommand(incoming[1:])
+    if incoming and incoming[0] == "task":
+        return _run_task_subcommand(incoming[1:])
     if incoming and incoming[0] == "migrate":
         from orchestrator.migrate import run_migrate
 

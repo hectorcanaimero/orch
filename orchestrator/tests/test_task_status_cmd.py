@@ -129,9 +129,10 @@ def test_sqlite_unknown_task_exits_2(project: Path) -> None:
 
 
 def test_sqlite_illegal_transition_exits_3(project: Path) -> None:
-    # T-A starts as `todo`; jumping straight to `done` is illegal.
+    # T-E starts as `blocked`; jumping straight to `done` is illegal
+    # (blocked → done has no direct path in _STATUS_TRANSITIONS).
     argv = [
-        "T-A",
+        "T-E",
         "done",
         "--project-root", str(project),
         "--project-id", "proj-a",

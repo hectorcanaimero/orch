@@ -52,7 +52,7 @@ _ALLOWED_STATUSES: frozenset[str] = frozenset(
 # CLI can map to exit-code 3.
 _STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     "backlog": frozenset({"todo", "blocked", "backlog"}),
-    "todo": frozenset({"in-progress", "blocked", "todo"}),
+    "todo": frozenset({"in-progress", "blocked", "todo", "done"}),  # done = manual completion
     "in-progress": frozenset({"done", "blocked", "todo", "in-progress"}),
     "blocked": frozenset({"todo", "in-progress", "blocked"}),
     "done": frozenset({"todo", "done"}),  # allow re-open for reset
