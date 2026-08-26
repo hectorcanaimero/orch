@@ -39,5 +39,6 @@ def test_override_root_none_is_default_behavior(tmp_path: Path) -> None:
     )
 
     assert paths.tasks_json == root / "tasks.json"
+    assert paths.router_yaml == root / ".orchestrator" / "model_router.yaml"
     assert paths.scripts_dir == root / "scripts"
     assert paths.state_dir == root / ".orchestrator" / "state"

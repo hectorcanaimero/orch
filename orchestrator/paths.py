@@ -153,8 +153,9 @@ class ProjectPaths:
         from orchestrator.state import CwdViolationError
 
         if not self.tasks_json.exists() or not (self.scripts_dir / "task-start.sh").exists():
+            active_root = self.override_root or self.project_root
             raise CwdViolationError(
-                f"orchestrator project_root={self.project_root} is missing "
+                f"orchestrator project_root={active_root} is missing "
                 "tasks.json or scripts/task-start.sh"
             )
 
