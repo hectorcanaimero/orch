@@ -891,8 +891,8 @@ def _install_sigint(
     SIGKILL the whole process group of every in-flight child (catches
     subprocess-of-subprocess trees, not just the direct CLI).
 
-    Sprint F-2: on hard kill (second signal), also call wm.remove_all() to
-    clean up any orphaned worktrees.
+    Sprint F-2: ``wm`` is accepted for API symmetry. Worktree cleanup on
+    hard kill is handled by ``main()`` after ``_drain_wait`` completes.
     """
 
     def handler(signum, frame):  # noqa: ARG001

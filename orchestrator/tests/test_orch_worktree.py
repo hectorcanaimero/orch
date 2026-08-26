@@ -32,6 +32,24 @@ from orchestrator.orch import (
 from orchestrator.worktree import WorktreeError, WorktreeManager
 
 
+# ---- Fixtures ---------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_sigint():
+    """Restore original SIGINT/SIGTERM handlers after each test.
+
+    _install_sigint installs global signal handlers without cleanup.
+    This fixture ensures no state leaks between tests.
+    """
+    import signal as _signal
+    old_sigint = _signal.getsignal(_signal.SIGINT)
+    old_sigterm = _signal.getsignal(_signal.SIGTERM)
+    yield
+    _signal.signal(_signal.SIGINT, old_sigint)
+    _signal.signal(_signal.SIGTERM, old_sigterm)
+
+
 # ---- Helpers ----------------------------------------------------------------
 
 
@@ -226,9 +244,11 @@ def test_reap_calls_push_and_remove_on_success(tmp_path: Path) -> None:
 
     wm.push.assert_called_once_with("T-WT1")
     wm.remove.assert_called_once_with("T-WT1")
-    # push before remove.
-    assert wm.method_calls[0][0] == "push"
-    assert wm.method_calls[1][0] == "remove"
+    # push before remove (index-based to survive interleaved calls).
+    call_names = [c[0] for c in wm.method_calls]
+    assert "push" in call_names
+    assert "remove" in call_names
+    assert call_names.index("push") < call_names.index("remove"), "push must happen before remove"
 
 
 # ---- Test 4: _reap_once skips push on failure but still removes -------------
@@ -251,7 +271,7 @@ def test_reap_skips_push_on_failure(tmp_path: Path) -> None:
             DispatchResult(exit_code=1, success=False, error_message="fail"), None
         )),
         patch("orchestrator.orch._record_spend"),
-        patch("orchestrator.orch.call_task_block", create=True),
+        patch("orchestrator.orch.call_task_block"),
     ):
         _reap_once(
             in_flight, queue, run_file, event_log, spend_log,
