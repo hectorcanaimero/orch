@@ -128,7 +128,7 @@ def test_empty_files_renders_literal_brackets(tmp_path: Path) -> None:
     path = render_prompt(t, [], "specs/foo.md", "r", tmp_path)
     text = path.read_text(encoding="utf-8")
     assert "Files you may write: []" in text
-    assert "Do NOT touch files outside []" in text
+    assert "Do NOT touch files outside the list above" in text
 
 
 def test_files_populated_renders_list_repr(tmp_path: Path) -> None:
@@ -181,3 +181,35 @@ def test_missing_comment_renders_no_comment_placeholder(tmp_path: Path) -> None:
     path = render_prompt(t, [dep], "specs/foo.md", "r", tmp_path)
     text = path.read_text(encoding="utf-8")
     assert "- T-DEP: (no comment)" in text
+
+
+# ---- Metadata cleanup (#46) ------------------------------------------------
+
+
+def test_prompt_excludes_phase_estimate_reason(tmp_path: Path) -> None:
+    """Rendered prompt must not include Phase, Estimate, or Model reason lines."""
+    t = _mk_task(phase=1, estimate_hours=2.5, reason="Testing purposes")
+    path = render_prompt(t, [], "specs/foo.md", "r", tmp_path)
+    text = path.read_text(encoding="utf-8")
+    assert "Phase:" not in text
+    assert "Estimate:" not in text
+    assert "Model reason:" not in text
+
+
+def test_prompt_files_list_appears_once(tmp_path: Path) -> None:
+    """The files list must appear exactly once (not duplicated)."""
+    t = _mk_task(files=["src/a.py", "src/b.py"])
+    path = render_prompt(t, [], "specs/foo.md", "r", tmp_path)
+    text = path.read_text(encoding="utf-8")
+    # Count occurrences of the file representation
+    assert text.count("['src/a.py', 'src/b.py']") == 1, "files list must not be duplicated"
+
+
+def test_prompt_files_constraint_uses_generic_reference(tmp_path: Path) -> None:
+    """The 'Do NOT touch files outside' constraint should reference 'the list above'."""
+    t = _mk_task(files=["src/foo.ts"])
+    path = render_prompt(t, [], "specs/foo.md", "r", tmp_path)
+    text = path.read_text(encoding="utf-8")
+    assert "Do NOT touch files outside the list above" in text
+    # Ensure no duplicate {files} placeholders leak
+    assert text.count("Do NOT touch files outside") == 1
