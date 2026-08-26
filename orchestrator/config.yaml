@@ -82,3 +82,13 @@ dashboard:
   # profile: operator                                                     # operator | stakeholder | both
   # token: ""                                                             # required when profile != operator
   board_url: "https://draw.z0n.co/editor/4177cfa1-e629-4eb0-a0a8-de925cfaaf7b"                # optional — embed an ExcaliDash canvas in the Board tab
+
+# Sprint F-2 — git worktree isolation per task.
+# When worktree_mode is true, each dispatched task runs in a dedicated
+# git worktree (.worktrees/<task-id>/) on branch orch/<task-id>, branched
+# off base_branch. On agent success the branch is pushed to origin with
+# --force-with-lease. On failure the branch is NOT pushed. The worktree
+# directory is always cleaned up after the task exits (success or failure).
+dispatch:
+  worktree_mode: false   # opt-in — set to true to enable per-task git isolation
+  base_branch: main      # branch new worktrees are based on
