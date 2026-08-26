@@ -27,21 +27,11 @@ def deep_merge(base: dict, override: dict) -> dict:
 
 
 def _try_load_override(path: Path) -> dict[str, Any]:
-    """Load a YAML override file. Returns {} if the file doesn't exist or is unparseable.
-
-    Errors are silently swallowed so a malformed override (e.g. model_router.yaml
-    with bad syntax) does not abort config loading. The dedicated preflight checks
-    (``orch doctor`` / ``orch validate``) surface parse errors with proper
-    diagnostics — we must not swallow them here and convert them into a generic
-    ``config.parse`` failure.
-    """
+    """Load a YAML override file. Returns {} if the file doesn't exist."""
     if not path.exists():
         return {}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
-    except Exception:  # noqa: BLE001 — yaml.YAMLError or IO errors
-        return {}
+    with open(path, encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
 
 
 def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:

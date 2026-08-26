@@ -85,33 +85,26 @@ def build_doctor_report(
 
     try:
         cfg = config_loader(paths.config_yaml)
-    except Exception as exc:  # noqa: BLE001 — every load path counts as parse error
+    except Exception:  # noqa: BLE001 — every load path counts as parse error
         cfg = {}
-        checks.append(
-            preflight.CheckResult(
-                name="config.parse",
-                status="error",
-                detail=f"cannot load {paths.config_yaml}: {exc}",
-                remediation=(
-                    f"Create {paths.config_yaml} (run `orch init` for a template)."
-                ),
-            )
-        )
 
     backend_kind = str(((cfg.get("state") or {}) or {}).get("backend", "file"))
     budgets_preset = cfg.get("budgets_preset")
     budgets_path = _resolve_budgets_path(paths, cfg)
 
-    if not any(c.name == "config.parse" for c in checks):
-        checks.extend(
-            preflight.check_config_files(
-                config_yaml=paths.config_yaml,
-                budgets_yaml=budgets_path,
-                router_yaml=paths.router_yaml,
-                tasks_json=paths.tasks_json,
-                budgets_preset=budgets_preset,
-            )
+    # Always run check_config_files so individual file checks (config.parse,
+    # router.parse, budgets.parse, tasks.parse) are always reported, even when
+    # the config_loader raised (e.g. a malformed override file — the error
+    # should surface as router.parse, not as a generic config.parse).
+    checks.extend(
+        preflight.check_config_files(
+            config_yaml=paths.config_yaml,
+            budgets_yaml=budgets_path,
+            router_yaml=paths.router_yaml,
+            tasks_json=paths.tasks_json,
+            budgets_preset=budgets_preset,
         )
+    )
 
     # Scripts + jq.
     checks.extend(preflight.check_scripts(paths.scripts_dir))
