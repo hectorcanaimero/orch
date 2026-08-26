@@ -76,7 +76,7 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 
 Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funciona.
 
-- [ ] **Git worktrees por task** — cada agente trabaja en su branch aislada. Cero conflictos de archivos entre tasks paralelas. `dispatch.worktree_mode: true` en config.
+- [x] **Git worktrees por task** — cada agente trabaja en su branch aislada. Cero conflictos de archivos entre tasks paralelas. `dispatch.worktree_mode: true` en config. (F-2, PR #48)
 - [ ] **PR automático por task** — cuando el agente termina, orch hace push + `gh pr create`. El dashboard muestra el link al PR.
 - [ ] **CI polling en `tasks_runtime`** — orch espera resultado de GitHub Actions y lo registra en SQLite. El stakeholder ve "✅ 47 tests passed — Merged at 14:32".
 - [ ] **`orch init` genera `.github/workflows/orch-ci.yml`** — configurable via `github.test_command: "pytest"`. El workflow corre automáticamente en cada PR de task.
@@ -126,7 +126,8 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | Client-shareable URL | ❌ | ❌ | ❌ | ❌ | ✅ |
 | DAG-based dependencies | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
-| PR por task | ❌ | ❌ | ❌ | ✅ | 🔜 F-2 |
+| Git worktree por task | ❌ | ❌ | ❌ | ❌ | ✅ F-2 |
+| PR automático por task | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
 | CI auto-validación | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
@@ -163,4 +164,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-26 — basado en estado v0.7.0 post Sprint F-1*
+*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-2 (worktree dispatch, PR #48)*
