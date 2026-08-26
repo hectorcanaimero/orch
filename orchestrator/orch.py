@@ -2411,7 +2411,7 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
                 parsed.task_id,
                 parsed.status,  # type: ignore[arg-type]
                 author="operator",
-                note=f"manual set via orch task set",
+                note="manual set via orch task set",
                 ts=ts,
             )
             print(f"task {parsed.task_id}: status -> {parsed.status}")

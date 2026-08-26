@@ -278,3 +278,59 @@ def test_task_set_backend_flag_updates_tasks_definition(tmp_path: Path, capsys) 
     ).fetchone()[0]
     conn.close()
     assert backend == "claude"
+
+
+def test_set_model_unknown_task_exits_1(tmp_path: Path, capsys) -> None:
+    """--id with a task not in tasks_definition must exit 1."""
+    from orchestrator.orch import _run_task_set_subcommand
+
+    root = tmp_path / "proj"
+    _make_sqlite_project(root)
+    _bootstrap_project(root)
+
+    rc = _run_task_set_subcommand([
+        "--id", "NONEXISTENT",
+        "--model", "opencode/claude-sonnet-4-6",
+        *_common_args(root),
+    ])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "NONEXISTENT" in err
+
+
+def test_set_status_invalid_transition_exits_3(tmp_path: Path, capsys) -> None:
+    """Invalid status transition (done → blocked) must exit 3."""
+    from orchestrator.orch import _run_task_set_subcommand
+    from orchestrator.state.sqlite_backend import SqliteBackend
+    from orchestrator.state import get_backend
+    from orchestrator.orch import _load_config, _resolve_paths_from_argv
+    import argparse
+
+    root = tmp_path / "proj"
+    _make_sqlite_project(root)
+    _bootstrap_project(root)
+
+    # Manually set task to done so we can attempt an invalid transition
+    ns = argparse.Namespace(
+        project_root=str(root),
+        project_id="proj-task-set",
+        config=".orchestrator/config.yaml",
+    )
+    paths = _resolve_paths_from_argv(ns)
+    cfg = _load_config(paths.config_yaml)
+    backend = get_backend(paths, cfg)
+    assert isinstance(backend, SqliteBackend)
+
+    # First set T-A to in-progress, then to done
+    backend.set_task_status("T-A", "in-progress", "operator", "test setup", "2026-08-25T00:00:00Z")
+    backend.set_task_status("T-A", "done", "operator", "test setup", "2026-08-25T00:00:00Z")
+
+    # Now try to transition done → blocked, which is invalid
+    rc = _run_task_set_subcommand([
+        "--id", "T-A",
+        "--status", "blocked",
+        *_common_args(root),
+    ])
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "illegal transition" in err
