@@ -11,11 +11,7 @@ import { labelForStatus } from "@/lib/status"
 export function MilestonesPage() {
   const { data: milestones, isLoading, isError, error } = useMilestones()
   const { data: config } = useProjectConfig()
-  const raw = config?.presentation?.status_labels
-  const statusLabels: Record<string, string> | undefined =
-    raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, string>)
-      : undefined
+  const statusLabels = config?.presentation?.status_labels
 
   if (isLoading) {
     return (
