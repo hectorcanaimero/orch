@@ -2368,7 +2368,7 @@ def _run_task_subcommand(args: list[str]) -> int:
 
 
 def _run_task_set_subcommand(argv: list[str]) -> int:
-    """Handle `orch task set --id TASK [--model MODEL] [--status STATUS] [--backend BACKEND]`.
+    """Handle `orch task set --id TASK [--model MODEL] [--status STATUS] [--backend BACKEND] [--milestone MILESTONE]`.
 
     Writes directly to the SQLite `tasks_definition` and `tasks_runtime` tables.
     Requires state.backend = sqlite.
@@ -2387,12 +2387,18 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
                    help="Set the task status (e.g. done, in-progress, blocked).")
     p.add_argument("--backend", default=None, dest="task_backend",
                    help="Override the backend for this task in tasks_definition.")
+    p.add_argument(
+        "--milestone",
+        default=None,
+        dest="task_milestone",
+        help="Assign the task to a milestone ID.",
+    )
     _add_common_project_flags(p)
     parsed = p.parse_args(argv)
 
-    if not any([parsed.model, parsed.status, parsed.task_backend]):
+    if not any([parsed.model, parsed.status, parsed.task_backend, parsed.task_milestone]):
         print(
-            "error: at least one of --model, --status, --backend is required",
+            "error: at least one of --model, --status, --backend, --milestone is required",
             file=sys.stderr,
         )
         return 1
@@ -2429,6 +2435,17 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
         if parsed.task_backend:
             backend.set_task_backend(parsed.task_id, parsed.task_backend)
             print(f"task {parsed.task_id}: backend -> {parsed.task_backend}")
+
+        if parsed.task_milestone:
+            if not hasattr(backend, "set_task_milestone"):
+                print(
+                    "error: --milestone requires the SQLite state backend "
+                    "(set state.backend: sqlite in config.yaml)",
+                    file=sys.stderr,
+                )
+                return 1
+            backend.set_task_milestone(parsed.task_id, parsed.task_milestone)
+            print(f"task {parsed.task_id}: milestone -> {parsed.task_milestone}")
 
         if parsed.status:
             import datetime as _dt
