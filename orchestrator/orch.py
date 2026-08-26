@@ -2437,13 +2437,6 @@ def _run_task_set_subcommand(argv: list[str]) -> int:
             print(f"task {parsed.task_id}: backend -> {parsed.task_backend}")
 
         if parsed.task_milestone:
-            if not hasattr(backend, "set_task_milestone"):
-                print(
-                    "error: --milestone requires the SQLite state backend "
-                    "(set state.backend: sqlite in config.yaml)",
-                    file=sys.stderr,
-                )
-                return 1
             backend.set_task_milestone(parsed.task_id, parsed.task_milestone)
             print(f"task {parsed.task_id}: milestone -> {parsed.task_milestone}")
 

@@ -767,7 +767,7 @@ def create_app(
         cfg_path = app_state.paths.config_yaml
         try:
             raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-        except (OSError, ValueError):
+        except (OSError, ValueError, yaml.YAMLError):
             raw_cfg = {}
 
         backend = _get_state_backend(app_state.paths, raw_cfg)

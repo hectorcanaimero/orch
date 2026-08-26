@@ -137,6 +137,68 @@ def test_milestones_returns_milestone_data(tmp_path: Path) -> None:
         _reset_caches()
 
 
+def test_milestones_returns_200_on_malformed_yaml(tmp_path: Path) -> None:
+    """Malformed config.yaml triggers yaml.YAMLError — must fall back gracefully (not 500)."""
+    from orchestrator.paths import ProjectPaths
+
+    root = tmp_path / "proj_bad_yaml"
+    (root / ".orchestrator" / "state").mkdir(parents=True)
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
+    (root / "tasks.json").write_text(
+        json.dumps({"meta": {}, "phases": [], "tasks": []}),
+        encoding="utf-8",
+    )
+
+    cfg_path = root / ".orchestrator" / "config.yaml"
+    # Write YAML that is syntactically invalid (triggers yaml.YAMLError)
+    cfg_path.write_text(":\n  - not: valid: yaml: [", encoding="utf-8")
+
+    paths = ProjectPaths(
+        project_root=root,
+        project_id="proj_bad_yaml",
+        config_yaml=cfg_path,
+        explicit_root=True,
+        state_layout="legacy",
+    )
+
+    _reset_caches()
+    try:
+        client = _client(paths)
+        r = client.get("/api/milestones")
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["milestones"] == []
+        assert payload["backend"] == "file"
+    finally:
+        _reset_caches()
+
+
+def test_milestones_requires_auth_in_stakeholder_mode(tmp_path: Path) -> None:
+    """GET /api/milestones must return 401 without a token when stakeholder profile is used."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orchestrator.dashboard.server import create_app
+
+    _reset_caches()
+    try:
+        paths = _make_project(tmp_path, backend="file")
+        app = create_app(
+            paths=paths,
+            profile_override="stakeholder",
+            token_override="s3cr3t",
+        )
+        client = TestClient(app)
+
+        # No token → 401
+        r = client.get("/api/milestones")
+        assert r.status_code == 401, (
+            f"expected 401 without token, got {r.status_code}"
+        )
+    finally:
+        _reset_caches()
+
+
 def test_milestones_missing_config_falls_back_to_file(tmp_path: Path) -> None:
     """If config.yaml is absent, file backend is assumed → milestones=[]."""
     from orchestrator.paths import ProjectPaths
