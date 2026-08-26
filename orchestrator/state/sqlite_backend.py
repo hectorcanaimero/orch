@@ -244,8 +244,7 @@ class SqliteBackend:
         """Seed `projects` + `tasks_runtime` idempotently for this project.
 
         Uses `INSERT OR IGNORE` so re-running bootstrap over an existing
-        DB is a no-op. `tasks.json` status is IGNORED per the design
-        decision (`tasks_json_precedence: "deps-only"`) — the DB is the
+        DB is a no-op. `tasks.json` status is IGNORED — the DB is the
         source of truth for runtime status once initialized.
         """
         now = _utc_now_iso()

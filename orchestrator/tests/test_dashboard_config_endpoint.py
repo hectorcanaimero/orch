@@ -92,7 +92,6 @@ _FULL_CONFIG = dedent(
     state:
       backend: file
       sqlite_path: null
-    tasks_json_precedence: deps-only
 
     budgets_config: budgets.yaml
     budgets_preset: conservative
@@ -128,7 +127,6 @@ def test_api_config_reflects_yaml_values(tmp_path: Path) -> None:
     assert payload["state"] == {
         "backend": "file",
         "sqlite_path": None,
-        "tasks_json_precedence": "deps-only",
     }
     assert payload["retry"] == {
         "backoff_seconds": 5,
