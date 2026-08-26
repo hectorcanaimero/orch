@@ -5,7 +5,7 @@ All git subprocess calls are mocked — no real git repo needed.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -78,6 +78,10 @@ def test_create_cleans_stale_path_first(tmp_path: Path) -> None:
     calls_made = []
     def fake_run(args, **kwargs):
         calls_made.append(args)
+        # Simulate actual removal of the stale directory
+        if args[2] == "remove" and stale_path.exists():
+            import shutil
+            shutil.rmtree(stale_path)
         return _ok_run()
 
     with patch("subprocess.run", side_effect=fake_run):
@@ -85,8 +89,10 @@ def test_create_cleans_stale_path_first(tmp_path: Path) -> None:
 
     # First call must be the remove (for the stale path), then the add.
     assert calls_made[0] == ["git", "worktree", "remove", "--force", str(stale_path)]
-    assert calls_made[1][1] == "worktree"
-    assert calls_made[1][2] == "add"
+    expected_wt_path = tmp_path / ".worktrees" / "F2.1.T1"
+    assert calls_made[1] == [
+        "git", "worktree", "add", str(expected_wt_path), "-b", "orch/F2.1.T1", "main"
+    ]
 
 
 def test_create_raises_worktree_error_on_git_failure(tmp_path: Path) -> None:

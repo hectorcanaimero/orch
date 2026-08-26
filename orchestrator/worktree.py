@@ -82,6 +82,8 @@ class WorktreeManager:
         wt_path = self.worktree_path(task_id)
         if wt_path.exists():
             self.remove(task_id)
+        if wt_path.exists():  # remove() swallows errors — verify cleanup succeeded
+            raise WorktreeError(task_id, [], f"stale worktree at {wt_path} could not be removed")
         (self._root / ".worktrees").mkdir(parents=True, exist_ok=True)
         self._run(
             ["git", "worktree", "add", str(wt_path), "-b", self.branch_name(task_id), base_branch],
