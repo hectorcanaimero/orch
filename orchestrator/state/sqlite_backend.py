@@ -274,6 +274,94 @@ class SqliteBackend:
                         now,
                     ),
                 )
+                conn.execute(
+                    "INSERT OR IGNORE INTO tasks_definition "
+                    "(project_id, task_id, title, model, backend, deps_json, "
+                    " spec_ref, phase, estimate_h, reason, files_json, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        self.project_id,
+                        t.id,
+                        t.title or "",
+                        t.model,
+                        None,
+                        json.dumps(list(t.dependencies or [])),
+                        t.spec_ref,
+                        t.phase,
+                        t.estimate_hours,
+                        t.reason,
+                        json.dumps(list(t.files or [])),
+                        now,
+                    ),
+                )
+
+    def upsert_task_definition(
+        self,
+        task_id: str,
+        *,
+        title: str,
+        model: str | None,
+        backend: str | None,
+        deps: list[str],
+        spec_ref: str | None,
+        phase: int | None,
+        estimate_h: float | None,
+        reason: str | None,
+        files: list[str],
+    ) -> None:
+        """INSERT OR REPLACE into tasks_definition — called by atomize --apply."""
+        now = _utc_now_iso()
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO tasks_definition "
+                "(project_id, task_id, title, model, backend, deps_json, "
+                " spec_ref, phase, estimate_h, reason, files_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    self.project_id,
+                    task_id,
+                    title or "",
+                    model,
+                    backend,
+                    json.dumps(list(deps or [])),
+                    spec_ref,
+                    phase,
+                    estimate_h,
+                    reason,
+                    json.dumps(list(files or [])),
+                    now,
+                ),
+            )
+
+    def set_task_model(self, task_id: str, model: str) -> None:
+        """Update tasks_definition.model — used by orch task set --model."""
+        now = _utc_now_iso()
+        with self._write() as conn:
+            rowcount = conn.execute(
+                "UPDATE tasks_definition SET model = ?, updated_at = ? "
+                "WHERE project_id = ? AND task_id = ?",
+                (model, now, self.project_id, task_id),
+            ).rowcount
+        if rowcount == 0:
+            raise KeyError(
+                f"task '{task_id}' not found in tasks_definition for project "
+                f"'{self.project_id}'. Run 'orch atomize --apply' first."
+            )
+
+    def set_task_backend(self, task_id: str, backend: str) -> None:
+        """Update tasks_definition.backend — used by orch task set --backend."""
+        now = _utc_now_iso()
+        with self._write() as conn:
+            rowcount = conn.execute(
+                "UPDATE tasks_definition SET backend = ?, updated_at = ? "
+                "WHERE project_id = ? AND task_id = ?",
+                (backend, now, self.project_id, task_id),
+            ).rowcount
+        if rowcount == 0:
+            raise KeyError(
+                f"task '{task_id}' not found in tasks_definition for project "
+                f"'{self.project_id}'. Run 'orch atomize --apply' first."
+            )
 
     # ---- task status ---------------------------------------------------
 
