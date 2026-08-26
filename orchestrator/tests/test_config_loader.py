@@ -86,3 +86,37 @@ def test_load_config_max_attempts_overridable(tmp_path: Path):
     cfg_file.write_text("retry:\n  max_attempts: 5\n", encoding="utf-8")
     cfg = load_config(cfg_file)
     assert cfg["retry"]["max_attempts"] == 5
+
+
+def test_load_config_applies_dashboard_override(tmp_path: Path):
+    (tmp_path / "config.yaml").write_text("retry:\n  max_attempts: 2\n", encoding="utf-8")
+    (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard" / "dashboard.yaml").write_text("dashboard:\n  port: 9999\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "config.yaml")
+    assert cfg["dashboard"]["port"] == 9999
+
+
+def test_load_config_override_priority_later_file_wins(tmp_path: Path):
+    (tmp_path / "config.yaml").write_text("retry:\n  max_attempts: 2\n", encoding="utf-8")
+    (tmp_path / "budgets.yaml").write_text("budget:\n  per_dispatch_usd: 1.0\n", encoding="utf-8")
+    (tmp_path / "model_router.yaml").write_text("budget:\n  per_dispatch_usd: 2.0\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "config.yaml")
+    assert cfg["budget"]["per_dispatch_usd"] == 2.0
+
+
+def test_load_config_project_root_defaults_to_config_parent(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("retry:\n  max_attempts: 2\n", encoding="utf-8")
+    (tmp_path / "budgets.yaml").write_text("budget:\n  per_dispatch_usd: 7.0\n", encoding="utf-8")
+    # Call WITHOUT explicit project_root — it should still find budgets.yaml
+    cfg = load_config(config_path)
+    assert cfg["budget"]["per_dispatch_usd"] == 7.0
+
+
+def test_load_config_budget_partial_override_keeps_default(tmp_path: Path):
+    # config.yaml has budget.max_usd but NOT per_dispatch_usd
+    (tmp_path / "config.yaml").write_text("budget:\n  max_usd: 100\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "config.yaml")
+    # per_dispatch_usd default must still be applied
+    assert cfg["budget"]["per_dispatch_usd"] == 5.0
+    assert cfg["budget"]["max_usd"] == 100

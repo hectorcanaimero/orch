@@ -8,6 +8,7 @@ Resolution order (last wins):
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,7 @@ def deep_merge(base: dict, override: dict) -> dict:
         if key in result and isinstance(result[key], dict) and isinstance(val, dict):
             result[key] = deep_merge(result[key], val)
         else:
-            result[key] = val
+            result[key] = copy.deepcopy(val)
     return result
 
 
@@ -44,7 +45,8 @@ def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     )
     cfg.setdefault("strict_files_phases", [])
     cfg.setdefault("default_timeout_multiplier", 1.5)
-    cfg.setdefault("budget", {"per_dispatch_usd": 5.0})
+    cfg.setdefault("budget", {})
+    cfg["budget"].setdefault("per_dispatch_usd", 5.0)
     cfg.setdefault("retry", {})
     cfg["retry"].setdefault("backoff_seconds", 5.0)
     cfg["retry"].setdefault("rate_limit_backoff_seconds", 60.0)
