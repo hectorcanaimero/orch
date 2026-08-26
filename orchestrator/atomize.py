@@ -1057,6 +1057,40 @@ def main(argv: list[str] | None = None) -> int:
     console.print(f"[green]✓ Escrito:[/green] {tasks_json}")
     if backup:
         console.print(f"[dim]  backup: {backup}[/dim]")
+
+    # Sync tasks_definition to SQLite (single runtime owner after F-1).
+    # Best-effort: if the active backend is not SQLite, this is a no-op.
+    try:
+        from orchestrator.state import get_backend
+        from orchestrator.state.sqlite_backend import SqliteBackend
+
+        cfg: dict[str, Any] = {}
+        config_path = paths.project_root / args.config
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+
+        state_backend = get_backend(paths, cfg)
+        if isinstance(state_backend, SqliteBackend):
+            for pt in parse.tasks:
+                state_backend.upsert_task_definition(
+                    task_id=pt.id,
+                    title=pt.title or "",
+                    model=pt.model,
+                    backend=None,
+                    deps=list(pt.dependencies or []),
+                    spec_ref=pt.spec_ref,
+                    phase=pt.phase,
+                    estimate_h=pt.estimate_hours,
+                    reason=pt.reason,
+                    files=list(pt.files or []),
+                )
+            console.print(
+                f"[dim]  SQLite tasks_definition synced ({len(parse.tasks)} tasks)[/dim]"
+            )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]Warning:[/yellow] SQLite sync failed (non-fatal): {exc}")
+
     return 0
 
 

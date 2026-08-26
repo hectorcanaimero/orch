@@ -669,3 +669,55 @@ def test_set_task_backend_updates_definition(tmp_path: Path) -> None:
     ).fetchone()[0]
     conn.close()
     assert backend == "opencode"
+
+
+def test_atomize_apply_upserts_tasks_definition(tmp_path: Path) -> None:
+    """After atomize --apply, tasks_definition must have the parsed task rows."""
+    from orchestrator.atomize import parse_specs, merge_tasks
+
+    # Minimal project layout
+    (tmp_path / "tasks.json").write_text(
+        '{"meta": {"project": "test"}, "tasks": []}', encoding="utf-8"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    spec = docs / "f1.md"
+    spec.write_text(
+        "# F1 — Sprint F1\n\n"
+        "## F1.1 — Pkg\n\n"
+        "### F1.1.T1 — Do thing\n\n"
+        "- **Modelo**: claude-sonnet-4-6\n"
+        "- **Estimación**: 2h\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "orch.db"
+    backend = SqliteBackend(db_path, "test", project_root=tmp_path)
+    backend.bootstrap([])  # empty seed
+
+    # Simulate what atomize does: parse then upsert
+    parse = parse_specs([spec], docs_root=docs, expected_project_id=None)
+    assert parse.tasks, "spec must yield at least one ParsedTask"
+
+    for pt in parse.tasks:
+        backend.upsert_task_definition(
+            task_id=pt.id,
+            title=pt.title or "",
+            model=pt.model,
+            backend=None,
+            deps=list(pt.dependencies or []),
+            spec_ref=pt.spec_ref,
+            phase=pt.phase,
+            estimate_h=pt.estimate_hours,
+            reason=pt.reason,
+            files=list(pt.files or []),
+        )
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT task_id, model FROM tasks_definition WHERE project_id='test'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "tasks_definition must be populated after atomize"
+    assert row[0] == "F1.1.T1"
+    assert row[1] == "claude-sonnet-4-6"
