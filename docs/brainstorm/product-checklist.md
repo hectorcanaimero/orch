@@ -33,14 +33,14 @@ Estas son las ventajas reales. Ningún competidor las tiene juntas.
 
 Esto ya está en el producto pero la experiencia es incompleta o técnica.
 
-- [ ] **Dashboard UX stakeholder** — hoy muestra task IDs, backend names, status técnico. El cliente necesita ver "¿cuándo está listo mi chatbot?" en lenguaje de negocio. La vista `/stakeholder/summary` es un esqueleto.
+- [ ] **Dashboard UX stakeholder** — hoy muestra task IDs, backend names, status técnico. El cliente necesita ver "¿cuándo está listo mi chatbot?" en lenguaje de negocio. La vista `/stakeholder/summary` es un esqueleto. (Labels configurables en F-3 ✅, milestone view ✅)
 - [ ] **ETA automático del sprint** — `estimate_h` existe en `tasks_definition` pero no se proyecta a "ETA del sprint completo" en el dashboard. Es un cálculo simple: tareas pendientes × velocidad promedio.
 - [ ] **Graph visual en el browser** — `orch graph` genera DOT/texto, pero el dashboard no lo renderiza. Un DAG visual es table stakes para que el stakeholder entienda qué depende de qué.
 - [ ] **Observability en el dashboard** — los logs existen pero la vista en browser es básica. Sin filtros, sin live tail, sin búsqueda. El dev trabaja con logs crudos.
 - [ ] **Error messaging para stakeholders** — errores como `ID_SPOOF`, `VERSION_DRIFT`, `PARSER` son útiles para el dev pero ilegibles para el cliente en el dashboard. Necesitan traducción a lenguaje humano.
-- [ ] **Retry policy configurable** — las estrategias de retry (TRANSIENT, TIMEOUT, VERSION_DRIFT) son hardcoded. Un policy declarativo en config.yaml daría control real.
+- [x] **Retry policy configurable** — `retry.max_attempts` ahora configurable en `config.yaml`. Estrategias de retry (TRANSIENT, TIMEOUT, VERSION_DRIFT) siguen hardcoded en código — eso es intencional (conocimiento del sistema). (F-3 ✅)
 - [ ] **orch init wizard** — funciona pero es lineal y genérico. No adapta el scaffolding al tipo de proyecto. Con templates (punto ➕ más abajo) este punto se resuelve solo.
-- [ ] **Onboarding** — 5 archivos de config (config.yaml, budgets.yaml, model_router.yaml, dashboard.yaml, tasks.json). Curva empinada. Los templates van a aliviar esto, pero hay que pensar también en defaults inteligentes.
+- [x] **Onboarding** — `config.yaml` es ahora el único archivo obligatorio. `budgets.yaml`, `model_router.yaml`, `dashboard/dashboard.yaml` son overrides opcionales con deep-merge. Defaults inteligentes vía `_apply_defaults`. (F-3 ✅)
 
 ---
 
@@ -48,11 +48,11 @@ Esto ya está en el producto pero la experiencia es incompleta o técnica.
 
 Cosas que están mal planteadas, no solo incompletas.
 
-- [ ] **Sprint model → Feature/Milestone model en el dashboard** — los stakeholders no piensan en "Sprint F-1". Piensan en "Login feature", "Chatbot integration", "Admin panel". Las tasks deberían agruparse por deliverable visible al cliente, no por sprint técnico. El sprint sigue siendo útil para el dev; el cliente ve milestones.
-- [ ] **Status labels** — `backlog / in_progress / done` son términos de dev. Para el stakeholder: "Planificado", "En progreso", "Entregado". Necesita capa de presentación con labels configurables.
-- [ ] **Board tab con ExcaliDash** — el propio brainstorm lo identifica: no es core al positioning. Mover a plugin opcional antes del HN launch.
-- [ ] **README** — hoy está orientado al dev. Necesita reescritura completa: nuevo tagline, comparison table, screenshot stakeholder como hero image, GIF de 30s mostrando el flujo "manda este link al cliente". Esto es Q1, ANTES del HN launch.
-- [ ] **Consolidar archivos de config** — cinco archivos son demasiados para el primer `orch init`. Meta: 1 archivo obligatorio (`config.yaml`), el resto opcionales con defaults que funcionan.
+- [x] **Sprint model → Feature/Milestone model en el dashboard** — tabla `milestones` en SQLite, `MilestonesPage` en SPA, `orch task set --milestone`, `GET /api/milestones`. Stakeholders ven deliverables, no sprint codes. (F-3 ✅)
+- [x] **Status labels** — `presentation.status_labels` configurable en `config.yaml` con defaults en español. Helper `labelForStatus()` en SPA. (F-3 ✅)
+- [x] **Board tab con ExcaliDash** — eliminado. `BoardPage.tsx` borrado, tab reemplazado por Milestones. (F-3 ✅)
+- [x] **README** — reescritura completa orientada a stakeholder/agency. Tagline nuevo, comparison table, quickstart de 3 pasos. Dev notes archivados en `docs/README-dev.md`. (F-3 ✅)
+- [x] **Consolidar archivos de config** — `config.yaml` es el único obligatorio. `config_loader.py` con deep-merge para override files opcionales. (F-3 ✅)
 
 ---
 
@@ -70,7 +70,7 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 - [ ] **Budget vs actual chart** — gráfico visual de gasto proyectado vs real, por proveedor y por feature. Transparencia financiera real.
 - [ ] **"What's blocked" view** — vista rápida de tasks bloqueadas con su razón. El cliente puede actuar (dar acceso, aprobar algo) sin tener que preguntar.
 - [ ] **Spend dashboard para el cliente** — "Este sprint costó $X en AI tokens" con desglose por proveedor y por feature. Si el cliente paga el AI spend, esto es ESENCIAL.
-- [ ] **Milestone tracking** — grupos de tasks con fecha objetivo. "Milestone: MVP Login — ETA 15/09 — 3/7 tasks done". Como Jira Epics pero sin el overhead.
+- [x] **Milestone tracking** — grupos de tasks con fecha objetivo. "Milestone: MVP Login — ETA 15/09 — 3/7 tasks done". Como Jira Epics pero sin el overhead. (F-3 ✅)
 
 ### CI/CD y calidad — Sprint F-2/F-3 🔥
 
@@ -122,13 +122,13 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 |---------|:---------:|:------:|:------:|:-----:|:--------:|
 | Multi-backend en un DAG | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Budget guardrails | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Stakeholder dashboard | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Stakeholder dashboard | ❌ | ❌ | ❌ | ❌ | ✅ F-3 |
 | Client-shareable URL | ❌ | ❌ | ❌ | ❌ | ✅ |
 | DAG-based dependencies | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Git worktree por task | ❌ | ❌ | ❌ | ❌ | ✅ F-2 |
-| PR automático por task | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
-| CI auto-validación | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
+| PR automático por task | ❌ | ❌ | ❌ | ✅ | 🔜 F-4 |
+| CI auto-validación | ❌ | ❌ | ❌ | ✅ | 🔜 F-4 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
@@ -147,9 +147,14 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 ## 🗓️ Resumen de prioridades
 
 ```
-Q1 (mes 1-2)  ── Stakeholder polish: timeline, exec summary, PDF, budget chart, blockers view
-               ── CI/CD: worktrees (F-2) + PR automático + CI polling (F-3)
-               ── README reescritura + HN launch prep
+✅ Completo
+   F-1  ── SQLite como SSOT, AGENTS.md, orch task set
+   F-2  ── Git worktrees por task (dispatch.worktree_mode)
+   F-3  ── Config consolidation + milestones + status labels + README rewrite (PR #49)
+
+Q1 (próximo)
+   F-4  ── CI/CD: PR automático por task + CI polling en tasks_runtime
+   F-5  ── Stakeholder polish: timeline/Gantt, exec summary, PDF export, budget chart
 
 Q2 (mes 3-4)  ── Template system (5 templates canónicos)
                ── Multi-project dashboard + client auth por proyecto
@@ -164,4 +169,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-2 (worktree dispatch, PR #48)*
+*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-3 (config consolidation, milestones, status labels, README — PR #49)*
