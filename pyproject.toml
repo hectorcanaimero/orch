@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orchestrator"
-version = "0.6.6"
+version = "0.7.0"
 description = "Task orchestrator that walks a tasks.json DAG and dispatches to claude/codex/opencode CLIs with per-provider budget guardrails"
 requires-python = ">=3.11"
 readme = "README.md"
