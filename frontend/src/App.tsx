@@ -4,7 +4,6 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { AppLayout } from "@/components/AppLayout"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { ArchitecturePage } from "@/pages/ArchitecturePage"
-import { BoardPage } from "@/pages/BoardPage"
 import { DoctorPage } from "@/pages/DoctorPage"
 import { GraphPage } from "@/pages/GraphPage"
 import { KanbanPage } from "@/pages/KanbanPage"
@@ -12,6 +11,7 @@ import { ListPage } from "@/pages/ListPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { LogsPage } from "@/pages/LogsPage"
 import { MetricsPage } from "@/pages/MetricsPage"
+import { MilestonesPage } from "@/pages/MilestonesPage"
 import { DocumentsPage } from "@/pages/DocumentsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
@@ -68,11 +68,11 @@ export default function App() {
             }
           />
           <Route
-            path="/board"
+            path="/milestones"
             element={
               <ProtectedRoute>
                 <AppLayout>
-                  <BoardPage />
+                  <MilestonesPage />
                 </AppLayout>
               </ProtectedRoute>
             }
