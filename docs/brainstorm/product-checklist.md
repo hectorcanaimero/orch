@@ -67,9 +67,9 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 - [ ] **Timeline visual (Gantt-like)** — por milestone/feature, con ETA calculado desde `estimate_h` y velocidad actual. El cliente ve "¿cuándo entrega?" sin preguntar. Nativo en el dashboard, no un iframe externo.
 - [ ] **Executive summary auto-generado** — la IA genera resumen en lenguaje de negocio: *"Esta semana: auth completado, API 60% avanzada, bloqueado esperando credenciales del cliente. ETA revisado +2 días."* Se muestra en el dashboard Y se puede reenviar por email.
 - [ ] **PDF export del sprint/milestone** — el cliente lo lleva a reunión de board. Una página: features entregadas, spend, ETA, blockers.
-- [ ] **Budget vs actual chart** — gráfico visual de gasto proyectado vs real, por proveedor y por feature. Transparencia financiera real.
+- [ ] **Budget vs actual chart** — gráfico visual de gasto real por proveedor y por feature. Solo en vista **operator** — el cliente no ve costos de AI (evita que subestime el valor del servicio).
 - [ ] **"What's blocked" view** — vista rápida de tasks bloqueadas con su razón. El cliente puede actuar (dar acceso, aprobar algo) sin tener que preguntar.
-- [ ] **Spend dashboard para el cliente** — "Este sprint costó $X en AI tokens" con desglose por proveedor y por feature. Si el cliente paga el AI spend, esto es ESENCIAL.
+- [ ] **Spend dashboard operator** — "Este sprint costó $X en AI tokens" con desglose por proveedor. Solo vista operator, nunca stakeholder.
 - [x] **Milestone tracking** — grupos de tasks con fecha objetivo. "Milestone: MVP Login — ETA 15/09 — 3/7 tasks done". Como Jira Epics pero sin el overhead. (F-3 ✅)
 
 ### CI/CD y calidad — Sprint F-2/F-3 🔥
@@ -154,7 +154,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 Q1 (próximo)
    F-4  ── CI/CD: PR automático por task + CI polling en tasks_runtime
-   F-5  ── Stakeholder polish: timeline/Gantt, exec summary, PDF export, budget chart
+   F-5  ── Stakeholder polish: timeline/Gantt, exec summary, PDF export (sin costos al stakeholder)
 
 Q2 (mes 3-4)  ── Template system (5 templates canónicos)
                ── Multi-project dashboard + client auth por proyecto
