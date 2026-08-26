@@ -42,14 +42,14 @@ def _scaffold(
     startup_probe_timeout_s: int = 3,
 ) -> Path:
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "tasks.json").write_text(
         json.dumps({"meta": {}, "phases": [], "tasks": []}),
         encoding="utf-8",
     )
-    (root / "orchestrator" / "config.yaml").write_text("", encoding="utf-8")
+    (root / ".orchestrator" / "config.yaml").write_text("", encoding="utf-8")
     dash = ["tunnel:", f"  enabled: {'true' if enabled else 'false'}"]
     if enabled:
         dash += [
@@ -116,7 +116,7 @@ def _make_client(
     paths = ProjectPaths(
         project_root=root,
         project_id="proj",
-        config_yaml=root / "orchestrator" / "config.yaml",
+        config_yaml=root / ".orchestrator" / "config.yaml",
         explicit_root=True,
         state_layout="legacy",
     )

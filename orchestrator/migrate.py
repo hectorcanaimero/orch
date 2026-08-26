@@ -376,7 +376,7 @@ def run_migrate(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--project-root", default=None, metavar="PATH")
     p.add_argument("--project-id", default=None, metavar="ID")
-    p.add_argument("--config", default="orchestrator/config.yaml")
+    p.add_argument("--config", default=".orchestrator/config.yaml")
     p.add_argument("--backup-dir", default=None, metavar="DIR")
     p.add_argument("--sqlite-path", default=None, metavar="PATH",
                    help="Override the DB path (default: <state_dir>/orch.db)")

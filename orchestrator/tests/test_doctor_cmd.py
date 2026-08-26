@@ -61,7 +61,7 @@ def _scaffold_project(root: Path, backend_kind: str = "file") -> None:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir()
     (orch_dir / "config.yaml").write_text(
         f"state:\n  backend: {backend_kind}\n  sqlite_path: null\n"
@@ -89,7 +89,7 @@ def _common_args(root: Path) -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", "proj-doctor",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 
@@ -275,7 +275,7 @@ def test_doctor_missing_config_file_returns_error(
     monkeypatch.setattr("shutil.which", _fake_which({"jq": "/usr/bin/jq"}))
     rc = _run_doctor_subcommand([
         "--project-root", str(root),
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--json",
     ])
     payload = json.loads(capsys.readouterr().out)

@@ -965,7 +965,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--config",
-        default="orchestrator/config.yaml",
+        default=".orchestrator/config.yaml",
         help="Path a config.yaml (para compat con resolve_project_paths).",
     )
     p.add_argument(
@@ -1010,6 +1010,11 @@ def main(argv: list[str] | None = None) -> int:
         project_id_arg=args.project_id,
         config_arg=args.config,
     )
+
+    cfg: dict[str, Any] = {}
+    if paths.config_yaml.exists():
+        with open(paths.config_yaml, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
 
     specs_root = (
         Path(args.specs_dir).expanduser().resolve()
@@ -1057,6 +1062,34 @@ def main(argv: list[str] | None = None) -> int:
     console.print(f"[green]✓ Escrito:[/green] {tasks_json}")
     if backup:
         console.print(f"[dim]  backup: {backup}[/dim]")
+
+    # Sync tasks_definition to SQLite (single runtime owner after F-1).
+    # Best-effort: if the active backend is not SQLite, this is a no-op.
+    try:
+        from orchestrator.state import get_backend
+        from orchestrator.state.sqlite_backend import SqliteBackend
+
+        state_backend = get_backend(paths, cfg)
+        if isinstance(state_backend, SqliteBackend):
+            for pt in parse.tasks:
+                state_backend.upsert_task_definition(
+                    task_id=pt.id,
+                    title=pt.title or "",
+                    model=pt.model,
+                    backend=None,
+                    deps=list(pt.dependencies or []),
+                    spec_ref=pt.spec_ref,
+                    phase=pt.phase,
+                    estimate_h=pt.estimate_hours,
+                    reason=pt.reason,
+                    files=list(pt.files or []),
+                )
+            console.print(
+                f"[dim]  SQLite tasks_definition synced ({len(parse.tasks)} tasks)[/dim]"
+            )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]Warning:[/yellow] SQLite sync failed (non-fatal): {exc}")
+
     return 0
 
 

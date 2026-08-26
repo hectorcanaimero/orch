@@ -88,7 +88,8 @@ def test_schema_bootstrap_sets_user_version(tmp_path: Path) -> None:
         names = {r[0] for r in rows}
     finally:
         conn.close()
-    assert {"projects", "tasks_runtime", "runs", "dispatches", "events", "spend"} <= names
+    assert {"projects", "tasks_runtime", "runs", "dispatches", "events", "spend",
+            "tasks_definition"} <= names
 
 
 def test_migration_files_discovered() -> None:
@@ -136,10 +137,27 @@ def test_task_status_unknown_raises_key_error(tmp_path: Path) -> None:
 
 def test_task_status_illegal_transition_raises_value_error(tmp_path: Path) -> None:
     be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
-    be.bootstrap([_task("T-A")])
-    # todo → done directly is illegal (must go through in-progress).
+    be.bootstrap([_task("T-A", status="blocked")])
+    # blocked → done directly is illegal (must go through in-progress or todo first).
     with pytest.raises(ValueError, match="illegal transition"):
         be.set_task_status("T-A", "done", author="x", note="", ts="2026-08-19T12:00:00Z")
+
+
+def test_status_transition_todo_to_done_allowed(tmp_path: Path) -> None:
+    """todo → done must be a valid transition (manual completion without dispatch)."""
+    be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
+    be.bootstrap([_task("T-A")])
+
+    # Must not raise — this is the manual completion path.
+    be.set_task_status("T-A", "done", author="operator", note="manual done", ts="2026-08-19T12:00:00Z")
+
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(str(tmp_path / "orch.db"))
+    status = conn.execute(
+        "SELECT status FROM tasks_runtime WHERE project_id='p1' AND task_id='T-A'"
+    ).fetchone()[0]
+    conn.close()
+    assert status == "done"
 
 
 def test_task_status_comments_round_trip(tmp_path: Path) -> None:
@@ -452,3 +470,271 @@ def test_get_backend_unknown_raises(tmp_path: Path) -> None:
 
     with pytest.raises(BackendFactoryError, match="unknown state backend"):
         get_backend(FakePaths, {"state": {"backend": "mystery"}})
+
+
+# ---- tasks_definition tests (Sprint F-1 Task 6) -------------------------
+
+
+def test_bootstrap_seeds_tasks_definition(tmp_path: Path) -> None:
+    """bootstrap() must INSERT tasks_definition rows alongside tasks_runtime."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    tasks = [
+        Task(
+            id="T1",
+            title="First",
+            model="claude",
+            status="todo",
+            dependencies=["T0"],
+            files=["a.py"],
+            spec_ref="specs/f.md",
+            phase=1,
+            estimate_hours=2.0,
+            reason="fast",
+            description="desc",
+            comments=[],
+        ),
+    ]
+    sb.bootstrap(tasks)
+
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT title, model, deps_json, files_json, spec_ref, phase, estimate_h "
+        "FROM tasks_definition WHERE project_id='proj' AND task_id='T1'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "tasks_definition row must be created by bootstrap()"
+    assert row[0] == "First"
+    assert row[1] == "claude"
+    assert json.loads(row[2]) == ["T0"]
+    assert json.loads(row[3]) == ["a.py"]
+    assert row[4] == "specs/f.md"
+    assert row[5] == 1
+    assert row[6] == 2.0
+
+
+def test_bootstrap_definition_is_ignore_on_rerun(tmp_path: Path) -> None:
+    """Re-running bootstrap() must not overwrite tasks_definition (INSERT OR IGNORE)."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    task = Task(
+        id="T1",
+        title="Original",
+        model="claude",
+        status="todo",
+        dependencies=[],
+        files=[],
+        spec_ref=None,  # type: ignore[arg-type]
+        phase=1,
+        estimate_hours=1.0,
+        reason="",
+        description="",
+        comments=[],
+    )
+    sb.bootstrap([task])
+
+    # Re-bootstrap with different title — should NOT overwrite
+    task2 = Task(
+        id="T1",
+        title="Changed",
+        model="gemini",
+        status="todo",
+        dependencies=[],
+        files=[],
+        spec_ref=None,  # type: ignore[arg-type]
+        phase=1,
+        estimate_hours=1.0,
+        reason="",
+        description="",
+        comments=[],
+    )
+    sb.bootstrap([task2])
+
+    conn = sqlite3.connect(db)
+    title = conn.execute(
+        "SELECT title FROM tasks_definition WHERE task_id='T1'"
+    ).fetchone()[0]
+    conn.close()
+    assert title == "Original", "bootstrap() must not overwrite existing definition rows"
+
+
+def test_upsert_task_definition_inserts_and_updates(tmp_path: Path) -> None:
+    """upsert_task_definition() must INSERT OR REPLACE — update on re-atomize."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    task = Task(
+        id="T1",
+        title="Original",
+        model="claude",
+        status="todo",
+        dependencies=[],
+        files=[],
+        spec_ref=None,  # type: ignore[arg-type]
+        phase=1,
+        estimate_hours=1.0,
+        reason="",
+        description="",
+        comments=[],
+    )
+    sb.bootstrap([task])
+    sb.set_task_status(
+        "T1", "in-progress", author="orch", note="starting", ts="2026-08-25T10:00:00Z"
+    )
+
+    # Re-atomize changes the model
+    sb.upsert_task_definition(
+        task_id="T1",
+        title="Original",
+        model="gemini",
+        backend=None,
+        deps=[],
+        spec_ref=None,
+        phase=1,
+        estimate_h=1.0,
+        reason="",
+        files=[],
+    )
+
+    conn = sqlite3.connect(db)
+    model = conn.execute(
+        "SELECT model FROM tasks_definition WHERE task_id='T1'"
+    ).fetchone()[0]
+    status = conn.execute(
+        "SELECT status FROM tasks_runtime WHERE task_id='T1'"
+    ).fetchone()[0]
+    conn.close()
+    assert model == "gemini", "upsert must update model in tasks_definition"
+    assert status == "in-progress", "upsert must NOT touch tasks_runtime status"
+
+
+def test_set_task_model_updates_definition(tmp_path: Path) -> None:
+    """set_task_model() must update tasks_definition.model only."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    task = Task(
+        id="T2",
+        title="T",
+        model="claude",
+        status="todo",
+        dependencies=[],
+        files=[],
+        spec_ref=None,  # type: ignore[arg-type]
+        phase=1,
+        estimate_hours=1.0,
+        reason="",
+        description="",
+        comments=[],
+    )
+    sb.bootstrap([task])
+
+    sb.set_task_model("T2", "codex")
+
+    conn = sqlite3.connect(db)
+    model = conn.execute(
+        "SELECT model FROM tasks_definition WHERE task_id='T2'"
+    ).fetchone()[0]
+    conn.close()
+    assert model == "codex"
+
+
+def test_set_task_model_raises_on_missing_task(tmp_path: Path) -> None:
+    """set_task_model() must raise KeyError when task not in tasks_definition."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    sb.bootstrap([])  # empty project
+
+    with pytest.raises(KeyError, match="MISSING"):
+        sb.set_task_model("MISSING", "claude")
+
+
+def test_set_task_backend_raises_on_missing_task(tmp_path: Path) -> None:
+    """set_task_backend() must raise KeyError when task not in tasks_definition."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    sb.bootstrap([])
+
+    with pytest.raises(KeyError, match="MISSING"):
+        sb.set_task_backend("MISSING", "opencode")
+
+
+def test_set_task_backend_updates_definition(tmp_path: Path) -> None:
+    """set_task_backend() must update tasks_definition.backend only."""
+    db = tmp_path / "orch.db"
+    sb = SqliteBackend(db, "proj")
+    task = Task(
+        id="T3",
+        title="T",
+        model="claude",
+        status="todo",
+        dependencies=[],
+        files=[],
+        spec_ref=None,  # type: ignore[arg-type]
+        phase=1,
+        estimate_hours=1.0,
+        reason="",
+        description="",
+        comments=[],
+    )
+    sb.bootstrap([task])
+
+    sb.set_task_backend("T3", "opencode")
+
+    conn = sqlite3.connect(db)
+    backend = conn.execute(
+        "SELECT backend FROM tasks_definition WHERE task_id='T3'"
+    ).fetchone()[0]
+    conn.close()
+    assert backend == "opencode"
+
+
+def test_atomize_apply_upserts_tasks_definition(tmp_path: Path) -> None:
+    """After atomize --apply, tasks_definition must have the parsed task rows."""
+    from orchestrator.atomize import parse_specs, merge_tasks
+
+    # Minimal project layout
+    (tmp_path / "tasks.json").write_text(
+        '{"meta": {"project": "test"}, "tasks": []}', encoding="utf-8"
+    )
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    spec = docs / "f1.md"
+    spec.write_text(
+        "# F1 — Sprint F1\n\n"
+        "## F1.1 — Pkg\n\n"
+        "### F1.1.T1 — Do thing\n\n"
+        "- **Modelo**: claude-sonnet-4-6\n"
+        "- **Estimación**: 2h\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "orch.db"
+    backend = SqliteBackend(db_path, "test", project_root=tmp_path)
+    backend.bootstrap([])  # empty seed
+
+    # Simulate what atomize does: parse then upsert
+    parse = parse_specs([spec], docs_root=docs, expected_project_id=None)
+    assert parse.tasks, "spec must yield at least one ParsedTask"
+
+    for pt in parse.tasks:
+        backend.upsert_task_definition(
+            task_id=pt.id,
+            title=pt.title or "",
+            model=pt.model,
+            backend=None,
+            deps=list(pt.dependencies or []),
+            spec_ref=pt.spec_ref,
+            phase=pt.phase,
+            estimate_h=pt.estimate_hours,
+            reason=pt.reason,
+            files=list(pt.files or []),
+        )
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT task_id, model FROM tasks_definition WHERE project_id='test'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None, "tasks_definition must be populated after atomize"
+    assert row[0] == "F1.1.T1"
+    assert row[1] == "claude-sonnet-4-6"

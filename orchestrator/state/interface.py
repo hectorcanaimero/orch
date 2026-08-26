@@ -29,7 +29,13 @@ from ..models import Dispatch, EventEntry, Finding, RunState, SpendEntry, Status
 
 @runtime_checkable
 class StateBackend(Protocol):
-    """Storage-agnostic view over the mutable orchestrator state."""
+    """Storage-agnostic view over the mutable orchestrator state.
+
+    Note: `upsert_task_definition`, `set_task_model`, and `set_task_backend`
+    are deliberately SqliteBackend-only methods (tasks_definition table
+    requires SQLite). They are not part of this Protocol — callers must
+    type-check against SqliteBackend directly when using these methods.
+    """
 
     # ---- lifecycle ------------------------------------------------------
 

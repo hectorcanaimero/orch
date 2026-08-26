@@ -635,7 +635,7 @@ def _make_run_file_with_stale_in_flight(
 def test_reconcile_reverts_in_progress_with_dead_pid(tmp_path: Path) -> None:
     """Extended reconcile_in_flight (Issue #7) must ALSO revert tasks.json
     when the PID is dead — not just the run-file's in_flight map."""
-    state_dir = tmp_path / "orchestrator" / "state"
+    state_dir = tmp_path / ".orchestrator" / "state"
     _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=999999)
     _write_tasks_json(tmp_path, [
         {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
@@ -660,7 +660,7 @@ def test_reconcile_reverts_in_progress_with_dead_pid(tmp_path: Path) -> None:
 
 def test_reconcile_keeps_in_progress_with_alive_pid(tmp_path: Path) -> None:
     """Live PID → no reconcile, tasks.json untouched."""
-    state_dir = tmp_path / "orchestrator" / "state"
+    state_dir = tmp_path / ".orchestrator" / "state"
     _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=os.getpid())
     _write_tasks_json(tmp_path, [
         {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},
@@ -682,7 +682,7 @@ def test_reconcile_reverts_with_project_root_none_skips_tasks_json(
     still get the run-file reconcile but skip tasks.json (silently). This
     preserves pre-Sprint-A behavior for tests / callers that don't know
     the project root."""
-    state_dir = tmp_path / "orchestrator" / "state"
+    state_dir = tmp_path / ".orchestrator" / "state"
     _make_run_file_with_stale_in_flight(state_dir, "F0.5.T1", dead_pid=999999)
     _write_tasks_json(tmp_path, [
         {"id": "F0.5.T1", "phase": 0, "title": "t", "model": "m", "status": "in-progress", "comments": []},

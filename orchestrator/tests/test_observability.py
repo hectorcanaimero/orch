@@ -39,7 +39,7 @@ def _write_tasks_json(root: Path) -> None:
 
 
 def _write_router_yaml(root: Path) -> None:
-    yaml_dir = root / "orchestrator"
+    yaml_dir = root / ".orchestrator"
     yaml_dir.mkdir(parents=True, exist_ok=True)
     (yaml_dir / "model_router.yaml").write_text(
         "opencode/glm-5.1:\n"
@@ -67,7 +67,7 @@ class _FakePaths:
         self.project_id = project_id
         self.state_dir = state_dir
         self.tasks_json = project_root / "tasks.json"
-        self.router_yaml = project_root / "orchestrator" / "model_router.yaml"
+        self.router_yaml = project_root / ".orchestrator" / "model_router.yaml"
         self.config_yaml = project_root / "config.yaml"
 
 

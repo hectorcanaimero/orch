@@ -27,15 +27,15 @@ def _stage_project(root: Path) -> Path:
     v2 = root / "v2"
     v2.mkdir(parents=True, exist_ok=True)
     (v2 / "scripts").mkdir(exist_ok=True)
-    (v2 / "orchestrator" / "state").mkdir(parents=True, exist_ok=True)
+    (v2 / ".orchestrator" / "state").mkdir(parents=True, exist_ok=True)
     shutil.copy(FIXTURES / "main_loop_tasks.json", v2 / "tasks.json")
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (v2 / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
         (v2 / "scripts" / name).chmod(0o755)
     shutil.copy(FIXTURES / "main_loop_router.yaml",
-                v2 / "orchestrator" / "model_router.yaml")
+                v2 / ".orchestrator" / "model_router.yaml")
     shutil.copy(FIXTURES / "main_loop_config.yaml",
-                v2 / "orchestrator" / "config.yaml")
+                v2 / ".orchestrator" / "config.yaml")
     return v2
 
 

@@ -273,8 +273,7 @@ def _load_project_view(state: AppState) -> dict[str, Any]:
         except (OSError, ValueError):
             return []
         # Overlay live statuses from the configured state backend.
-        # When `tasks_json_precedence: deps-only` + sqlite, orch never writes
-        # status back to tasks.json — the DB is the authoritative source.
+        # SQLite is always the authoritative source for runtime status.
         # Task is frozen, so we rebuild via dataclasses.replace().
         try:
             import yaml
@@ -456,9 +455,6 @@ def _load_project_config(state: AppState) -> dict[str, Any]:
             "state": {
                 "backend": state_raw.get("backend"),
                 "sqlite_path": state_raw.get("sqlite_path"),
-                # `tasks_json_precedence` is a top-level key in config.yaml
-                # but belongs to state semantics — group it here for API sanity.
-                "tasks_json_precedence": raw.get("tasks_json_precedence"),
             },
             "retry": {
                 "backoff_seconds": retry_raw.get("backoff_seconds"),
@@ -497,7 +493,7 @@ def create_app(
     *,
     project_root: str | None = None,
     project_id: str | None = None,
-    config: str = "orchestrator/config.yaml",
+    config: str = ".orchestrator/config.yaml",
     profile_override: str | None = None,
     token_override: str | None = None,
     probe_port: int | None = None,
@@ -1653,7 +1649,7 @@ def run(
     host: str = "127.0.0.1",
     project_root: str | None = None,
     project_id: str | None = None,
-    config: str = "orchestrator/config.yaml",
+    config: str = ".orchestrator/config.yaml",
     reload: bool = False,
     profile: str | None = None,
     token: str | None = None,

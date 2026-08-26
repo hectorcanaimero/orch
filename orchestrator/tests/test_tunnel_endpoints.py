@@ -46,7 +46,7 @@ def _write_dashboard_yaml(root: Path, *, enabled: bool, extra: dict | None = Non
 
 def _scaffold(tmp_path: Path, *, enabled: bool = True, extra: dict | None = None) -> Path:
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "tasks.json").write_text(
@@ -54,7 +54,7 @@ def _scaffold(tmp_path: Path, *, enabled: bool = True, extra: dict | None = None
         encoding="utf-8",
     )
     # Empty config.yaml — token/profile come via overrides on create_app.
-    (root / "orchestrator" / "config.yaml").write_text("", encoding="utf-8")
+    (root / ".orchestrator" / "config.yaml").write_text("", encoding="utf-8")
     _write_dashboard_yaml(root, enabled=enabled, extra=extra)
     return root
 
@@ -74,7 +74,7 @@ def _client(
     paths = ProjectPaths(
         project_root=root,
         project_id="proj",
-        config_yaml=root / "orchestrator" / "config.yaml",
+        config_yaml=root / ".orchestrator" / "config.yaml",
         explicit_root=True,
         state_layout="legacy",
     )

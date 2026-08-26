@@ -131,12 +131,13 @@ def _wizard_answers(
     budget_preset: str = "conservative",
     spec_root: str = "specs",
     sdd: str = "n",
+    open_dashboard: str = "n",
 ) -> list[str]:
     """Build the canonical answer sequence the wizard consumes.
 
     Order matches the run_wizard() prompt sequence:
         project_id, project_root, state_backend, budget_preset, spec_root,
-        3 tier picks (defaults), sdd flag.
+        3 tier picks (defaults), sdd flag, open_dashboard prompt.
     """
     return [
         project_id,
@@ -148,6 +149,7 @@ def _wizard_answers(
         "",  # standard default
         "",  # cheap default
         sdd,
+        open_dashboard,  # "Open dashboard in browser?"
     ]
 
 
@@ -162,8 +164,8 @@ def test_wizard_scaffolds_fresh_project(tmp_path: Path) -> None:
     assert rc == 0
     # Every file the batch scaffolder writes is present.
     assert (project_root / "tasks.json").exists()
-    assert (project_root / "orchestrator" / "config.yaml").exists()
-    assert (project_root / "orchestrator" / "model_router.yaml").exists()
+    assert (project_root / ".orchestrator" / "config.yaml").exists()
+    assert (project_root / ".orchestrator" / "model_router.yaml").exists()
     assert (project_root / "scripts" / "task-start.sh").exists()
     # Post-processing wrote the project id into meta.
     tasks_payload = json.loads((project_root / "tasks.json").read_text())
@@ -181,7 +183,7 @@ def test_wizard_writes_selected_state_backend(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "backend: sqlite" in cfg
 
 
@@ -193,7 +195,7 @@ def test_wizard_writes_selected_budget_preset(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "budgets_preset: aggressive" in cfg
 
 
@@ -205,7 +207,7 @@ def test_wizard_writes_selected_spec_root(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "spec_root: docs/specs" in cfg
 
 
@@ -216,9 +218,9 @@ def test_wizard_overwrite_prompt_keeps_existing(tmp_path: Path) -> None:
     project_root.mkdir()
     (project_root / "tasks.json").write_text('{"custom":"file"}')
 
-    # Answers now include one extra "n" for the overwrite prompt.
+    # Answers include the overwrite prompt before the final dashboard prompt.
     answers = _wizard_answers("existing", project_root)
-    answers.append("n")  # keep existing tasks.json
+    answers.insert(-1, "n")  # keep existing tasks.json (before dashboard prompt)
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
@@ -234,7 +236,7 @@ def test_wizard_overwrite_prompt_replaces_on_yes(tmp_path: Path) -> None:
     (project_root / "tasks.json").write_text('{"old":"data"}')
 
     answers = _wizard_answers("existing2", project_root)
-    answers.append("y")  # replace tasks.json
+    answers.insert(-1, "y")  # replace tasks.json (before dashboard prompt)
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0

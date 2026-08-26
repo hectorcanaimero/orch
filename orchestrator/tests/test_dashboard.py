@@ -77,7 +77,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 def _make_fixture_project(tmp_path: Path) -> ProjectPaths:
     """Set up a tiny project layout the dashboard can point at."""
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     # `paths.ensure_valid` needs task-start.sh — write a stub.
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
@@ -109,7 +109,7 @@ def _make_fixture_project(tmp_path: Path) -> ProjectPaths:
     }
     (root / "tasks.json").write_text(json.dumps(tasks_payload))
 
-    state = root / "orchestrator" / "state"
+    state = root / ".orchestrator" / "state"
     _write_jsonl(state / "events-run1.jsonl", [
         {"event_type": "dispatch", "task_id": "T-A", "backend": "opencode",
          "ts": "2026-08-21T10:00:00Z",
@@ -141,7 +141,7 @@ def _make_fixture_project(tmp_path: Path) -> ProjectPaths:
     return ProjectPaths(
         project_root=root,
         project_id="proj",
-        config_yaml=root / "orchestrator" / "config.yaml",
+        config_yaml=root / ".orchestrator" / "config.yaml",
         explicit_root=True,
         state_layout="legacy",
     )

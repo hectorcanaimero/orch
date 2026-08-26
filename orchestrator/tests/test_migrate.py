@@ -51,11 +51,11 @@ def project_with_state(tmp_path: Path) -> Path:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    cfg_dir = root / "orchestrator"
+    cfg_dir = root / ".orchestrator"
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text("state:\n  backend: file\n")
 
-    state = root / "orchestrator" / "state"
+    state = root / ".orchestrator" / "state"
     state.mkdir(parents=True)
     run_id = "abc-123"
     run_json = {
@@ -113,10 +113,10 @@ def test_migrate_round_trip(project_with_state: Path) -> None:
     rc = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-round-trip",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc == 0
-    db = project_with_state / "orchestrator" / "state" / "orch.db"
+    db = project_with_state / ".orchestrator" / "state" / "orch.db"
     conn = sqlite3.connect(str(db))
     try:
         n_runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
@@ -142,18 +142,18 @@ def test_migrate_idempotent_second_run_no_new_rows(project_with_state: Path) -> 
     rc1 = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-idem",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc1 == 0
     # Second run requires --force because migrated_at guard trips.
     rc2 = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-idem",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--force",
     ])
     assert rc2 == 0
-    db = project_with_state / "orchestrator" / "state" / "orch.db"
+    db = project_with_state / ".orchestrator" / "state" / "orch.db"
     conn = sqlite3.connect(str(db))
     try:
         counts = {
@@ -171,13 +171,13 @@ def test_migrate_second_run_without_force_refuses(project_with_state: Path) -> N
     rc1 = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-guard",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc1 == 0
     rc2 = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-guard",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc2 == 1
 
@@ -189,10 +189,10 @@ def test_migrate_creates_backup(project_with_state: Path) -> None:
     rc = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-backup",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc == 0
-    backup_root = project_with_state / "orchestrator" / "state-backups"
+    backup_root = project_with_state / ".orchestrator" / "state-backups"
     assert backup_root.exists()
     backups = list(backup_root.iterdir())
     assert len(backups) == 1
@@ -210,16 +210,16 @@ def test_migrate_dry_run_writes_nothing(project_with_state: Path) -> None:
     rc = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-dry",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--dry-run",
     ])
     assert rc == 0
     # Dry-run must not create backups.
-    backup_root = project_with_state / "orchestrator" / "state-backups"
+    backup_root = project_with_state / ".orchestrator" / "state-backups"
     assert not backup_root.exists()
     # The DB DID get created (SqliteBackend ctor runs migrations), but
     # projects table has no row for p-dry.
-    db = project_with_state / "orchestrator" / "state" / "orch.db"
+    db = project_with_state / ".orchestrator" / "state" / "orch.db"
     if db.exists():
         conn = sqlite3.connect(str(db))
         try:
@@ -245,12 +245,12 @@ def test_migrate_rollback_drops_tenant_and_restores(project_with_state: Path) ->
     rc = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-rb",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc == 0
 
     # Delete a JSONL file to prove restore actually happens.
-    state_dir = project_with_state / "orchestrator" / "state"
+    state_dir = project_with_state / ".orchestrator" / "state"
     spend_path = state_dir / "spend-2026-08-19.jsonl"
     assert spend_path.exists()
     spend_path.unlink()
@@ -259,7 +259,7 @@ def test_migrate_rollback_drops_tenant_and_restores(project_with_state: Path) ->
     rc_rb = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-rb",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--rollback",
     ])
     assert rc_rb == 0
@@ -286,7 +286,7 @@ def test_migrate_rollback_drops_tenant_and_restores(project_with_state: Path) ->
 
 def test_migrate_skips_malformed_jsonl_lines(project_with_state: Path) -> None:
     """One garbage line in events.jsonl doesn't kill the migration."""
-    state_dir = project_with_state / "orchestrator" / "state"
+    state_dir = project_with_state / ".orchestrator" / "state"
     events_files = list(state_dir.glob("events-*.jsonl"))
     assert events_files
     with events_files[0].open("a", encoding="utf-8") as fh:
@@ -297,10 +297,10 @@ def test_migrate_skips_malformed_jsonl_lines(project_with_state: Path) -> None:
     rc = run_migrate([
         "--project-root", str(project_with_state),
         "--project-id", "p-bad",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc == 0
-    db = project_with_state / "orchestrator" / "state" / "orch.db"
+    db = project_with_state / ".orchestrator" / "state" / "orch.db"
     conn = sqlite3.connect(str(db))
     try:
         n = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]

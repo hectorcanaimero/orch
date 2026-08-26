@@ -142,9 +142,6 @@ def render_prompt(
         id=task.id,
         title=task.title,
         description=task.description,
-        phase=task.phase,
-        estimate_hours=task.estimate_hours,
-        reason=task.reason,
         files=_render_files(task.files),
         spec_ref_line=_render_spec_ref(spec_ref, spec_root=spec_root),
         deps_block=deps_block,
@@ -167,8 +164,6 @@ You are executing task {id}.
 Working dir: {working_dir}
 Title: {title}
 Description: {description}
-Phase: {phase}  Estimate: {estimate_hours}h
-Model reason: {reason}
 Files you may write: {files}
 Spec ref (READ FIRST): {spec_ref_line}
 {deps_block}
@@ -180,6 +175,6 @@ Coordination protocol:
 
 Constraints:
 - Do NOT edit tasks.json directly.
-- Do NOT touch files outside {files} unless the spec explicitly requires it.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
 - Report progress via the scripts above only.
 """

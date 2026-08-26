@@ -32,7 +32,7 @@ def _make_fixture_project(tmp_path: Path, *, config_yaml: str | None):
     from orchestrator.paths import ProjectPaths
 
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
 
@@ -41,7 +41,7 @@ def _make_fixture_project(tmp_path: Path, *, config_yaml: str | None):
         encoding="utf-8",
     )
 
-    cfg_path = root / "orchestrator" / "config.yaml"
+    cfg_path = root / ".orchestrator" / "config.yaml"
     if config_yaml is not None:
         cfg_path.write_text(config_yaml, encoding="utf-8")
 
@@ -92,7 +92,6 @@ _FULL_CONFIG = dedent(
     state:
       backend: file
       sqlite_path: null
-    tasks_json_precedence: deps-only
 
     budgets_config: budgets.yaml
     budgets_preset: conservative
@@ -128,7 +127,6 @@ def test_api_config_reflects_yaml_values(tmp_path: Path) -> None:
     assert payload["state"] == {
         "backend": "file",
         "sqlite_path": None,
-        "tasks_json_precedence": "deps-only",
     }
     assert payload["retry"] == {
         "backoff_seconds": 5,

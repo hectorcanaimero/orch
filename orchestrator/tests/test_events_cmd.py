@@ -36,7 +36,7 @@ def _make_project(root: Path, backend_kind: str) -> None:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir()
     (orch_dir / "config.yaml").write_text(
         f"state:\n  backend: {backend_kind}\n  sqlite_path: null\n"
@@ -60,10 +60,10 @@ def _seed_events(root: Path, backend_kind: str) -> str:
     paths = resolve_project_paths(
         project_root_arg=str(root),
         project_id_arg="proj-events",
-        config_arg="orchestrator/config.yaml",
+        config_arg=".orchestrator/config.yaml",
     )
     import yaml
-    cfg = yaml.safe_load((root / "orchestrator" / "config.yaml").read_text()) or {}
+    cfg = yaml.safe_load((root / ".orchestrator" / "config.yaml").read_text()) or {}
     backend = get_backend(paths, cfg)
     from orchestrator.state import load_tasks
     backend.bootstrap(load_tasks(paths.tasks_json))
@@ -98,7 +98,7 @@ def _common_args(root: Path) -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", "proj-events",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 

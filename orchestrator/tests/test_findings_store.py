@@ -2,7 +2,7 @@
 
 Parity tests live in `test_backend_parity.py`. This file focuses on:
 
-- Migration versioning (sqlite bumps to `PRAGMA user_version = 2`).
+- Migration versioning (sqlite bumps to `PRAGMA user_version = 3`).
 - File-backend on-disk layout (`findings.jsonl`).
 - Multitenant isolation (two `project_id`s share one DB but never see each
   other's rows).
@@ -41,12 +41,12 @@ def _finding(fid: str, *, dedup: str, project_id: str = "") -> Finding:
 # ---- sqlite migration ---------------------------------------------------
 
 
-def test_sqlite_migration_bumps_user_version_to_2(tmp_path: Path) -> None:
+def test_sqlite_migration_bumps_user_version_to_3(tmp_path: Path) -> None:
     _reset_schema_cache_for_tests()
     _reset_backend_cache()
     db = tmp_path / "state" / "orch.db"
     backend = SqliteBackend(db_path=db, project_id="pytest")
-    assert backend.schema_version() == 2
+    assert backend.schema_version() == 3
     # findings table is queryable — smoke-check the schema is applied.
     conn = sqlite3.connect(str(db))
     try:
@@ -60,14 +60,14 @@ def test_sqlite_migration_bumps_user_version_to_2(tmp_path: Path) -> None:
 
 
 def test_sqlite_migration_is_reentrant(tmp_path: Path) -> None:
-    """Opening the same DB twice must not re-apply 002_findings."""
+    """Opening the same DB twice must not re-apply migrations."""
     _reset_schema_cache_for_tests()
     _reset_backend_cache()
     db = tmp_path / "state" / "orch.db"
     SqliteBackend(db_path=db, project_id="pytest")
     _reset_schema_cache_for_tests()  # force re-check without altering DB
     b2 = SqliteBackend(db_path=db, project_id="pytest")
-    assert b2.schema_version() == 2
+    assert b2.schema_version() == 3
 
 
 # ---- file backend on-disk layout ---------------------------------------

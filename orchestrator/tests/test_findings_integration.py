@@ -331,8 +331,8 @@ def test_dedup_below_threshold_allows_publish(any_backend: StateBackend) -> None
 
 
 def _bootstrap_project(tmp_path: Path, backend_kind: str = "file") -> None:
-    (tmp_path / "orchestrator").mkdir(exist_ok=True)
-    (tmp_path / "orchestrator" / "config.yaml").write_text(
+    (tmp_path / ".orchestrator").mkdir(exist_ok=True)
+    (tmp_path / ".orchestrator" / "config.yaml").write_text(
         f"concurrency: {{global_max: 1}}\n"
         f"state: {{backend: {backend_kind}}}\n"
         f"findings: {{publish_repo: 'o/r', publish_rate_limit_per_hour: 3}}\n",

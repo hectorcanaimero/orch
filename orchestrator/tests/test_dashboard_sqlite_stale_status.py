@@ -1,8 +1,8 @@
 """Issue #33 — Dashboard shows stale statuses when using SQLite backend.
 
-With `tasks_json_precedence: deps-only`, orch never writes task status back
-to tasks.json — only to SQLite.  Before the fix, `_load_project_view()` only
-read from tasks.json, so the dashboard always showed the frozen pre-run state.
+SQLite is always the authoritative source for runtime status. Before the fix,
+`_load_project_view()` only read from tasks.json, so the dashboard always showed
+the frozen pre-run state.
 
 The fix overlays `get_all_task_status()` from the configured backend on top of
 the tasks loaded from tasks.json.
@@ -17,10 +17,10 @@ import pytest
 
 
 def _write_config(root: Path, backend: str = "sqlite") -> None:
-    cfg_dir = root / "orchestrator"
+    cfg_dir = root / ".orchestrator"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.yaml").write_text(
-        f"state:\n  backend: {backend}\ntasks_json_precedence: deps-only\n",
+        f"state:\n  backend: {backend}\n",
         encoding="utf-8",
     )
 
@@ -29,7 +29,7 @@ def _make_project(tmp_path: Path, *, tasks_statuses: dict[str, str]) -> "Project
     from orchestrator.paths import ProjectPaths
 
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
 
@@ -51,7 +51,7 @@ def _make_project(tmp_path: Path, *, tasks_statuses: dict[str, str]) -> "Project
     paths = ProjectPaths(
         project_root=root,
         project_id="proj",
-        config_yaml=root / "orchestrator" / "config.yaml",
+        config_yaml=root / ".orchestrator" / "config.yaml",
         explicit_root=True,
         state_layout="legacy",
     )

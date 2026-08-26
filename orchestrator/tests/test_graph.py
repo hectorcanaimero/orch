@@ -122,7 +122,7 @@ def _make_project(root: Path) -> None:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir()
     (orch_dir / "config.yaml").write_text("state:\n  backend: file\n")
     (orch_dir / "model_router.yaml").write_text(
@@ -146,7 +146,7 @@ def test_graph_subcommand_writes_html(
     rc = _run_graph_subcommand([
         "--project-root", str(root),
         "--project-id", "proj-graph",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--out", str(out),
     ])
     assert rc == 0
@@ -166,7 +166,7 @@ def test_graph_subcommand_only_filter(tmp_path: Path) -> None:
     rc = _run_graph_subcommand([
         "--project-root", str(root),
         "--project-id", "proj-graph",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
         "--out", str(out),
         "--only", "T-A",
     ])

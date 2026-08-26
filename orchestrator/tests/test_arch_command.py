@@ -20,14 +20,14 @@ from orchestrator import arch as arch_mod
 
 def _scaffold(tmp_path: Path) -> Path:
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "tasks.json").write_text(
         json.dumps({"meta": {}, "phases": [], "tasks": []}),
         encoding="utf-8",
     )
-    (root / "orchestrator" / "config.yaml").write_text("", encoding="utf-8")
+    (root / ".orchestrator" / "config.yaml").write_text("", encoding="utf-8")
     return root
 
 
@@ -86,8 +86,8 @@ def test_lock_created_at_start_and_removed_on_success(
 
     lock_seen: dict[str, bool] = {"present_during_dispatch": False}
     # `--project-root` triggers namespaced state layout — state lives under
-    # <root>/orchestrator/state/<project_id>/ (project_id defaults to basename).
-    state_dir = root / "orchestrator" / "state" / "proj"
+    # <root>/.orchestrator/state/<project_id>/ (project_id defaults to basename).
+    state_dir = root / ".orchestrator" / "state" / "proj"
 
     def _fake_claude(argv, prompt, cwd, timeout_s):
         # Lock must exist right when the sub-agent is about to run.
@@ -139,8 +139,8 @@ def test_lock_removed_when_dispatch_fails(tmp_path: Path, monkeypatch, capsys) -
     monkeypatch.setattr(arch_mod, "_run_claude", _boom)
     rc = arch_mod.run_arch_cli(["generate", "--project-root", str(root)])
     assert rc == 1
-    # namespaced state layout under --project-root — lock lives beside project id.
-    assert not (root / "orchestrator" / "state" / "proj" / "arch-generate.lock").exists()
+    # namespaced state layout under --project-root — lock lives beside project id (.orchestrator/state/proj/).
+    assert not (root / ".orchestrator" / "state" / "proj" / "arch-generate.lock").exists()
 
 
 def test_second_generate_refuses_when_live_lock_exists(
@@ -152,7 +152,7 @@ def test_second_generate_refuses_when_live_lock_exists(
     monkeypatch.setattr(arch_mod, "resolve_skill_path", lambda _pr: fake_skill)
 
     import os
-    state_dir = root / "orchestrator" / "state" / "proj"
+    state_dir = root / ".orchestrator" / "state" / "proj"
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / "arch-generate.lock").write_text(
         json.dumps({"pid": os.getpid(), "started_at": "2026-08-22T00:00:00Z"})
@@ -170,7 +170,7 @@ def test_stale_lock_is_ignored(tmp_path: Path, monkeypatch) -> None:
     fake_skill.write_text("archify", encoding="utf-8")
     monkeypatch.setattr(arch_mod, "resolve_skill_path", lambda _pr: fake_skill)
 
-    state_dir = root / "orchestrator" / "state" / "proj"
+    state_dir = root / ".orchestrator" / "state" / "proj"
     state_dir.mkdir(parents=True, exist_ok=True)
     # PID 999999 is virtually guaranteed to not exist.
     (state_dir / "arch-generate.lock").write_text(

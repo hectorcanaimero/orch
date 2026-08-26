@@ -60,7 +60,7 @@ def _make_fixture_project(tmp_path: Path):
     from orchestrator.paths import ProjectPaths
 
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "task-start.sh").write_text("#!/bin/sh\nexit 0\n")
 
@@ -81,7 +81,7 @@ def _make_fixture_project(tmp_path: Path):
     }
     (root / "tasks.json").write_text(json.dumps(tasks_payload), encoding="utf-8")
 
-    state_dir = root / "orchestrator" / "state"
+    state_dir = root / ".orchestrator" / "state"
     _write_jsonl(state_dir / "spend-2026-08-20.jsonl", [
         {"ts": "2026-08-20T10:12:00", "task_id": "T-A", "model": "opencode-go/glm-5.1",
          "tokens_in": 5000, "tokens_out": 2000, "cost_usd": 0.42},
@@ -92,7 +92,7 @@ def _make_fixture_project(tmp_path: Path):
     return ProjectPaths(
         project_root=root,
         project_id="proj",
-        config_yaml=root / "orchestrator" / "config.yaml",
+        config_yaml=root / ".orchestrator" / "config.yaml",
         explicit_root=True,
         state_layout="legacy",
     )

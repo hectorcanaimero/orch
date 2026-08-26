@@ -129,10 +129,10 @@ def test_project_paths_derived_paths_are_absolute(tmp_path: Path) -> None:
         config_arg="config.yaml",
     )
     assert paths.tasks_json == tmp_path / "tasks.json"
-    assert paths.router_yaml == tmp_path / "orchestrator" / "model_router.yaml"
+    assert paths.router_yaml == tmp_path / ".orchestrator" / "model_router.yaml"
     # Fase 2: --project-root explícito → layout `namespaced`,
     # state_dir = <root>/orchestrator/state/<project_id>.
-    assert paths.state_dir == tmp_path / "orchestrator" / "state" / "test-proj"
+    assert paths.state_dir == tmp_path / ".orchestrator" / "state" / "test-proj"
     assert paths.state_layout == "namespaced"
     assert paths.explicit_root is True
     assert paths.scripts_dir == tmp_path / "scripts"
@@ -258,7 +258,7 @@ def test_autodetect_namespaced_when_orch_db_in_subdir(
     monkeypatch.chdir(tmp_path)
 
     project_id = tmp_path.name
-    namespaced_state = tmp_path / "orchestrator" / "state" / project_id
+    namespaced_state = tmp_path / ".orchestrator" / "state" / project_id
     namespaced_state.mkdir(parents=True)
     (namespaced_state / "orch.db").touch()
 
@@ -280,7 +280,7 @@ def test_autodetect_namespaced_when_spend_jsonl_in_subdir(
     monkeypatch.chdir(tmp_path)
 
     project_id = tmp_path.name
-    namespaced_state = tmp_path / "orchestrator" / "state" / project_id
+    namespaced_state = tmp_path / ".orchestrator" / "state" / project_id
     namespaced_state.mkdir(parents=True)
     (namespaced_state / "spend-2026-08-23.jsonl").touch()
 
@@ -323,7 +323,7 @@ def test_cwd_fallback_uses_legacy_layout(tmp_path: Path, monkeypatch) -> None:
     )
     assert paths.explicit_root is False
     assert paths.state_layout == "legacy"
-    assert paths.state_dir == tmp_path.resolve() / "orchestrator" / "state"
+    assert paths.state_dir == tmp_path.resolve() / ".orchestrator" / "state"
     # Y NO debe tener el project_id colgado al final (retrocompat rupies).
     assert paths.project_id not in paths.state_dir.parts[-1:]
 
@@ -340,7 +340,7 @@ def test_flag_activates_namespaced_layout(tmp_path: Path) -> None:
     assert paths.state_layout == "namespaced"
     # project_id = basename del root (no hay generic name que saltar).
     assert paths.project_id == "someproj"
-    assert paths.state_dir == root / "orchestrator" / "state" / "someproj"
+    assert paths.state_dir == root / ".orchestrator" / "state" / "someproj"
 
 
 def test_env_activates_namespaced_layout(tmp_path: Path, monkeypatch) -> None:
@@ -354,7 +354,7 @@ def test_env_activates_namespaced_layout(tmp_path: Path, monkeypatch) -> None:
     )
     assert paths.explicit_root is True
     assert paths.state_layout == "namespaced"
-    assert paths.state_dir == root / "orchestrator" / "state" / "envproj"
+    assert paths.state_dir == root / ".orchestrator" / "state" / "envproj"
 
 
 def test_ensure_valid_creates_state_dir_when_namespaced(tmp_path: Path) -> None:

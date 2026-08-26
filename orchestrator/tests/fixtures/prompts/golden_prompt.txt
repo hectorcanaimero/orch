@@ -4,8 +4,6 @@ You are executing task T-A.
 Working dir: /tmp/orch-golden-project
 Title: Root A
 Description: First root
-Phase: 1  Estimate: 0.5h
-Model reason: Cheap sanity task
 Files you may write: []
 Spec ref (READ FIRST): docs/rewrite-plan/specs/foo.md
 Completed dependencies (context):
@@ -19,5 +17,5 @@ Coordination protocol:
 
 Constraints:
 - Do NOT edit tasks.json directly.
-- Do NOT touch files outside [] unless the spec explicitly requires it.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
 - Report progress via the scripts above only.

@@ -198,8 +198,8 @@ def _run_cli(argv: list[str], tmp_path: Path) -> tuple[int, str, str]:
 
 def _bootstrap_project(tmp_path: Path) -> None:
     """Minimal on-disk layout so _load_config + project resolution work."""
-    (tmp_path / "orchestrator").mkdir(exist_ok=True)
-    (tmp_path / "orchestrator" / "config.yaml").write_text(
+    (tmp_path / ".orchestrator").mkdir(exist_ok=True)
+    (tmp_path / ".orchestrator" / "config.yaml").write_text(
         "concurrency: {global_max: 1}\n"
         "state: {backend: file}\n",
         encoding="utf-8",
