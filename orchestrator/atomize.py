@@ -965,7 +965,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--config",
-        default="orchestrator/config.yaml",
+        default=".orchestrator/config.yaml",
         help="Path a config.yaml (para compat con resolve_project_paths).",
     )
     p.add_argument(

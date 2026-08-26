@@ -23,8 +23,8 @@ Fase 1 alcance:
 Fase 2 alcance (este archivo):
     - `state_layout`: `"legacy"` (rupies cwd fallback) vs `"namespaced"`
       (`--project-root` o env explícito). `state_dir` se computa según el
-      layout: legacy usa `<root>/orchestrator/state/`, namespaced usa
-      `<root>/orchestrator/state/<project_id>/`. NO auto-migra archivos.
+      layout: legacy usa `<root>/.orchestrator/state/`, namespaced usa
+      `<root>/.orchestrator/state/<project_id>/`. NO auto-migra archivos.
     - `explicit_root`: expuesto para que sitios río abajo puedan decidir
       qué layout aplicar (por ejemplo, para skips de guards históricos).
 
@@ -204,7 +204,7 @@ def resolve_project_paths(
 
     # Auto-detect namespaced layout when the legacy default is chosen but
     # the project has already been run with --project-root (which creates
-    # `orchestrator/state/<project_id>/`). Without this, `orch dashboard`
+    # `.orchestrator/state/<project_id>/`). Without this, `orch dashboard`
     # started from the project dir without --project-root reads the empty
     # legacy DB instead of the real namespaced one.
     if state_layout == "legacy":
