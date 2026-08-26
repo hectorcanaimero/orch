@@ -366,7 +366,7 @@ class SqliteBackend:
 
     def upsert_milestone(
         self,
-        id: str,
+        milestone_id: str,
         title: str,
         description: str | None = None,
         target_date: str | None = None,
@@ -381,7 +381,7 @@ class SqliteBackend:
                 "ON CONFLICT(project_id, id) DO UPDATE SET "
                 "title=excluded.title, description=excluded.description, "
                 "target_date=excluded.target_date",
-                (self.project_id, id, title, description, target_date, now),
+                (self.project_id, milestone_id, title, description, target_date, now),
             )
 
     def get_milestones(self) -> list[dict]:
@@ -453,12 +453,16 @@ class SqliteBackend:
             )
 
     def complete_milestone(self, milestone_id: str) -> None:
-        """Mark a milestone as completed."""
+        """Mark a milestone as completed. Raises KeyError if milestone not found."""
         with self._write() as conn:
-            conn.execute(
+            rowcount = conn.execute(
                 "UPDATE milestones SET status = 'completed' "
                 "WHERE project_id = ? AND id = ?",
                 (self.project_id, milestone_id),
+            ).rowcount
+        if rowcount == 0:
+            raise KeyError(
+                f"milestone '{milestone_id}' not found for project '{self.project_id}'"
             )
 
     # ---- task status ---------------------------------------------------

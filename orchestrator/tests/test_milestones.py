@@ -162,7 +162,8 @@ def test_complete_milestone_changes_status(tmp_path: Path):
     assert milestones[0]["status"] == "completed"
 
 
-def test_complete_milestone_noop_on_unknown_id(tmp_path: Path):
-    """complete_milestone on a nonexistent id should not raise."""
+def test_complete_milestone_raises_on_unknown_id(tmp_path: Path):
+    """complete_milestone on a nonexistent id should raise KeyError."""
     b = _backend(tmp_path)
-    b.complete_milestone("NONEXISTENT")  # no-op, no error
+    with pytest.raises(KeyError):
+        b.complete_milestone("NONEXISTENT")
