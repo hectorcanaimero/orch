@@ -23,6 +23,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "budgets",
     "findings",
     "dashboard",
+    "presentation",
     "strict_files_phases",
     "default_timeout_multiplier",
 }
@@ -219,33 +220,32 @@ def test_api_config_partial_yaml_uses_nulls_not_defaults(tmp_path: Path) -> None
     assert payload["strict_files_phases"] == []
 
 
-# ---- Sprint E-3 — `dashboard.board_url` per-project SPA config ------------
+# ---- Sprint F-3 — `presentation.status_labels` per-project SPA config ----
 
 
-def test_api_config_exposes_dashboard_board_url_when_set(tmp_path: Path) -> None:
-    """When `dashboard.board_url` is set, the endpoint surfaces it verbatim."""
-    with_board = _FULL_CONFIG + dedent(
+def test_api_config_exposes_presentation_status_labels_when_set(tmp_path: Path) -> None:
+    """When `presentation.status_labels` is set, the endpoint surfaces it verbatim."""
+    with_labels = _FULL_CONFIG + dedent(
         """\
 
-        dashboard:
-          board_url: "https://draw.z0n.co/editor/abc-123"
+        presentation:
+          status_labels:
+            done: "Shipped"
+            in-progress: "WIP"
         """
     )
-    client, _ = _client_or_skip(tmp_path, config_yaml=with_board)
+    client, _ = _client_or_skip(tmp_path, config_yaml=with_labels)
     payload = client.get("/api/config").json()
-    assert payload["dashboard"] == {"board_url": "https://draw.z0n.co/editor/abc-123"}
+    assert payload["presentation"] == {
+        "status_labels": {"done": "Shipped", "in-progress": "WIP"}
+    }
 
 
-def test_api_config_dashboard_board_url_is_null_when_missing(tmp_path: Path) -> None:
-    """When the key is absent, the endpoint reflects None (matching other optionals).
+def test_api_config_dashboard_does_not_leak_secrets(tmp_path: Path) -> None:
+    """Secret dashboard keys (token, stakeholder_routes) must NOT appear in the response.
 
-    Doubles as a whitelist guard: even when the operator sets other keys in
-    the SAME `dashboard:` YAML block (see `dashboard_config.py` — `token`,
-    `stakeholder_routes`, etc.), the endpoint MUST NOT echo them. Grouping
-    both assertions here keeps us at the spec'd 9-test count.
-
-    We stay on the default `operator` profile so the middleware doesn't gate
-    the request — this test targets `_load_project_config`, not auth.
+    Doubles as a whitelist guard: the endpoint must strip any secrets even
+    if the operator sets them in the same `dashboard:` YAML block.
     """
     tainted = _FULL_CONFIG + dedent(
         """\
@@ -260,9 +260,8 @@ def test_api_config_dashboard_board_url_is_null_when_missing(tmp_path: Path) -> 
     r = client.get("/api/config")
     assert r.status_code == 200
     payload = r.json()
-    # `dashboard` bucket is always present (whitelist shape); only its inner
-    # keys go None when not set — same pattern as `state.sqlite_path`.
-    assert payload["dashboard"] == {"board_url": None}
+    # `dashboard` bucket is always present (whitelist shape) but must be empty.
+    assert payload["dashboard"] == {}
     assert "token" not in payload["dashboard"]
     assert "stakeholder_routes" not in payload["dashboard"]
     assert "hunter2-super-secret" not in r.text
