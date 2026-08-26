@@ -614,6 +614,7 @@ class InFlight:
     timeout_s: float
     timed_out: bool = False
     task_lock_fd: Any = None  # per-task flock fd when --task-locks; None otherwise
+    worktree_path: Path | None = None
 
 
 @dataclass
@@ -877,7 +878,11 @@ def _killpg_or_pid(pid: int, sig: int) -> None:
             pass
 
 
-def _install_sigint(drain: _DrainFlag, in_flight: dict[int, InFlight]) -> None:
+def _install_sigint(
+    drain: _DrainFlag,
+    in_flight: dict[int, InFlight],
+    wm: "WorktreeManager | None" = None,
+) -> None:
     """SIGINT/SIGTERM → drain; second signal → SIGKILL every child group.
 
     Sprint A / Issue #12: SIGTERM is treated identically to SIGINT so that
@@ -885,6 +890,9 @@ def _install_sigint(drain: _DrainFlag, in_flight: dict[int, InFlight]) -> None:
     the same in-memory `_DrainFlag`. On the second signal we escalate:
     SIGKILL the whole process group of every in-flight child (catches
     subprocess-of-subprocess trees, not just the direct CLI).
+
+    Sprint F-2: ``wm`` is accepted for API symmetry. Worktree cleanup on
+    hard kill is handled by ``main()`` after ``_drain_wait`` completes.
     """
 
     def handler(signum, frame):  # noqa: ARG001
@@ -952,6 +960,7 @@ def _reap_once(
     retry_queue: list["_RetryItem"] | None = None,
     router: dict[str, RouteEntry] | None = None,
     task_costs: dict[str, float] | None = None,
+    wm: "WorktreeManager | None" = None,
 ) -> int:
     """Reap every child that has already exited (non-blocking).
 
@@ -1012,6 +1021,20 @@ def _reap_once(
                 )
 
         result, spoof_id = _post_run_checks(entry.task, result, cfg, cwd, log_text)
+
+        # Worktree push + cleanup (Sprint F-2)
+        # push() only on success — don't publish incomplete work.
+        # remove() always — best-effort, errors are logged and swallowed.
+        if entry.worktree_path is not None and wm is not None:
+            if result.success:
+                try:
+                    wm.push(entry.task.id)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "worktree push failed for %s (best-effort, not failing task): %s",
+                        entry.task.id, exc,
+                    )
+            wm.remove(entry.task.id)
 
         if spoof_id:
             event_log.emit(
@@ -1325,6 +1348,8 @@ def _spawn_one(
     use_task_locks: bool = False,
     budget_gate: BudgetGate | None = None,
     defer_reasons: dict[str, str] | None = None,
+    wm: "WorktreeManager | None" = None,
+    base_branch: str = "main",
 ) -> bool:
     """Try to acquire semaphores and spawn one task; return True on success.
 
@@ -1454,6 +1479,36 @@ def _spawn_one(
         )
         return False
 
+    # ---- worktree creation (Sprint F-2) -----------------------------------
+    # When worktree_mode is on, each task gets its own isolated git branch.
+    # effective_cwd is the path passed to backend.spawn(); all other uses of
+    # cwd (call_task_start, render_prompt, error paths) keep the main root.
+    effective_cwd = cwd
+    if wm is not None:
+        try:
+            effective_cwd = wm.create(task.id, base_branch)
+        except Exception as exc:  # noqa: BLE001
+            log.error("worktree create failed for %s: %s", task.id, exc)
+            gsem.release()
+            psem[route.backend].release()
+            release_task_lock(task_lock_fd)
+            try:
+                call_task_block(
+                    task.id, f"worktree create failed: {exc}", route.cli_model,
+                    project_root=cwd,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            queue.mark_blocked(task.id)
+            run_file.mark_blocked(task.id)
+            event_log.emit(
+                "block",
+                task.id,
+                backend=route.backend,
+                reason=f"worktree create failed: {exc}",
+            )
+            return False
+
     log_path = state_dir / "logs" / f"{task.id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1464,13 +1519,15 @@ def _spawn_one(
             route=route,
             prompt_path=prompt_path,
             log_path=log_path,
-            cwd=cwd,
+            cwd=effective_cwd,
         )
     except (FileNotFoundError, OSError) as exc:
         log.exception("spawn failed for %s: %s", task.id, exc)
         gsem.release()
         psem[route.backend].release()
         release_task_lock(task_lock_fd)
+        if wm is not None:
+            wm.remove(task.id)
         try:
             call_task_block(
                 task.id, f"spawn failed: {exc}", route.cli_model,
@@ -1500,6 +1557,7 @@ def _spawn_one(
         started_at_mono=_monotonic(),
         timeout_s=timeout_s,
         task_lock_fd=task_lock_fd,
+        worktree_path=effective_cwd if wm is not None else None,
     )
     in_flight[dispatch.pid] = entry
     queue.mark_in_flight(task.id)
@@ -1538,6 +1596,8 @@ def _refill(
     only: str | None = None,
     budget_gate: BudgetGate | None = None,
     defer_reasons: dict[str, str] | None = None,
+    wm: "WorktreeManager | None" = None,
+    base_branch: str = "main",
 ) -> int:
     """Try to dispatch as many ready tasks as capacity allows.
 
@@ -1588,6 +1648,8 @@ def _refill(
                 use_task_locks=use_task_locks,
                 budget_gate=budget_gate,
                 defer_reasons=defer_reasons,
+                wm=wm,
+                base_branch=base_branch,
             )
             if ok:
                 dispatched_count += 1
@@ -1660,6 +1722,8 @@ def _refill(
             use_task_locks=use_task_locks,
             budget_gate=budget_gate,
             defer_reasons=defer_reasons,
+            wm=wm,
+            base_branch=base_branch,
         )
         if ok:
             dispatched_count += 1
@@ -1680,6 +1744,7 @@ def _drain_wait(
     timeout_s: float = 300.0,
     router: dict[str, RouteEntry] | None = None,
     task_costs: dict[str, float] | None = None,
+    wm: "WorktreeManager | None" = None,
 ) -> None:
     """Poll `_reap_once` until `in_flight` empty or overall timeout hits.
 
@@ -1691,6 +1756,7 @@ def _drain_wait(
         _reap_once(
             in_flight, queue, run_file, event_log, spend_log, cfg, cwd, gsem, psem,
             router=router, task_costs=task_costs,
+            wm=wm,
         )
         _timeout_sweep(in_flight, event_log)
         time.sleep(0.2)
@@ -4196,7 +4262,18 @@ def main(argv: list[str] | None = None) -> int:
             cli_preset=args.budgets_preset,
             config_path=paths.config_yaml,
         )
-        _install_sigint(drain, in_flight)
+        # Sprint F-2: worktree mode — opt-in via dispatch.worktree_mode in config.yaml
+        _dispatch_cfg = cfg.get("dispatch") or {}
+        _worktree_mode = bool(_dispatch_cfg.get("worktree_mode", False))
+        _base_branch = str(_dispatch_cfg.get("base_branch", "main"))
+        if _worktree_mode:
+            from orchestrator.worktree import WorktreeManager
+            wm: "WorktreeManager | None" = WorktreeManager(paths.project_root)
+            log.info("worktree mode enabled; base_branch=%s", _base_branch)
+        else:
+            wm = None
+
+        _install_sigint(drain, in_flight, wm=wm)
 
         dispatched_count = 0
         # Periodic orphan-PID sweep: piggybacks on the existing tick, no
@@ -4211,6 +4288,7 @@ def main(argv: list[str] | None = None) -> int:
                 retry_queue=retry_queue,
                 router=router,
                 task_costs=task_costs,
+                wm=wm,
             )
             _timeout_sweep(in_flight, event_log)
 
@@ -4241,6 +4319,8 @@ def main(argv: list[str] | None = None) -> int:
                     only=args.only,
                     budget_gate=budget_gate,
                     defer_reasons=defer_reasons,
+                    wm=wm,
+                    base_branch=_base_branch,
                 )
 
             # Sprint 7 — sleep-until-reset when every provider is capped.
@@ -4303,8 +4383,15 @@ def main(argv: list[str] | None = None) -> int:
             _drain_wait(
                 in_flight, queue, run_file, event_log, spend_log, cfg, cwd, gsem, psem,
                 router=router, task_costs=task_costs,
+                wm=wm,
             )
+            if wm is not None:
+                wm.remove_all()
             return 130
+
+        # Sprint F-2: clean up any remaining worktrees on normal exit
+        if wm is not None:
+            wm.remove_all()
 
         # ---- Sprint C end-of-run summary --------------------------------
         # Prints unconditionally after a clean drain (both success and
