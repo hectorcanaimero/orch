@@ -1011,6 +1011,11 @@ def main(argv: list[str] | None = None) -> int:
         config_arg=args.config,
     )
 
+    cfg: dict[str, Any] = {}
+    if paths.config_yaml.exists():
+        with open(paths.config_yaml, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+
     specs_root = (
         Path(args.specs_dir).expanduser().resolve()
         if args.specs_dir
@@ -1063,12 +1068,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from orchestrator.state import get_backend
         from orchestrator.state.sqlite_backend import SqliteBackend
-
-        cfg: dict[str, Any] = {}
-        config_path = paths.project_root / args.config
-        if config_path.exists():
-            with open(config_path, encoding="utf-8") as fh:
-                cfg = yaml.safe_load(fh) or {}
 
         state_backend = get_backend(paths, cfg)
         if isinstance(state_backend, SqliteBackend):
