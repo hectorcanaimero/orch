@@ -24,7 +24,7 @@ def _make_project(root: Path) -> None:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir()
     (orch_dir / "config.yaml").write_text("state:\n  backend: file\n")
 
@@ -33,7 +33,7 @@ def _common_args(root: Path) -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", "proj-logs",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 
@@ -50,7 +50,7 @@ def test_logs_tail_default_and_custom(
     root = tmp_path / "proj"
     _make_project(root)
     # Namespaced layout because --project-root was explicit → state/<project_id>/logs.
-    logs_dir = root / "orchestrator" / "state" / "proj-logs" / "logs"
+    logs_dir = root / ".orchestrator" / "state" / "proj-logs" / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_lines = [f"line {i}\n" for i in range(300)]
     (logs_dir / "T-A.log").write_text("".join(log_lines))
@@ -76,7 +76,7 @@ def test_logs_all_prints_everything(
 ) -> None:
     root = tmp_path / "proj"
     _make_project(root)
-    logs_dir = root / "orchestrator" / "state" / "proj-logs" / "logs"
+    logs_dir = root / ".orchestrator" / "state" / "proj-logs" / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     (logs_dir / "T-A.log").write_text("only-line\n")
 
@@ -92,6 +92,6 @@ def test_logs_missing_project_layout_returns_1(tmp_path: Path) -> None:
     rc = _run_logs_subcommand([
         "T-A",
         "--project-root", str(empty),
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ])
     assert rc == 1

@@ -41,7 +41,7 @@ def _common(root: Path, project_id: str = "integ") -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", project_id,
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 
@@ -194,7 +194,7 @@ def test_doctor_malformed_router_reports_error(
     root = tmp_path / "bad-router"
     _scaffold(capsys, root, "bad")
     # Overwrite router with garbage YAML.
-    (root / "orchestrator" / "model_router.yaml").write_text(
+    (root / ".orchestrator" / "model_router.yaml").write_text(
         "not: [yaml\n  - broken"
     )
     _stub_probes(monkeypatch)
@@ -258,7 +258,7 @@ def test_doctor_reports_correct_state_backend(
     root = tmp_path / f"be-{state_backend}"
     _scaffold(capsys, root, f"proj-{state_backend}")
     # Rewrite config so state.backend matches the parametrized value.
-    cfg = root / "orchestrator" / "config.yaml"
+    cfg = root / ".orchestrator" / "config.yaml"
     text = cfg.read_text()
     import re as _re
     cfg.write_text(_re.sub(r"(?m)^(\s*backend:\s*)\S+", rf"\g<1>{state_backend}", text, count=1))
@@ -288,7 +288,7 @@ def test_validate_and_doctor_agree_on_missing_router(
     """Deleting model_router.yaml should surface in BOTH commands as error."""
     root = tmp_path / "no-router"
     _scaffold(capsys, root, "nr")
-    (root / "orchestrator" / "model_router.yaml").unlink()
+    (root / ".orchestrator" / "model_router.yaml").unlink()
     _stub_probes(monkeypatch)
 
     rc_val = _run_validate_subcommand([*_common(root, "nr"), "--json"])

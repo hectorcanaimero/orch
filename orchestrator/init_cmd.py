@@ -49,9 +49,9 @@ _TEMPLATES_DIR = _PKG_DIR / "templates"
 # Each tuple is (source path relative to _PKG_DIR, destination path
 # relative to project_path).
 _YAML_DEFAULTS: tuple[tuple[str, str], ...] = (
-    ("config.yaml", "orchestrator/config.yaml"),
-    ("model_router.yaml", "orchestrator/model_router.yaml"),
-    ("budgets.yaml", "orchestrator/budgets.yaml"),
+    ("config.yaml", ".orchestrator/config.yaml"),
+    ("model_router.yaml", ".orchestrator/model_router.yaml"),
+    ("budgets.yaml", ".orchestrator/budgets.yaml"),
     # Dashboard config lives one level deeper in the package but the
     # project override MUST sit at the project root (see
     # orchestrator/dashboard/dashboard_config.py's loader). Preserve that.
@@ -65,9 +65,9 @@ _CONFLICT_MARKERS: tuple[str, ...] = (
     "scripts/task-start.sh",
     "scripts/task-finish.sh",
     "scripts/task-block.sh",
-    "orchestrator/config.yaml",
-    "orchestrator/model_router.yaml",
-    "orchestrator/budgets.yaml",
+    ".orchestrator/config.yaml",
+    ".orchestrator/model_router.yaml",
+    ".orchestrator/budgets.yaml",
     "dashboard.yaml",
 )
 
@@ -171,8 +171,8 @@ def orch_init(
         specs_dst / "README.md",
     )
 
-    # ---- orchestrator/ ---------------------------------------------
-    orch_dir = project_path / "orchestrator"
+    # ---- .orchestrator/ --------------------------------------------
+    orch_dir = project_path / ".orchestrator"
     (orch_dir / "state").mkdir(parents=True, exist_ok=True)
     (orch_dir / "state" / ".gitkeep").touch()
     for src_rel, dst_rel in _YAML_DEFAULTS:
@@ -556,9 +556,9 @@ def run_wizard(
     # Post-process config.yaml with the wizard's answers (state.backend,
     # spec_root, budgets_preset) so operators don't need to edit YAML by
     # hand for common choices.
-    if "orchestrator/config.yaml" not in protected:
+    if ".orchestrator/config.yaml" not in protected:
         _post_process_config(
-            project_root / "orchestrator" / "config.yaml",
+            project_root / ".orchestrator" / "config.yaml",
             state_backend=state_backend,
             budget_preset=budget_preset,
             spec_root=spec_root,
@@ -582,7 +582,7 @@ def run_wizard(
 
     try:
         tasks_list = load_tasks(project_root / "tasks.json")
-        router = load_router(project_root / "orchestrator" / "model_router.yaml")
+        router = load_router(project_root / ".orchestrator" / "model_router.yaml")
         errors = preflight.validate_graph(tasks_list, router_keys=router.keys())
     except Exception as exc:  # noqa: BLE001
         _say(f"  validation could not run: {exc}")

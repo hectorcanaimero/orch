@@ -89,8 +89,8 @@ class ProjectPaths:
           `Path.cwd()` (modo rupies clásico).
         - `state_layout`: "legacy" | "namespaced" — derivado de `explicit_root`.
           Determina la forma de `state_dir`:
-            legacy      → `<root>/orchestrator/state/`      (rupies retrocompat)
-            namespaced  → `<root>/orchestrator/state/<project_id>/`
+            legacy      → `<root>/.orchestrator/state/`      (retrocompat)
+            namespaced  → `<root>/.orchestrator/state/<project_id>/`
     """
 
     project_root: Path
@@ -107,22 +107,22 @@ class ProjectPaths:
 
     @property
     def router_yaml(self) -> Path:
-        return self.project_root / "orchestrator" / "model_router.yaml"
+        return self.project_root / ".orchestrator" / "model_router.yaml"
 
     @property
     def state_dir(self) -> Path:
         """State dir según layout (Fase 2).
 
-        - `legacy` → `<root>/orchestrator/state/` (comportamiento histórico
+        - `legacy` → `<root>/.orchestrator/state/` (comportamiento histórico
           rupies — cuando NO se pasó `--project-root`/`ORCH_PROJECT_ROOT`).
-        - `namespaced` → `<root>/orchestrator/state/<project_id>/` (cuando
+        - `namespaced` → `<root>/.orchestrator/state/<project_id>/` (cuando
           el root fue explícito — permite multi-project sin colisiones de
           `run-*.json`, `events-*.jsonl`, `.lock`, etc.).
 
         NUNCA migra archivos: si un proyecto arrancó en `legacy` y luego
         pasás `--project-root`, los archivos viejos quedan donde estaban.
         """
-        base = self.project_root / "orchestrator" / "state"
+        base = self.project_root / ".orchestrator" / "state"
         if self.state_layout == "namespaced":
             return base / self.project_id
         return base
@@ -208,7 +208,7 @@ def resolve_project_paths(
     # started from the project dir without --project-root reads the empty
     # legacy DB instead of the real namespaced one.
     if state_layout == "legacy":
-        namespaced_state = root / "orchestrator" / "state" / pid
+        namespaced_state = root / ".orchestrator" / "state" / pid
         if namespaced_state.is_dir() and (
             (namespaced_state / "orch.db").exists()
             or any(namespaced_state.glob("spend-*.jsonl"))

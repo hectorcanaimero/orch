@@ -38,8 +38,8 @@ def backend(tmp_path: Path) -> StateBackend:
 
 
 def _bootstrap_project(tmp_path: Path) -> None:
-    (tmp_path / "orchestrator").mkdir(exist_ok=True)
-    (tmp_path / "orchestrator" / "config.yaml").write_text(
+    (tmp_path / ".orchestrator").mkdir(exist_ok=True)
+    (tmp_path / ".orchestrator" / "config.yaml").write_text(
         "concurrency: {global_max: 1}\n"
         "state: {backend: file}\n"
         "findings: {publish_repo: 'ownr/reporepo'}\n",

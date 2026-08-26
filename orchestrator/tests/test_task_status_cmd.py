@@ -52,7 +52,7 @@ def project(tmp_path: Path) -> Path:
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
     # orchestrator/config.yaml — minimal.
-    cfg_dir = root / "orchestrator"
+    cfg_dir = root / ".orchestrator"
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text(
         "state:\n  backend: sqlite\n  sqlite_path: null\n"
@@ -74,7 +74,7 @@ def project_file_backend(tmp_path: Path) -> Path:
         # Real inert scripts — write nothing to tasks.json.
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    cfg_dir = root / "orchestrator"
+    cfg_dir = root / ".orchestrator"
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text("state:\n  backend: file\n")
     return root
@@ -96,14 +96,14 @@ def test_sqlite_happy_path_updates_row(project: Path) -> None:
         "--project-id",
         "proj-a",
         "--config",
-        "orchestrator/config.yaml",
+        ".orchestrator/config.yaml",
     ]
     rc = _run_task_status_subcommand(argv)
     assert rc == 0
     # Verify the row landed.
     import sqlite3
 
-    db = project / "orchestrator" / "state" / "proj-a" / "orch.db"
+    db = project / ".orchestrator" / "state" / "proj-a" / "orch.db"
     conn = sqlite3.connect(str(db))
     try:
         row = conn.execute(
@@ -122,7 +122,7 @@ def test_sqlite_unknown_task_exits_2(project: Path) -> None:
         "in-progress",
         "--project-root", str(project),
         "--project-id", "proj-a",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
     rc = _run_task_status_subcommand(argv)
     assert rc == 2
@@ -135,7 +135,7 @@ def test_sqlite_illegal_transition_exits_3(project: Path) -> None:
         "done",
         "--project-root", str(project),
         "--project-id", "proj-a",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
     rc = _run_task_status_subcommand(argv)
     assert rc == 3
@@ -170,7 +170,7 @@ def test_file_backend_invokes_task_start_script(
         "--author", "test",
         "--project-root", str(project_file_backend),
         "--project-id", "proj-file",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
     rc = _run_task_status_subcommand(argv)
     assert rc == 0
@@ -185,7 +185,7 @@ def test_file_backend_unknown_task_exits_2(project_file_backend: Path) -> None:
         "in-progress",
         "--project-root", str(project_file_backend),
         "--project-id", "proj-file",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
     rc = _run_task_status_subcommand(argv)
     assert rc == 2

@@ -38,7 +38,7 @@ def _write_project(
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir(exist_ok=True)
     cfg_text = "state:\n  backend: file\n"
     if budgets_yaml is not None:
@@ -93,7 +93,7 @@ def _common(root: Path) -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", "proj-validate",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 
@@ -166,7 +166,7 @@ def test_validate_bad_state_backend(tmp_path: Path, capsys: pytest.CaptureFixtur
         config_extra="",  # placeholder — override below
     )
     # Overwrite config with a bad backend.
-    (root / "orchestrator" / "config.yaml").write_text(
+    (root / ".orchestrator" / "config.yaml").write_text(
         "state:\n  backend: mysql\n"
     )
     rc = _run_validate_subcommand([*_common(root), "--json"])
@@ -237,7 +237,7 @@ def test_validate_missing_router_reports_error(
 ) -> None:
     root = tmp_path / "proj"
     _write_project(root, tasks=[_task("A")])
-    (root / "orchestrator" / "model_router.yaml").unlink()
+    (root / ".orchestrator" / "model_router.yaml").unlink()
     rc = _run_validate_subcommand([*_common(root), "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert rc == 2

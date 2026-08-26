@@ -631,8 +631,8 @@ class TestCliMain:
         (docs / "sample.md").write_text(FIXTURE.read_text(), encoding="utf-8")
         tasks_json = tmp_path / "tasks.json"
         # Config.yaml stub (resolve_project_paths lo resuelve pero no lo lee)
-        (tmp_path / "orchestrator").mkdir()
-        (tmp_path / "orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
+        (tmp_path / ".orchestrator").mkdir()
+        (tmp_path / ".orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
         # scripts stub para pasar ensure_valid si se llamara — atomize NO lo llama
         # así que no hace falta.
 
@@ -653,8 +653,8 @@ class TestCliMain:
         docs.mkdir()
         (docs / "sample.md").write_text(FIXTURE.read_text(), encoding="utf-8")
         tasks_json = tmp_path / "tasks.json"
-        (tmp_path / "orchestrator").mkdir()
-        (tmp_path / "orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
+        (tmp_path / ".orchestrator").mkdir()
+        (tmp_path / ".orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
 
         rc = atomize_main(
             [
@@ -681,8 +681,8 @@ class TestCliMain:
         tasks_json.write_text(
             json.dumps({"meta": {}, "phases": [], "tasks": []}), encoding="utf-8"
         )
-        (tmp_path / "orchestrator").mkdir()
-        (tmp_path / "orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
+        (tmp_path / ".orchestrator").mkdir()
+        (tmp_path / ".orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
 
         rc = atomize_main(
             [
@@ -701,8 +701,8 @@ class TestCliMain:
         docs = tmp_path / "docs"
         docs.mkdir()
         (docs / "sample.md").write_text(FIXTURE.read_text(), encoding="utf-8")
-        (tmp_path / "orchestrator").mkdir()
-        (tmp_path / "orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
+        (tmp_path / ".orchestrator").mkdir()
+        (tmp_path / ".orchestrator" / "config.yaml").write_text("{}", encoding="utf-8")
 
         rc = atomize_main(
             [

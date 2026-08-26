@@ -45,10 +45,10 @@ def test_init_creates_expected_layout(tmp_path: Path) -> None:
         mode = p.stat().st_mode
         assert mode & stat.S_IXUSR, f"script not executable: {p}"
     # orchestrator dir
-    assert (dest / "orchestrator" / "state" / ".gitkeep").exists()
-    assert (dest / "orchestrator" / "config.yaml").exists()
-    assert (dest / "orchestrator" / "model_router.yaml").exists()
-    assert (dest / "orchestrator" / "budgets.yaml").exists()
+    assert (dest / ".orchestrator" / "state" / ".gitkeep").exists()
+    assert (dest / ".orchestrator" / "config.yaml").exists()
+    assert (dest / ".orchestrator" / "model_router.yaml").exists()
+    assert (dest / ".orchestrator" / "budgets.yaml").exists()
 
 
 def test_init_creates_dest_dir_if_missing(tmp_path: Path) -> None:
@@ -93,9 +93,9 @@ def test_init_config_yamls_are_copies_of_packaged_defaults(tmp_path: Path) -> No
     orch_init(dest)
 
     pairs = (
-        ("config.yaml", "orchestrator/config.yaml"),
-        ("model_router.yaml", "orchestrator/model_router.yaml"),
-        ("budgets.yaml", "orchestrator/budgets.yaml"),
+        ("config.yaml", ".orchestrator/config.yaml"),
+        ("model_router.yaml", ".orchestrator/model_router.yaml"),
+        ("budgets.yaml", ".orchestrator/budgets.yaml"),
         # Dashboard override lives at the project root — package source is
         # one level deeper. Verified explicitly to lock the layout.
         ("dashboard/dashboard.yaml", "dashboard.yaml"),
@@ -124,7 +124,7 @@ def test_init_creates_dashboard_yaml_at_project_root(tmp_path: Path) -> None:
     assert "tunnel:" in text, "shipped dashboard.yaml should include tunnel block"
     # And it MUST NOT sit under orchestrator/ — that would silently break
     # the loader while looking correct in a file listing.
-    assert not (dest / "orchestrator" / "dashboard.yaml").exists()
+    assert not (dest / ".orchestrator" / "dashboard.yaml").exists()
 
 
 def test_init_refuses_when_dest_has_dashboard_yaml(tmp_path: Path) -> None:

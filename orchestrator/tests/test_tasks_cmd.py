@@ -31,7 +31,7 @@ def _make_project(root: Path, backend_kind: str) -> None:
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         (scripts / name).write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / name).chmod(0o755)
-    orch_dir = root / "orchestrator"
+    orch_dir = root / ".orchestrator"
     orch_dir.mkdir()
     (orch_dir / "config.yaml").write_text(
         f"state:\n  backend: {backend_kind}\n  sqlite_path: null\n"
@@ -59,7 +59,7 @@ def _common_args(root: Path) -> list[str]:
     return [
         "--project-root", str(root),
         "--project-id", "proj-tasks",
-        "--config", "orchestrator/config.yaml",
+        "--config", ".orchestrator/config.yaml",
     ]
 
 

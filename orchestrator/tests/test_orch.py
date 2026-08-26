@@ -72,7 +72,7 @@ def _stage_v2(root: Path, tasks_src: Path, router_src: Path, config_src: Path) -
     v2 = root / "v2"
     v2.mkdir(parents=True, exist_ok=True)
     (v2 / "scripts").mkdir(exist_ok=True)
-    (v2 / "orchestrator" / "state").mkdir(parents=True, exist_ok=True)
+    (v2 / ".orchestrator" / "state").mkdir(parents=True, exist_ok=True)
 
     # tasks.json
     shutil.copy(tasks_src, v2 / "tasks.json")
@@ -82,8 +82,8 @@ def _stage_v2(root: Path, tasks_src: Path, router_src: Path, config_src: Path) -
         _mk_no_op_script(v2 / "scripts" / name)
 
     # config + router
-    shutil.copy(router_src, v2 / "orchestrator" / "model_router.yaml")
-    shutil.copy(config_src, v2 / "orchestrator" / "config.yaml")
+    shutil.copy(router_src, v2 / ".orchestrator" / "model_router.yaml")
+    shutil.copy(config_src, v2 / ".orchestrator" / "config.yaml")
 
     return v2
 
@@ -249,7 +249,7 @@ def test_dry_run_is_side_effect_free(
     assert rc == 0
 
     # No run file, no events file, no spend file.
-    state_dir = staged_v2 / "orchestrator" / "state"
+    state_dir = staged_v2 / ".orchestrator" / "state"
     run_files = list(state_dir.glob("run-*.json"))
     event_files = list(state_dir.glob("events-*.jsonl"))
     spend_files = list(state_dir.glob("spend-*.jsonl"))
@@ -281,7 +281,7 @@ def test_dry_run_max_tasks_caps_plan(
 
 def test_flock_contention_returns_3(staged_v2: Path) -> None:
     """AS-09: another orchestrator holds the lock → exit 3."""
-    lock_path = staged_v2 / "orchestrator" / "state" / ".lock"
+    lock_path = staged_v2 / ".orchestrator" / "state" / ".lock"
     held = acquire_flock(lock_path)
     try:
         rc = orch_mod.main(["--dry-run"])
@@ -310,7 +310,7 @@ def test_full_loop_fake_backend(
     rc = orch_mod.main(["--mode", "auto"])
     assert rc == 0, "clean drain expected"
 
-    state_dir = staged_v2 / "orchestrator" / "state"
+    state_dir = staged_v2 / ".orchestrator" / "state"
 
     # Exactly one run file was created.
     run_files = list(state_dir.glob("run-*.json"))
@@ -477,7 +477,7 @@ def test_retry_once_then_block(
     # Exit=1 because the task ended blocked (spec: blocked → exit 1).
     assert rc == 1
 
-    state_dir = staged_v2 / "orchestrator" / "state"
+    state_dir = staged_v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     assert len(event_files) == 1
     events = [
@@ -569,7 +569,7 @@ def test_version_drift_fallback(
     )
 
     # Event stream: 2 dispatches (one per model), 1 retry with drift reason.
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     assert len(event_files) == 1
     events = [
@@ -610,7 +610,7 @@ def _run_single_task_with_backend(
     monkeypatch.setattr("orchestrator.orch.get_backend", _fake_get_backend)
 
     rc = orch_mod.main(["--mode", "auto"])
-    state_dir = staged_v2 / "orchestrator" / "state"
+    state_dir = staged_v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     assert len(event_files) == 1
     events = [
@@ -1102,7 +1102,7 @@ def test_escalation_route_validated_at_startup(
         f"expected startup error to name the missing route; got:\n{combined}"
     )
     # And NO run/events/spend files were created (fail-fast before flock).
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     assert list(state_dir.glob("run-*.json")) == []
     assert list(state_dir.glob("events-*.jsonl")) == []
 
@@ -1159,7 +1159,7 @@ def test_attempt_3_uses_escalation_route(
         f"attempt 3 must use escalation cli_model; got {seen_cli_models[2]}"
     )
 
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     assert len(event_files) == 1
     events = [
@@ -1212,7 +1212,7 @@ def test_no_escalation_when_class_terminal(
     rc = orch_mod.main(["--mode", "auto"])
     assert rc == 1
 
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     events = [
         json.loads(line)
@@ -1264,7 +1264,7 @@ def test_no_escalation_when_route_lacks_escalation_model(
     rc = orch_mod.main(["--mode", "auto"])
     assert rc == 1
 
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     events = [
         json.loads(line)
@@ -1353,7 +1353,7 @@ def test_escalation_respects_per_dispatch_budget(
     rc = orch_mod.main(["--mode", "auto"])
     assert rc == 1
 
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     event_files = list(state_dir.glob("events-*.jsonl"))
     events = [
         json.loads(line)
@@ -1581,7 +1581,7 @@ def _stage_v2_with_status(tmp_path: Path, tasks: list[dict]) -> Path:
     v2 = tmp_path / "v2"
     v2.mkdir()
     (v2 / "scripts").mkdir()
-    (v2 / "orchestrator" / "state").mkdir(parents=True)
+    (v2 / ".orchestrator" / "state").mkdir(parents=True)
     for name in ("task-start.sh", "task-finish.sh", "task-block.sh"):
         p = v2 / "scripts" / name
         p.write_text("#!/bin/sh\nexit 0\n")
@@ -1591,8 +1591,8 @@ def _stage_v2_with_status(tmp_path: Path, tasks: list[dict]) -> Path:
     )
     # config + router (minimal — reset subcommand doesn't need them but
     # resolve_project_paths reads them).
-    shutil.copy(FIXTURES / "main_loop_config.yaml", v2 / "orchestrator" / "config.yaml")
-    shutil.copy(FIXTURES / "main_loop_router.yaml", v2 / "orchestrator" / "model_router.yaml")
+    shutil.copy(FIXTURES / "main_loop_config.yaml", v2 / ".orchestrator" / "config.yaml")
+    shutil.copy(FIXTURES / "main_loop_router.yaml", v2 / ".orchestrator" / "model_router.yaml")
     return v2
 
 
@@ -1804,7 +1804,7 @@ def test_orch_stop_signals_parent_pid(
     v2 = _stage_v2_with_status(tmp_path, [
         {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
     ])
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     state_dir.mkdir(exist_ok=True, parents=True)
     run_id = "target-run"
     payload = {
@@ -1854,7 +1854,7 @@ def test_orch_stop_grace_expires_returns_1(
     v2 = _stage_v2_with_status(tmp_path, [
         {"id": "T-1", "phase": 0, "title": "t", "model": "opencode/glm", "status": "todo", "comments": []},
     ])
-    state_dir = v2 / "orchestrator" / "state"
+    state_dir = v2 / ".orchestrator" / "state"
     state_dir.mkdir(exist_ok=True, parents=True)
     payload = {
         "run_id": "target-run",

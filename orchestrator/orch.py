@@ -190,8 +190,8 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="orchestrator/config.yaml",
-        help="Path to config.yaml (default: orchestrator/config.yaml)",
+        default=".orchestrator/config.yaml",
+        help="Path to config.yaml (default: .orchestrator/config.yaml)",
     )
     parser.add_argument(
         "--only",
@@ -1849,8 +1849,8 @@ def _run_task_status_subcommand(argv: list[str]) -> int:
                    help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
     p.add_argument("--project-id", default=None, metavar="ID",
                    help="Project id override. Env fallback: ORCH_PROJECT_ID.")
-    p.add_argument("--config", default="orchestrator/config.yaml",
-                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+    p.add_argument("--config", default=".orchestrator/config.yaml",
+                   help="Path to config.yaml (default: .orchestrator/config.yaml)")
     args = p.parse_args(argv)
 
     paths = resolve_project_paths(
@@ -2087,8 +2087,8 @@ def _run_reset_subcommand(argv: list[str]) -> int:
     )
     p.add_argument(
         "--config",
-        default="orchestrator/config.yaml",
-        help="Path to config.yaml (default: orchestrator/config.yaml)",
+        default=".orchestrator/config.yaml",
+        help="Path to config.yaml (default: .orchestrator/config.yaml)",
     )
     args = p.parse_args(argv)
 
@@ -2210,8 +2210,8 @@ def _run_stop_subcommand(argv: list[str]) -> int:
     )
     p.add_argument(
         "--config",
-        default="orchestrator/config.yaml",
-        help="Path to config.yaml (default: orchestrator/config.yaml)",
+        default=".orchestrator/config.yaml",
+        help="Path to config.yaml (default: .orchestrator/config.yaml)",
     )
     p.add_argument(
         "--grace",
@@ -2323,8 +2323,8 @@ def _add_common_project_flags(p: argparse.ArgumentParser) -> None:
                    help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
     p.add_argument("--project-id", default=None, metavar="ID",
                    help="Project id override. Env fallback: ORCH_PROJECT_ID.")
-    p.add_argument("--config", default="orchestrator/config.yaml",
-                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+    p.add_argument("--config", default=".orchestrator/config.yaml",
+                   help="Path to config.yaml (default: .orchestrator/config.yaml)")
 
 
 def _run_status_subcommand(argv: list[str]) -> int:
@@ -3528,8 +3528,8 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
                    help="Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.")
     p.add_argument("--project-id", default=None, metavar="ID",
                    help="Project id override. Env fallback: ORCH_PROJECT_ID.")
-    p.add_argument("--config", default="orchestrator/config.yaml",
-                   help="Path to config.yaml (default: orchestrator/config.yaml)")
+    p.add_argument("--config", default=".orchestrator/config.yaml",
+                   help="Path to config.yaml (default: .orchestrator/config.yaml)")
     p.add_argument("--reload", action="store_true",
                    help="Enable uvicorn --reload (dev only; watches for code changes).")
     p.add_argument("--profile", default=None,

@@ -209,7 +209,7 @@ def test_build_doctor_report_includes_tunnel_checks(
     from orchestrator.paths import ProjectPaths
 
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     start = root / "scripts" / "task-start.sh"
     start.write_text("#!/bin/sh\nexit 0\n")
@@ -218,9 +218,9 @@ def test_build_doctor_report_includes_tunnel_checks(
         json.dumps({"meta": {}, "phases": [], "tasks": []}),
         encoding="utf-8",
     )
-    cfg_path = root / "orchestrator" / "config.yaml"
+    cfg_path = root / ".orchestrator" / "config.yaml"
     cfg_path.write_text("state:\n  backend: file\n", encoding="utf-8")
-    (root / "orchestrator" / "model_router.yaml").write_text(
+    (root / ".orchestrator" / "model_router.yaml").write_text(
         "claude-4:\n  backend: claude\n  model: claude-4\n", encoding="utf-8",
     )
     (root / "dashboard.yaml").write_text(

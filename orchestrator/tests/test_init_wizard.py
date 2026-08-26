@@ -162,8 +162,8 @@ def test_wizard_scaffolds_fresh_project(tmp_path: Path) -> None:
     assert rc == 0
     # Every file the batch scaffolder writes is present.
     assert (project_root / "tasks.json").exists()
-    assert (project_root / "orchestrator" / "config.yaml").exists()
-    assert (project_root / "orchestrator" / "model_router.yaml").exists()
+    assert (project_root / ".orchestrator" / "config.yaml").exists()
+    assert (project_root / ".orchestrator" / "model_router.yaml").exists()
     assert (project_root / "scripts" / "task-start.sh").exists()
     # Post-processing wrote the project id into meta.
     tasks_payload = json.loads((project_root / "tasks.json").read_text())
@@ -181,7 +181,7 @@ def test_wizard_writes_selected_state_backend(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "backend: sqlite" in cfg
 
 
@@ -193,7 +193,7 @@ def test_wizard_writes_selected_budget_preset(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "budgets_preset: aggressive" in cfg
 
 
@@ -205,7 +205,7 @@ def test_wizard_writes_selected_spec_root(tmp_path: Path) -> None:
     args = argparse.Namespace()
     rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
     assert rc == 0
-    cfg = (project_root / "orchestrator" / "config.yaml").read_text()
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
     assert "spec_root: docs/specs" in cfg
 
 

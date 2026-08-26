@@ -58,7 +58,7 @@ def _make_fixture_project(tmp_path: Path) -> "object":
     from orchestrator.paths import ProjectPaths
 
     root = tmp_path / "proj"
-    (root / "orchestrator" / "state").mkdir(parents=True)
+    (root / ".orchestrator" / "state").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
 
     start = root / "scripts" / "task-start.sh"
@@ -70,9 +70,9 @@ def _make_fixture_project(tmp_path: Path) -> "object":
         encoding="utf-8",
     )
 
-    cfg_path = root / "orchestrator" / "config.yaml"
+    cfg_path = root / ".orchestrator" / "config.yaml"
     cfg_path.write_text(_MINIMAL_CONFIG, encoding="utf-8")
-    (root / "orchestrator" / "model_router.yaml").write_text(
+    (root / ".orchestrator" / "model_router.yaml").write_text(
         _MINIMAL_ROUTER, encoding="utf-8",
     )
 
