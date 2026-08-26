@@ -46,7 +46,7 @@ def test_sqlite_migration_bumps_user_version_to_3(tmp_path: Path) -> None:
     _reset_backend_cache()
     db = tmp_path / "state" / "orch.db"
     backend = SqliteBackend(db_path=db, project_id="pytest")
-    assert backend.schema_version() == 3
+    assert backend.schema_version() >= 3
     # findings table is queryable — smoke-check the schema is applied.
     conn = sqlite3.connect(str(db))
     try:
@@ -67,7 +67,7 @@ def test_sqlite_migration_is_reentrant(tmp_path: Path) -> None:
     SqliteBackend(db_path=db, project_id="pytest")
     _reset_schema_cache_for_tests()  # force re-check without altering DB
     b2 = SqliteBackend(db_path=db, project_id="pytest")
-    assert b2.schema_version() == 3
+    assert b2.schema_version() >= 3
 
 
 # ---- file backend on-disk layout ---------------------------------------

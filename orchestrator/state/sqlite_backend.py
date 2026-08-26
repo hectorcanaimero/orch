@@ -362,6 +362,105 @@ class SqliteBackend:
                 f"'{self.project_id}'. Run 'orch atomize --apply' first."
             )
 
+    # ---- milestones (Sprint F-3) ----------------------------------------
+
+    def upsert_milestone(
+        self,
+        id: str,
+        title: str,
+        description: str | None = None,
+        target_date: str | None = None,
+    ) -> None:
+        """Create or update a milestone for this project."""
+        now = _utc_now_iso()
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO milestones "
+                "(project_id, id, title, description, target_date, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(project_id, id) DO UPDATE SET "
+                "title=excluded.title, description=excluded.description, "
+                "target_date=excluded.target_date",
+                (self.project_id, id, title, description, target_date, now),
+            )
+
+    def get_milestones(self) -> list[dict]:
+        """Return all milestones for this project with computed task progress."""
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                """
+                SELECT
+                    m.id,
+                    m.title,
+                    m.description,
+                    m.target_date,
+                    m.status,
+                    m.created_at,
+                    COUNT(td.task_id) AS total,
+                    SUM(CASE WHEN tr.status = 'done' THEN 1 ELSE 0 END) AS done
+                FROM milestones m
+                LEFT JOIN tasks_definition td
+                    ON td.project_id = m.project_id AND td.milestone_id = m.id
+                LEFT JOIN tasks_runtime tr
+                    ON tr.project_id = td.project_id AND tr.task_id = td.task_id
+                WHERE m.project_id = ?
+                GROUP BY m.id
+                ORDER BY m.created_at
+                """,
+                (self.project_id,),
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        result = []
+        for row in rows:
+            total = row["total"] or 0
+            done = row["done"] or 0
+            pct = int(done / total * 100) if total > 0 else 0
+            result.append({
+                "id": row["id"],
+                "title": row["title"],
+                "description": row["description"],
+                "target_date": row["target_date"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "progress": {"total": total, "done": done, "pct": pct},
+            })
+        return result
+
+    def set_task_milestone(self, task_id: str, milestone_id: str) -> None:
+        """Assign a task to a milestone. Raises KeyError if either doesn't exist."""
+        with self._write() as conn:
+            cur = conn.execute(
+                "SELECT id FROM milestones WHERE project_id = ? AND id = ?",
+                (self.project_id, milestone_id),
+            )
+            if cur.fetchone() is None:
+                raise KeyError(
+                    f"milestone '{milestone_id}' not found for project '{self.project_id}'"
+                )
+            now = _utc_now_iso()
+            rowcount = conn.execute(
+                "UPDATE tasks_definition SET milestone_id = ?, updated_at = ? "
+                "WHERE project_id = ? AND task_id = ?",
+                (milestone_id, now, self.project_id, task_id),
+            ).rowcount
+        if rowcount == 0:
+            raise KeyError(
+                f"task '{task_id}' not found in tasks_definition for project '{self.project_id}'"
+            )
+
+    def complete_milestone(self, milestone_id: str) -> None:
+        """Mark a milestone as completed."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE milestones SET status = 'completed' "
+                "WHERE project_id = ? AND id = ?",
+                (self.project_id, milestone_id),
+            )
+
     # ---- task status ---------------------------------------------------
 
     def get_task_status(self, task_id: str) -> Status | None:
