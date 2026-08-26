@@ -614,7 +614,7 @@ class InFlight:
     timeout_s: float
     timed_out: bool = False
     task_lock_fd: Any = None  # per-task flock fd when --task-locks; None otherwise
-    worktree_path: "Path | None" = None
+    worktree_path: Path | None = None
 
 
 @dataclass
@@ -902,8 +902,6 @@ def _install_sigint(
                 _killpg_or_pid(pid, signal.SIGKILL)
                 entry.timed_out = True
             drain.hard_kill_next = True
-            if wm is not None:
-                wm.remove_all()
         else:
             drain.set = True
             log.warning(

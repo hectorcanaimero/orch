@@ -4,7 +4,7 @@ Verifies that Sprint F-2 worktree lifecycle hooks are called at the correct
 times:
     - wm.push(task_id) is called on success (and only on success)
     - wm.remove(task_id) is always called after reap
-    - wm.remove_all() is called on the second SIGINT (hard kill)
+    - wm.remove_all() is called in main() after _drain_wait (not in the SIGINT handler)
 
 All WorktreeManager calls are mocked — no real git commands are run.
 """
@@ -149,11 +149,16 @@ def _make_mocks(tmp_path: Path, *, backend_name: str = "opencode"):
     return queue, run_file, event_log, spend_log, cfg, gsem, psem
 
 
-# ---- Test 1: _install_sigint - second signal calls remove_all ---------------
+# ---- Test 1: _install_sigint - second signal does not call remove_all --------
 
 
-def test_install_sigint_calls_remove_all_on_second_signal() -> None:
-    """On the second SIGINT (hard kill), wm.remove_all() must be called."""
+def test_install_sigint_does_not_call_remove_all_on_second_signal() -> None:
+    """On the second SIGINT (hard kill), wm.remove_all() is NOT called in the handler.
+
+    Sprint F-2: The handler sets drain.hard_kill_next and kills children, but
+    the actual worktree cleanup (wm.remove_all) happens later in main() after
+    _drain_wait completes, avoiding cleanup-during-drain race conditions.
+    """
     drain = _DrainFlag()
     drain.set = True  # simulate first signal already received
     in_flight: dict = {}
@@ -165,7 +170,10 @@ def test_install_sigint_calls_remove_all_on_second_signal() -> None:
     handler = signal.getsignal(signal.SIGINT)
     handler(signal.SIGINT, None)
 
-    wm.remove_all.assert_called_once()
+    # The handler must NOT call remove_all (that happens in main after _drain_wait).
+    wm.remove_all.assert_not_called()
+    # But it should set the hard_kill flag.
+    assert drain.hard_kill_next is True
 
 
 # ---- Test 2: _install_sigint - no wm on second signal does not raise --------
