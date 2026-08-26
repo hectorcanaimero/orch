@@ -23,3 +23,16 @@ export function statusBadgeVariant(
       return "outline"
   }
 }
+
+/**
+ * Translate a raw status value to its display label using the
+ * presentation.status_labels config from /api/config.
+ * Falls back to the raw status string if the label is not configured.
+ */
+export function labelForStatus(
+  status: string,
+  labels: Record<string, string> | undefined,
+): string {
+  if (!labels) return status
+  return labels[status] ?? status
+}
