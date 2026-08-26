@@ -91,6 +91,12 @@ class ProjectPaths:
           Determina la forma de `state_dir`:
             legacy      → `<root>/.orchestrator/state/`      (retrocompat)
             namespaced  → `<root>/.orchestrator/state/<project_id>/`
+
+    Sprint F-2 — Worktree isolation:
+        - `override_root`: when set to a worktree path, project files
+          (tasks_json, scripts_dir, router_yaml) resolve inside the worktree.
+          state_dir ALWAYS uses project_root (shared across worktrees).
+          None (default) → backward compat, all paths use project_root.
     """
 
     project_root: Path
@@ -100,14 +106,15 @@ class ProjectPaths:
     config_yaml: Path
     explicit_root: bool = False
     state_layout: StateLayout = "legacy"
+    override_root: Path | None = None
 
     @property
     def tasks_json(self) -> Path:
-        return self.project_root / "tasks.json"
+        return (self.override_root or self.project_root) / "tasks.json"
 
     @property
     def router_yaml(self) -> Path:
-        return self.project_root / ".orchestrator" / "model_router.yaml"
+        return (self.override_root or self.project_root) / ".orchestrator" / "model_router.yaml"
 
     @property
     def state_dir(self) -> Path:
@@ -129,7 +136,7 @@ class ProjectPaths:
 
     @property
     def scripts_dir(self) -> Path:
-        return self.project_root / "scripts"
+        return (self.override_root or self.project_root) / "scripts"
 
     def ensure_valid(self) -> None:
         """Chequeo defensivo: `tasks.json` y `scripts/task-start.sh` presentes.
