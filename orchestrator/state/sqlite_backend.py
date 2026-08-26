@@ -1279,6 +1279,49 @@ class SqliteBackend:
         finally:
             conn.close()
 
+    # ---- VCS / CI tracking (Sprint F-4) ------------------------------------
+
+    def set_task_pr(self, task_id: str, pr_url: str) -> None:
+        """Store PR URL and initialise ci_status to 'pending'."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE tasks_runtime SET pr_url = ?, ci_status = 'pending', "
+                "updated_at = ? WHERE project_id = ? AND task_id = ?",
+                (pr_url, _utc_now_iso(), self.project_id, task_id),
+            )
+
+    def get_tasks_with_pending_ci(self) -> list[dict]:
+        """Return tasks_runtime rows where pr_url IS NOT NULL AND ci_status = 'pending'."""
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "SELECT task_id, pr_url, ci_status, ci_attempts "
+                "FROM tasks_runtime "
+                "WHERE project_id = ? AND pr_url IS NOT NULL AND ci_status = 'pending'",
+                (self.project_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def set_task_ci_status(self, task_id: str, status: str) -> None:
+        """Update ci_status. Valid values: pending | success | failure | skipped."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE tasks_runtime SET ci_status = ?, updated_at = ? "
+                "WHERE project_id = ? AND task_id = ?",
+                (status, _utc_now_iso(), self.project_id, task_id),
+            )
+
+    def increment_ci_attempts(self, task_id: str) -> None:
+        """Increment ci_attempts by 1."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE tasks_runtime SET ci_attempts = ci_attempts + 1, "
+                "updated_at = ? WHERE project_id = ? AND task_id = ?",
+                (_utc_now_iso(), self.project_id, task_id),
+            )
+
     # ---- introspection (used by migrate + tests) -----------------------
 
     def schema_version(self) -> int:
