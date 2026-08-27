@@ -14,6 +14,20 @@ fi
 
 cd "$FRONTEND_DIR"
 
+# Guard: VITE_API_BASE_URL must NOT be set at wheel-build time.
+# If it is, Vite bakes it as a string literal and dead-code-eliminates the
+# window.location.origin fallback — breaking multi-port and cross-origin use.
+# Use frontend/.env.local.example as a reference for dev-only overrides.
+if grep -q 'VITE_API_BASE_URL' "$FRONTEND_DIR/.env" 2>/dev/null; then
+  echo "error: frontend/.env contains VITE_API_BASE_URL — clear it before building the wheel." >&2
+  echo "       Dev overrides belong in .env.local (gitignored), NOT .env." >&2
+  exit 1
+fi
+if [ -n "${VITE_API_BASE_URL:-}" ]; then
+  echo "error: VITE_API_BASE_URL is set in the shell environment — unset it before building the wheel." >&2
+  exit 1
+fi
+
 # Prefer pnpm; fall back to npm if pnpm isn't on PATH.
 if command -v pnpm >/dev/null 2>&1; then
   pnpm install --frozen-lockfile
