@@ -57,3 +57,19 @@ def test_get_tasks_with_pending_ci_null_pr_url_excluded(backend):
     # task without pr_url should never appear
     rows = backend.get_tasks_with_pending_ci()
     assert rows == []
+
+
+def test_set_task_pr_raises_on_unknown_task(backend):
+    with pytest.raises(KeyError):
+        backend.set_task_pr("nonexistent", "https://github.com/x/y/pull/1")
+
+
+def test_set_task_ci_status_raises_on_invalid_status(backend):
+    backend.set_task_pr("task-001", "https://github.com/org/repo/pull/42")
+    with pytest.raises(ValueError):
+        backend.set_task_ci_status("task-001", "broken")
+
+
+def test_increment_ci_attempts_raises_on_unknown_task(backend):
+    with pytest.raises(KeyError):
+        backend.increment_ci_attempts("nonexistent")
