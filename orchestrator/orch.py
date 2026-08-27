@@ -169,6 +169,17 @@ def _build_argparser() -> argparse.ArgumentParser:
         epilog=_HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    import importlib.metadata  # noqa: PLC0415 — stdlib, local to keep import cost off hot paths
+    try:
+        _ver = importlib.metadata.version("orchestrator")
+    except importlib.metadata.PackageNotFoundError:
+        _ver = "0+unknown"  # running from a source tree without an install
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"orch {_ver}",
+        help="Print the installed orch version and exit.",
+    )
     parser.add_argument(
         "--mode",
         choices=("auto", "semi"),
