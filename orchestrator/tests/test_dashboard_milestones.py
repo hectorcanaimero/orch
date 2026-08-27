@@ -133,6 +133,12 @@ def test_milestones_returns_milestone_data(tmp_path: Path) -> None:
         assert m["progress"]["total"] == 0
         assert m["progress"]["done"] == 0
         assert m["progress"]["pct"] == 0
+        # G-3: every milestone carries an `eta` key — None here (0 tasks → no
+        # remaining → no projection), or {eta_date, eta_days, confidence}.
+        assert "eta" in m
+        assert m["eta"] is None
+        if m["eta"] is not None:  # pragma: no cover — shape guard for seeded runs
+            assert set(m["eta"]) == {"eta_date", "eta_days", "confidence"}
     finally:
         _reset_caches()
 

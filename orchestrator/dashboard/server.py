@@ -773,7 +773,27 @@ def create_app(
         backend = _get_state_backend(app_state.paths, raw_cfg)
         if not isinstance(backend, SqliteBackend):
             return JSONResponse({"milestones": [], "backend": "file"})
-        return JSONResponse({"milestones": backend.get_milestones()})
+
+        # G-3: attach a tasks-based ETA per milestone. Velocity is the same
+        # project-wide rolling-7d figure /api/sprint uses; applied to each
+        # milestone's remaining task count.
+        from datetime import datetime, timezone
+        from orchestrator.dashboard.metrics import milestone_eta, sprint_health
+
+        milestones = backend.get_milestones()
+        tasks = load_tasks(app_state.paths.tasks_json)
+        done_7d = backend.count_done_last_n_days(7)
+        velocity = sprint_health(tasks, done_7d, {}).get("velocity_per_day", 0.0)
+        today = datetime.now(timezone.utc).date().isoformat()
+        for m in milestones:
+            remaining = m["progress"]["total"] - m["progress"]["done"]
+            m["eta"] = milestone_eta(
+                remaining=remaining,
+                velocity_per_day=velocity,
+                today=today,
+                target_date=m.get("target_date"),
+            )
+        return JSONResponse({"milestones": milestones})
 
     @app.get("/api/sprint", name="api_sprint")
     def api_sprint():
