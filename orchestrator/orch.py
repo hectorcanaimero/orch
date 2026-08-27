@@ -2174,6 +2174,7 @@ def _print_subcommand_list() -> int:
     print("  orch graph [FLAGS]        Emit a self-contained HTML/SVG plan graph")
     print("  orch doctor [FLAGS]       Read-only preflight (backends, scripts, jq, state)")
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
+    print("  orch router add-missing   Append inferred router entries for unrouted task models")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch upgrade [--check]    Self-update to the latest GitHub release")
@@ -3408,6 +3409,140 @@ def _render_validate_report(payload: dict[str, Any]) -> None:
         print(summary_line)
 
 
+def _run_router_subcommand(argv: list[str]) -> int:
+    """Dispatch `orch router <subcommand>`. Currently: add-missing (issue #55)."""
+    if not argv or argv[0] in ("-h", "--help"):
+        print("usage: orch router <subcommand>")
+        print("subcommands: add-missing")
+        return 0 if argv else 2
+    if argv[0] == "add-missing":
+        return _run_router_add_missing_subcommand(argv[1:])
+    print(f"orch router: unknown subcommand {argv[0]!r}", file=sys.stderr)
+    return 2
+
+
+def _run_router_add_missing_subcommand(argv: list[str]) -> int:
+    """`orch router add-missing` — append inferred router entries for every model
+    referenced in tasks.json but absent from model_router.yaml (issue #55).
+
+    Keeps the run path fail-fast: this is a deliberate, separate fix step, not
+    an interactive prompt injected mid-dispatch (which would break `--mode auto`).
+    """
+    from collections import Counter
+
+    p = argparse.ArgumentParser(
+        prog="orch router add-missing",
+        description=(
+            "Append inferred entries to model_router.yaml for every model "
+            "referenced in tasks.json but missing from the router. `backend` "
+            "and `cli_model` are parsed from the `backend/cli_model` key; "
+            "`tier` defaults to 'standard' (review after — it drives budget)."
+        ),
+    )
+    p.add_argument(
+        "--tier", default="standard", choices=("premium", "standard", "cheap"),
+        help="Tier assigned to every added entry (default: standard).",
+    )
+    p.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the confirmation prompt (for non-interactive use).",
+    )
+    _add_common_project_flags(p)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    from orchestrator.router import (
+        append_router_entries,
+        infer_route_entry,
+        load_router,
+        missing_models,
+    )
+    from orchestrator.state import load_tasks
+
+    try:
+        router = load_router(paths.router_yaml)
+    except FileNotFoundError:
+        print(f"error: router file not found: {paths.router_yaml}", file=sys.stderr)
+        print("Run `orch init` to scaffold it first.", file=sys.stderr)
+        return 2
+    try:
+        tasks = load_tasks(paths.tasks_json)
+    except FileNotFoundError:
+        print(f"error: tasks file not found: {paths.tasks_json}", file=sys.stderr)
+        return 2
+
+    missing = missing_models(tasks, router)
+    if not missing:
+        print("model_router.yaml already covers every task model. Nothing to add.")
+        return 0
+
+    missing_set = set(missing)
+    task_counts = Counter(t.model for t in tasks if t.model in missing_set)
+
+    inferable: dict = {}
+    skipped: list[str] = []
+    for m in missing:
+        entry = infer_route_entry(m, default_tier=args.tier)
+        if entry is None:
+            skipped.append(m)
+        else:
+            inferable[m] = entry
+
+    print(
+        f"Found {len(missing)} missing model(s) across "
+        f"{sum(task_counts.values())} task(s):"
+    )
+    for m in sorted(inferable):
+        e = inferable[m]
+        print(
+            f"  + {m}  →  backend={e.backend}, cli_model={e.cli_model}, "
+            f"tier={e.tier}  ({task_counts[m]} task(s))"
+        )
+    for m in skipped:
+        print(
+            f"  ! {m}  →  cannot infer backend (no `backend/` prefix) — "
+            f"add by hand  ({task_counts[m]} task(s))"
+        )
+
+    if not inferable:
+        print(
+            "\nNothing can be auto-added — every missing model lacks a "
+            "recognizable `backend/` prefix.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not args.yes:
+        try:
+            reply = input(
+                f"\nAppend {len(inferable)} entry(ies) to {paths.router_yaml} "
+                f"with tier '{args.tier}'? [y/N] "
+            )
+        except EOFError:
+            reply = ""
+        if reply.strip().lower() not in ("y", "yes"):
+            print("Aborted. No changes written.")
+            return 1
+
+    added = append_router_entries(paths.router_yaml, inferable)
+    print(f"\nAdded {len(added)} entry(ies) to {paths.router_yaml}.")
+    print(
+        f"→ Review the `tier` of each new entry (defaulted to '{args.tier}') — "
+        "it drives budget + the semi gate."
+    )
+    if skipped:
+        print(
+            f"→ {len(skipped)} model(s) still need manual entries (no backend prefix)."
+        )
+    print("→ Re-run `orch` when ready.")
+    return 0
+
+
 def _run_findings_subcommand(argv: list[str]) -> int:
     """Handle `orch findings <verb> ...` — dogfooding loop dispatcher (Sprint E-1).
 
@@ -4125,6 +4260,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_doctor_subcommand(incoming[1:])
     if incoming and incoming[0] == "validate":
         return _run_validate_subcommand(incoming[1:])
+    if incoming and incoming[0] == "router":
+        return _run_router_subcommand(incoming[1:])
     if incoming and incoming[0] == "findings":
         return _run_findings_subcommand(incoming[1:])
     if incoming and incoming[0] == "arch":

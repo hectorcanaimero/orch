@@ -35,7 +35,8 @@ class UnroutedModelError(Exception):
         msg = (
             f"model_router.yaml is missing entries for {len(offenders)} task(s):\n"
             + "\n".join(lines)
-            + "\nAdd them to orchestrator/model_router.yaml and re-run."
+            + "\nRun `orch router add-missing` to auto-add them (backend/cli_model "
+            "inferred, tier defaults to standard), or edit model_router.yaml by hand."
         )
         super().__init__(msg)
 
@@ -122,3 +123,80 @@ def validate_all_models(
         # Sort by task id for stable error output (test assertions rely on it).
         offenders.sort(key=lambda pair: pair[0])
         raise UnroutedModelError(offenders)
+
+
+# ---- issue #55: infer + append missing routes -------------------------------
+
+
+def infer_route_entry(
+    model_key: str, *, default_tier: str = "standard"
+) -> RouteEntry | None:
+    """Infer a `RouteEntry` from a `backend/cli_model` router key.
+
+    The router key convention is `<backend>/<cli_model>` (see the header of
+    `model_router.yaml`). We can safely infer `backend` (prefix) and
+    `cli_model` (remainder), but `tier` is a business decision that a model
+    name can't reveal — so it defaults to `standard` (non-premium, does not
+    trip the semi gate). Callers must tell the user to review tiers.
+
+    Returns None when the backend prefix is unknown or absent (a bare model
+    string with no `/`, or `openai/...`): those need a human, not a guess.
+    """
+    backend, sep, cli_model = model_key.partition("/")
+    if not sep or backend not in _VALID_BACKENDS or not cli_model:
+        return None
+    return RouteEntry(
+        backend=backend,
+        cli_model=cli_model,
+        tier=default_tier,
+        is_premium=(default_tier == "premium"),
+    )
+
+
+def missing_models(
+    tasks: Iterable[Task], router: dict[str, RouteEntry]
+) -> list[str]:
+    """Unique `task.model` keys referenced by tasks but absent from the router.
+
+    Deduplicated and sorted — an `UnroutedModelError` lists one line per task,
+    but N tasks usually share a handful of models. The caller adds *models*,
+    not tasks.
+    """
+    return sorted({t.model for t in tasks if t.model not in router})
+
+
+def _format_router_entry(key: str, entry: RouteEntry) -> str:
+    """Render one router row as YAML text (comment-safe append, no full dump)."""
+    return (
+        f"{key}:\n"
+        f"  backend: {entry.backend}\n"
+        f"  cli_model: {entry.cli_model}\n"
+        f"  tier: {entry.tier}\n"
+    )
+
+
+def append_router_entries(
+    path: str | Path, entries: dict[str, RouteEntry]
+) -> list[str]:
+    """Append inferred entries to `model_router.yaml`, preserving the file.
+
+    We append raw YAML text rather than re-dumping the parsed mapping so the
+    header comments and hand-authored ordering survive untouched. Keys already
+    present in the file are skipped (idempotent). Returns the list of keys
+    actually appended, sorted.
+    """
+    p = Path(path)
+    existing = load_router(p)  # also validates the current file is well-formed
+    to_add = {k: v for k, v in entries.items() if k not in existing and v is not None}
+    if not to_add:
+        return []
+
+    blocks = [_format_router_entry(k, to_add[k]) for k in sorted(to_add)]
+    body = p.read_text(encoding="utf-8")
+    sep = "" if body.endswith("\n") else "\n"
+    addition = (
+        f"{sep}\n# ---- auto-added by `orch router add-missing` "
+        f"(review tiers) ----\n" + "\n".join(blocks)
+    )
+    p.write_text(body + addition, encoding="utf-8")
+    return sorted(to_add)
