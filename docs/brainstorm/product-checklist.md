@@ -2,7 +2,7 @@
 
 **Fecha**: 2026-08-26
 **Estado**: Living document — actualizar con cada sprint
-**Base**: vision-and-positioning.md + estado técnico v0.7.0
+**Base**: vision-and-positioning.md + estado técnico v0.7.0 (post F-5)
 
 > Cuatro zonas: lo que ya es top, lo que necesita pulido, lo que hay que cambiar, y lo que falta para ganarle al mercado — todo pensado desde el eje **stakeholder**.
 
@@ -34,7 +34,7 @@ Estas son las ventajas reales. Ningún competidor las tiene juntas.
 Esto ya está en el producto pero la experiencia es incompleta o técnica.
 
 - [ ] **Dashboard UX stakeholder** — hoy muestra task IDs, backend names, status técnico. El cliente necesita ver "¿cuándo está listo mi chatbot?" en lenguaje de negocio. La vista `/stakeholder/summary` es un esqueleto.
-- [ ] **ETA automático del sprint** — `estimate_h` existe en `tasks_definition` pero no se proyecta a "ETA del sprint completo" en el dashboard. Es un cálculo simple: tareas pendientes × velocidad promedio.
+- [x] **ETA automático del sprint** (F-5, PR #52) — velocidad rolling 7 días, proyección ETA con badge alta/baja confianza, remaining hours. Sprint health endpoint en `/api/sprint`.
 - [ ] **Graph visual en el browser** — `orch graph` genera DOT/texto, pero el dashboard no lo renderiza. Un DAG visual es table stakes para que el stakeholder entienda qué depende de qué.
 - [ ] **Observability en el dashboard** — los logs existen pero la vista en browser es básica. Sin filtros, sin live tail, sin búsqueda. El dev trabaja con logs crudos.
 - [ ] **Error messaging para stakeholders** — errores como `ID_SPOOF`, `VERSION_DRIFT`, `PARSER` son útiles para el dev pero ilegibles para el cliente en el dashboard. Necesitan traducción a lenguaje humano.
@@ -68,7 +68,7 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 - [ ] **Executive summary auto-generado** — la IA genera resumen en lenguaje de negocio: *"Esta semana: auth completado, API 60% avanzada, bloqueado esperando credenciales del cliente. ETA revisado +2 días."* Se muestra en el dashboard Y se puede reenviar por email.
 - [ ] **PDF export del sprint/milestone** — el cliente lo lleva a reunión de board. Una página: features entregadas, spend, ETA, blockers.
 - [ ] **Budget vs actual chart** — gráfico visual de gasto proyectado vs real, por proveedor y por feature. Transparencia financiera real.
-- [ ] **"What's blocked" view** — vista rápida de tasks bloqueadas con su razón. El cliente puede actuar (dar acceso, aprobar algo) sin tener que preguntar.
+- [x] **"What's blocked" view** (F-5, PR #52) — grid de tasks bloqueadas con razón de bloqueo, fase y fecha. Integrado en `/sprint` del dashboard, visible a todos los perfiles.
 - [ ] **Spend dashboard para el cliente** — "Este sprint costó $X en AI tokens" con desglose por proveedor y por feature. Si el cliente paga el AI spend, esto es ESENCIAL.
 - [ ] **Milestone tracking** — grupos de tasks con fecha objetivo. "Milestone: MVP Login — ETA 15/09 — 3/7 tasks done". Como Jira Epics pero sin el overhead.
 
@@ -129,6 +129,8 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | Git worktree por task | ❌ | ❌ | ❌ | ❌ | ✅ F-2 |
 | PR automático por task | ❌ | ❌ | ❌ | ✅ | ✅ F-4 |
 | CI auto-validación | ❌ | ❌ | ❌ | ✅ | ✅ F-4 |
+| Sprint velocity / ETA | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
+| Blockers dashboard | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
@@ -164,4 +166,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-4 (PR automation + CI polling, PR #51). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49).*
+*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-5 (sprint health: ETA + velocity + blockers dashboard, PR #52). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49), F-4: PR automation + CI polling (#51). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
