@@ -753,6 +753,56 @@ def budget_vs_actual(
     return rows
 
 
+def executive_summary(
+    health: dict,
+    total_spend_usd: float | None,
+    language: str = "es",
+) -> dict:
+    """Render a deterministic business-language progress summary from the
+    already-computed sprint_health dict. No LLM — every sentence is a template
+    filled from real figures (done/remaining/blocked/ETA/spend). Deterministic
+    ⇒ testable, free, no `claude` CLI dependency on the dashboard host.
+
+    `generated_from` echoes the inputs for provenance (UI tooltip + tests).
+    Unknown language falls back to Spanish.
+    """
+    lang = language if language in ("es", "en") else "es"
+    done = int(health.get("done_count", 0))
+    remaining = int(health.get("remaining_tasks", 0))
+    blocked = int(health.get("blocked_count", 0))
+    eta_date = health.get("eta_date")
+    parts: list[str] = []
+
+    if lang == "es":
+        parts.append(f"{done} tareas entregadas, {remaining} restantes.")
+        if eta_date:
+            parts.append(f"ETA estimado: {eta_date}.")
+        if blocked:
+            parts.append(f"{blocked} bloqueada(s) — requieren atención.")
+        if total_spend_usd is not None:
+            parts.append(f"Gastado en AI: ${total_spend_usd:.2f}.")
+    else:  # en
+        parts.append(f"{done} tasks delivered, {remaining} remaining.")
+        if eta_date:
+            parts.append(f"Estimated ETA: {eta_date}.")
+        if blocked:
+            parts.append(f"{blocked} blocked — needs attention.")
+        if total_spend_usd is not None:
+            parts.append(f"AI spend: ${total_spend_usd:.2f}.")
+
+    return {
+        "text": " ".join(parts),
+        "language": lang,
+        "generated_from": {
+            "done_count": done,
+            "remaining_tasks": remaining,
+            "blocked_count": blocked,
+            "eta_date": eta_date,
+            "total_spend_usd": total_spend_usd,
+        },
+    }
+
+
 def milestones_from_phases(
     tasks: Iterable[Task],
 ) -> list[dict[str, Any]]:
