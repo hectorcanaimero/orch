@@ -1,8 +1,11 @@
+import { useState } from "react"
 import {
   AlertTriangle,
   Ban,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   DollarSign,
   Download,
   ListTodo,
@@ -216,11 +219,31 @@ function SpendChart({ days }: { days: SpendByDay[] }) {
 // ---- Executive summary -----------------------------------------------------
 
 function ExecSummary({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
   if (!text) return null
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    })
+  }
   return (
     <Card className="border-blue-200 bg-blue-50/50">
-      <CardHeader className="pb-2">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-base">Executive summary</CardTitle>
+        <Button
+          variant="outline"
+          size="sm"
+          className="print:hidden gap-1.5"
+          onClick={handleCopy}
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-500" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          {copied ? "Copied" : "Copy"}
+        </Button>
       </CardHeader>
       <CardContent>
         <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-700">{text}</p>
