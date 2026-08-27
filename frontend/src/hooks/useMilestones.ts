@@ -6,6 +6,12 @@ export interface MilestoneProgress {
   pct: number
 }
 
+export interface MilestoneEta {
+  eta_date: string
+  eta_days: number
+  confidence: "high" | "low"
+}
+
 export interface Milestone {
   id: string
   title: string
@@ -14,6 +20,7 @@ export interface Milestone {
   status: "open" | "completed" | "cancelled"
   created_at: string
   progress: MilestoneProgress
+  eta: MilestoneEta | null
 }
 
 async function fetchMilestones(): Promise<Milestone[]> {

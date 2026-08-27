@@ -684,6 +684,42 @@ def eta_hours_remaining(
     return remaining_est * ratio
 
 
+def milestone_eta(
+    remaining: int,
+    velocity_per_day: float,
+    today: str,
+    target_date: str | None = None,
+) -> dict | None:
+    """Project a completion date for one milestone from task throughput.
+
+    tasks-based: `eta_days = ceil(remaining / velocity_per_day)`. `today` is an
+    ISO date string (injected for testability — no clock read inside). Returns
+    None when there's no signal (nothing remaining, or zero velocity) — the UI
+    renders '—' instead of a misleading date.
+
+    confidence:
+      - "high" → eta lands on/before target_date (when set) AND within 30 days
+      - "low"  → eta misses target_date, or is > 30 days out with no target
+    """
+    import math  # noqa: PLC0415 — local import matches this module's style
+    from datetime import date, timedelta  # noqa: PLC0415
+
+    if remaining <= 0 or velocity_per_day <= 0:
+        return None
+    eta_days = math.ceil(remaining / velocity_per_day)
+    eta_d = date.fromisoformat(today) + timedelta(days=eta_days)
+
+    if target_date:
+        try:
+            confidence = "high" if eta_d <= date.fromisoformat(target_date) else "low"
+        except ValueError:
+            confidence = "high" if eta_days <= 30 else "low"
+    else:
+        confidence = "high" if eta_days <= 30 else "low"
+
+    return {"eta_date": eta_d.isoformat(), "eta_days": eta_days, "confidence": confidence}
+
+
 def milestones_from_phases(
     tasks: Iterable[Task],
 ) -> list[dict[str, Any]]:
