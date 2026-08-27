@@ -128,9 +128,18 @@
 
 ## Serie H — Onboarding y distribución (Q2)
 
-### H-1 — Template system (`orch init --template`)
+### H-1 — `orch init` wizard guiado por CLI + template system
 
-Templates canónicos (5 primeros):
+**Decisión**: el wizard se queda en CLI (no browser). El problema hoy es que el flujo es lineal y genérico — el dev no sabe qué contestar, se pierde entre archivos. La solución es hacerlo guiado e inteligente, no visual.
+
+**Entregables del wizard**:
+- Pregunta el tipo de proyecto → sugiere el template más adecuado con descripción de una línea.
+- Muestra un resumen de lo que va a crear (archivos, config keys, dependencias) antes de escribir nada. El dev confirma o ajusta.
+- Detecta si el proyecto ya tiene `config.yaml`, `tasks.json`, `pyproject.toml` y adapta las preguntas (no te pregunta el nombre del proyecto si ya está en pyproject.toml).
+- Al final imprime un checklist de "próximos pasos" en color: qué archivos editaste, cómo correr el primer dispatch, cómo abrir el dashboard.
+- `orch init --template <name>` para saltear el wizard y ir directo al template.
+
+**Templates canónicos (5 primeros)**:
 - `python-api` — FastAPI + pytest + ruff + `orch-ci.yml`
 - `nextjs-saas` — Next.js 14 + Clerk + Supabase + Vercel deploy
 - `chatbot-whatsapp` — Waha + agentes Claude + webhook config

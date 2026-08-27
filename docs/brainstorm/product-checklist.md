@@ -39,7 +39,7 @@ Esto ya está en el producto pero la experiencia es incompleta o técnica.
 - [ ] **Observability en el dashboard** — los logs existen pero la vista en browser es básica. Sin filtros, sin live tail, sin búsqueda. El dev trabaja con logs crudos.
 - [ ] **Error messaging para stakeholders** — errores como `ID_SPOOF`, `VERSION_DRIFT`, `PARSER` son útiles para el dev pero ilegibles para el cliente en el dashboard. Necesitan traducción a lenguaje humano.
 - [ ] **Retry policy configurable** — las estrategias de retry (TRANSIENT, TIMEOUT, VERSION_DRIFT) son hardcoded. Un policy declarativo en config.yaml daría control real.
-- [ ] **orch init wizard** — funciona pero es lineal y genérico. No adapta el scaffolding al tipo de proyecto. Con templates (punto ➕ más abajo) este punto se resuelve solo.
+- [ ] **orch init wizard guiado** — sigue siendo CLI (no browser). El problema es que el flujo es lineal y el dev se pierde. Fix: pregunta el tipo de proyecto, sugiere template, muestra resumen de lo que va a crear antes de escribir, imprime checklist de próximos pasos al final. Se implementa en H-1 junto con el template system.
 - [ ] **Onboarding** — 5 archivos de config (config.yaml, budgets.yaml, model_router.yaml, dashboard.yaml, tasks.json). Curva empinada. Los templates van a aliviar esto, pero hay que pensar también en defaults inteligentes.
 
 ---
