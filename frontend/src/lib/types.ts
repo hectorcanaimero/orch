@@ -354,6 +354,31 @@ export type TunnelConflictError =
   | { error: "locked" }
   | { error: "not_running" }
 
+// ---- Sprint health (Sprint F-5) --------------------------------------------
+
+export interface SprintBlocker {
+  task_id: string
+  title: string
+  phase: number
+  reason: string
+  blocked_at: string | null
+  estimate_hours: number
+}
+
+export interface SprintHealth {
+  available: boolean
+  reason?: string
+  velocity_per_day: number
+  done_count: number
+  remaining_tasks: number
+  remaining_hours: number
+  blocked_count: number
+  eta_days: number | null
+  eta_date: string | null
+  confidence: "high" | "low" | "none"
+  blockers: SprintBlocker[]
+}
+
 // ---- Graph view (Sprint E-6 / issue #13) -----------------------------------
 
 export interface GraphNode {

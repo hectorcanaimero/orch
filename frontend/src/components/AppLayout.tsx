@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from "react-router-dom"
 import {
   BarChart3,
   BookOpen,
+  CalendarClock,
   ChevronLeft,
   ChevronRight,
   GitFork,
@@ -42,6 +43,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/list", label: "Tasks", icon: ListIcon },
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/milestones", label: "Milestones", icon: Milestone },
+  { to: "/sprint", label: "Sprint", icon: CalendarClock },
   { to: "/architecture", label: "Architecture", icon: Network },
   { to: "/docs", label: "Documents", icon: BookOpen },
   { to: "/graph", label: "Graph", icon: GitFork, operatorOnly: true },

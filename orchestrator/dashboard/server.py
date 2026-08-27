@@ -775,6 +775,32 @@ def create_app(
             return JSONResponse({"milestones": [], "backend": "file"})
         return JSONResponse({"milestones": backend.get_milestones()})
 
+    @app.get("/api/sprint", name="api_sprint")
+    def api_sprint():
+        """Sprint health: velocity, ETA, blockers. Requires SQLite backend."""
+        import yaml
+        from orchestrator.state.sqlite_backend import SqliteBackend
+        from orchestrator.dashboard.metrics import sprint_health
+
+        cfg_path = app_state.paths.config_yaml
+        try:
+            raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            raw_cfg = {}
+
+        backend = _get_state_backend(app_state.paths, raw_cfg)
+        if not isinstance(backend, SqliteBackend):
+            return JSONResponse({"available": False, "reason": "file_backend"})
+
+        tasks = load_tasks(app_state.paths.tasks_json)
+        done_7d = backend.count_done_last_n_days(7)
+        blocked_ids = [t.id for t in tasks if t.status == "blocked"]
+        last_events = backend.get_task_last_events(blocked_ids) if blocked_ids else {}
+
+        payload = sprint_health(tasks, done_7d, last_events)
+        payload["available"] = True
+        return JSONResponse(payload)
+
     @app.get("/api/config", name="api_config")
     def api_config():
         return JSONResponse(_load_project_config(app_state))
