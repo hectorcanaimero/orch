@@ -15,9 +15,11 @@ import {
   Radio,
   ScrollText,
   Stethoscope,
+  Wallet,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
+import { useProjectConfig } from "@/hooks/useProjectConfig"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
 import { useWhoami } from "@/hooks/useWhoami"
 import { cn } from "@/lib/utils"
@@ -36,6 +38,9 @@ interface NavItem {
   // stakeholder sessions. Hiding them client-side avoids the 403 dead-end
   // clicks and gives the curated view a cleaner sidebar.
   operatorOnly?: boolean
+  // G-5: spend is sensitive. Operators always see it; stakeholders only when
+  // the project opts in via dashboard.show_spend_to_stakeholder.
+  stakeholderSpendGated?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -43,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/list", label: "Tasks", icon: ListIcon },
   { to: "/kanban", label: "Kanban", icon: KanbanSquare },
   { to: "/milestones", label: "Milestones", icon: Milestone },
+  { to: "/budget", label: "Budget", icon: Wallet, stakeholderSpendGated: true },
   { to: "/sprint", label: "Sprint", icon: CalendarClock },
   { to: "/architecture", label: "Architecture", icon: Network },
   { to: "/docs", label: "Documents", icon: BookOpen },
@@ -58,6 +64,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const navigate = useNavigate()
   const [collapsed, , toggle] = useSidebarCollapsed()
   const { data: whoami } = useWhoami()
+  const { data: projectConfig } = useProjectConfig()
 
   const handleLogout = () => {
     clearToken()
@@ -69,8 +76,14 @@ export function AppLayout({ children }: AppLayoutProps) {
   // hit a transient hiccup. Stakeholder gating only kicks in on an EXPLICIT
   // "stakeholder" answer.
   const isStakeholder = whoami?.profile === "stakeholder"
+  const showSpendToStakeholder =
+    projectConfig?.dashboard?.show_spend_to_stakeholder ?? false
   const visibleNav = isStakeholder
-    ? NAV_ITEMS.filter((item) => !item.operatorOnly)
+    ? NAV_ITEMS.filter(
+        (item) =>
+          !item.operatorOnly &&
+          (!item.stakeholderSpendGated || showSpendToStakeholder),
+      )
     : NAV_ITEMS
 
   return (
