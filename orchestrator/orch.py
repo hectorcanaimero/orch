@@ -1398,6 +1398,17 @@ def _check_ci_once(
             queue.mark_done(task_id)
             run_file.mark_done(task_id)
             event_log.emit("ci_success", task_id, pr_url=pr_url)
+            if (cfg.get("github") or {}).get("auto_merge"):
+                try:
+                    merged = vcs_provider.merge_pr(pr_url)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("merge_pr failed for %s: %s", task_id, exc)
+                    merged = False
+                event_log.emit(
+                    "pr_auto_merged" if merged else "pr_auto_merge_failed",
+                    task_id,
+                    pr_url=pr_url,
+                )
         elif ci_status == "failure":
             if ci_attempts < max_retries:
                 try:

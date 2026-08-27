@@ -20,3 +20,6 @@ class VcsProvider(Protocol):
 
     def get_ci_logs(self, pr_url: str) -> str:
         """Return failed CI job logs as plain text (truncated to ~8000 chars)."""
+
+    def merge_pr(self, pr_url: str) -> bool:
+        """Squash-merge the PR/MR. Returns True on success."""

@@ -89,14 +89,21 @@ def test_set_task_ci_status_raises_on_unknown_task(backend):
 # _check_ci_once dispatch loop integration (mocked VCS + state backend)
 # ---------------------------------------------------------------------------
 
-def _make_mock_cfg(ci_max_retries: int = 1, ci_poll_interval_s: float = 0.0) -> dict:
-    return {
+def _make_mock_cfg(
+    ci_max_retries: int = 1,
+    ci_poll_interval_s: float = 0.0,
+    github: dict | None = None,
+) -> dict:
+    cfg: dict = {
         "vcs": {
             "auto_pr": True,
             "ci_max_retries": ci_max_retries,
             "ci_poll_interval_s": ci_poll_interval_s,
         }
     }
+    if github is not None:
+        cfg["github"] = github
+    return cfg
 
 
 def _mock_state_backend(pending_tasks: list[dict]) -> MagicMock:
@@ -211,3 +218,50 @@ def test_ci_no_pending_tasks_skips_vcs_calls():
     wm = MagicMock()
     _check_ci_once(**_ci_kwargs(_make_mock_cfg(), sb, vcs, q, wm))
     vcs.get_ci_status.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# auto_merge on CI success (Sprint G-1)
+# ---------------------------------------------------------------------------
+
+
+def test_ci_success_without_auto_merge_does_not_call_merge_pr():
+    task_id = "t1"
+    pending = [{"task_id": task_id, "pr_url": "https://gh/pull/1", "ci_attempts": 0}]
+    sb = _mock_state_backend(pending)
+    vcs = _mock_vcs("success")
+    q = _mock_queue(task_id)
+    wm = MagicMock()
+    _check_ci_once(**_ci_kwargs(_make_mock_cfg(), sb, vcs, q, wm))
+    vcs.merge_pr.assert_not_called()
+
+
+def test_ci_success_with_auto_merge_calls_merge_pr():
+    task_id = "t1"
+    pr_url = "https://gh/pull/1"
+    pending = [{"task_id": task_id, "pr_url": pr_url, "ci_attempts": 0}]
+    sb = _mock_state_backend(pending)
+    vcs = _mock_vcs("success")
+    vcs.merge_pr.return_value = True
+    q = _mock_queue(task_id)
+    wm = MagicMock()
+    cfg = _make_mock_cfg(github={"auto_merge": True})
+    kwargs = _ci_kwargs(cfg, sb, vcs, q, wm)
+    _check_ci_once(**kwargs)
+    vcs.merge_pr.assert_called_once_with(pr_url)
+    kwargs["event_log"].emit.assert_any_call("pr_auto_merged", task_id, pr_url=pr_url)
+
+
+def test_ci_success_auto_merge_failure_emits_failed_event():
+    task_id = "t1"
+    pr_url = "https://gh/pull/1"
+    pending = [{"task_id": task_id, "pr_url": pr_url, "ci_attempts": 0}]
+    sb = _mock_state_backend(pending)
+    vcs = _mock_vcs("success")
+    vcs.merge_pr.return_value = False
+    q = _mock_queue(task_id)
+    wm = MagicMock()
+    cfg = _make_mock_cfg(github={"auto_merge": True})
+    kwargs = _ci_kwargs(cfg, sb, vcs, q, wm)
+    _check_ci_once(**kwargs)
+    kwargs["event_log"].emit.assert_any_call("pr_auto_merge_failed", task_id, pr_url=pr_url)

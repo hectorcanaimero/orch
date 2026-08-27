@@ -88,3 +88,28 @@ def test_iid_from_url_extracts_iid():
 
 def test_iid_from_url_returns_empty_on_invalid():
     assert GitLabProvider._iid_from_url("https://github.com/org/repo/pull/1") == ""
+
+
+# ---------------------------------------------------------------------------
+# merge_pr (Sprint G-1)
+# ---------------------------------------------------------------------------
+
+@patch("orchestrator.vcs.gitlab.subprocess.run")
+def test_merge_pr_calls_glab_with_squash(mock_run):
+    mock_run.return_value = _make_proc(0, stdout="Merged")
+    provider = GitLabProvider(host="gitlab.com")
+    assert provider.merge_pr("https://gitlab.com/org/repo/-/merge_requests/7") is True
+    args = mock_run.call_args[0][0]
+    assert args[0] == "glab"
+    assert "mr" in args and "merge" in args and "7" in args
+    assert "--squash" in args
+
+
+@patch("orchestrator.vcs.gitlab.subprocess.run")
+def test_merge_pr_returns_false_on_failure(mock_run):
+    mock_run.return_value = _make_proc(1, stderr="error")
+    assert GitLabProvider().merge_pr("https://gitlab.com/org/repo/-/merge_requests/7") is False
+
+
+def test_merge_pr_returns_false_on_invalid_url():
+    assert GitLabProvider().merge_pr("https://github.com/org/repo/pull/1") is False

@@ -101,3 +101,11 @@ class GitHubProvider:
             text=True,
         )
         return log_result.stdout[:_MAX_LOG_CHARS]
+
+    def merge_pr(self, pr_url: str) -> bool:
+        result = subprocess.run(
+            ["gh", "pr", "merge", "--squash", "--auto", pr_url],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0

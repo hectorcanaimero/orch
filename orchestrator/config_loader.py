@@ -69,6 +69,9 @@ def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg["vcs"].setdefault("auto_pr", False)
     cfg["vcs"].setdefault("ci_max_retries", 1)
     cfg["vcs"].setdefault("ci_poll_interval_s", 30)
+    cfg.setdefault("github", {})
+    cfg["github"].setdefault("test_command", "pytest")
+    cfg["github"].setdefault("auto_merge", False)
     cfg.setdefault("presentation", {})
     cfg["presentation"].setdefault("status_labels", {
         "backlog":     "Planificado",

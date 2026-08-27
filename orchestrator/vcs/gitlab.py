@@ -133,6 +133,19 @@ class GitLabProvider:
         combined = "\n---\n".join(logs)
         return combined[:_MAX_LOG_CHARS]
 
+    def merge_pr(self, pr_url: str) -> bool:
+        iid = self._iid_from_url(pr_url)
+        if not iid:
+            return False
+
+        result = subprocess.run(
+            ["glab", "mr", "merge", iid, "--squash", "--yes"],
+            capture_output=True,
+            text=True,
+            env=self._env(),
+        )
+        return result.returncode == 0
+
     @staticmethod
     def _iid_from_url(url: str) -> str:
         parts = url.rstrip("/").split("/")

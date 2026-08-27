@@ -16,7 +16,8 @@ Contract (both modes):
     - Creates the minimum layout orch needs: tasks.json, scripts/task-*.sh,
       orchestrator/{state, config.yaml, model_router.yaml, budgets.yaml},
       dashboard.yaml (project-root override for the dashboard),
-      specs/README.md, .gitignore (when absent).
+      specs/README.md, .gitignore (when absent),
+      .github/workflows/orch-ci.yml (when absent — Sprint G-1).
     - Never writes AI. Never touches the network. Never installs anything.
     - Batch mode refuses to overwrite existing files without --force.
     - Interactive mode prompts per-file before overwriting (default: keep).
@@ -246,6 +247,20 @@ def orch_init(
             _generate_agents_md(name), encoding="utf-8"
         )
 
+    # ---- .github/workflows/orch-ci.yml (soft — only when absent) -------
+    # Gives the vcs.auto_pr / CI-polling loop (Sprint F-4) a check to watch
+    # out of the box. Never overwritten once it exists (user-editable).
+    workflow_path = project_path / ".github" / "workflows" / "orch-ci.yml"
+    if not workflow_path.exists() or force:
+        workflow_path.parent.mkdir(parents=True, exist_ok=True)
+        workflow_template = (
+            _TEMPLATES_DIR / "github" / "orch-ci.yml.tmpl"
+        ).read_text(encoding="utf-8")
+        workflow_path.write_text(
+            workflow_template.replace("TEST_COMMAND", "pytest"),
+            encoding="utf-8",
+        )
+
     # ---- --sdd: openspec/ layout ------------------------------------
     if sdd:
         openspec_dst = project_path / "openspec"
@@ -310,6 +325,9 @@ def _print_next_steps(project_path: Path, *, sdd: bool) -> None:
     print("Dashboard:")
     print(f"  orch dashboard --project-root {project_path}")
     print("  → http://127.0.0.1:7420")
+    print()
+    print(f"✓ CI workflow: {project_path / '.github' / 'workflows' / 'orch-ci.yml'}")
+    print("  (edit `github.test_command` / `github.auto_merge` in config.yaml)")
     print()
 
 

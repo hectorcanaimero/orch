@@ -149,3 +149,28 @@ def test_get_ci_logs_returns_empty_on_no_failures(mock_run):
     mock_run.return_value = _make_proc(0, stdout=json.dumps(pr_view))
     logs = GitHubProvider().get_ci_logs("https://github.com/org/repo/pull/1")
     assert logs == ""
+
+
+# ---------------------------------------------------------------------------
+# GitHubProvider — merge_pr (Sprint G-1)
+# ---------------------------------------------------------------------------
+
+@patch("orchestrator.vcs.github.subprocess.run")
+def test_merge_pr_calls_gh_with_squash_auto(mock_run):
+    mock_run.return_value = _make_proc(0, stdout="Merged")
+    assert GitHubProvider().merge_pr("https://github.com/org/repo/pull/1") is True
+    args = mock_run.call_args[0][0]
+    assert args[0] == "gh"
+    assert "pr" in args and "merge" in args
+    assert "--squash" in args and "--auto" in args
+    assert "https://github.com/org/repo/pull/1" in args
+
+
+@patch("orchestrator.vcs.github.subprocess.run")
+def test_merge_pr_returns_false_on_failure(mock_run):
+    mock_run.return_value = _make_proc(1, stderr="not mergeable")
+    assert GitHubProvider().merge_pr("https://github.com/org/repo/pull/1") is False
+
+
+def test_vcs_provider_protocol_declares_merge_pr():
+    assert hasattr(VcsProvider, "merge_pr")

@@ -190,6 +190,40 @@ def test_init_gitignore_preserves_existing(tmp_path: Path) -> None:
     assert (dest / ".gitignore").read_text(encoding="utf-8") == original
 
 
+# ---- .github/workflows/orch-ci.yml (Sprint G-1) ------------------------
+
+
+def test_init_generates_ci_workflow_when_absent(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest) == 0
+    workflow = dest / ".github" / "workflows" / "orch-ci.yml"
+    assert workflow.exists()
+    text = workflow.read_text(encoding="utf-8")
+    assert "pytest" in text
+    assert "TEST_COMMAND" not in text  # placeholder must be substituted
+
+
+def test_init_preserves_existing_ci_workflow(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    workflow_dir = dest / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    original = "# hand-authored workflow\nname: custom-ci\n"
+    (workflow_dir / "orch-ci.yml").write_text(original, encoding="utf-8")
+
+    assert orch_init(dest) == 0
+    assert (workflow_dir / "orch-ci.yml").read_text(encoding="utf-8") == original
+
+
+def test_init_force_overwrites_existing_ci_workflow(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    workflow_dir = dest / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "orch-ci.yml").write_text("stale", encoding="utf-8")
+
+    assert orch_init(dest, force=True) == 0
+    assert "pytest" in (workflow_dir / "orch-ci.yml").read_text(encoding="utf-8")
+
+
 # ---- SDD detection -----------------------------------------------------
 
 
