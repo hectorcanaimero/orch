@@ -754,50 +754,75 @@ def budget_vs_actual(
 
 
 def executive_summary(
-    health: dict,
-    total_spend_usd: float | None,
+    *,
+    done: int,
+    total: int,
+    in_progress: int = 0,
+    blocked: int = 0,
+    blocked_reasons: list[str] | None = None,
+    eta_date: str | None = None,
+    eta_hours: float | None = None,
+    total_spend_usd: float | None = None,
     language: str = "es",
 ) -> dict:
-    """Render a deterministic business-language progress summary from the
-    already-computed sprint_health dict. No LLM — every sentence is a template
-    filled from real figures (done/remaining/blocked/ETA/spend). Deterministic
-    ⇒ testable, free, no `claude` CLI dependency on the dashboard host.
+    """Render a deterministic business-language progress summary. No LLM —
+    every sentence is a template filled from real figures (progress / in-progress
+    / blocked + reasons / ETA / spend). Deterministic ⇒ testable, free, no
+    `claude` CLI dependency on the dashboard host.
 
-    `generated_from` echoes the inputs for provenance (UI tooltip + tests).
-    Unknown language falls back to Spanish.
+    Single source of truth for BOTH `/api/summary` and the stakeholder payload
+    (Sprint E-7's inline summary was folded in here — G-4). Callers map their
+    own data onto these primitives. Sentences are appended only when the data
+    is present, so a partial input still reads cleanly.
+
+    `generated_from` echoes the inputs for provenance. Unknown language → `es`.
     """
     lang = language if language in ("es", "en") else "es"
-    done = int(health.get("done_count", 0))
-    remaining = int(health.get("remaining_tasks", 0))
-    blocked = int(health.get("blocked_count", 0))
-    eta_date = health.get("eta_date")
-    parts: list[str] = []
+    pct = round(done / total * 100) if total > 0 else 0
+    reasons = blocked_reasons or []
+    head: list[str] = []
+    tail: list[str] = []  # multi-line detail (blocked reasons)
 
     if lang == "es":
-        parts.append(f"{done} tareas entregadas, {remaining} restantes.")
-        if eta_date:
-            parts.append(f"ETA estimado: {eta_date}.")
+        head.append(f"Proyecto {pct}% completo — {done} de {total} tareas entregadas.")
+        if in_progress:
+            head.append(f"{in_progress} en progreso.")
         if blocked:
-            parts.append(f"{blocked} bloqueada(s) — requieren atención.")
+            head.append(f"{blocked} bloqueada(s) — requieren atención.")
+        if reasons:
+            tail.append("Bloqueos:\n" + "\n".join(reasons[:3]))
+        if eta_date:
+            head.append(f"ETA estimado: {eta_date}.")
+        elif eta_hours is not None:
+            head.append(f"Restan ~{eta_hours}h al ritmo actual.")
         if total_spend_usd is not None:
-            parts.append(f"Gastado en AI: ${total_spend_usd:.2f}.")
+            head.append(f"Gastado en AI: ${total_spend_usd:.2f}.")
     else:  # en
-        parts.append(f"{done} tasks delivered, {remaining} remaining.")
-        if eta_date:
-            parts.append(f"Estimated ETA: {eta_date}.")
+        head.append(f"Project {pct}% complete — {done} of {total} tasks delivered.")
+        if in_progress:
+            head.append(f"{in_progress} in progress.")
         if blocked:
-            parts.append(f"{blocked} blocked — needs attention.")
+            head.append(f"{blocked} blocked — need attention.")
+        if reasons:
+            tail.append("Blocked:\n" + "\n".join(reasons[:3]))
+        if eta_date:
+            head.append(f"Estimated ETA: {eta_date}.")
+        elif eta_hours is not None:
+            head.append(f"~{eta_hours}h remaining at current pace.")
         if total_spend_usd is not None:
-            parts.append(f"AI spend: ${total_spend_usd:.2f}.")
+            head.append(f"AI spend: ${total_spend_usd:.2f}.")
 
+    text = " ".join(head) + (("\n\n" + "\n".join(tail)) if tail else "")
     return {
-        "text": " ".join(parts),
+        "text": text,
         "language": lang,
         "generated_from": {
-            "done_count": done,
-            "remaining_tasks": remaining,
-            "blocked_count": blocked,
+            "done": done,
+            "total": total,
+            "in_progress": in_progress,
+            "blocked": blocked,
             "eta_date": eta_date,
+            "eta_hours": eta_hours,
             "total_spend_usd": total_spend_usd,
         },
     }

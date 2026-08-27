@@ -52,6 +52,7 @@ from orchestrator.dashboard.metrics import (
     downstream_impact,
     eta_hours_remaining,
     events_for_task,
+    executive_summary,
     human_hours_by_task,
     last_updated_by_task,
     metrics_by_day,
@@ -878,7 +879,7 @@ def create_app(
         """
         import yaml
         from orchestrator.state.sqlite_backend import SqliteBackend
-        from orchestrator.dashboard.metrics import executive_summary, sprint_health
+        from orchestrator.dashboard.metrics import sprint_health
         from orchestrator.spend_reader import (
             aggregate_by_provider,
             iter_today_entries,
@@ -906,8 +907,23 @@ def create_app(
         spend = aggregate_by_provider(iter_today_entries(app_state.paths.state_dir))
         total_spend = round(sum(spend.values()), 2) if spend else None
 
+        done = int(health.get("done_count", 0))
+        remaining = int(health.get("remaining_tasks", 0))
+        in_progress = sum(1 for t in tasks if t.status in ("in_progress", "in-progress"))
+        blocked_reasons = [
+            f"• {b.get('title', b.get('task_id'))}: {b.get('reason', '')}".strip()
+            for b in health.get("blockers", [])
+            if b.get("reason")
+        ]
         summary = executive_summary(
-            health, total_spend_usd=total_spend, language=language
+            done=done,
+            total=done + remaining,
+            in_progress=in_progress,
+            blocked=int(health.get("blocked_count", 0)),
+            blocked_reasons=blocked_reasons,
+            eta_date=health.get("eta_date"),
+            total_spend_usd=total_spend,
+            language=language,
         )
         return JSONResponse({"available": True, "summary": summary})
 
@@ -1653,36 +1669,34 @@ def create_app(
         ]
 
         # ---- executive summary (computed, no LLM) ---------------------------
+        # G-4: single source of truth — metrics.executive_summary(). Language
+        # from dashboard.summary_language (default es). The inline template that
+        # lived here (Sprint E-7) was folded into that tested helper.
         summ = view["summary"]
-        in_prog = getattr(summ, "in_progress", 0)
-        blocked = getattr(summ, "blocked", 0)
-        done = getattr(summ, "done", 0)
-        total_tasks = getattr(summ, "total", 0)
-        pct = round(getattr(summ, "percent_done", 0))
-
-        parts: list[str] = []
-        parts.append(f"Project is {pct}% complete — {done} of {total_tasks} tasks done.")
-        if in_prog:
-            parts.append(f"{in_prog} task{'s' if in_prog != 1 else ''} currently in progress.")
-        if blocked:
-            parts.append(f"{blocked} task{'s' if blocked != 1 else ''} blocked and need attention.")
-
-        # Blocked task reasons (from comments) — first comment of each blocked task.
         blocked_reasons: list[str] = []
         for t in tasks:
             if t.status == "blocked" and t.comments:
                 body = t.comments[0].get("body", "").strip()
                 if body:
                     blocked_reasons.append(f"• {t.title}: {body[:120]}")
-        if blocked_reasons:
-            parts.append("Blocked:\n" + "\n".join(blocked_reasons[:3]))
-
-        if eta_h is not None:
-            parts.append(f"Estimated {eta_h}h remaining at current pace.")
-        parts.append(f"Total AI spend to date: {round_up_to_step(total, 0.50):.2f} USD.")
-        exec_summary = " ".join(parts[:3]) + (
-            "\n\n" + "\n".join(parts[3:]) if len(parts) > 3 else ""
-        )
+        import yaml
+        try:
+            _raw_cfg = yaml.safe_load(
+                paths.config_yaml.read_text(encoding="utf-8")
+            ) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            _raw_cfg = {}
+        _summary_lang = (_raw_cfg.get("dashboard") or {}).get("summary_language") or "es"
+        exec_summary = executive_summary(
+            done=getattr(summ, "done", 0),
+            total=getattr(summ, "total", 0),
+            in_progress=getattr(summ, "in_progress", 0),
+            blocked=getattr(summ, "blocked", 0),
+            blocked_reasons=blocked_reasons,
+            eta_hours=eta_h,
+            total_spend_usd=round_up_to_step(total, 0.50),
+            language=_summary_lang,
+        )["text"]
 
         return {
             "project_id": view["project_id"],
