@@ -77,8 +77,8 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funciona.
 
 - [x] **Git worktrees por task** — cada agente trabaja en su branch aislada. Cero conflictos de archivos entre tasks paralelas. `dispatch.worktree_mode: true` en config. (F-2, PR #48)
-- [ ] **PR automático por task** — cuando el agente termina, orch hace push + `gh pr create`. El dashboard muestra el link al PR.
-- [ ] **CI polling en `tasks_runtime`** — orch espera resultado de GitHub Actions y lo registra en SQLite. El stakeholder ve "✅ 47 tests passed — Merged at 14:32".
+- [x] **PR automático por task** — cuando el agente termina, orch hace push + `gh pr create`. El dashboard muestra el link al PR. `vcs.auto_pr: true` en config. (F-4, PR #51)
+- [x] **CI polling en `tasks_runtime`** — orch espera resultado de GitHub Actions/GitLab CI, registra en SQLite, y re-despacha el agente con los logs de error si falla (hasta `ci_max_retries`). (F-4, PR #51)
 - [ ] **`orch init` genera `.github/workflows/orch-ci.yml`** — configurable via `github.test_command: "pytest"`. El workflow corre automáticamente en cada PR de task.
 - [ ] **auto_merge opt-in** — si CI pasa, merge automático. Config: `github.auto_merge: false` (off por default, requiere branch protection activa).
 
@@ -127,8 +127,8 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | DAG-based dependencies | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Git worktree por task | ❌ | ❌ | ❌ | ❌ | ✅ F-2 |
-| PR automático por task | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
-| CI auto-validación | ❌ | ❌ | ❌ | ✅ | 🔜 F-3 |
+| PR automático por task | ❌ | ❌ | ❌ | ✅ | ✅ F-4 |
+| CI auto-validación | ❌ | ❌ | ❌ | ✅ | ✅ F-4 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
@@ -148,7 +148,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ```
 Q1 (mes 1-2)  ── Stakeholder polish: timeline, exec summary, PDF, budget chart, blockers view
-               ── CI/CD: worktrees (F-2) + PR automático + CI polling (F-3)
+               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4)
                ── README reescritura + HN launch prep
 
 Q2 (mes 3-4)  ── Template system (5 templates canónicos)
@@ -164,4 +164,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-2 (worktree dispatch, PR #48)*
+*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-4 (PR automation + CI polling, PR #51). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49).*
