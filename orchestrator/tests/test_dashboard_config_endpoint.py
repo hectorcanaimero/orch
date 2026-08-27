@@ -260,8 +260,11 @@ def test_api_config_dashboard_does_not_leak_secrets(tmp_path: Path) -> None:
     r = client.get("/api/config")
     assert r.status_code == 200
     payload = r.json()
-    # `dashboard` bucket is always present (whitelist shape) but must be empty.
-    assert payload["dashboard"] == {}
+    # `dashboard` bucket only carries the public whitelist (G-5 added
+    # show_spend_to_stakeholder). Secrets set in the same YAML block must be
+    # stripped — the whitelist is allow-list, not deny-list.
+    assert set(payload["dashboard"]) == {"show_spend_to_stakeholder"}
+    assert payload["dashboard"]["show_spend_to_stakeholder"] is False
     assert "token" not in payload["dashboard"]
     assert "stakeholder_routes" not in payload["dashboard"]
     assert "hunter2-super-secret" not in r.text

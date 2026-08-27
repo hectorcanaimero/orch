@@ -82,6 +82,7 @@ dashboard:
   # profile: operator                                                     # operator | stakeholder | both
   # token: ""                                                             # required when profile != operator
   board_url: "https://draw.z0n.co/editor/4177cfa1-e629-4eb0-a0a8-de925cfaaf7b"                # optional — embed an ExcaliDash canvas in the Board tab
+  show_spend_to_stakeholder: false                                        # G-5: expose the Budget/spend view to stakeholders (off by default — spend is sensitive)
 
 # Sprint F-2 — git worktree isolation per task.
 # When worktree_mode is true, each dispatched task runs in a dedicated

@@ -475,7 +475,13 @@ def _load_project_config(state: AppState) -> dict[str, Any]:
             # Sprint E-3 — per-project SPA client config. Only surface public,
             # non-secret keys here (profile/token stay OUT: the middleware
             # already gates auth, and echoing the token would defeat it).
-            "dashboard": {},
+            "dashboard": {
+                # G-5: opt-in flag to show the spend/budget view to stakeholders.
+                # Off by default — spend is sensitive.
+                "show_spend_to_stakeholder": bool(
+                    dashboard_raw.get("show_spend_to_stakeholder", False)
+                ),
+            },
             "presentation": {
                 "status_labels": raw.get("presentation", {}).get("status_labels") or {},
             },
