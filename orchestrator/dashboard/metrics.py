@@ -23,10 +23,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from orchestrator.models import Task
 from orchestrator.dashboard.pricing import PricingTable
+
+if TYPE_CHECKING:
+    from orchestrator.budget import BudgetConfig
 
 
 # ---- File scanners ---------------------------------------------------------
@@ -718,6 +721,36 @@ def milestone_eta(
         confidence = "high" if eta_days <= 30 else "low"
 
     return {"eta_date": eta_d.isoformat(), "eta_days": eta_days, "confidence": confidence}
+
+
+def budget_vs_actual(
+    cfg: "BudgetConfig",
+    used_by_provider: dict[str, int],
+    cost_by_provider: dict[str, float],
+) -> list[dict]:
+    """Pair each configured provider's token budget with tokens actually used
+    (rolling window) + USD spent. Pure — callers supply the aggregates.
+
+    `pct` and `over_threshold` are computed in TOKENS (the unit the guardrail
+    enforces). `cost_usd` rides along as an informational figure only — the
+    budget config has no USD limit, so we never invent one.
+    """
+    rows = []
+    for provider in sorted(cfg.providers):
+        pb = cfg.providers[provider]
+        used = int(used_by_provider.get(provider, 0))
+        budget = int(pb.token_budget)
+        pct = int(used / budget * 100) if budget > 0 else 0
+        rows.append({
+            "provider": provider,
+            "token_budget": budget,
+            "tokens_used": used,
+            "pct": pct,
+            "threshold_pct": pb.threshold_pct,
+            "over_threshold": budget > 0 and pct >= pb.threshold_pct,
+            "cost_usd": round(float(cost_by_provider.get(provider, 0.0)), 4),
+        })
+    return rows
 
 
 def milestones_from_phases(
