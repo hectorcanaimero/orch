@@ -23,6 +23,18 @@
 
 ## Serie G — Stakeholder UX completo (Q1)
 
+### G-0 — CLI polish (`orch --version`)
+
+**Objetivo**: ergonomía básica de CLI. Un orchestrator que se distribuye por `pipx` sin `--version` es fricción — el usuario no puede reportar qué build corre.
+
+**Entregables**:
+- [x] `orch --version` — imprime `orch <version>` desde `importlib.metadata.version("orchestrator")` y sale 0. Flag argparse nativo (`action="version"`), con fallback `0+unknown` si corre desde un source tree sin instalar.
+- [x] Test: `test_version_flag.py` — `main(["--version"])` → `SystemExit(0)` + stdout coincide con la metadata instalada.
+
+**Nota**: micro-item standalone, no pertenece temáticamente a ninguna feature de la Serie G. Se implementó como polish suelto, sin sprint TDD dedicado.
+
+---
+
 ### G-1 — CI workflow auto-generation + auto_merge ✅ (PR #53)
 
 **Objetivo**: cerrar el loop CI/CD que abrió F-4. Hoy orch crea el PR y espera CI — pero el workflow de CI tiene que existir previamente en el repo. Eso es fricción para el onboarding.
