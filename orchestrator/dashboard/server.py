@@ -868,6 +868,49 @@ def create_app(
         payload["available"] = True
         return JSONResponse(payload)
 
+    @app.get("/api/summary", name="api_summary")
+    def api_summary():
+        """Deterministic executive summary from sprint health + spend (G-4).
+
+        NO LLM — every sentence is a template filled from real figures, so it
+        works headless (no `claude` CLI needed on the host), costs nothing, and
+        is fully deterministic. Requires SQLite (sprint_health source).
+        """
+        import yaml
+        from orchestrator.state.sqlite_backend import SqliteBackend
+        from orchestrator.dashboard.metrics import executive_summary, sprint_health
+        from orchestrator.spend_reader import (
+            aggregate_by_provider,
+            iter_today_entries,
+        )
+
+        cfg_path = app_state.paths.config_yaml
+        try:
+            raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            raw_cfg = {}
+        language = (raw_cfg.get("dashboard") or {}).get("summary_language") or "es"
+
+        backend = _get_state_backend(app_state.paths, raw_cfg)
+        if not isinstance(backend, SqliteBackend):
+            return JSONResponse({"available": False, "summary": None})
+
+        tasks = load_tasks(app_state.paths.tasks_json)
+        done_7d = backend.count_done_last_n_days(7)
+        blocked_ids = [t.id for t in tasks if t.status == "blocked"]
+        last_events = (
+            backend.get_task_last_events(blocked_ids) if blocked_ids else {}
+        )
+        health = sprint_health(tasks, done_7d, last_events)
+
+        spend = aggregate_by_provider(iter_today_entries(app_state.paths.state_dir))
+        total_spend = round(sum(spend.values()), 2) if spend else None
+
+        summary = executive_summary(
+            health, total_spend_usd=total_spend, language=language
+        )
+        return JSONResponse({"available": True, "summary": summary})
+
     @app.get("/api/config", name="api_config")
     def api_config():
         return JSONResponse(_load_project_config(app_state))
