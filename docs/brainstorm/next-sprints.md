@@ -12,8 +12,8 @@
 
 | Capa | Qué hay | Qué falta |
 |------|---------|-----------|
-| **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | CI workflow auto-generated (`orch init`) |
-| **CI/CD** | PR automático, CI polling, redispatch con logs | `auto_merge` opt-in, workflow template |
+| **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | — |
+| **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
 | **Dashboard** | KPIs, sprint health, ETA, blockers, velocity | Milestone tracking, Gantt, exec summary |
 | **Stakeholder UX** | Status labels, profiles, tunnel URL | Timeline, PDF export, lenguaje de negocio |
 | **Onboarding** | `orch init`, doctor, validate | Templates, consolidación de configs |
@@ -23,20 +23,20 @@
 
 ## Serie G — Stakeholder UX completo (Q1)
 
-### G-1 — CI workflow auto-generation + auto_merge
+### G-1 — CI workflow auto-generation + auto_merge ✅ (PR #53)
 
 **Objetivo**: cerrar el loop CI/CD que abrió F-4. Hoy orch crea el PR y espera CI — pero el workflow de CI tiene que existir previamente en el repo. Eso es fricción para el onboarding.
 
 **Entregables**:
-- `orch init` detecta si existe `.github/workflows/orch-ci.yml`. Si no, lo genera desde un template configurable.
-- Config nueva en `config.yaml`:
+- [x] `orch init` detecta si existe `.github/workflows/orch-ci.yml`. Si no, lo genera desde un template configurable (soft target — nunca pisa uno existente).
+- [x] Config nueva en `config.yaml`:
   ```yaml
   github:
     test_command: "pytest"      # comando que corre el workflow
     auto_merge: false           # off por default — requiere branch protection
   ```
-- `auto_merge: true` hace merge automático via `gh pr merge --squash --auto` cuando CI pasa.
-- Tests: integración con `GitHubProvider.get_ci_status()` ya existente; mock del `gh` CLI.
+- [x] `auto_merge: true` hace merge automático via `gh pr merge --squash --auto` (GitHub) / `glab mr merge --squash` (GitLab) cuando CI pasa. `merge_pr()` agregado al protocolo `VcsProvider`.
+- [x] Tests: `test_vcs_github.py`, `test_vcs_gitlab.py`, `test_config_loader.py`, `test_init.py`, `test_ci_dispatch.py` — 15 tests nuevos, suite completa en 1208 passed + 3 skipped.
 
 **Impacto**: un dev nuevo hace `orch init` en un repo de Python → tiene CI + PR automático + auto-merge sin tocar GitHub Actions manualmente.
 
@@ -203,7 +203,7 @@ Assets finales en `logos/export/` (combination mark + icon cuadrado, SVG + PNG e
 ## Tabla de dependencias
 
 ```
-G-1 (CI workflow)          ──── standalone
+G-1 (CI workflow)          ──── standalone ✅ done (PR #53)
 G-2 (milestones)           ──── standalone
 G-3 (Gantt)                ──── depende de G-2
 G-4 (exec summary)         ──── depende de G-2 (contexto de milestones)
@@ -217,4 +217,4 @@ H-3 (README + HN)          ──── depende de H-1 + G-3 (screenshots)
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Próxima revisión: al completar G-1.*
+*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-1 completado (PR #53). Próxima revisión: al completar G-2.*

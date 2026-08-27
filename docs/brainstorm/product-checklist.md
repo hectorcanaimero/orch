@@ -79,8 +79,8 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 - [x] **Git worktrees por task** — cada agente trabaja en su branch aislada. Cero conflictos de archivos entre tasks paralelas. `dispatch.worktree_mode: true` en config. (F-2, PR #48)
 - [x] **PR automático por task** — cuando el agente termina, orch hace push + `gh pr create`. El dashboard muestra el link al PR. `vcs.auto_pr: true` en config. (F-4, PR #51)
 - [x] **CI polling en `tasks_runtime`** — orch espera resultado de GitHub Actions/GitLab CI, registra en SQLite, y re-despacha el agente con los logs de error si falla (hasta `ci_max_retries`). (F-4, PR #51)
-- [ ] **`orch init` genera `.github/workflows/orch-ci.yml`** — configurable via `github.test_command: "pytest"`. El workflow corre automáticamente en cada PR de task.
-- [ ] **auto_merge opt-in** — si CI pasa, merge automático. Config: `github.auto_merge: false` (off por default, requiere branch protection activa).
+- [x] **`orch init` genera `.github/workflows/orch-ci.yml`** — configurable via `github.test_command: "pytest"`. Soft target: nunca pisa un workflow existente. (G-1, PR #53)
+- [x] **auto_merge opt-in** — si CI pasa, merge automático (`gh pr merge --squash --auto` / `glab mr merge --squash`). Config: `github.auto_merge: false` (off por default, requiere branch protection activa). (G-1, PR #53)
 
 ### Notificaciones y comunicación — Q1
 
@@ -131,6 +131,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | CI auto-validación | ❌ | ❌ | ❌ | ✅ | ✅ F-4 |
 | Sprint velocity / ETA | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
 | Blockers dashboard | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
+| CI workflow auto-gen + auto-merge | ❌ | ❌ | ❌ | ✅ | ✅ G-1 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
@@ -150,7 +151,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ```
 Q1 (mes 1-2)  ── Stakeholder polish: timeline, exec summary, PDF, budget chart, blockers view
-               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4)
+               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1)
                ── README reescritura + HN launch prep
 
 Q2 (mes 3-4)  ── Template system (5 templates canónicos)
@@ -166,4 +167,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-26 — v0.7.0 post Sprint F-5 (sprint health: ETA + velocity + blockers dashboard, PR #52). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49), F-4: PR automation + CI polling (#51). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
+*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-1 (CI workflow auto-generation + auto_merge, PR #53). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
