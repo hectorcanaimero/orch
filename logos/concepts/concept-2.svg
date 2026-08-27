@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512">
+
+  <!-- Icon: Orbital ring / Precision circle — "O" of orch -->
+  <g id="icon">
+    <!--
+      Circle centered at (240, 256), outer radius 130.
+      strokeWidth 22 → inner radius ~109.
+      Arc gap of ~50° at top-right (from ~320° to ~10°, i.e. going clockwise).
+      We draw only the arc that IS the ring (the remaining ~310°).
+
+      Arc from 10° to 320° (clockwise), which is the "closed" portion.
+      In SVG coords (Y-axis down), angles are measured clockwise from 3 o'clock.
+
+      Gap: from 320° to 370° (=10°) clockwise → ~50° gap at top-right.
+
+      Start of visible arc: 10° from 3-o'clock = top-right area.
+        x = 240 + 130·cos(10°) = 240 + 130·0.9848 = 240 + 128.02 = 368.02
+        y = 256 + 130·sin(10°) = 256 + 130·0.1736 = 256 + 22.57 = 278.57
+
+      End of visible arc: 320° from 3-o'clock (= -40° = 40° above 3-o'clock, top-right).
+        x = 240 + 130·cos(320°) = 240 + 130·cos(-40°) = 240 + 130·0.7660 = 240 + 99.58 = 339.58
+        y = 256 + 130·sin(320°) = 256 + 130·sin(-40°) = 256 + 130·(-0.6428) = 256 - 83.56 = 172.44
+
+      large-arc-flag = 1 (arc > 180°), sweep-flag = 1 (clockwise)
+    -->
+    <path
+      d="M 368.02 278.57 A 130 130 0 1 1 339.58 172.44"
+      fill="none"
+      stroke="#7c3aed"
+      stroke-width="22"
+      stroke-linecap="round"
+    />
+
+    <!-- Small filled circle at start of arc (bottom end of gap, x=368.02, y=278.57) -->
+    <circle cx="368.02" cy="278.57" r="12" fill="#7c3aed"/>
+
+    <!-- Tiny accent dot at end of arc (top end of gap) — slightly darker, smaller -->
+    <circle cx="339.58" cy="172.44" r="7" fill="#6d28d9"/>
+  </g>
+
+  <!-- Wordmark: "orch" -->
+  <g id="wordmark">
+    <text
+      x="520"
+      y="308"
+      font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+      font-weight="600"
+      font-size="172"
+      letter-spacing="-0.04em"
+      fill="#09090b"
+    >orch</text>
+  </g>
+
+</svg>

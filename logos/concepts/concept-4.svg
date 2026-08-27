@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512">
+
+  <!-- Icon: fork → 3 parallel branches → converge, left-to-right, sharp 90° bends -->
+  <g id="icon">
+
+    <!-- Fork source dot -->
+    <circle cx="156" cy="256" r="10" fill="#7c3aed"/>
+
+    <!-- Source horizontal stem to fork point -->
+    <line x1="156" y1="256" x2="216" y2="256"
+          stroke="#7c3aed" stroke-width="12"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Top branch (outer): fork down from 216,256 → up to 156+60,256-96 = 216,160 → right to 360,160 → down to 360,256 → right to 420,256 -->
+    <!-- Bend up then across then back down -->
+    <polyline points="216,256 216,160 360,160 360,256"
+              fill="none" stroke="#a78bfa" stroke-width="11"
+              stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Center branch (main): straight through -->
+    <line x1="216" y1="256" x2="360" y2="256"
+          fill="none" stroke="#7c3aed" stroke-width="12"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Bottom branch (outer): bend down then across then back up -->
+    <polyline points="216,256 216,352 360,352 360,256"
+              fill="none" stroke="#a78bfa" stroke-width="11"
+              stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Converge dot -->
+    <circle cx="360" cy="256" r="10" fill="#7c3aed"/>
+
+    <!-- Destination horizontal stem from converge point -->
+    <line x1="360" y1="256" x2="420" y2="256"
+          stroke="#7c3aed" stroke-width="12"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+  </g>
+
+  <!-- Wordmark -->
+  <g id="wordmark">
+    <text
+      x="460"
+      y="330"
+      font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+      font-weight="600"
+      font-size="172"
+      letter-spacing="-0.03em"
+      fill="#09090b"
+    >orch</text>
+  </g>
+
+</svg>

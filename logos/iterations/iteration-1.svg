@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512">
+  <!-- Icon: 4 parallel tracks, vertically centered in 512px canvas -->
+  <!-- Stack height: 4×24 + 3×46 = 234px. Top: 256-117=139 -->
+  <g id="icon">
+    <rect x="100" y="139" width="210" height="24" rx="12" fill="#7c3aed"/>
+    <rect x="100" y="185" width="155" height="24" rx="12" fill="#a78bfa"/>
+    <rect x="100" y="231" width="232" height="24" rx="12" fill="#7c3aed"/>
+    <rect x="100" y="277" width="128" height="24" rx="12" fill="#a78bfa"/>
+  </g>
+
+  <!-- Wordmark: "orch" — baseline at y=304 centers lowercase visually at 256px -->
+  <g id="wordmark">
+    <text
+      x="410"
+      y="304"
+      font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+      font-weight="600"
+      font-size="172"
+      letter-spacing="-0.04em"
+      fill="#09090b"
+    >orch</text>
+  </g>
+</svg>

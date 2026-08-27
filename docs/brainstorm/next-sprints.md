@@ -157,14 +157,24 @@ Meta: el dev hace `orch init` y solo tiene que editar `config.yaml`. Todo lo dem
 - `dashboard.yaml` → sección `dashboard:` en `config.yaml`.
 - `orch migrate --consolidate` para proyectos existentes.
 
-### H-3 — README reescritura + HN launch prep
+### H-3 — Brand integration
+
+Assets finales en `logos/export/` (combination mark + icon cuadrado, SVG + PNG en 7 tamaños).
+
+- Reemplazar `frontend/public/favicon.svg` con `logos/export/icon.svg`.
+- Copiar `logos/export/icon-192.png` y `icon-512.png` a `frontend/public/` para PWA manifest.
+- Actualizar `frontend/public/manifest.json` con los nuevos iconos.
+- Usar `logos/export/logo.svg` como hero image del README.
+- Actualizar `orchestrator/spa/` con el nuevo favicon (rebuild de la SPA).
+
+### H-4 — README reescritura + HN launch prep
 
 - Nuevo tagline: *"El primer orchestrator con dashboard para stakeholders. Mandá este link a tu cliente."*
-- Hero image: screenshot del stakeholder view con ETA + blockers.
+- Hero image: `logos/export/logo.svg` + screenshot del stakeholder view con ETA + blockers.
 - GIF de 30s: `orch init` → dispatch → PR creado → dashboard stakeholder con ETA.
 - Comparison table honesta (ya existe en product-checklist).
 - Sección "Quick start" en 3 comandos.
-- Target: HN "Show HN" post cuando H-1 y H-2 estén listos.
+- Target: HN "Show HN" post cuando H-1, H-2 y H-3 estén listos.
 
 ---
 

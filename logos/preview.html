@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logo Preview — Iterations</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 2rem;
+    transition: background-color 0.3s, color 0.3s;
+  }
+  body.light { background: #f5f5f5; color: #333; }
+  body.dark  { background: #1a1a1a; color: #eee; }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; }
+  h2 { font-size: 1rem; font-weight: 600; margin: 2.5rem 0 1rem; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; }
+  .toggle {
+    padding: 0.5rem 1rem;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.875rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 1.5rem;
+  }
+  .grid-sm {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1.5rem;
+  }
+  .card {
+    border: 1px solid rgba(128,128,128,0.3);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .card-img {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2.5rem 2rem;
+    min-height: 180px;
+  }
+  .card-img-sm {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    min-height: 140px;
+  }
+  body.light .card-img,
+  body.light .card-img-sm { background: #fff; }
+  body.dark  .card-img,
+  body.dark  .card-img-sm { background: #2a2a2a; }
+  .card-img img { max-width: 100%; max-height: 140px; }
+  .card-img-sm img { max-width: 100px; max-height: 100px; }
+  .card-label {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-top: 1px solid rgba(128,128,128,0.3);
+  }
+  .card-desc {
+    padding: 0 1rem 0.75rem;
+    font-size: 0.8rem;
+    opacity: 0.6;
+    line-height: 1.4;
+  }
+  body.light .card-label,
+  body.light .card-desc { background: #fafafa; }
+  body.dark  .card-label,
+  body.dark  .card-desc { background: #222; }
+
+  /* Favicon strip */
+  .favicon-strip {
+    display: flex;
+    gap: 3rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    padding: 1.5rem;
+    border: 1px solid rgba(128,128,128,0.3);
+    border-radius: 12px;
+  }
+  body.light .favicon-strip { background: #fff; }
+  body.dark  .favicon-strip { background: #2a2a2a; }
+  .favicon-item { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+  .favicon-name { font-size: 0.8rem; font-weight: 500; }
+  .favicon-sizes { display: flex; gap: 1.25rem; align-items: flex-end; }
+  .favicon-size { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .favicon-size span { font-size: 0.7rem; opacity: 0.5; }
+</style>
+</head>
+<body class="light">
+  <div class="header">
+    <h1>Logo Preview — Iterations</h1>
+    <button class="toggle" onclick="document.body.classList.toggle('dark'); document.body.classList.toggle('light'); this.textContent = document.body.classList.contains('dark') ? '☀️ Light' : '🌙 Dark';">🌙 Dark</button>
+  </div>
+
+  <h2>Combination mark</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-img">
+        <img src="iterations/iteration-1.svg" alt="iteration-1">
+      </div>
+      <div class="card-label">Iteration 1 — Combination mark</div>
+      <div class="card-desc">Barras paralelas + wordmark "orch". Para README, header del dashboard, redes sociales.</div>
+    </div>
+  </div>
+
+  <h2>Favicon / Icon mark</h2>
+  <div class="grid-sm">
+    <div class="card">
+      <div class="card-img-sm">
+        <img src="favicon.svg" alt="favicon">
+      </div>
+      <div class="card-label">favicon.svg — "o" geométrica</div>
+      <div class="card-desc">Mark cuadrado independiente. Zinc-950 + anillo violet.</div>
+    </div>
+  </div>
+
+  <h2>Favicon size check</h2>
+  <div class="favicon-strip">
+    <div class="favicon-item">
+      <div class="favicon-name">favicon.svg</div>
+      <div class="favicon-sizes">
+        <div class="favicon-size">
+          <img src="favicon.svg" width="64" height="64">
+          <span>64px</span>
+        </div>
+        <div class="favicon-size">
+          <img src="favicon.svg" width="32" height="32">
+          <span>32px</span>
+        </div>
+        <div class="favicon-size">
+          <img src="favicon.svg" width="16" height="16">
+          <span>16px</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

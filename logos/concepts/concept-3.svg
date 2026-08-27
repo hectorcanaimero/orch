@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512">
+  <!-- Icon: 4 horizontal bars representing parallel agent tracks -->
+  <g id="icon">
+    <!-- Bar 1: long, violet-600, top -->
+    <rect x="110" y="166" width="200" height="22" rx="11" fill="#7c3aed"/>
+    <!-- Bar 2: shorter, violet-400, lighter -->
+    <rect x="110" y="214" width="150" height="22" rx="11" fill="#a78bfa"/>
+    <!-- Bar 3: longest, violet-600 -->
+    <rect x="110" y="262" width="220" height="22" rx="11" fill="#7c3aed"/>
+    <!-- Bar 4: short, violet-400, lighter -->
+    <rect x="110" y="310" width="130" height="22" rx="11" fill="#a78bfa"/>
+  </g>
+
+  <!-- Wordmark: "orch" -->
+  <g id="wordmark">
+    <text
+      x="470"
+      y="332"
+      font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+      font-weight="600"
+      font-size="172"
+      letter-spacing="-0.03em"
+      fill="#09090b"
+      dominant-baseline="auto"
+    >orch</text>
+  </g>
+</svg>

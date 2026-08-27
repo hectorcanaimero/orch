@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background: zinc-950 rounded square -->
+  <rect width="512" height="512" rx="88" fill="#09090b"/>
+  <!-- Parallel bars centered in square. Stack height: 4×30 + 3×38 = 234px. Top: 256-117=139 -->
+  <g id="icon">
+    <rect x="106" y="139" width="262" height="30" rx="15" fill="#7c3aed"/>
+    <rect x="106" y="177" width="194" height="30" rx="15" fill="#a78bfa"/>
+    <rect x="106" y="215" width="290" height="30" rx="15" fill="#7c3aed"/>
+    <rect x="106" y="253" width="162" height="30" rx="15" fill="#a78bfa"/>
+  </g>
+</svg>

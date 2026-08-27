@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#6d28d9"/>
+    </marker>
+  </defs>
+
+  <!-- Icon group: centered in left 480px zone, vertically centered in 512px -->
+  <g id="icon">
+    <!-- Root node: top center of icon -->
+    <!-- Icon fits ~200x260px, centered at x=240, vertical center at y=256 -->
+    <!-- root y=126, mid-left y=256, mid-right y=256, output y=386 -->
+
+    <!-- Edge: root → mid-left -->
+    <line
+      x1="240" y1="154"
+      x2="176" y2="228"
+      stroke="#6d28d9" stroke-width="6" stroke-linecap="round"
+      marker-end="url(#arrow)"/>
+
+    <!-- Edge: root → mid-right -->
+    <line
+      x1="240" y1="154"
+      x2="304" y2="228"
+      stroke="#6d28d9" stroke-width="6" stroke-linecap="round"
+      marker-end="url(#arrow)"/>
+
+    <!-- Edge: mid-left → output -->
+    <line
+      x1="176" y1="284"
+      x2="222" y2="358"
+      stroke="#6d28d9" stroke-width="6" stroke-linecap="round"
+      marker-end="url(#arrow)"/>
+
+    <!-- Edge: mid-right → output -->
+    <line
+      x1="304" y1="284"
+      x2="258" y2="358"
+      stroke="#6d28d9" stroke-width="6" stroke-linecap="round"
+      marker-end="url(#arrow)"/>
+
+    <!-- Root node: filled violet -->
+    <circle cx="240" cy="126" r="28" fill="#7c3aed"/>
+
+    <!-- Mid-left node: filled violet -->
+    <circle cx="176" cy="256" r="28" fill="#7c3aed"/>
+
+    <!-- Mid-right node: unfilled (violet-100 fill, violet stroke) — parallel task -->
+    <circle cx="304" cy="256" r="28" fill="#ede9fe" stroke="#7c3aed" stroke-width="6"/>
+
+    <!-- Output node: filled violet -->
+    <circle cx="240" cy="386" r="28" fill="#7c3aed"/>
+  </g>
+
+  <!-- Wordmark group -->
+  <g id="wordmark">
+    <text
+      x="520"
+      y="308"
+      font-family="'Helvetica Neue', Helvetica, Arial, sans-serif"
+      font-weight="600"
+      font-size="168"
+      letter-spacing="-0.04em"
+      fill="#09090b">orch</text>
+  </g>
+</svg>
