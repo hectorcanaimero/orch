@@ -63,6 +63,12 @@ def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("dispatch", {})
     cfg["dispatch"].setdefault("worktree_mode", False)
     cfg["dispatch"].setdefault("base_branch", "main")
+    cfg.setdefault("vcs", {})
+    cfg["vcs"].setdefault("provider", "github")
+    cfg["vcs"].setdefault("host", "github.com")
+    cfg["vcs"].setdefault("auto_pr", False)
+    cfg["vcs"].setdefault("ci_max_retries", 1)
+    cfg["vcs"].setdefault("ci_poll_interval_s", 30)
     cfg.setdefault("presentation", {})
     cfg["presentation"].setdefault("status_labels", {
         "backlog":     "Planificado",
