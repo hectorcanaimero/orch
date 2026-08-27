@@ -12,6 +12,7 @@ import { LoginPage } from "@/pages/LoginPage"
 import { LogsPage } from "@/pages/LogsPage"
 import { MetricsPage } from "@/pages/MetricsPage"
 import { MilestonesPage } from "@/pages/MilestonesPage"
+import { SprintPage } from "@/pages/SprintPage"
 import { DocumentsPage } from "@/pages/DocumentsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
@@ -73,6 +74,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <MilestonesPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/sprint"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <SprintPage />
                 </AppLayout>
               </ProtectedRoute>
             }

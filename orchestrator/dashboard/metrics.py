@@ -741,3 +741,95 @@ def phase_counts(tasks: Iterable[Task]) -> list[dict[str, Any]]:
         for p, r in sorted(per_phase.items())
     ]
     return out
+
+
+# ---- Sprint health (F-5) ---------------------------------------------------
+
+
+def sprint_velocity(done_7d: int, window_days: int = 7) -> float:
+    """Tasks completed per day over the last *window_days* days."""
+    return done_7d / window_days if window_days > 0 else 0.0
+
+
+def sprint_eta(
+    velocity_per_day: float,
+    remaining_tasks: int,
+    remaining_hours: float,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compute ETA fields from velocity and remaining work.
+
+    Returns a dict with:
+        eta_days        float | None  — projected days to completion
+        eta_date        str | None    — ISO date (YYYY-MM-DD)
+        confidence      str           — 'high' | 'low' | 'none'
+    """
+    _now = now or datetime.now(timezone.utc)
+    if velocity_per_day <= 0 or remaining_tasks <= 0:
+        return {"eta_days": None, "eta_date": None, "confidence": "none"}
+
+    eta_days = remaining_tasks / velocity_per_day
+    from datetime import timedelta
+    eta_dt = _now + timedelta(days=eta_days)
+    confidence = "high" if eta_days <= 30 else "low"
+    return {
+        "eta_days": round(eta_days, 1),
+        "eta_date": eta_dt.date().isoformat(),
+        "confidence": confidence,
+    }
+
+
+def sprint_health(
+    tasks: Iterable[Task],
+    done_7d: int,
+    last_events: dict[str, dict[str, Any]],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Aggregate sprint health payload for `GET /api/sprint`.
+
+    Args:
+        tasks:       All project tasks (Task objects).
+        done_7d:     Count of tasks with status='done' updated in last 7 days.
+                     Comes from the SQLite backend query.
+        last_events: Latest event per task_id (from SqliteBackend.get_task_last_events).
+        now:         Override for 'current time' (testing).
+
+    Returns a dict ready for JSON serialisation.
+    """
+    tasks_list = list(tasks)
+    _TERMINAL = {"done", "skipped"}
+    active = [t for t in tasks_list if t.status not in _TERMINAL]
+    blocked_tasks = [t for t in tasks_list if t.status == "blocked"]
+    remaining = [t for t in active if t.status != "blocked"]
+
+    done_count = sum(1 for t in tasks_list if t.status == "done")
+    remaining_tasks = len(remaining)
+    remaining_hours = sum(float(t.estimate_hours or 0.0) for t in remaining)
+
+    velocity = sprint_velocity(done_7d)
+    eta = sprint_eta(velocity, remaining_tasks, remaining_hours, now=now)
+
+    blockers: list[dict[str, Any]] = []
+    for t in sorted(blocked_tasks, key=lambda x: x.phase):
+        ev = last_events.get(t.id, {})
+        extra = ev.get("extra", {})
+        reason: str = extra.get("reason") or ev.get("event_type") or "unknown"
+        blocked_at: str | None = ev.get("ts")
+        blockers.append({
+            "task_id": t.id,
+            "title": t.title or t.id,
+            "phase": t.phase,
+            "reason": reason[:300],
+            "blocked_at": blocked_at,
+            "estimate_hours": float(t.estimate_hours or 0.0),
+        })
+
+    return {
+        "velocity_per_day": round(velocity, 2),
+        "done_count": done_count,
+        "remaining_tasks": remaining_tasks,
+        "remaining_hours": round(remaining_hours, 1),
+        "blocked_count": len(blocked_tasks),
+        **eta,
+        "blockers": blockers,
+    }

@@ -1332,6 +1332,20 @@ class SqliteBackend:
         if rowcount == 0:
             raise KeyError(task_id)
 
+    def count_done_last_n_days(self, days: int) -> int:
+        """Count tasks with status='done' updated within the last *days* days."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM tasks_runtime "
+                "WHERE project_id = ? AND status = 'done' "
+                "AND updated_at >= datetime('now', ?)",
+                (self.project_id, f"-{days} days"),
+            ).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
     # ---- introspection (used by migrate + tests) -----------------------
 
     def schema_version(self) -> int:
