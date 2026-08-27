@@ -58,6 +58,8 @@ export type TaskStatus =
   | "blocked"
   | "done"
 
+export type CiStatus = "pending" | "success" | "failure" | "skipped"
+
 export interface Task {
   id: string
   phase: number
@@ -77,6 +79,10 @@ export interface Task {
   downstream_impact: number
   on_critical_path: boolean
   parallelizable?: boolean
+  // Sprint F-4 — PR automation
+  pr_url?: string | null
+  ci_status?: CiStatus | null
+  ci_attempts?: number
 }
 
 export interface TasksSummary {

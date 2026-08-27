@@ -121,6 +121,29 @@ class WorktreeManager:
                 pass
         self._active.pop(task_id, None)
 
+    def recreate(self, task_id: str) -> Path:
+        """Check out an existing branch into a fresh worktree for CI re-dispatch.
+
+        Unlike ``create()``, this does NOT branch off ``base_branch`` — it
+        reuses the remote branch ``orch/<task_id>`` that was already pushed.
+        The worktree path is the same as normal so downstream code (context
+        file injection, _spawn_one) works unchanged.
+
+        Raises:
+            WorktreeError: if the checkout or fetch fails.
+        """
+        self.remove(task_id)  # clean up any stale dir first
+        branch = self.branch_name(task_id)
+        wt_path = self.worktree_path(task_id)
+        # Fetch the remote branch so the local ref is up-to-date.
+        self._run(["git", "fetch", "origin", branch], task_id)
+        self._run(
+            ["git", "worktree", "add", str(wt_path), branch],
+            task_id,
+        )
+        self._active[task_id] = wt_path
+        return wt_path
+
     def remove_all(self) -> None:
         """Remove every tracked worktree. Called from the SIGTERM handler."""
         for task_id in list(self._active):

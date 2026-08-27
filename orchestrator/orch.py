@@ -919,6 +919,8 @@ def _reap_once(
     router: dict[str, RouteEntry] | None = None,
     task_costs: dict[str, float] | None = None,
     wm: "WorktreeManager | None" = None,
+    vcs_provider: "VcsProvider | None" = None,
+    state_backend: "SqliteBackend | None" = None,
 ) -> int:
     """Reap every child that has already exited (non-blocking).
 
@@ -983,6 +985,10 @@ def _reap_once(
         # Worktree push + cleanup (Sprint F-2)
         # push() only on success — don't publish incomplete work.
         # remove() always — best-effort, errors are logged and swallowed.
+        # Sprint F-4: after a successful push, if auto_pr is enabled, create a
+        # PR and hand off done-marking to the CI poller. pr_created=True means
+        # the success block below must NOT call queue.mark_done() yet.
+        pr_created = False
         if entry.worktree_path is not None and wm is not None:
             if result.success:
                 try:
@@ -992,6 +998,33 @@ def _reap_once(
                         "worktree push failed for %s (best-effort, not failing task): %s",
                         entry.task.id, exc,
                     )
+                else:
+                    # push succeeded — optionally open a PR (F-4)
+                    _vcs_cfg = cfg.get("vcs") or {}
+                    if vcs_provider is not None and state_backend is not None and _vcs_cfg.get("auto_pr"):
+                        _base = str((cfg.get("dispatch") or {}).get("base_branch", "main"))
+                        _title = getattr(entry.task, "title", entry.task.id) or entry.task.id
+                        _spec = getattr(entry.task, "spec_ref", None) or "n/a"
+                        _reason = getattr(entry.task, "reason", None) or ""
+                        _body = f"Task: `{entry.task.id}`\nSpec: {_spec}\n\n{_reason}".strip()
+                        try:
+                            pr_url = vcs_provider.create_pr(
+                                task_id=entry.task.id,
+                                title=_title,
+                                body=_body,
+                                head=wm.branch_name(entry.task.id),
+                                base=_base,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("create_pr failed for %s: %s", entry.task.id, exc)
+                            pr_url = None
+                        if pr_url:
+                            try:
+                                state_backend.set_task_pr(entry.task.id, pr_url)
+                                pr_created = True
+                                event_log.emit("pr_created", entry.task.id, pr_url=pr_url)
+                            except Exception as exc:  # noqa: BLE001
+                                log.warning("set_task_pr failed for %s: %s", entry.task.id, exc)
             wm.remove(entry.task.id)
 
         if spoof_id:
@@ -1057,8 +1090,11 @@ def _reap_once(
                 cost_usd=result.cost_usd,
                 duration_s=duration_s,
             )
-            queue.mark_done(entry.task.id)
-            run_file.mark_done(entry.task.id)
+            if not pr_created:
+                # No PR opened — mark done immediately (standard path).
+                queue.mark_done(entry.task.id)
+                run_file.mark_done(entry.task.id)
+            # else: CI poller (_check_ci_once) will call mark_done on CI success.
         else:
             reason = (result.error_message or "unknown failure")[:500]
 
@@ -1252,6 +1288,158 @@ def _reap_once(
         release_task_lock(entry.task_lock_fd)
         reaped += 1
     return reaped
+
+
+def _redispatch_with_ci_feedback(
+    task_row: dict,
+    ci_logs: str,
+    cfg: dict,
+    wm: "WorktreeManager",
+    in_flight: dict,
+    run_file: "RunFile",
+    event_log: "EventLog",
+    spend_log: "SpendLog",
+    gsem: "_Sem",
+    psem: dict,
+    retry_queue: list,
+    router: dict,
+    task_costs: dict,
+    queue: "TaskQueue",
+    state_dir: "Path",
+    cwd: "Path",
+) -> None:
+    """Re-dispatch a task whose CI failed, injecting failure logs as context."""
+    task_id = task_row["task_id"]
+    try:
+        wt_path = wm.recreate(task_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("wm.recreate failed for %s; skipping CI re-dispatch: %s", task_id, exc)
+        return
+
+    context_file = wt_path / ".orch-ci-feedback.md"
+    try:
+        context_file.write_text(f"# CI Failure — Please fix\n\n```\n{ci_logs}\n```\n", encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not write CI feedback file for %s: %s", task_id, exc)
+
+    # Re-queue the task so the refill loop re-dispatches it on the next tick.
+    # We mark it back to "todo" and insert a _RetryItem so the backoff + route
+    # resolution follow the same path as regular retries.
+    task_entry = next((t for t in queue._tasks if t.id == task_id), None)  # noqa: SLF001
+    if task_entry is None:
+        log.warning("CI re-dispatch: task %s not found in queue._tasks", task_id)
+        return
+
+    route_entry = (router or {}).get(task_entry.model)
+    if route_entry is None:
+        log.warning("CI re-dispatch: no route for task %s model %r", task_id, task_entry.model)
+        return
+
+    queue._status[task_id] = "todo"  # noqa: SLF001
+    run_file.remove_dispatch(task_id)
+    retry_queue.append(
+        _RetryItem(
+            task=task_entry,
+            route=route_entry,
+            attempt=1,
+            retry_earliest_at=time.monotonic(),
+        )
+    )
+    event_log.emit("ci_redispatch", task_id, backend=route_entry.backend)
+
+
+def _check_ci_once(
+    cfg: dict,
+    state_backend: "SqliteBackend",
+    vcs_provider: "VcsProvider",
+    queue: "TaskQueue",
+    wm: "WorktreeManager",
+    in_flight: dict,
+    run_file: "RunFile",
+    event_log: "EventLog",
+    spend_log: "SpendLog",
+    gsem: "_Sem",
+    psem: dict,
+    retry_queue: list,
+    router: dict,
+    task_costs: dict,
+    state_dir: "Path",
+    cwd: "Path",
+    last_check_ts: float,
+) -> float:
+    """Poll CI status for tasks with pending CI. Returns updated last_check_ts."""
+    now = time.monotonic()
+    interval = float((cfg.get("vcs") or {}).get("ci_poll_interval_s", 30))
+    if now - last_check_ts < interval:
+        return last_check_ts
+
+    try:
+        pending = state_backend.get_tasks_with_pending_ci()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("get_tasks_with_pending_ci failed: %s", exc)
+        return now
+
+    max_retries = int((cfg.get("vcs") or {}).get("ci_max_retries", 1))
+    for task_row in pending:
+        task_id = task_row["task_id"]
+        pr_url = task_row.get("pr_url", "")
+        ci_attempts = int(task_row.get("ci_attempts", 0))
+        try:
+            ci_status = vcs_provider.get_ci_status(pr_url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("get_ci_status failed for %s: %s", task_id, exc)
+            continue
+
+        if ci_status == "success":
+            try:
+                state_backend.set_task_ci_status(task_id, "success")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("set_task_ci_status(success) failed for %s: %s", task_id, exc)
+            queue.mark_done(task_id)
+            run_file.mark_done(task_id)
+            event_log.emit("ci_success", task_id, pr_url=pr_url)
+        elif ci_status == "failure":
+            if ci_attempts < max_retries:
+                try:
+                    ci_logs = vcs_provider.get_ci_logs(pr_url)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("get_ci_logs failed for %s: %s", task_id, exc)
+                    ci_logs = "(log retrieval failed)"
+                _redispatch_with_ci_feedback(
+                    task_row=task_row,
+                    ci_logs=ci_logs,
+                    cfg=cfg,
+                    wm=wm,
+                    in_flight=in_flight,
+                    run_file=run_file,
+                    event_log=event_log,
+                    spend_log=spend_log,
+                    gsem=gsem,
+                    psem=psem,
+                    retry_queue=retry_queue,
+                    router=router,
+                    task_costs=task_costs,
+                    queue=queue,
+                    state_dir=state_dir,
+                    cwd=cwd,
+                )
+                try:
+                    state_backend.increment_ci_attempts(task_id)
+                    state_backend.set_task_ci_status(task_id, "pending")
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("CI attempt update failed for %s: %s", task_id, exc)
+                event_log.emit("ci_failure_retry", task_id, pr_url=pr_url, attempt=ci_attempts + 1)
+            else:
+                try:
+                    state_backend.set_task_ci_status(task_id, "failure")
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("set_task_ci_status(failure) failed for %s: %s", task_id, exc)
+                queue.mark_blocked(task_id)
+                run_file.mark_blocked(task_id)
+                event_log.emit("ci_blocked", task_id, pr_url=pr_url, attempts=ci_attempts)
+        # status == "pending" → nothing to do yet
+
+    return now
 
 
 def _timeout_sweep(
@@ -4243,6 +4431,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             wm = None
 
+        # Sprint F-4: VCS provider — only active when worktree_mode AND auto_pr are both on.
+        _vcs_cfg = cfg.get("vcs") or {}
+        _auto_pr = bool(_vcs_cfg.get("auto_pr", False))
+        from orchestrator.state.sqlite_backend import SqliteBackend as _SqliteBackend
+        _sqlite_backend: "_SqliteBackend | None" = (
+            state_backend if isinstance(state_backend, _SqliteBackend) else None
+        )
+        if _worktree_mode and _auto_pr and _sqlite_backend is not None:
+            from orchestrator.vcs import get_vcs_provider as _get_vcs_provider
+            vcs_provider: "VcsProvider | None" = _get_vcs_provider(cfg)
+            log.info("VCS auto-PR enabled; provider=%s", _vcs_cfg.get("provider", "github"))
+        else:
+            vcs_provider = None
+
         _install_sigint(drain, in_flight, wm=wm)
 
         dispatched_count = 0
@@ -4252,6 +4454,8 @@ def main(argv: list[str] | None = None) -> int:
         # doesn't linger on the dashboard past a minute.
         _RECONCILE_INTERVAL_SEC = 60.0
         last_reconcile_ts = time.monotonic()
+        # Sprint F-4: CI poll timestamp (monotonic); compared against ci_poll_interval_s.
+        _last_ci_check_ts: float = 0.0
         while True:
             _reap_once(
                 in_flight, queue, run_file, event_log, spend_log, cfg, cwd, gsem, psem,
@@ -4259,7 +4463,30 @@ def main(argv: list[str] | None = None) -> int:
                 router=router,
                 task_costs=task_costs,
                 wm=wm,
+                vcs_provider=vcs_provider,
+                state_backend=_sqlite_backend,
             )
+            # Sprint F-4: CI poller — only when VCS auto-PR is active.
+            if vcs_provider is not None and _sqlite_backend is not None and wm is not None:
+                _last_ci_check_ts = _check_ci_once(
+                    cfg=cfg,
+                    state_backend=_sqlite_backend,
+                    vcs_provider=vcs_provider,
+                    queue=queue,
+                    wm=wm,
+                    in_flight=in_flight,
+                    run_file=run_file,
+                    event_log=event_log,
+                    spend_log=spend_log,
+                    gsem=gsem,
+                    psem=psem,
+                    retry_queue=retry_queue,
+                    router=router,
+                    task_costs=task_costs,
+                    state_dir=state_dir,
+                    cwd=cwd,
+                    last_check_ts=_last_ci_check_ts,
+                )
             _timeout_sweep(in_flight, event_log)
 
             if drain.set and not in_flight:

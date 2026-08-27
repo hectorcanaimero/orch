@@ -1,6 +1,13 @@
-import { GitBranch, Lock, Timer, Zap } from "lucide-react"
+import { ExternalLink, GitBranch, Lock, Timer, Zap } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Task } from "@/lib/types"
+import type { CiStatus, Task } from "@/lib/types"
+
+const CI_BADGE: Record<CiStatus, { label: string; className: string }> = {
+  pending:  { label: "CI...",     className: "text-amber-500" },
+  success:  { label: "CI ✓",     className: "text-emerald-600" },
+  failure:  { label: "CI ✗",     className: "text-rose-500" },
+  skipped:  { label: "CI skip",  className: "text-zinc-400" },
+}
 
 export interface TaskCardProps {
   task: Task
@@ -70,6 +77,29 @@ export function TaskCard({ task, taskStatusMap, onClick }: TaskCardProps) {
       <p className="line-clamp-3 text-sm font-medium leading-snug text-zinc-800">
         {task.title}
       </p>
+
+      {/* Sprint F-4 — PR + CI badges */}
+      {(task.pr_url || task.ci_status) && (
+        <div className="flex items-center gap-2 text-[10px]">
+          {task.pr_url && (
+            <a
+              href={task.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-0.5 rounded bg-zinc-100 px-1 py-0.5 font-medium text-zinc-500 hover:text-zinc-700"
+            >
+              <ExternalLink className="h-2.5 w-2.5" />
+              PR
+            </a>
+          )}
+          {task.ci_status && CI_BADGE[task.ci_status] && (
+            <span className={cn("font-medium", CI_BADGE[task.ci_status].className)}>
+              {CI_BADGE[task.ci_status].label}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
