@@ -65,7 +65,7 @@ Dividido por horizonte de tiempo y zona de impacto.
 
 Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 
-- [ ] **Timeline visual (Gantt-like)** — por milestone/feature, con ETA calculado desde `estimate_h` y velocidad actual. El cliente ve "¿cuándo entrega?" sin preguntar. Nativo en el dashboard, no un iframe externo.
+- [x] **Timeline visual (Gantt-like)** (G-3) — `GanttChart.tsx` en SVG hand-written dentro de `MilestonesPage`, con ETA tasks-based (`remaining / velocity`) por milestone, marcador "hoy", color por confianza y export SVG. El cliente ve "¿cuándo entrega?" sin preguntar. Refinamiento futuro: ETA hours-based desde `estimate_h`.
 - [ ] **Executive summary auto-generado** — la IA genera resumen en lenguaje de negocio: *"Esta semana: auth completado, API 60% avanzada, bloqueado esperando credenciales del cliente. ETA revisado +2 días."* Se muestra en el dashboard Y se puede reenviar por email.
 - [ ] **PDF export del sprint/milestone** — el cliente lo lleva a reunión de board. Una página: features entregadas, spend, ETA, blockers.
 - [ ] **Budget vs actual chart** — gráfico visual de gasto proyectado vs real, por proveedor y por feature. Transparencia financiera real.
@@ -134,7 +134,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | Blockers dashboard | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
 | CI workflow auto-gen + auto-merge | ❌ | ❌ | ❌ | ✅ | ✅ G-1 |
 | Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
-| Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
+| Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | ✅ G-3 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | Executive summary por IA | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
 | DAG visual interactivo | ❌ | ❌ | ❌ | ❌ | 🔜 Q3 |
@@ -151,7 +151,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 ## 🗓️ Resumen de prioridades
 
 ```
-Q1 (mes 1-2)  ── Stakeholder polish: timeline, exec summary, PDF, budget chart, blockers view
+Q1 (mes 1-2)  ── Stakeholder polish: ✅ timeline/Gantt (G-3), exec summary, PDF, budget chart, ✅ blockers view (F-5)
                ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1)
                ── README reescritura + HN launch prep
 
@@ -168,4 +168,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-1. G-0: `orch --version` (PR #54). G-1: CI workflow auto-generation + auto_merge (#53). F-2: worktree dispatch (#48), F-3: config + milestones + status labels + README + Board removal (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
+*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-3. G-0: `orch --version` (PR #54). G-1: CI workflow auto-generation + auto_merge (#53). G-3: milestone timeline (Gantt ligero) + ETA projection. F-2: worktree dispatch (#48), F-3: config + milestones + status labels + README + Board removal (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*

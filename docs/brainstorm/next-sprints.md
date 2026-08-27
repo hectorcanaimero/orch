@@ -14,7 +14,7 @@
 |------|---------|-----------|
 | **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | — |
 | **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
-| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3) | Gantt, exec summary |
+| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3), Gantt timeline (G-3) | exec summary |
 | **Stakeholder UX** | Status labels, profiles, tunnel URL | Timeline, PDF export, lenguaje de negocio |
 | **Onboarding** | `orch init`, doctor, validate | Templates, consolidación de configs |
 | **Notificaciones** | — | Slack/Discord, email digest |
@@ -70,15 +70,17 @@
 
 ---
 
-### G-3 — Timeline visual (Gantt ligero)
+### G-3 — Timeline visual (Gantt ligero) ✅
 
 **Objetivo**: proyección temporal de milestones sobre un eje de tiempo. Sin librerías pesadas — SVG propio como los budget charts.
 
 **Entregables**:
-- Componente `GanttChart` en SVG: barras horizontales por milestone, eje de fechas, marcador "hoy", badge de ETA con color por confianza (verde ≤ 30d, naranja > 30d).
-- Se alimenta de `/api/milestones` + sprint velocity de `/api/sprint`.
-- Integrado en `MilestonePage` como sección colapsable.
-- Exportable como SVG (botón "Download").
+- [x] Helper puro `milestone_eta()` en `metrics.py` — ETA **tasks-based** (`remaining / velocity_per_day`), confianza high/low vs `target_date` (o regla de 30d).
+- [x] `GET /api/milestones` engancha `eta {eta_date, eta_days, confidence}` por milestone, reusando la velocity de `sprint_health`.
+- [x] Componente `GanttChart.tsx` en SVG hand-written: barras por milestone, overlay de progreso, marcador "hoy", tick de ETA con color por confianza (verde high / ámbar low).
+- [x] Integrado en `MilestonesPage` como sección colapsable (`<details>`) + badge de ETA por card.
+- [x] Exportable como SVG (botón "Download", `XMLSerializer` — cero deps).
+- [ ] Refinamiento futuro: ETA **hours-based** (`estimate_h` por milestone) para más precisión.
 
 **Impacto**: el cliente ve un Gantt real en el dashboard sin que el dev haya tocado nada. Cierra el gap vs Jira/Linear en el eje "¿cuándo entrega?".
 
@@ -229,4 +231,4 @@ H-3 (README + HN)          ──── depende de H-1 + G-3 (screenshots)
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) completados; G-2 (milestones) ya entregado en F-3 (#49). Próximo sprint real: G-3 (Gantt) o G-5 (budget chart, standalone). Próxima revisión: al completar G-3.*
+*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) + G-3 (Gantt timeline) completados; G-2 (milestones) entregado en F-3 (#49). Próximo sprint real: G-4 (exec summary) o G-5 (budget chart, standalone). Próxima revisión: al completar G-4.*
