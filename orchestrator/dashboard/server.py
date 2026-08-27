@@ -746,6 +746,47 @@ def create_app(
             "providers": gate.snapshot(),
         })
 
+    @app.get("/api/budget/summary", name="api_budget_summary")
+    def api_budget_summary():
+        """Budget vs actual (G-5): configured per-provider token budget vs
+        rolling-window tokens used + USD spent. Requires budgets.yaml.
+
+        Reuses BudgetGate.snapshot() for the in-window token sums (single
+        source of truth with the dispatch gate) and spend_reader for the
+        informational USD figure. `pct`/`over_threshold` are token-based —
+        the config has no USD limit, so we never invent one.
+        """
+        import os
+        from orchestrator.dashboard.metrics import budget_vs_actual
+        from orchestrator.spend_reader import (
+            aggregate_by_provider,
+            iter_today_entries,
+        )
+
+        preset = os.environ.get("ORCH_BUDGETS_PRESET") or "conservative"
+        budget_cfg = None
+        for candidate in (
+            paths.config_yaml.parent / "budgets.yaml",
+            paths.project_root / "budgets.yaml",
+        ):
+            try:
+                budget_cfg = load_budget_config(candidate, preset=preset)
+            except ValueError:
+                budget_cfg = None
+            if budget_cfg is not None:
+                break
+        if budget_cfg is None or not budget_cfg.providers:
+            return JSONResponse({"available": False, "rows": []})
+
+        gate = BudgetGate(state_dir=paths.state_dir, config=budget_cfg)
+        snap = gate.snapshot()
+        used = {p: int(v.get("tokens_used", 0)) for p, v in snap.items()}
+        cost = aggregate_by_provider(iter_today_entries(paths.state_dir))
+        rows = budget_vs_actual(
+            budget_cfg, used_by_provider=used, cost_by_provider=cost
+        )
+        return JSONResponse({"available": True, "rows": rows})
+
     @app.get("/api/metrics", name="api_metrics")
     def api_metrics():
         view = _load_project_view(app_state)
