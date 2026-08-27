@@ -69,6 +69,7 @@ exclude = ["orchestrator.tests*"]
     "templates/scripts/*.sh",
     "templates/specs/*.md",
     "templates/openspec/*.md",
+    "templates/github/*.tmpl",
     "spa/**/*",
     "spa/.orch-spa.json",
 ]

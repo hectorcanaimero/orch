@@ -104,6 +104,13 @@ vcs:
   ci_max_retries: 1          # CI-triggered re-dispatches before blocking the task
   ci_poll_interval_s: 30     # seconds between CI status checks
 
+# Sprint G-1 — CI workflow auto-generation + auto-merge.
+# `orch init` generates .github/workflows/orch-ci.yml from this section
+# when it's absent from the target repo (never overwrites an existing one).
+github:
+  test_command: pytest       # command the generated CI workflow runs
+  auto_merge: false          # opt-in — requires branch protection on the repo
+
 # Presentation layer — labels shown in the dashboard UI.
 # Override any key to use your own language. Internal status values never change.
 presentation:

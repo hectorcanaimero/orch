@@ -120,3 +120,25 @@ def test_load_config_budget_partial_override_keeps_default(tmp_path: Path):
     # per_dispatch_usd default must still be applied
     assert cfg["budget"]["per_dispatch_usd"] == 5.0
     assert cfg["budget"]["max_usd"] == 100
+
+
+# ---- github: section defaults (Sprint G-1) ----------------------------------
+
+
+def test_load_config_github_defaults(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("", encoding="utf-8")
+    cfg = load_config(cfg_file)
+    assert cfg["github"]["test_command"] == "pytest"
+    assert cfg["github"]["auto_merge"] is False
+
+
+def test_load_config_github_auto_merge_overridable(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "github:\n  auto_merge: true\n  test_command: \"make test\"\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    assert cfg["github"]["auto_merge"] is True
+    assert cfg["github"]["test_command"] == "make test"
