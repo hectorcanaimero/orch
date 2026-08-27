@@ -73,3 +73,8 @@ def test_set_task_ci_status_raises_on_invalid_status(backend):
 def test_increment_ci_attempts_raises_on_unknown_task(backend):
     with pytest.raises(KeyError):
         backend.increment_ci_attempts("nonexistent")
+
+
+def test_set_task_ci_status_raises_on_unknown_task(backend):
+    with pytest.raises(KeyError):
+        backend.set_task_ci_status("nonexistent", "success")
