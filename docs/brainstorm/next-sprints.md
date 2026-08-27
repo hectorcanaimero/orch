@@ -14,7 +14,7 @@
 |------|---------|-----------|
 | **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | — |
 | **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
-| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3), Gantt timeline (G-3) | exec summary |
+| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3), Gantt timeline (G-3), exec summary (G-4) | — |
 | **Stakeholder UX** | Status labels, profiles, tunnel URL, budget/spend view (G-5) | PDF export, lenguaje de negocio |
 | **Onboarding** | `orch init`, doctor, validate | Templates, consolidación de configs |
 | **Notificaciones** | — | Slack/Discord, email digest |
@@ -86,18 +86,22 @@
 
 ---
 
-### G-4 — Executive summary auto-generado
+### G-4 — Executive summary (template determinista) ✅
 
-**Objetivo**: resumen en lenguaje de negocio generado por IA, listo para copiar/pegar al cliente o reenviar por email.
+**Objetivo**: resumen en lenguaje de negocio, listo para copiar/pegar al cliente.
+
+**Decisión de diseño clave**: NO es una llamada a LLM en vivo (como floteaba el roadmap original). Es un **template determinista** llenado desde `sprint_health` + spend. ¿Por qué? El dashboard puede correr headless sin el CLI `claude` instalado — una llamada a LLM ahí se rompería. Toda la data que un LLM parafrasearía YA está estructurada. Determinista ⇒ testeable, gratis, instantáneo, cero dependencia de host.
+
+**Descubrimiento**: el Sprint E-7 YA tenía un exec summary determinista inline (sin tests, inglés fijo, sin copiar). G-4 **consolidó** en vez de duplicar:
 
 **Entregables**:
-- Nuevo subcomando `orch summarize` — llama a Claude con contexto de `tasks_runtime` (done/blocked/in_progress, spend, ETA) y genera un resumen de 150-200 palabras en lenguaje de negocio.
-- Config: `dashboard.summary_prompt` para customizar el tono (formal/casual, idioma).
-- `GET /api/summary` en el dashboard — cachea el resumen por 1h, regenera on-demand.
-- Componente `ExecutiveSummary` en el SPA: texto generado + botón "Regenerar" + timestamp.
-- Visible solo en el perfil stakeholder (o both).
+- [x] Helper puro `executive_summary()` en `metrics.py` (12 tests) — pct, in-progress, blocked + reasons, ETA (date/hours), spend, idioma es/en.
+- [x] `GET /api/summary` nuevo + el payload stakeholder (E-7) ahora usan el MISMO helper (single source of truth). La lógica inline del E-7 se plegó adentro.
+- [x] Config `dashboard.summary_language: es` (default) — es | en.
+- [x] Botón "Copiar" (Clipboard API, cero deps) en el card `<ExecSummary>` que ya existía.
+- [ ] Fuera de alcance: llamada LLM en vivo, entrega por email/Slack (eso es G-6).
 
-**Entregable secundario**: botón "Copiar" que formatea el resumen para email/Slack con emojis de status (✅ completado, 🔄 en progreso, 🚫 bloqueado).
+**Nota de honestidad**: la tabla comparativa decía "Executive summary por IA" — se corrigió a "(auto)" porque NO llamamos a un LLM.
 
 **Impacto**: el dev deja de escribir el "update semanal" al cliente. Lo genera orch.
 
@@ -235,4 +239,4 @@ H-3 (README + HN)          ──── depende de H-1 + G-3 (screenshots)
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) + G-3 (Gantt timeline) + G-5 (budget vs actual) completados; G-2 (milestones) entregado en F-3 (#49). Próximo sprint real: G-4 (exec summary) o G-6 (notificaciones). Próxima revisión: al completar G-4.*
+*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) + G-3 (Gantt) + G-4 (exec summary, consolidado con E-7) + G-5 (budget vs actual) completados; G-2 (milestones) entregado en F-3 (#49). Próximo sprint real: G-6 (notificaciones). Con G-6, la Serie G queda completa. Próxima revisión: al completar G-6.*
