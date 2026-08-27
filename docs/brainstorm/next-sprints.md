@@ -15,7 +15,7 @@
 | **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | — |
 | **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
 | **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3), Gantt timeline (G-3) | exec summary |
-| **Stakeholder UX** | Status labels, profiles, tunnel URL | Timeline, PDF export, lenguaje de negocio |
+| **Stakeholder UX** | Status labels, profiles, tunnel URL, budget/spend view (G-5) | PDF export, lenguaje de negocio |
 | **Onboarding** | `orch init`, doctor, validate | Templates, consolidación de configs |
 | **Notificaciones** | — | Slack/Discord, email digest |
 
@@ -103,15 +103,19 @@
 
 ---
 
-### G-5 — Budget vs actual chart + spend dashboard stakeholder
+### G-5 — Budget vs actual chart + spend dashboard stakeholder ✅
 
 **Objetivo**: transparencia financiera real. "Este sprint costó $X en AI tokens" con desglose por proveedor.
 
+**Decisión de diseño clave**: el budget config mide en **tokens** (`token_budget`), no en dólares. La barra compara `tokens_used / token_budget` (la unidad que el guardrail realmente enforcea); el `cost_usd` se muestra AL LADO como cifra informativa. No inventamos un límite en USD que la config no tiene.
+
 **Entregables**:
-- Componente `BudgetChart` en SVG: barras agrupadas por proveedor (proyectado vs actual), línea de límite configurado. Reutiliza el patrón de `BudgetPage` existente pero en vista stakeholder.
-- `GET /api/budget/summary` — spend total del sprint actual, por proveedor, por milestone (si hay milestones asignados).
-- Vista separada para stakeholder: sin nombres técnicos de providers, solo "AI tokens" con USD real.
-- Config: `dashboard.show_spend_to_stakeholder: true` (off por default).
+- [x] Helper puro `budget_vs_actual()` en `metrics.py` — cruza límite configurado vs tokens usados (en ventana) + USD, por proveedor.
+- [x] `GET /api/budget/summary` — reusa `BudgetGate.snapshot()` (single source of truth con el gate de dispatch) + `spend_reader` para el USD.
+- [x] `BudgetChart.tsx` SVG hand-written: barra por proveedor (track=budget, fill=used), rule en threshold, color ámbar al pasarlo, label pct% + ~$cost.
+- [x] `BudgetPage.tsx` + nav item + ruta `/budget`.
+- [x] Config `dashboard.show_spend_to_stakeholder: false` (off por default). Operator siempre lo ve; stakeholder solo con el flag on.
+- [ ] Fuera de alcance (futuro): spend por milestone, proyección de gasto futuro.
 
 **Impacto**: si el cliente paga el AI spend, esto es ESENCIAL. Cierra el ciclo de transparencia financiera que abrió el budget guardrail.
 
@@ -231,4 +235,4 @@ H-3 (README + HN)          ──── depende de H-1 + G-3 (screenshots)
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) + G-3 (Gantt timeline) completados; G-2 (milestones) entregado en F-3 (#49). Próximo sprint real: G-4 (exec summary) o G-5 (budget chart, standalone). Próxima revisión: al completar G-4.*
+*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) + G-3 (Gantt timeline) + G-5 (budget vs actual) completados; G-2 (milestones) entregado en F-3 (#49). Próximo sprint real: G-4 (exec summary) o G-6 (notificaciones). Próxima revisión: al completar G-4.*
