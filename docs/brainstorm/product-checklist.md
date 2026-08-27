@@ -22,6 +22,7 @@ Estas son las ventajas reales. Ningún competidor las tiene juntas.
 - [x] **Findings loop** — agentes reportan hallazgos a GitHub. Dogfooding auténtico, no marketing.
 - [x] **AGENTS.md auto-generation** (F-1) — zero-cost context para agentes. Claude Code lo lee automáticamente al iniciar sesión.
 - [x] **orch task set** (F-1) — control manual de model/status/backend sin editar JSON ni hacer dispatch. Cirugía fina.
+- [x] **`orch --version`** (G-0, PR #54) — imprime `orch <version>` desde `importlib.metadata`. Ergonomía básica de CLI para reportar qué build corre un usuario de `pipx`.
 - [x] **Doctor / preflight / validate** — validación antes de correr. El usuario no corre a ciegas.
 - [x] **CI/CD propio** — wheel + SPA embedded + release automático en GitHub. El propio proyecto es ejemplo del proceso.
 - [x] **SPA sin dependencias heavy** — hand-written shadcn, SVG charts propios, 380kB / ~114kB gzipped. Disciplina que paga en 2 años.
@@ -48,10 +49,10 @@ Esto ya está en el producto pero la experiencia es incompleta o técnica.
 
 Cosas que están mal planteadas, no solo incompletas.
 
-- [ ] **Sprint model → Feature/Milestone model en el dashboard** — los stakeholders no piensan en "Sprint F-1". Piensan en "Login feature", "Chatbot integration", "Admin panel". Las tasks deberían agruparse por deliverable visible al cliente, no por sprint técnico. El sprint sigue siendo útil para el dev; el cliente ve milestones.
-- [ ] **Status labels** — `backlog / in_progress / done` son términos de dev. Para el stakeholder: "Planificado", "En progreso", "Entregado". Necesita capa de presentación con labels configurables.
-- [ ] **Board tab con ExcaliDash** — el propio brainstorm lo identifica: no es core al positioning. Mover a plugin opcional antes del HN launch.
-- [ ] **README** — hoy está orientado al dev. Necesita reescritura completa: nuevo tagline, comparison table, screenshot stakeholder como hero image, GIF de 30s mostrando el flujo "manda este link al cliente". Esto es Q1, ANTES del HN launch.
+- [x] **Sprint model → Feature/Milestone model en el dashboard** (F-3, PR #49) — `MilestonesPage` en el SPA agrupa tasks por deliverable con barra de progreso. El sprint sigue para el dev; el cliente ve milestones. Base entregada; falta el Gantt (G-3) y ETA por milestone.
+- [x] **Status labels** (F-3, PR #49) — capa de presentación con `presentation.status_labels` configurable en `config.yaml` + helper `labelForStatus()` en el SPA. "Planificado / En progreso / Entregado".
+- [x] **Board tab con ExcaliDash** (F-3, PR #49) — removido. `BoardPage` ya no existe; reemplazado por `MilestonesPage` en el nav.
+- [x] **README** (F-3, PR #49) — reescrito para audiencia stakeholder/agencia: nuevo tagline ("Show clients a live dashboard — not a Slack thread"), comparison table, quickstart en 3 comandos. Falta hero image + GIF (H-3/H-4, pre-HN).
 - [ ] **Consolidar archivos de config** — cinco archivos son demasiados para el primer `orch init`. Meta: 1 archivo obligatorio (`config.yaml`), el resto opcionales con defaults que funcionan.
 
 ---
@@ -70,7 +71,7 @@ Esto es lo que cierra la brecha vs el mercado. El diferenciador principal.
 - [ ] **Budget vs actual chart** — gráfico visual de gasto proyectado vs real, por proveedor y por feature. Transparencia financiera real.
 - [x] **"What's blocked" view** (F-5, PR #52) — grid de tasks bloqueadas con razón de bloqueo, fase y fecha. Integrado en `/sprint` del dashboard, visible a todos los perfiles.
 - [ ] **Spend dashboard para el cliente** — "Este sprint costó $X en AI tokens" con desglose por proveedor y por feature. Si el cliente paga el AI spend, esto es ESENCIAL.
-- [ ] **Milestone tracking** — grupos de tasks con fecha objetivo. "Milestone: MVP Login — ETA 15/09 — 3/7 tasks done". Como Jira Epics pero sin el overhead.
+- [x] **Milestone tracking** (F-3, PR #49) — migración 004 (`milestones` table + `milestone_id` FK), `GET /api/milestones` con progreso done/total, `orch task set --milestone`, `MilestonesPage` en el SPA. Falta la fecha objetivo/ETA por milestone (llega con G-3 Gantt).
 
 ### CI/CD y calidad — Sprint F-2/F-3 🔥
 
@@ -167,4 +168,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-1 (CI workflow auto-generation + auto_merge, PR #53). F-2: worktree dispatch (#48), F-3: config + milestones + status labels (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
+*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-1. G-0: `orch --version` (PR #54). G-1: CI workflow auto-generation + auto_merge (#53). F-2: worktree dispatch (#48), F-3: config + milestones + status labels + README + Board removal (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*

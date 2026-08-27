@@ -14,7 +14,7 @@
 |------|---------|-----------|
 | **Dispatch** | DAG, worktrees, multi-backend, budget guardrails | — |
 | **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
-| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity | Milestone tracking, Gantt, exec summary |
+| **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3) | Gantt, exec summary |
 | **Stakeholder UX** | Status labels, profiles, tunnel URL | Timeline, PDF export, lenguaje de negocio |
 | **Onboarding** | `orch init`, doctor, validate | Templates, consolidación de configs |
 | **Notificaciones** | — | Slack/Discord, email digest |
@@ -54,19 +54,19 @@
 
 ---
 
-### G-2 — Milestone tracking
+### G-2 — Milestone tracking ✅ (entregado en F-3, PR #49)
 
 **Objetivo**: agrupar tasks por deliverable visible al cliente. Hoy los sprints son técnicos; el cliente piensa en features/milestones.
 
 **Entregables**:
-- Campo `milestone` en `tasks_definition` (opcional, string libre).
-- Migración SQLite 006: `milestone` column en `tasks_runtime`.
-- `GET /api/milestones` — agrupa tasks por milestone, calcula progreso (done/total, estimate_h restantes, ETA propio).
-- Componente `MilestonePage` en el SPA: lista de milestones con barra de progreso, ETA, tasks colapsables.
-- Nav item "Milestones" (visible a todos los perfiles).
-- `orch task set <id> --milestone <name>` para asignar desde CLI.
+- [x] Migración SQLite **004** (`milestones` table + `milestone_id` FK en `tasks_definition`; no fue 006 como se planeó).
+- [x] `GET /api/milestones` — agrupa tasks por milestone, calcula progreso done/total.
+- [x] Componente `MilestonesPage` en el SPA: cards de milestone con barra de progreso.
+- [x] Nav item "Milestones" (reemplazó al Board tab).
+- [x] `orch task set <id> --milestone <name>` para asignar desde CLI.
+- [ ] Pendiente: ETA/fecha objetivo por milestone y tasks colapsables → llega con **G-3 (Gantt)**.
 
-**Impacto**: el stakeholder ve "Milestone: Auth — 5/7 tasks, ETA 3 sep" en lugar de una lista plana de 40 tasks técnicas.
+**Impacto**: el stakeholder ve "Milestone: Auth — 5/7 tasks" en lugar de una lista plana de 40 tasks técnicas. Falta la proyección temporal (Gantt).
 
 ---
 
@@ -229,4 +229,4 @@ H-3 (README + HN)          ──── depende de H-1 + G-3 (screenshots)
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-1 completado (PR #53). Próxima revisión: al completar G-2.*
+*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-27 — G-0 (`orch --version`, PR #54) + G-1 (PR #53) completados; G-2 (milestones) ya entregado en F-3 (#49). Próximo sprint real: G-3 (Gantt) o G-5 (budget chart, standalone). Próxima revisión: al completar G-3.*
