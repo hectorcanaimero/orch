@@ -2173,6 +2173,7 @@ _SUBCOMMANDS = (
     "validate",
     "findings",
     "notify",
+    "config",
 )
 
 
@@ -2199,6 +2200,7 @@ def _print_subcommand_list() -> int:
     print("  orch router add-missing   Append inferred router entries for unrouted task models")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch notify <verb>        Slack/Discord webhooks (test | digest) — Sprint G-6")
+    print("  orch config <verb>        Config helpers (consolidate) — Sprint H-2")
     print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch upgrade [--check]    Self-update to the latest GitHub release")
     print("  orch list                 Print this list")
@@ -3997,6 +3999,115 @@ def _findings_dismiss_cli(argv: list[str]) -> int:
     return 0
 
 
+def _run_config_subcommand(argv: list[str]) -> int:
+    """Handle `orch config <verb>` — H-2 config helpers.
+
+    Verbs:
+      consolidate  Merge project-root dashboard.yaml into config.yaml under
+                   `dashboard:`, back up the original as `.bak-<ts>`, and
+                   report what changed. Idempotent: nothing to do → exit 0
+                   with a "nothing to consolidate" note. Only touches
+                   dashboard.yaml today — budgets.yaml is already optional
+                   and model_router.yaml is intentionally kept separate.
+
+    Exit codes:
+      0 — success (including "nothing to do")
+      1 — bad args / config load failed / write failed
+    """
+    p = argparse.ArgumentParser(
+        prog="orch config",
+        description="Config helpers (H-2). See `orch config consolidate --help`.",
+    )
+    sub = p.add_subparsers(dest="verb", required=True)
+    p_cons = sub.add_parser(
+        "consolidate",
+        help="Fold project-root dashboard.yaml into .orchestrator/config.yaml.",
+    )
+    p_cons.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the merge without writing anything.",
+    )
+    _add_common_project_flags(p_cons)
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    if args.verb == "consolidate":
+        return _consolidate_configs(paths, dry_run=args.dry_run)
+    # argparse's required=True already prevents this — belt & suspenders.
+    return 1
+
+
+def _consolidate_configs(paths: "ProjectPaths", *, dry_run: bool) -> int:
+    """Fold `dashboard.yaml` into `config.yaml` under `dashboard:`.
+
+    - Missing project-root dashboard.yaml → exit 0, print "nothing to do".
+    - Present → deep-merge into config.yaml's `dashboard:` block (existing
+      values in config.yaml win only when dashboard.yaml doesn't override
+      them — the source file is what the operator explicitly wrote, so its
+      keys take precedence). Original is renamed to `.bak-<ts>`.
+    - `--dry-run` prints the plan without writing.
+    """
+    import yaml
+    from datetime import datetime, timezone
+
+    from orchestrator.config_loader import deep_merge
+
+    project_root = paths.project_root
+    dashboard_yaml = project_root / "dashboard.yaml"
+    config_yaml = paths.config_yaml
+
+    if not dashboard_yaml.exists():
+        print("nothing to consolidate — no project-root dashboard.yaml found")
+        return 0
+    if not config_yaml.exists():
+        print(f"config.yaml not found at {config_yaml}", file=sys.stderr)
+        return 1
+
+    try:
+        dash_body = yaml.safe_load(dashboard_yaml.read_text(encoding="utf-8")) or {}
+        cfg_body = yaml.safe_load(config_yaml.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError) as exc:
+        print(f"failed to parse yaml: {exc}", file=sys.stderr)
+        return 1
+
+    existing_dash = cfg_body.get("dashboard") or {}
+    # dashboard.yaml is what the operator explicitly wrote → its keys win.
+    merged_dash = deep_merge(existing_dash, dash_body)
+
+    if merged_dash == existing_dash:
+        print("nothing to consolidate — dashboard.yaml is already a subset of config.yaml")
+        return 0
+
+    if dry_run:
+        print("--dry-run: would merge dashboard.yaml into config.yaml as:")
+        print(yaml.safe_dump({"dashboard": merged_dash}, sort_keys=False, indent=2))
+        return 0
+
+    cfg_body["dashboard"] = merged_dash
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = dashboard_yaml.with_suffix(f".yaml.bak-{stamp}")
+    try:
+        dashboard_yaml.rename(backup)
+        config_yaml.write_text(
+            yaml.safe_dump(cfg_body, sort_keys=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(f"consolidation write failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"✓ merged dashboard.yaml → {config_yaml}")
+    print(f"  original backed up as {backup.name}")
+    return 0
+
+
 def _run_notify_subcommand(argv: list[str]) -> int:
     """Handle `orch notify <verb>` — G-6 side-channel helpers.
 
@@ -4442,6 +4553,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_findings_subcommand(incoming[1:])
     if incoming and incoming[0] == "notify":
         return _run_notify_subcommand(incoming[1:])
+    if incoming and incoming[0] == "config":
+        return _run_config_subcommand(incoming[1:])
     if incoming and incoming[0] == "arch":
         from orchestrator.arch import run_arch_cli
 

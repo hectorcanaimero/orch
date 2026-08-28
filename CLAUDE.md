@@ -14,7 +14,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1288 passed + 3 skipped (`test_router.py::test_validate_all_models_passes_on_shipping_router` is skipped, not failing). Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
+- **Tests**: `pytest` from repo root. Full suite is 1293 passed + 3 skipped (`test_router.py::test_validate_all_models_passes_on_shipping_router` is skipped, not failing). Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
 - **Never build after changes.** Type-check / test only.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
