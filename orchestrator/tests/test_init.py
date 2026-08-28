@@ -481,3 +481,43 @@ def test_orch_init_chatbot_whatsapp_agents_md_documents_stack(
     assert "X-Api-Key" in agents_text
     # Placeholders rendered.
     assert "PROJECT_NAME" not in agents_text
+
+
+# ---- data-pipeline template (Sprint H-1c) ----------------------------------
+
+
+def test_list_templates_includes_data_pipeline() -> None:
+    rows = list_templates()
+    assert "data-pipeline" in rows
+    desc = rows["data-pipeline"].lower()
+    assert "duckdb" in desc or "etl" in desc
+
+
+def test_orch_init_data_pipeline_writes_four_phase_dag(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="data-pipeline") == 0
+
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["template"] == "data-pipeline"
+    phase_ids = {p["id"] for p in payload["phases"]}
+    assert phase_ids == {0, 1, 2, 3}
+    tasks_by_id = {t["id"]: t for t in payload["tasks"]}
+    # DAG chain: F3 → F2 → F1 → F0.
+    assert "F2.T1" in tasks_by_id["F3.T1"]["dependencies"]
+    assert "F1.T1" in tasks_by_id["F2.T1"]["dependencies"]
+    assert "F0.T1" in tasks_by_id["F1.T1"]["dependencies"]
+
+
+def test_orch_init_data_pipeline_agents_md_documents_duckdb_and_apscheduler(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="data-pipeline") == 0
+
+    agents_text = (dest / "AGENTS.md").read_text(encoding="utf-8")
+    assert "DuckDB" in agents_text
+    assert "apscheduler" in agents_text.lower()
+    # Layered-schema convention (raw / marts).
+    assert "raw." in agents_text and "marts." in agents_text
+    # Placeholders rendered.
+    assert "PROJECT_NAME" not in agents_text
