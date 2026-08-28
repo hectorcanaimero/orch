@@ -127,6 +127,7 @@ def _wizard_answers(
     project_id: str,
     project_root: Path,
     *,
+    template: str = "blank",
     state_backend: str = "file",
     budget_preset: str = "conservative",
     spec_root: str = "specs",
@@ -136,12 +137,14 @@ def _wizard_answers(
     """Build the canonical answer sequence the wizard consumes.
 
     Order matches the run_wizard() prompt sequence:
-        project_id, project_root, state_backend, budget_preset, spec_root,
-        3 tier picks (defaults), sdd flag, open_dashboard prompt.
+        project_id, project_root, template (H-1a), state_backend,
+        budget_preset, spec_root, 3 tier picks (defaults), sdd flag,
+        open_dashboard prompt.
     """
     return [
         project_id,
         str(project_root),
+        template,  # H-1a: template picker
         state_backend,
         budget_preset,
         spec_root,

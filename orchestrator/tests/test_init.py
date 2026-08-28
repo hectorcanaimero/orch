@@ -22,8 +22,11 @@ import pytest
 
 from orchestrator.init_cmd import (
     SDDStatus,
+    TemplateNotFoundError,
     detect_sdd,
+    list_templates,
     orch_init,
+    run_init_cli,
 )
 
 
@@ -323,3 +326,101 @@ def test_init_gitignore_includes_worktrees(tmp_path: Path) -> None:
     orch_init(tmp_path)
     gitignore = (tmp_path / ".gitignore").read_text()
     assert ".worktrees/" in gitignore
+
+
+# ---- Project templates (Sprint H-1a) ---------------------------------------
+
+
+def test_list_templates_includes_python_api() -> None:
+    """python-api must ship in the packaged templates."""
+    rows = list_templates()
+    assert "python-api" in rows
+    assert rows["python-api"].strip()  # description is not empty
+
+
+def test_orch_init_with_python_api_template_writes_seeded_tasks(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="python-api") == 0
+
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["template"] == "python-api"
+    task_ids = [t["id"] for t in payload["tasks"]]
+    assert "F0.T1" in task_ids
+    assert "F1.T1" in task_ids
+    # DAG dependency preserved end-to-end.
+    f1 = next(t for t in payload["tasks"] if t["id"] == "F1.T1")
+    assert "F0.T1" in f1["dependencies"]
+
+
+def test_orch_init_with_python_api_template_overrides_config_and_agents(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="python-api") == 0
+
+    cfg_text = (dest / ".orchestrator" / "config.yaml").read_text(encoding="utf-8")
+    # Template config keeps python-friendly defaults (pytest CI command).
+    assert "test_command: pytest" in cfg_text
+
+    agents_text = (dest / "AGENTS.md").read_text(encoding="utf-8")
+    # Template AGENTS.md carries the stack blurb, not the generic one.
+    assert "FastAPI" in agents_text
+    # Placeholders are rendered, not raw.
+    assert "PROJECT_NAME" not in agents_text
+
+
+def test_orch_init_unknown_template_raises_template_not_found(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(TemplateNotFoundError) as exc_info:
+        orch_init(tmp_path / "proj", template="does-not-exist")
+    # Error message must name the available options so the operator can fix
+    # the typo without re-running --list-templates.
+    assert "python-api" in str(exc_info.value)
+
+
+def test_orch_init_without_template_matches_pre_H1a_behavior(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: template=None → the pre-existing empty tasks.json
+    skeleton is written verbatim, no template metadata leaks in."""
+    dest = tmp_path / "proj"
+    assert orch_init(dest) == 0
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["tasks"] == []
+    assert "template" not in payload["meta"]
+
+
+# ---- CLI: --list-templates / --template ------------------------------------
+
+
+def test_cli_list_templates_prints_available_and_exits_zero(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    rc = run_init_cli(["--list-templates"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "python-api" in out
+
+
+def test_cli_template_scaffolds_project(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    rc = run_init_cli([str(dest), "--template", "python-api"])
+    assert rc == 0
+    assert (dest / "tasks.json").exists()
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["template"] == "python-api"
+
+
+def test_cli_template_unknown_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        run_init_cli([str(tmp_path / "proj"), "--template", "bogus-template"])
+    # argparse.error → exit 2.
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "bogus-template" in err
+    assert "python-api" in err  # available list surfaced

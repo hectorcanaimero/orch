@@ -128,6 +128,7 @@ def test_wizard_scaffold_passes_validate(
     answers = iter([
         "wizproj",  # project id
         str(root),  # project root
+        "blank",  # template (H-1a)
         "file",  # state backend
         "conservative",  # budget preset
         "specs",  # spec root
