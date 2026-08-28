@@ -53,7 +53,7 @@ Cosas que están mal planteadas, no solo incompletas.
 - [x] **Status labels** (F-3, PR #49) — capa de presentación con `presentation.status_labels` configurable en `config.yaml` + helper `labelForStatus()` en el SPA. "Planificado / En progreso / Entregado".
 - [x] **Board tab con ExcaliDash** (F-3, PR #49) — removido. `BoardPage` ya no existe; reemplazado por `MilestonesPage` en el nav.
 - [x] **README** (F-3, PR #49) — reescrito para audiencia stakeholder/agencia: nuevo tagline ("Show clients a live dashboard — not a Slack thread"), comparison table, quickstart en 3 comandos. Falta hero image + GIF (H-3/H-4, pre-HN).
-- [ ] **Consolidar archivos de config** — cinco archivos son demasiados para el primer `orch init`. Meta: 1 archivo obligatorio (`config.yaml`), el resto opcionales con defaults que funcionan.
+- [x] **Consolidar archivos de config** (H-2, PR #63, opción B) — `orch init` scaffoldea 1 archivo (`config.yaml`) en vez de 4. `dashboard:` inline, `budgets.yaml` ya era opcional, `model_router.yaml` stub que `orch router add-missing` puebla on-demand. `orch config consolidate` migra proyectos existentes. Fuera de scope deliberado: consolidar budgets/router (son data grande, no config narrativo).
 
 ---
 
@@ -85,8 +85,9 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ### Notificaciones y comunicación — Q1
 
-- [ ] **Email digest semanal al stakeholder** — resumen automático generado desde `tasks_runtime`. Config: `stakeholder.email`, `digest.schedule: weekly`.
-- [ ] **Slack/Discord webhook nativo** — notificación cuando una task termina, el sprint cierra, o algo se bloquea. Config: `notifications.slack_webhook`.
+- [x] **Slack/Discord webhook nativo** (G-6, PR #62) — `Notifier` con stdlib `urllib` (cero deps), silent-fail. Hooks live en `_reap_once` (task blocked) y `_check_ci_once` (ci_blocked). Config: `notifications.slack_webhook` / `.discord_webhook`. Subcomando `orch notify test` para validar setup.
+- [x] **Email digest — vía CLI + cron** (G-6, PR #62) — `orch notify digest [--send] [--language es|en]` imprime resumen determinista (reusa `executive_summary` + tabla de milestones con ETA). El operador cronjobea `orch notify digest --send | mail -s ...`. NO SMTP nativo (evita nueva dep + credenciales).
+- [ ] **Sprint-done detection** — notificar cuando la queue queda vacía. Requiere estado shared en main loop; fuera de scope de G-6.
 - [ ] **Progress changelog automático** — "En las últimas 24h: 3 features completadas, 2 en progreso". Generado desde events en `tasks_runtime`. Visible en el dashboard y enviable por email.
 
 ### Templates y onboarding — Q2
@@ -133,9 +134,11 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | Sprint velocity / ETA | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
 | Blockers dashboard | ❌ | ❌ | ❌ | ❌ | ✅ F-5 |
 | CI workflow auto-gen + auto-merge | ❌ | ❌ | ❌ | ✅ | ✅ G-1 |
-| Template system | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
+| Slack/Discord webhooks | ❌ | ❌ | ❌ | ❌ | ✅ G-6 |
+| Config: 1 archivo obligatorio | ❌ | ❌ | ❌ | ❌ | ✅ H-2 |
+| Template system | ❌ | ❌ | ❌ | ❌ | 🔜 H-1 |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | ✅ G-3 |
-| PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q1 |
+| PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Executive summary (auto) | ❌ | ❌ | ❌ | ❌ | ✅ G-4 |
 | DAG visual interactivo | ❌ | ❌ | ❌ | ❌ | 🔜 Q3 |
 | Browser tool use | ❌ | ❌ | ✅ | ✅ | ❌ |
@@ -152,13 +155,15 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ```
 Q1 (mes 1-2)  ── Stakeholder polish: ✅ timeline/Gantt (G-3), ✅ exec summary (G-4), PDF, ✅ budget chart (G-5), ✅ blockers view (F-5)
-               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1)
-               ── README reescritura + HN launch prep
+               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1) + ✅ commit_pending fix (F-6, bugfix crítico #60)
+               ── ✅ Notificaciones: Slack/Discord + `orch notify digest` (G-6)
+               ── ✅ Config consolidation (H-2, opción B)
+               ── README hero image + GIF + HN launch prep
 
-Q2 (mes 3-4)  ── Template system (5 templates canónicos)
+Q2 (mes 3-4)  ── Wizard guiado + 5 templates canónicos (H-1)
+               ── Brand integration (H-3) + README/HN prep (H-4)
                ── Multi-project dashboard + client auth por proyecto
                ── VS Code / Cursor extension
-               ── Notificaciones (Slack, email digest)
 
 Q3 (mes 5-6)  ── DAG visual interactivo
                ── Preview panels (Level 3 dashboard)
@@ -168,4 +173,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-27 — v0.7.1 post Sprint G-4. G-0: `orch --version` (PR #54). G-1: CI workflow auto-generation + auto_merge (#53). G-3: milestone timeline (Gantt ligero) + ETA projection. G-4: executive summary determinista (template, consolidó E-7). G-5: budget vs actual chart (tokens) + stakeholder spend view. F-2: worktree dispatch (#48), F-3: config + milestones + status labels + README + Board removal (#49), F-4: PR automation + CI polling (#51), F-5: sprint health ETA/velocity/blockers (#52). Bug fix: issue #41 (VITE_API_BASE_URL baked in bundle) resuelto — SPA ahora usa window.location.origin en runtime.*
+*Última actualización: 2026-08-28 — v0.8.0. Serie G completa (G-0..G-6). F-6 bugfix crítico #60 (worktree commit before push, PR #61) + G-6 notificaciones Slack/Discord + `orch notify` (PR #62) + H-2 consolidación config opción B (PR #63). Serie previa: G-0 `orch --version` (#54), G-1 CI workflow auto-gen + auto_merge (#53), G-3 Gantt timeline, G-4 exec summary determinista (#59, consolidó E-7), G-5 budget vs actual (#58), F-2 worktree dispatch (#48), F-3 config + milestones + status labels + README (#49), F-4 PR automation + CI polling (#51), F-5 sprint health (#52). Próximo: H-1 (wizard + 5 templates).*
