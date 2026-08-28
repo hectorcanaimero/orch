@@ -113,6 +113,15 @@ github:
   test_command: pytest       # command the generated CI workflow runs
   auto_merge: false          # opt-in — requires branch protection on the repo
 
+# Sprint G-6 — Slack/Discord webhooks + `orch notify digest`.
+# Empty webhook URLs disable that channel. Failures are silent by design —
+# a broken webhook never surfaces into the dispatch loop. Triggers today:
+# task moved to `blocked`, and CI blocked after ci_max_retries.
+notifications:
+  slack_webhook: ""          # https://hooks.slack.com/services/...
+  discord_webhook: ""        # https://discord.com/api/webhooks/...
+  timeout_s: 5               # per-request timeout for the POST
+
 # Presentation layer — labels shown in the dashboard UI.
 # Override any key to use your own language. Internal status values never change.
 presentation:

@@ -198,6 +198,48 @@ def test_ci_failure_at_cap_blocks_task():
     q.mark_blocked.assert_called_once_with(task_id)
 
 
+def test_ci_blocked_triggers_notifier_when_webhook_configured():
+    """Sprint G-6: `ci_blocked` fires notify_ci_blocked when a webhook is set."""
+    from unittest.mock import patch as _patch
+    task_id = "t1"
+    pr_url = "https://gh/pull/1"
+    pending = [{"task_id": task_id, "pr_url": pr_url, "ci_attempts": 1}]
+    sb = _mock_state_backend(pending)
+    vcs = _mock_vcs("failure")
+    q = _mock_queue(task_id)
+    wm = MagicMock()
+    cfg = _make_mock_cfg(ci_max_retries=1)
+    cfg["notifications"] = {"slack_webhook": "https://hooks.slack.com/X"}
+
+    fake_notifier = MagicMock()
+    with _patch("orchestrator.orch.Notifier.from_config", return_value=fake_notifier):
+        _check_ci_once(**_ci_kwargs(cfg, sb, vcs, q, wm))
+
+    fake_notifier.notify_ci_blocked.assert_called_once_with(
+        task_id, pr_url=pr_url, attempts=1
+    )
+
+
+def test_ci_failure_retry_does_not_trigger_notifier():
+    """Only exhaustion (`ci_blocked`) notifies — a mid-retry does not."""
+    from unittest.mock import patch as _patch
+    task_id = "t1"
+    pending = [{"task_id": task_id, "pr_url": "https://gh/pull/1", "ci_attempts": 0}]
+    sb = _mock_state_backend(pending)
+    vcs = _mock_vcs("failure")
+    q = _mock_queue(task_id)
+    wm = MagicMock()
+    wm.recreate.return_value = MagicMock()
+    cfg = _make_mock_cfg(ci_max_retries=2)
+    cfg["notifications"] = {"slack_webhook": "https://hooks.slack.com/X"}
+
+    fake_notifier = MagicMock()
+    with _patch("orchestrator.orch.Notifier.from_config", return_value=fake_notifier):
+        _check_ci_once(**_ci_kwargs(cfg, sb, vcs, q, wm))
+
+    fake_notifier.notify_ci_blocked.assert_not_called()
+
+
 def test_ci_pending_does_nothing():
     task_id = "t1"
     pending = [{"task_id": task_id, "pr_url": "https://gh/pull/1", "ci_attempts": 0}]
