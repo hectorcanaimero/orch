@@ -72,6 +72,7 @@ from orchestrator.budget import (  # noqa: E402
     warn_undersized_presets,
 )
 from orchestrator.checkpoints import SemiModeGate, is_critical  # noqa: E402
+from orchestrator.notifications import Notifier  # noqa: E402
 from orchestrator.dispatcher import (  # noqa: E402
     Backend,
     DispatchResult,
@@ -1305,6 +1306,9 @@ def _reap_once(
                 )
                 queue.mark_blocked(entry.task.id)
                 run_file.mark_blocked(entry.task.id)
+                # G-6: opt-in webhook notification (silent-fail — a broken
+                # webhook must never take down the dispatch loop).
+                Notifier.from_config(cfg).notify_blocked(entry.task.id, reason=reason)
 
         # Release capacity so the refill step can pick up new work.
         gsem.release()
@@ -1472,6 +1476,10 @@ def _check_ci_once(
                 queue.mark_blocked(task_id)
                 run_file.mark_blocked(task_id)
                 event_log.emit("ci_blocked", task_id, pr_url=pr_url, attempts=ci_attempts)
+                # G-6: opt-in webhook notification for CI-triggered blocks.
+                Notifier.from_config(cfg).notify_ci_blocked(
+                    task_id, pr_url=pr_url, attempts=ci_attempts
+                )
         # status == "pending" → nothing to do yet
 
     return now
@@ -2164,6 +2172,7 @@ _SUBCOMMANDS = (
     "doctor",
     "validate",
     "findings",
+    "notify",
 )
 
 
@@ -2189,6 +2198,7 @@ def _print_subcommand_list() -> int:
     print("  orch validate [FLAGS]     Static graph validation (schema, deps, cycles, routes)")
     print("  orch router add-missing   Append inferred router entries for unrouted task models")
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
+    print("  orch notify <verb>        Slack/Discord webhooks (test | digest) — Sprint G-6")
     print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch upgrade [--check]    Self-update to the latest GitHub release")
     print("  orch list                 Print this list")
@@ -3987,6 +3997,159 @@ def _findings_dismiss_cli(argv: list[str]) -> int:
     return 0
 
 
+def _run_notify_subcommand(argv: list[str]) -> int:
+    """Handle `orch notify <verb>` — G-6 side-channel helpers.
+
+    Verbs:
+      test    Send a canned message to every configured webhook. Exit 0 when
+              at least one channel accepted; exit 1 when no channel accepted
+              or none is configured.
+      digest  Print (or POST to a webhook) a stakeholder-oriented digest
+              built from the deterministic executive_summary + milestone
+              progress. Intended to be cron-scheduled by the operator, e.g.
+              `0 9 * * MON orch notify digest --send` — orch itself has no
+              daemon so it never schedules for you.
+
+    Exit codes:
+      0 — success
+      1 — bad args / config / no channel accepted (for `test` and `--send`)
+      2 — SQLite backend required for digest but the project uses file backend
+    """
+    p = argparse.ArgumentParser(
+        prog="orch notify",
+        description="Slack/Discord webhook helpers (G-6). See `orch notify test --help`.",
+    )
+    sub = p.add_subparsers(dest="verb", required=True)
+
+    p_test = sub.add_parser("test", help="Send a canned test message to configured webhooks.")
+    p_test.add_argument(
+        "--message",
+        default="orch: notifier test — if you see this, the webhook works.",
+        help="Custom message body.",
+    )
+    _add_common_project_flags(p_test)
+
+    p_dig = sub.add_parser("digest", help="Print (or send) the stakeholder digest.")
+    p_dig.add_argument(
+        "--send",
+        action="store_true",
+        help="POST the digest to configured webhooks in addition to printing it.",
+    )
+    p_dig.add_argument(
+        "--language",
+        default=None,
+        choices=("es", "en"),
+        help="Override dashboard.summary_language for this run.",
+    )
+    _add_common_project_flags(p_dig)
+
+    args = p.parse_args(argv)
+
+    try:
+        paths = _resolve_paths_from_argv(args)
+        paths.ensure_valid()
+    except CwdViolationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        cfg = _load_config(paths.config_yaml, project_root=paths.project_root)
+    except Exception as exc:  # noqa: BLE001
+        print(f"config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    notifier = Notifier.from_config(cfg)
+
+    if args.verb == "test":
+        if not notifier.enabled:
+            print(
+                "no webhook configured — set notifications.slack_webhook or "
+                "notifications.discord_webhook in config.yaml",
+                file=sys.stderr,
+            )
+            return 1
+        ok = notifier.notify_test(args.message)
+        print("sent" if ok else "no channel accepted the message", file=sys.stderr)
+        return 0 if ok else 1
+
+    # --- verb == "digest" ----------------------------------------------------
+    # Mirrors /api/summary + /api/milestones composition in dashboard.server
+    # (single source of truth for wording — executive_summary + milestone_eta).
+    from orchestrator.state.sqlite_backend import SqliteBackend
+    from orchestrator.state import get_backend
+    backend = get_backend(paths, cfg)
+    if not isinstance(backend, SqliteBackend):
+        print(
+            "orch notify digest requires the SQLite backend (run `orch migrate`)",
+            file=sys.stderr,
+        )
+        return 2
+
+    from datetime import datetime, timezone
+    from orchestrator.dashboard.metrics import (
+        executive_summary,
+        milestone_eta,
+        sprint_health,
+    )
+    from orchestrator.spend_reader import aggregate_by_provider, iter_today_entries
+
+    tasks = load_tasks(paths.tasks_json)
+    done_7d = backend.count_done_last_n_days(7)
+    blocked_ids = [t.id for t in tasks if t.status == "blocked"]
+    last_events = backend.get_task_last_events(blocked_ids) if blocked_ids else {}
+    health = sprint_health(tasks, done_7d, last_events)
+
+    spend = aggregate_by_provider(iter_today_entries(paths.state_dir))
+    total_spend = round(sum(spend.values()), 2) if spend else None
+
+    done = int(health.get("done_count", 0))
+    remaining = int(health.get("remaining_tasks", 0))
+    in_progress = sum(1 for t in tasks if t.status in ("in_progress", "in-progress"))
+    blocked_reasons = [
+        f"- {b.get('title', b.get('task_id'))}: {b.get('reason', '')}".strip()
+        for b in health.get("blockers", [])
+        if b.get("reason")
+    ]
+    lang = args.language or (cfg.get("dashboard") or {}).get("summary_language", "es")
+    summary = executive_summary(
+        done=done,
+        total=done + remaining,
+        in_progress=in_progress,
+        blocked=int(health.get("blocked_count", 0)),
+        blocked_reasons=blocked_reasons,
+        eta_date=health.get("eta_date"),
+        total_spend_usd=total_spend,
+        language=lang,
+    )
+
+    # Milestones with ETA (same shape /api/milestones returns).
+    milestones = backend.get_milestones()
+    velocity = health.get("velocity_per_day", 0.0)
+    today = datetime.now(timezone.utc).date().isoformat()
+    for m in milestones:
+        remaining = m["progress"]["total"] - m["progress"]["done"]
+        m["eta"] = milestone_eta(
+            remaining=remaining,
+            velocity_per_day=velocity,
+            today=today,
+            target_date=m.get("target_date"),
+        )
+
+    text = notifier.digest_text(summary, milestones)
+    print(text, end="" if text.endswith("\n") else "\n")
+
+    if args.send:
+        if not notifier.enabled:
+            print(
+                "--send requested but no webhook is configured", file=sys.stderr,
+            )
+            return 1
+        ok = notifier.notify_test(text)  # reuse the plain-text POST path
+        if not ok:
+            print("digest print OK, but no webhook accepted it", file=sys.stderr)
+            return 1
+    return 0
+
+
 def _run_dashboard_subcommand(argv: list[str]) -> int:
     """Handle `orch dashboard [flags]` — separate parser to keep the main
     loop's argparser unchanged.
@@ -4277,6 +4440,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_router_subcommand(incoming[1:])
     if incoming and incoming[0] == "findings":
         return _run_findings_subcommand(incoming[1:])
+    if incoming and incoming[0] == "notify":
+        return _run_notify_subcommand(incoming[1:])
     if incoming and incoming[0] == "arch":
         from orchestrator.arch import run_arch_cli
 

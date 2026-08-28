@@ -72,6 +72,10 @@ def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("github", {})
     cfg["github"].setdefault("test_command", "pytest")
     cfg["github"].setdefault("auto_merge", False)
+    cfg.setdefault("notifications", {})
+    cfg["notifications"].setdefault("slack_webhook", "")
+    cfg["notifications"].setdefault("discord_webhook", "")
+    cfg["notifications"].setdefault("timeout_s", 5)
     cfg.setdefault("presentation", {})
     cfg["presentation"].setdefault("status_labels", {
         "backlog":     "Planificado",

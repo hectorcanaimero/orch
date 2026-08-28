@@ -142,3 +142,30 @@ def test_load_config_github_auto_merge_overridable(tmp_path: Path):
     cfg = load_config(cfg_file)
     assert cfg["github"]["auto_merge"] is True
     assert cfg["github"]["test_command"] == "make test"
+
+
+# ---- notifications: section defaults (Sprint G-6) ---------------------------
+
+
+def test_load_config_notifications_defaults(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("", encoding="utf-8")
+    cfg = load_config(cfg_file)
+    assert cfg["notifications"]["slack_webhook"] == ""
+    assert cfg["notifications"]["discord_webhook"] == ""
+    assert cfg["notifications"]["timeout_s"] == 5
+
+
+def test_load_config_notifications_overridable(tmp_path: Path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "notifications:\n"
+        "  slack_webhook: https://hooks.slack.com/services/AAA\n"
+        "  timeout_s: 10\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    assert cfg["notifications"]["slack_webhook"] == "https://hooks.slack.com/services/AAA"
+    assert cfg["notifications"]["timeout_s"] == 10
+    # discord default preserved when only slack overridden
+    assert cfg["notifications"]["discord_webhook"] == ""
