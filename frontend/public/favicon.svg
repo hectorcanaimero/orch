@@ -1,27 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
-  <defs>
-    <linearGradient id="orch-spine" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#aa3bff"/>
-      <stop offset="1" stop-color="#7e14ff"/>
-    </linearGradient>
-  </defs>
-
-  <!-- port nodes -->
-  <rect x="5.5" y="6" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-  <rect x="34.5" y="6" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-  <rect x="5.5" y="20" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-  <rect x="34.5" y="20" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-  <rect x="5.5" y="34" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-  <rect x="34.5" y="34" width="8" height="8" rx="1.5" fill="#aa3bff"/>
-
-  <!-- routing lines -->
-  <rect x="13.5" y="9" width="8" height="2" fill="#aa3bff"/>
-  <rect x="26.5" y="9" width="8" height="2" fill="#aa3bff"/>
-  <rect x="13.5" y="23" width="8" height="2" fill="#aa3bff"/>
-  <rect x="26.5" y="23" width="8" height="2" fill="#aa3bff"/>
-  <rect x="13.5" y="37" width="8" height="2" fill="#aa3bff"/>
-  <rect x="26.5" y="37" width="8" height="2" fill="#aa3bff"/>
-
-  <!-- spine -->
-  <rect x="21.5" y="4" width="5" height="40" rx="2.5" fill="url(#orch-spine)"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background: zinc-950 rounded square -->
+  <rect width="512" height="512" rx="88" fill="#09090b"/>
+  <!-- Parallel bars centered in square. Stack height: 4×30 + 3×38 = 234px. Top: 256-117=139 -->
+  <g id="icon">
+    <rect x="106" y="139" width="262" height="30" rx="15" fill="#7c3aed"/>
+    <rect x="106" y="177" width="194" height="30" rx="15" fill="#a78bfa"/>
+    <rect x="106" y="215" width="290" height="30" rx="15" fill="#7c3aed"/>
+    <rect x="106" y="253" width="162" height="30" rx="15" fill="#a78bfa"/>
+  </g>
 </svg>

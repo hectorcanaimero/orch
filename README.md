@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logos/export/logo.svg" alt="orch — task orchestrator" width="360" />
+</p>
+
 # orch
 
 **Run AI agents as a team. Show clients a live dashboard — not a Slack thread.**
