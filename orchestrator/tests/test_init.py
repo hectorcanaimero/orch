@@ -424,3 +424,60 @@ def test_cli_template_unknown_exits_2(
     err = capsys.readouterr().err
     assert "bogus-template" in err
     assert "python-api" in err  # available list surfaced
+
+
+# ---- chatbot-whatsapp template (Sprint H-1b) -------------------------------
+
+
+def test_list_templates_includes_chatbot_whatsapp() -> None:
+    rows = list_templates()
+    assert "chatbot-whatsapp" in rows
+    assert "waha" in rows["chatbot-whatsapp"].lower() or "whatsapp" in rows["chatbot-whatsapp"].lower()
+
+
+def test_orch_init_chatbot_whatsapp_writes_dag_across_three_phases(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="chatbot-whatsapp") == 0
+
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["template"] == "chatbot-whatsapp"
+    # Phases F0/F1/F2 present.
+    phase_ids = {p["id"] for p in payload["phases"]}
+    assert phase_ids == {0, 1, 2}
+    # DAG: F2.T1 depends on F1.T1 (which depends on F0.T2).
+    tasks_by_id = {t["id"]: t for t in payload["tasks"]}
+    assert "F2.T1" in tasks_by_id
+    assert "F1.T1" in tasks_by_id["F2.T1"]["dependencies"]
+    assert "F0.T2" in tasks_by_id["F1.T1"]["dependencies"]
+
+
+def test_orch_init_chatbot_whatsapp_enables_tunnel_by_default(
+    tmp_path: Path,
+) -> None:
+    """The whole ICP is 'agencies delivering a bot to a client' — the tunnel
+    default is on so the shareable URL works out of the box."""
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="chatbot-whatsapp") == 0
+
+    cfg_text = (dest / ".orchestrator" / "config.yaml").read_text(encoding="utf-8")
+    # tunnel.enabled: true AND auto_start: true both present.
+    assert "enabled: true" in cfg_text
+    assert "auto_start: true" in cfg_text
+
+
+def test_orch_init_chatbot_whatsapp_agents_md_documents_stack(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="chatbot-whatsapp") == 0
+
+    agents_text = (dest / "AGENTS.md").read_text(encoding="utf-8")
+    # Stack keywords the agent needs at session start.
+    assert "Waha" in agents_text
+    assert "anthropic" in agents_text
+    # Security note (webhook auth).
+    assert "X-Api-Key" in agents_text
+    # Placeholders rendered.
+    assert "PROJECT_NAME" not in agents_text
