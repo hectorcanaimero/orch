@@ -7,6 +7,7 @@ per ``orch run`` invocation and lives until the main loop exits.
 Public surface:
     WorktreeError  — raised when any git command fails
     WorktreeManager.create(task_id, base_branch) -> Path
+    WorktreeManager.commit_pending(task_id, message) -> bool  # Sprint F-6
     WorktreeManager.push(task_id)
     WorktreeManager.remove(task_id)
     WorktreeManager.remove_all()
@@ -91,6 +92,43 @@ class WorktreeManager:
         )
         self._active[task_id] = wt_path
         return wt_path
+
+    def commit_pending(self, task_id: str, message: str) -> bool:
+        """Stage and commit any uncommitted changes inside the worktree.
+
+        Fixes GH #60: the dispatched agent writes files into its worktree but
+        the prompt protocol never asks it to ``git add``/``git commit``. Without
+        this step, ``push()`` would send an empty branch and ``remove()`` would
+        then silently delete the agent's output.
+
+        Runs ``git -C <worktree> add -A``, then ``status --porcelain`` to
+        detect whether anything was actually staged. If the tree is clean this
+        is a no-op that returns ``False``. Otherwise it runs ``git commit``
+        with an inline user identity (so it works in a project whose git
+        config isn't set) and returns ``True``.
+
+        Raises:
+            WorktreeError: if any git command fails (other than a clean tree).
+        """
+        wt = str(self.worktree_path(task_id))
+        self._run(["git", "-C", wt, "add", "-A"], task_id)
+        status_out = self._run(
+            ["git", "-C", wt, "status", "--porcelain"], task_id
+        )
+        if not status_out.strip():
+            return False
+        self._run(
+            [
+                "git",
+                "-C", wt,
+                "-c", "user.email=orch@local",
+                "-c", "user.name=orch",
+                "commit",
+                "-m", message,
+            ],
+            task_id,
+        )
+        return True
 
     def push(self, task_id: str) -> None:
         """Push the task branch to origin using force-with-lease.

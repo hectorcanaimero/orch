@@ -1002,6 +1002,19 @@ def _reap_once(
         pr_created = False
         if entry.worktree_path is not None and wm is not None:
             if result.success:
+                # Sprint F-6 (fix #60): stage + commit anything the agent wrote
+                # BEFORE push. Without this, the branch is empty and remove()
+                # then silently discards the agent's work.
+                try:
+                    wm.commit_pending(
+                        entry.task.id,
+                        f"{entry.task.id}: orch auto-commit",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "worktree commit failed for %s (best-effort, not failing task): %s",
+                        entry.task.id, exc,
+                    )
                 try:
                     wm.push(entry.task.id)
                 except Exception as exc:  # noqa: BLE001
