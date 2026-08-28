@@ -151,5 +151,7 @@ class GitLabProvider:
         parts = url.rstrip("/").split("/")
         idx = next((i for i, p in enumerate(parts) if p == "merge_requests"), -1)
         if idx != -1 and idx + 1 < len(parts):
-            return parts[idx + 1]
+            candidate = parts[idx + 1]
+            if candidate.isdigit():
+                return candidate
         return ""

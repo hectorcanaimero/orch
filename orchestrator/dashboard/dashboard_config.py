@@ -217,6 +217,8 @@ class DashboardConfig:
             from_config=cfg_block.get("token"),
         )
         routes = _resolve_routes(cfg_block.get("stakeholder_routes"))
+        if cfg_block.get("show_spend_to_stakeholder"):
+            routes = routes + ("api_budget_summary",)
         tunnel = parse_tunnel_section(merged.get("tunnel"))
         server_port, server_host = parse_server_section(merged.get("server"))
 
