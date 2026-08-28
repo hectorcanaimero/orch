@@ -44,11 +44,15 @@ def test_init_creates_expected_layout(tmp_path: Path) -> None:
         assert p.exists(), f"missing script: {p}"
         mode = p.stat().st_mode
         assert mode & stat.S_IXUSR, f"script not executable: {p}"
-    # orchestrator dir
+    # orchestrator dir — H-2: only config.yaml + router stub live here.
+    # dashboard.yaml and budgets.yaml are NO LONGER scaffolded; their
+    # defaults ship inline in config.yaml (`dashboard:`) and in
+    # config_loader._apply_defaults (`budget:`) respectively.
     assert (dest / ".orchestrator" / "state" / ".gitkeep").exists()
     assert (dest / ".orchestrator" / "config.yaml").exists()
     assert (dest / ".orchestrator" / "model_router.yaml").exists()
-    assert (dest / ".orchestrator" / "budgets.yaml").exists()
+    assert not (dest / ".orchestrator" / "budgets.yaml").exists()
+    assert not (dest / "dashboard.yaml").exists()
 
 
 def test_init_creates_dest_dir_if_missing(tmp_path: Path) -> None:
@@ -82,8 +86,8 @@ def test_init_tasks_json_loadable_by_orch(tmp_path: Path) -> None:
 # ---- Config copies match the packaged defaults -------------------------
 
 
-def test_init_config_yamls_are_copies_of_packaged_defaults(tmp_path: Path) -> None:
-    """Single source of truth: the copied YAMLs must equal the ones shipped."""
+def test_init_config_yaml_is_byte_identical_to_packaged_default(tmp_path: Path) -> None:
+    """H-2: only config.yaml is copied verbatim; the other YAMLs are gone."""
     from orchestrator import (
         __file__ as pkg_init,
     )
@@ -92,65 +96,57 @@ def test_init_config_yamls_are_copies_of_packaged_defaults(tmp_path: Path) -> No
     dest = tmp_path / "proj"
     orch_init(dest)
 
-    pairs = (
-        ("config.yaml", ".orchestrator/config.yaml"),
-        ("model_router.yaml", ".orchestrator/model_router.yaml"),
-        ("budgets.yaml", ".orchestrator/budgets.yaml"),
-        # Dashboard override lives at the project root — package source is
-        # one level deeper. Verified explicitly to lock the layout.
-        ("dashboard/dashboard.yaml", "dashboard.yaml"),
+    packaged = pkg_dir / "config.yaml"
+    copied = dest / ".orchestrator" / "config.yaml"
+    assert copied.read_bytes() == packaged.read_bytes(), (
+        "config.yaml drift from packaged default"
     )
-    for src_rel, dst_rel in pairs:
-        packaged = pkg_dir / src_rel
-        copied = dest / dst_rel
-        assert copied.read_bytes() == packaged.read_bytes(), (
-            f"{dst_rel} drift from packaged default"
-        )
 
 
-def test_init_creates_dashboard_yaml_at_project_root(tmp_path: Path) -> None:
-    """dashboard.yaml MUST land at project root (not under orchestrator/).
+def test_init_config_yaml_ships_dashboard_defaults_inline(tmp_path: Path) -> None:
+    """H-2: `dashboard:` section is inline in config.yaml (no dashboard.yaml)."""
+    dest = tmp_path / "proj"
+    assert orch_init(dest) == 0
+    cfg_text = (dest / ".orchestrator" / "config.yaml").read_text(encoding="utf-8")
+    assert "dashboard:" in cfg_text
+    assert "kanban:" in cfg_text
+    assert "tunnel:" in cfg_text
+    # And the standalone override file is NOT scaffolded.
+    assert not (dest / "dashboard.yaml").exists()
 
-    The dashboard config loader looks for `<project_root>/dashboard.yaml`,
-    so if we put it anywhere else the operator can't actually override
-    settings (like flipping tunnel.enabled = true).
+
+def test_init_writes_router_stub_not_shipped_table(tmp_path: Path) -> None:
+    """H-2: fresh project gets an empty router mapping — not the 286-line
+    shipped table full of models the dev may not use.
+
+    `orch router add-missing` populates entries when tasks add new models.
     """
     dest = tmp_path / "proj"
     assert orch_init(dest) == 0
-    dashboard_yaml = dest / "dashboard.yaml"
-    assert dashboard_yaml.exists(), "dashboard.yaml must be scaffolded at project root"
-    # Sanity-check the schema: tunnel block must be present (shipped default).
-    text = dashboard_yaml.read_text(encoding="utf-8")
-    assert "tunnel:" in text, "shipped dashboard.yaml should include tunnel block"
-    # And it MUST NOT sit under orchestrator/ — that would silently break
-    # the loader while looking correct in a file listing.
-    assert not (dest / ".orchestrator" / "dashboard.yaml").exists()
+    router = dest / ".orchestrator" / "model_router.yaml"
+    text = router.read_text(encoding="utf-8")
+    assert "orch router add-missing" in text  # points the dev at the tool
+    # Stub must still parse as an empty mapping (load_router requires a dict).
+    import yaml
+    parsed = yaml.safe_load(text) or {}
+    assert parsed == {}
 
 
-def test_init_refuses_when_dest_has_dashboard_yaml(tmp_path: Path) -> None:
-    """Existing dashboard.yaml at project root must trigger the conflict gate."""
+def test_init_pre_existing_dashboard_yaml_is_left_alone(tmp_path: Path) -> None:
+    """H-2 backwards compat: a project that already has dashboard.yaml as an
+    override keeps it untouched — orch init never scaffolds one, and its
+    presence must NOT trigger the conflict gate (init writes only the
+    packaged config.yaml now).
+    """
     dest = tmp_path / "proj"
     dest.mkdir()
     original = "# operator-authored overrides\nkanban:\n  wip_default: 5\n"
     (dest / "dashboard.yaml").write_text(original, encoding="utf-8")
 
     exit_code = orch_init(dest, force=False)
-    assert exit_code == 1
-    # Existing file preserved and no partial write happened.
+    assert exit_code == 0
+    # Existing override preserved verbatim.
     assert (dest / "dashboard.yaml").read_text(encoding="utf-8") == original
-    assert not (dest / "scripts").exists()
-
-
-def test_init_force_overwrites_existing_dashboard_yaml(tmp_path: Path) -> None:
-    dest = tmp_path / "proj"
-    dest.mkdir()
-    (dest / "dashboard.yaml").write_text(
-        "# stale operator overrides\n", encoding="utf-8"
-    )
-
-    assert orch_init(dest, force=True) == 0
-    # After --force, the file equals the shipped default (tunnel block back).
-    assert "tunnel:" in (dest / "dashboard.yaml").read_text(encoding="utf-8")
 
 
 # ---- Conflict handling -------------------------------------------------

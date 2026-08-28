@@ -113,6 +113,41 @@ github:
   test_command: pytest       # command the generated CI workflow runs
   auto_merge: false          # opt-in — requires branch protection on the repo
 
+# Sprint H-2 — Dashboard defaults live inline. A project-root
+# `dashboard.yaml` still overrides via deep-merge (backwards compat), but
+# `orch init` no longer scaffolds one. See docs/DASHBOARD-PROFILES.md for
+# tunnel security notes.
+dashboard:
+  kanban:
+    wip_default: null          # integer or null. null = no WIP badge unless ?wip=N.
+    sort_default: null         # "impact" | null (default = phase asc + id asc).
+    group_default: null        # "phase" | null.
+    refresh_interval_s: 10     # HTMX polling cadence for the board.
+  # Tunnel manager (Sprint E-5). Disabled by default. Flip `enabled: true`
+  # to expose `/api/tunnel/*` (three-gate: config → operator profile →
+  # loopback host). Requires `autossh` on PATH.
+  tunnel:
+    enabled: false
+    provider: autossh          # v1 allowlist: autossh, bore.
+    command: autossh
+    args:
+      - "-M"
+      - "0"
+      - "-o"
+      - "StrictHostKeyChecking=no"
+      - "-o"
+      - "ServerAliveInterval=30"
+      - "-o"
+      - "ExitOnForwardFailure=yes"
+      - "-p"
+      - "443"
+      - "-R"
+      - "0:localhost:7420"
+      - "a.pinggy.io"
+    auto_start: false          # true = self-probe + spawn on dashboard boot.
+    startup_probe_timeout_s: 3    # 1..30 — self-probe timeout for auto_start.
+    url_parse_timeout_s: 30       # 5..300 — how long we wait for the URL line.
+
 # Sprint G-6 — Slack/Discord webhooks + `orch notify digest`.
 # Empty webhook URLs disable that channel. Failures are silent by design —
 # a broken webhook never surfaces into the dispatch loop. Triggers today:
