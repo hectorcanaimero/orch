@@ -32,6 +32,14 @@ from orchestrator.orch import (
 from orchestrator.worktree import WorktreeError, WorktreeManager
 
 
+# ---- F-6 helpers (fix #60): commit_pending is called before push ------------
+#
+# Every _reap_once test that sets a worktree_path must have wm.commit_pending
+# returning something (True/False). Without this, MagicMock(spec=WorktreeManager)
+# would still return a MagicMock() by default, which is truthy — but explicit
+# is better than implicit.
+
+
 # ---- Fixtures ---------------------------------------------------------------
 
 
@@ -244,11 +252,20 @@ def test_reap_calls_push_and_remove_on_success(tmp_path: Path) -> None:
 
     wm.push.assert_called_once_with("T-WT1")
     wm.remove.assert_called_once_with("T-WT1")
-    # push before remove (index-based to survive interleaved calls).
+    # Sprint F-6 (fix #60): commit_pending must run BEFORE push, so the branch
+    # actually carries the agent's work.
+    wm.commit_pending.assert_called_once()
+    assert wm.commit_pending.call_args[0][0] == "T-WT1"
+    # commit_pending before push before remove.
     call_names = [c[0] for c in wm.method_calls]
+    assert "commit_pending" in call_names
     assert "push" in call_names
     assert "remove" in call_names
-    assert call_names.index("push") < call_names.index("remove"), "push must happen before remove"
+    assert (
+        call_names.index("commit_pending")
+        < call_names.index("push")
+        < call_names.index("remove")
+    ), "expected commit_pending → push → remove ordering"
 
 
 # ---- Test 4: _reap_once skips push on failure but still removes -------------
@@ -323,3 +340,77 @@ def test_reap_logs_warning_when_push_fails(tmp_path: Path) -> None:
     wm.remove.assert_called_once_with("T-WT1")
     # Task was treated as success (mark_done was called).
     queue.mark_done.assert_called_once_with("T-WT1")
+
+
+# ---- F-6 (fix #60): commit_pending failure is best-effort -------------------
+
+
+def test_reap_still_pushes_when_commit_pending_raises(tmp_path: Path) -> None:
+    """A commit_pending error is logged but does not block the push attempt.
+
+    We follow the same best-effort posture as push: if commit failed, the tree
+    may still hold a prior state worth pushing (e.g. the agent committed
+    manually — a real case for backends that already commit their own work).
+    Downgrading the task on a commit hiccup would be worse than trying push.
+    """
+    worktree_path = tmp_path / ".worktrees" / "T-WT1"
+    pid = os.getpid()
+
+    in_flight = _make_in_flight(pid, worktree_path=worktree_path, success=True)
+    queue, run_file, event_log, spend_log, cfg, gsem, psem = _make_mocks(tmp_path)
+
+    wm = MagicMock(spec=WorktreeManager)
+    wm.commit_pending.side_effect = WorktreeError(
+        "T-WT1", ["git", "commit"], "fatal: unable to stage"
+    )
+
+    with (
+        patch("orchestrator.orch.os.waitpid", side_effect=[(pid, 0), (0, 0)]),
+        patch("orchestrator.orch._read_log_safely", return_value=""),
+        patch("orchestrator.orch._post_run_checks", return_value=(
+            DispatchResult(exit_code=0, success=True), None
+        )),
+        patch("orchestrator.orch._record_spend"),
+        patch("orchestrator.orch.call_task_finish"),
+    ):
+        _reap_once(
+            in_flight, queue, run_file, event_log, spend_log,
+            cfg, tmp_path, gsem, psem,
+            wm=wm,
+        )
+
+    wm.commit_pending.assert_called_once()
+    wm.push.assert_called_once_with("T-WT1")
+    wm.remove.assert_called_once_with("T-WT1")
+    queue.mark_done.assert_called_once_with("T-WT1")
+
+
+def test_reap_does_not_commit_or_push_on_failure(tmp_path: Path) -> None:
+    """On task failure, neither commit_pending nor push should run — remove only."""
+    worktree_path = tmp_path / ".worktrees" / "T-WT1"
+    pid = os.getpid()
+
+    in_flight = _make_in_flight(pid, worktree_path=worktree_path, success=False)
+    queue, run_file, event_log, spend_log, cfg, gsem, psem = _make_mocks(tmp_path)
+
+    wm = MagicMock(spec=WorktreeManager)
+
+    with (
+        patch("orchestrator.orch.os.waitpid", side_effect=[(pid, 0), (0, 0)]),
+        patch("orchestrator.orch._read_log_safely", return_value=""),
+        patch("orchestrator.orch._post_run_checks", return_value=(
+            DispatchResult(exit_code=1, success=False, error_message="fail"), None
+        )),
+        patch("orchestrator.orch._record_spend"),
+        patch("orchestrator.orch.call_task_block"),
+    ):
+        _reap_once(
+            in_flight, queue, run_file, event_log, spend_log,
+            cfg, tmp_path, gsem, psem,
+            retry_queue=None,
+            wm=wm,
+        )
+
+    wm.commit_pending.assert_not_called()
+    wm.push.assert_not_called()
+    wm.remove.assert_called_once_with("T-WT1")
