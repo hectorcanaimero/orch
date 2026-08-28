@@ -52,6 +52,7 @@ from typing import Callable
 
 _PKG_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _PKG_DIR / "templates"
+_PROJECTS_DIR = _TEMPLATES_DIR / "projects"  # H-1a: named project templates
 
 # Files copied verbatim from the package (shipped YAML defaults).
 # Each tuple is (source path relative to _PKG_DIR, destination path
@@ -88,6 +89,66 @@ class SDDStatus:
 
     installed: bool
     skills: list[str] = field(default_factory=list)
+
+
+# ---- H-1a: project templates -------------------------------------------
+
+
+class TemplateNotFoundError(ValueError):
+    """Raised by orch_init when template=<name> doesn't match any shipped
+    template directory."""
+
+
+def list_templates() -> dict[str, str]:
+    """Enumerate shipped project templates.
+
+    Returns ``{name: one_line_description}`` sorted by name. A template is
+    any subdir under ``templates/projects/`` that carries at least a
+    ``tasks.json.tmpl`` file (the only required file — every other file
+    in the template is optional and only overlaid when present).
+
+    ``description.txt`` (first non-empty line) supplies the human blurb;
+    falls back to the template name when absent.
+    """
+    if not _PROJECTS_DIR.exists():
+        return {}
+    out: dict[str, str] = {}
+    for entry in sorted(_PROJECTS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "tasks.json.tmpl").exists():
+            continue
+        desc_path = entry / "description.txt"
+        desc = entry.name
+        if desc_path.exists():
+            for line in desc_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped:
+                    desc = stripped
+                    break
+        out[entry.name] = desc
+    return out
+
+
+def _resolve_template(name: str) -> Path:
+    """Return the template dir for *name* or raise TemplateNotFoundError."""
+    candidate = _PROJECTS_DIR / name
+    if not candidate.is_dir() or not (candidate / "tasks.json.tmpl").exists():
+        available = ", ".join(sorted(list_templates())) or "<none>"
+        raise TemplateNotFoundError(
+            f"unknown template {name!r}. Available: {available}"
+        )
+    return candidate
+
+
+def _render_template_file(src: Path, project_name: str) -> str:
+    """Read a template .tmpl / .md.tmpl / .yaml.tmpl and substitute the two
+    canonical placeholders — matches the pattern already used for the
+    shipped tasks.json.tmpl (single source of truth for how tokens map)."""
+    body = src.read_text(encoding="utf-8")
+    return body.replace("PROJECT_NAME", project_name).replace(
+        "GENERATED_AT", datetime.now(timezone.utc).date().isoformat()
+    )
 
 
 def detect_sdd() -> SDDStatus:
@@ -175,13 +236,23 @@ def orch_init(
     force: bool = False,
     sdd: bool = False,
     project_name: str | None = None,
+    template: str | None = None,
 ) -> int:
     """Scaffold an orch project at `project_path`.
+
+    Args:
+        template: optional named template (H-1a) — one of the keys returned
+            by ``list_templates()``. When set, the baseline `tasks.json`,
+            `.orchestrator/config.yaml`, and `AGENTS.md` are overlaid with
+            the template's ``.tmpl`` files (each file is optional in the
+            template dir; only what's present overrides). Unknown names
+            raise ``TemplateNotFoundError``.
 
     Returns exit code:
         0 — success
         1 — destination already has conflicting files and --force wasn't set
     """
+    template_dir = _resolve_template(template) if template else None
     project_path = Path(project_path).expanduser().resolve()
 
     # ---- conflict check (before ANY write) --------------------------
@@ -201,14 +272,15 @@ def orch_init(
     project_path.mkdir(parents=True, exist_ok=True)
 
     # ---- tasks.json -------------------------------------------------
-    tasks_template = (_TEMPLATES_DIR / "tasks.json.tmpl").read_text(
-        encoding="utf-8"
-    )
     name = project_name or project_path.name
-    tasks_rendered = tasks_template.replace("PROJECT_NAME", name).replace(
-        "GENERATED_AT", datetime.now(timezone.utc).date().isoformat()
+    tasks_src = (
+        template_dir / "tasks.json.tmpl"
+        if template_dir and (template_dir / "tasks.json.tmpl").exists()
+        else _TEMPLATES_DIR / "tasks.json.tmpl"
     )
-    (project_path / "tasks.json").write_text(tasks_rendered, encoding="utf-8")
+    (project_path / "tasks.json").write_text(
+        _render_template_file(tasks_src, name), encoding="utf-8"
+    )
 
     # ---- scripts ----------------------------------------------------
     scripts_src = _TEMPLATES_DIR / "scripts"
@@ -239,6 +311,18 @@ def orch_init(
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dst)
 
+    # ---- Template overlay: config.yaml (H-1a) -----------------------
+    # If the chosen template ships a config.yaml.tmpl, it replaces the
+    # packaged default. The default already got applied above so any keys
+    # the template omits are still covered by _apply_defaults at load time.
+    if template_dir and (template_dir / "config.yaml.tmpl").exists():
+        (project_path / ".orchestrator" / "config.yaml").write_text(
+            _render_template_file(
+                template_dir / "config.yaml.tmpl", name
+            ),
+            encoding="utf-8",
+        )
+
     # ---- .orchestrator/model_router.yaml (H-2: stub, not the whole
     # shipped table). load_router() requires this file to exist; a fresh
     # project has no tasks yet, so an empty mapping is valid. When the
@@ -267,11 +351,22 @@ def orch_init(
         )
 
     # ---- AGENTS.md (committed, not gitignored) -------------------------
+    # H-1a: a template can ship its own AGENTS.md.tmpl with stack-specific
+    # context. Falls back to the generic generator when the template omits
+    # it (or when no template is in use).
     agents_md_path = project_path / "AGENTS.md"
     if not agents_md_path.exists() or force:
-        agents_md_path.write_text(
-            _generate_agents_md(name), encoding="utf-8"
+        template_agents = (
+            template_dir / "AGENTS.md.tmpl"
+            if template_dir and (template_dir / "AGENTS.md.tmpl").exists()
+            else None
         )
+        agents_body = (
+            _render_template_file(template_agents, name)
+            if template_agents
+            else _generate_agents_md(name)
+        )
+        agents_md_path.write_text(agents_body, encoding="utf-8")
 
     # ---- .github/workflows/orch-ci.yml (soft — only when absent) -------
     # Gives the vcs.auto_pr / CI-polling loop (Sprint F-4) a check to watch
@@ -373,6 +468,7 @@ _SCAFFOLDER_FLAGS: frozenset[str] = frozenset({
     "force",
     "sdd",
     "project_name",
+    "template",  # H-1a: --template signals batch intent
 })
 
 
@@ -385,7 +481,7 @@ def _is_scaffolder_flag_provided(args: argparse.Namespace) -> bool:
     """
     if getattr(args, "path", None):
         return True
-    for name in ("force", "sdd", "project_name"):
+    for name in ("force", "sdd", "project_name", "template"):
         val = getattr(args, name, None)
         if name == "project_name":
             if val:
@@ -558,6 +654,28 @@ def run_wizard(
     )
     project_root = Path(project_root_str).expanduser().resolve()
 
+    # ---- template picker (H-1a) ---------------------------------------
+    # An explicit --template already picked one → don't ask again. Otherwise
+    # offer "blank" + every shipped template as choices, keyed by name, with
+    # the description line printed inline.
+    template_choice: str | None = getattr(args, "template", None) or None
+    if template_choice is None:
+        shipped = list_templates()
+        if shipped:
+            _say("")
+            _say("Project templates:")
+            _say("  blank          Empty tasks.json — you fill it in yourself.")
+            for tname, tdesc in shipped.items():
+                _say(f"  {tname.ljust(14)} {tdesc}")
+            picked = prompt(
+                "template",
+                default="blank",
+                choices=["blank", *shipped.keys()],
+                input_fn=input_fn,
+            )
+            template_choice = None if picked == "blank" else picked
+            _say("")
+
     # Backends probe — informational, doesn't gate anything.
     _say("")
     _say("Detected backends on PATH:")
@@ -649,6 +767,7 @@ def run_wizard(
         force=True,
         sdd=sdd_flag,
         project_name=project_id,
+        template=template_choice,
     )
     if rc != 0:
         _say(f"scaffold failed (exit {rc}).")
@@ -821,7 +940,28 @@ def run_init_cli(argv: list[str]) -> int:
                    help="Force interactive wizard (auto-detect otherwise).")
     p.add_argument("--non-interactive", action="store_true",
                    help="Force batch mode even without scaffolder flags (fail if flags missing).")
+    p.add_argument("--template", default=None, metavar="NAME",
+                   help="Named project template (see --list-templates). Skips the wizard.")
+    p.add_argument("--list-templates", action="store_true",
+                   help="Print available project templates and exit.")
     args = p.parse_args(argv)
+
+    if args.list_templates:
+        rows = list_templates()
+        if not rows:
+            print("no templates shipped with this build", file=sys.stderr)
+            return 1
+        width = max(len(name) for name in rows)
+        print("Available templates:")
+        for name, desc in rows.items():
+            print(f"  {name.ljust(width)}   {desc}")
+        return 0
+
+    if args.template is not None:
+        try:
+            _resolve_template(args.template)
+        except TemplateNotFoundError as exc:
+            p.error(str(exc))
 
     if args.interactive and args.non_interactive:
         p.error("cannot combine --interactive and --non-interactive")
@@ -852,6 +992,7 @@ def run_init_cli(argv: list[str]) -> int:
         force=args.force,
         sdd=args.sdd,
         project_name=args.project_name,
+        template=args.template,
     )
 
 
