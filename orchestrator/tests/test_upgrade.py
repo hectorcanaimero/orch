@@ -92,3 +92,83 @@ def test_github_unreachable_returns_1(capsys):
         rc = _run_upgrade_subcommand([])
     assert rc == 1
     assert "GitHub" in capsys.readouterr().err
+
+
+def test_upgrade_uv_path_calls_uv_tool_install(capsys):
+    """A uv-installed tool env (`.../uv/tools/orch/bin/python`) must use
+    `uv tool install --force <wheel>`, not pip."""
+    fake_uv_exe = "/home/user/.local/share/uv/tools/orch/bin/python"
+    with (
+        _patch_urlopen(_NEWER),
+        patch("sys.executable", fake_uv_exe),
+        patch("shutil.which", return_value="/usr/local/bin/uv"),
+        patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run,
+    ):
+        rc = _run_upgrade_subcommand([])
+
+    assert rc == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0].endswith("/uv")
+    assert cmd[1:4] == ["tool", "install", "--force"]
+    assert _WHEEL_URL in cmd
+
+
+def test_check_flag_no_upgrade_reports_already_latest(capsys):
+    """Regression: `orch upgrade --check` on a current install must NOT
+    print 'Install with' — that's misleading."""
+    with _patch_urlopen(CURRENT):
+        rc = _run_upgrade_subcommand(["--check"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "already the latest" in out
+    assert "Install with" not in out
+
+
+# ---- stdlib version fallback ----------------------------------------------
+
+
+def test_version_gt_uses_packaging_when_available():
+    from orchestrator.orch import _version_gt
+    assert _version_gt("1.0.0", "0.9.9") is True
+    assert _version_gt("0.9.0", "0.9.1") is False
+    assert _version_gt("1.0.0", "1.0.0") is False
+
+
+def test_version_gt_falls_back_to_stdlib_without_packaging():
+    """If `packaging` isn't importable (bare uv tool env), the naive
+    tuple-of-ints parser must still get common cases right."""
+    from orchestrator.orch import _version_gt
+
+    real_import = __import__
+
+    def _no_packaging(name, *args, **kwargs):
+        if name == "packaging.version" or name == "packaging":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_no_packaging):
+        assert _version_gt("1.0.0", "0.9.9") is True
+        assert _version_gt("0.9.1", "0.9.1") is False
+        assert _version_gt("0.9.0", "0.9.1") is False
+        assert _version_gt("1.2.3", "1.2.2") is True
+
+
+# ---- install-method detection ---------------------------------------------
+
+
+def test_detect_install_method_pipx():
+    from orchestrator.orch import _detect_install_method
+    with patch("sys.executable", "/opt/pipx/venvs/orch/bin/python"):
+        assert _detect_install_method() == "pipx"
+
+
+def test_detect_install_method_uv():
+    from orchestrator.orch import _detect_install_method
+    with patch("sys.executable", "/home/user/.local/share/uv/tools/orch/bin/python"):
+        assert _detect_install_method() == "uv"
+
+
+def test_detect_install_method_fallback_pip():
+    from orchestrator.orch import _detect_install_method
+    with patch("sys.executable", "/usr/bin/python3"):
+        assert _detect_install_method() == "pip"

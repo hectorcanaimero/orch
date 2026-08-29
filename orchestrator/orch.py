@@ -2212,8 +2212,51 @@ def _print_subcommand_list() -> int:
     return 0
 
 
+def _version_gt(latest: str, current: str) -> bool:
+    """Return True if `latest` > `current`.
+
+    Uses `packaging.version.Version` when available (PEP 440 semantics —
+    handles rc/dev/post correctly); falls back to a stdlib tuple-of-ints
+    parser because `packaging` is not a declared runtime dep (it happens to
+    ship with pip, but a uv-installed tool env may not carry it).
+    """
+    try:
+        from packaging.version import Version  # noqa: PLC0415
+        return Version(latest) > Version(current)
+    except ImportError:
+        pass
+
+    def _tuple(v: str) -> tuple[int, ...]:
+        parts: list[int] = []
+        for chunk in v.split("."):
+            digits = ""
+            for c in chunk:
+                if c.isdigit():
+                    digits += c
+                else:
+                    break
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts)
+
+    return _tuple(latest) > _tuple(current)
+
+
+def _detect_install_method() -> str:
+    """Return 'pipx' | 'uv' | 'pip' based on `sys.executable` path.
+
+    pipx venvs live under `.../pipx/venvs/<pkg>/bin/python`; uv tool envs
+    under `.../uv/tools/<pkg>/bin/python`. Anything else → fall back to pip.
+    """
+    exe = sys.executable.replace("\\", "/")
+    if "pipx/venvs" in exe or "/pipx/" in exe:
+        return "pipx"
+    if "uv/tools" in exe:
+        return "uv"
+    return "pip"
+
+
 def _run_upgrade_subcommand(argv: list[str]) -> int:
-    """Handle `orch upgrade [--check]` — self-update via pipx or pip."""
+    """Handle `orch upgrade [--check]` — self-update via pipx, uv, or pip."""
     import importlib.metadata
     import shutil
     import urllib.request
@@ -2223,14 +2266,12 @@ def _run_upgrade_subcommand(argv: list[str]) -> int:
     ap.add_argument("--check", action="store_true", help="Only report whether an upgrade is available; don't install.")
     opts = ap.parse_args(argv)
 
-    # Current installed version.
     try:
         current = importlib.metadata.version("orchestrator")
     except importlib.metadata.PackageNotFoundError:
         print("error: cannot determine installed version", file=sys.stderr)
         return 1
 
-    # Latest release from GitHub.
     api_url = "https://api.github.com/repos/hectorcanaimero/orch/releases/latest"
     try:
         req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": "orch-upgrade"})
@@ -2249,33 +2290,32 @@ def _run_upgrade_subcommand(argv: list[str]) -> int:
         print("error: could not parse latest release metadata", file=sys.stderr)
         return 1
 
-    from packaging.version import Version  # noqa: PLC0415 — stdlib-like, always available via pip
-
-    try:
-        is_newer = Version(latest_tag) > Version(current)
-    except Exception:
-        is_newer = latest_tag != current
-
-    if not is_newer:
+    if not _version_gt(latest_tag, current):
         print(f"orch {current} is already the latest release.")
         return 0
 
     print(f"New release available: {current} → {latest_tag}")
 
     if opts.check:
-        print(f"  Install with: orch upgrade")
+        print("  Install with: orch upgrade")
         return 0
 
-    # Detect install method: pipx venv path contains "pipx/venvs".
-    using_pipx = "pipx" in sys.executable
+    method = _detect_install_method()
 
-    if using_pipx:
+    if method == "pipx":
         pipx_bin = shutil.which("pipx")
         if not pipx_bin:
             print("error: pipx not found in PATH", file=sys.stderr)
             return 1
         print(f"Upgrading via pipx → {wheel_url}")
         result = subprocess.run([pipx_bin, "install", "--force", wheel_url])
+    elif method == "uv":
+        uv_bin = shutil.which("uv")
+        if not uv_bin:
+            print("error: uv not found in PATH", file=sys.stderr)
+            return 1
+        print(f"Upgrading via uv tool install → {wheel_url}")
+        result = subprocess.run([uv_bin, "tool", "install", "--force", wheel_url])
     else:
         pip_bin = shutil.which("pip3") or shutil.which("pip")
         if not pip_bin:
