@@ -242,15 +242,87 @@ class SqliteBackend:
 
     # ---- lifecycle -----------------------------------------------------
 
+    def detect_orphan_rows(self) -> dict[str, dict[str, int]]:
+        """Return orphaned rows keyed by table then project_id.
+
+        F-9 (fix #73): a row in `tasks_runtime` or `tasks_definition` whose
+        `project_id` has no matching row in `projects` is an orphan. The FK
+        enforcement (see `_connect`'s `PRAGMA foreign_keys = ON`) blocks
+        NEW orphans, but historical DBs can still hold them. Return shape:
+
+            {"tasks_runtime": {"guayana-news": 229, ...},
+             "tasks_definition": {"guayana-news": 229, ...}}
+
+        Empty dict → clean. This is a pure read (no writes, no DELETEs) —
+        callers decide whether to repair.
+        """
+        result: dict[str, dict[str, int]] = {}
+        conn = self._conn()
+        try:
+            for table in ("tasks_runtime", "tasks_definition"):
+                cur = conn.execute(
+                    f"SELECT project_id, COUNT(*) AS n FROM {table} "
+                    "WHERE project_id NOT IN (SELECT project_id FROM projects) "
+                    "GROUP BY project_id"
+                )
+                rows = {row["project_id"]: int(row["n"]) for row in cur.fetchall()}
+                if rows:
+                    result[table] = rows
+        finally:
+            conn.close()
+        return result
+
+    def _warn_on_orphan_rows(self) -> None:
+        """Log a WARNING (with repair SQL) if `detect_orphan_rows` finds any.
+
+        Called from `bootstrap()` so operators see the diagnostic on every
+        `orch run`. Silent when the DB is clean.
+        """
+        try:
+            orphans = self.detect_orphan_rows()
+        except Exception as exc:  # noqa: BLE001 — never block bootstrap on a diag
+            log.warning("orphan-row check failed: %s", exc)
+            return
+        if not orphans:
+            return
+        lines: list[str] = [
+            "sqlite: orphaned rows detected — a prior bootstrap left rows "
+            "whose project_id has no matching row in `projects`. "
+            "This can silently break the DAG resolver.",
+        ]
+        for table, per_project in orphans.items():
+            for pid, count in per_project.items():
+                lines.append(
+                    f"  - {table}: {count} row(s) with project_id={pid!r}"
+                )
+        lines.append(
+            "To repair (after inspecting): "
+            "sqlite3 <db> \"DELETE FROM tasks_runtime WHERE project_id NOT IN "
+            "(SELECT project_id FROM projects); "
+            "DELETE FROM tasks_definition WHERE project_id NOT IN "
+            "(SELECT project_id FROM projects);\""
+        )
+        log.warning("\n".join(lines))
+
     def bootstrap(self, tasks: Iterable[Task]) -> None:
         """Seed `projects` + `tasks_runtime` idempotently for this project.
 
         Uses `INSERT OR IGNORE` so re-running bootstrap over an existing
         DB is a no-op. `tasks.json` status is IGNORED — the DB is the
         source of truth for runtime status once initialized.
+
+        F-9 (fix #73): before touching anything, check for orphan rows in
+        `tasks_runtime` and `tasks_definition` — rows whose `project_id`
+        has no matching row in `projects`. That state should never occur
+        with `PRAGMA foreign_keys = ON` (see `_connect`) but has been
+        observed after direct sqlite3-CLI edits, or after a bootstrap ran
+        on a version of orch that predated the FK enforcement. When we
+        find any, we log a WARNING with the exact repair SQL — never
+        auto-delete, so the operator can inspect first.
         """
         now = _utc_now_iso()
         root = str(self.project_root) if self.project_root is not None else ""
+        self._warn_on_orphan_rows()
         with self._write() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO projects "
