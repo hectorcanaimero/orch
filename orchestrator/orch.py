@@ -4668,14 +4668,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    # ---- (5) queue construction (cycle + missing-dep detection) ----------
-    try:
-        queue = TaskQueue(tasks)
-    except (TaskCycleError, MissingDependencyError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    # ---- (5b) state backend selection (Sprint B) -------------------------
+    # ---- (5) state backend selection (Sprint B; moved above queue in F-8) --
     # `get_backend()` picks FileBackend or SqliteBackend based on cfg. For the
     # sqlite backend, `bootstrap(tasks)` idempotently seeds the projects +
     # tasks_runtime rows. For the file backend it's a no-op. Downstream code
@@ -4683,6 +4676,12 @@ def main(argv: list[str] | None = None) -> int:
     # factories (`make_runfile` / `make_event_log` / `make_spend_log`) hand
     # back sqlite-backed shims when the backend is sqlite, so callsites don't
     # need to branch.
+    #
+    # F-8 (fix #72): the backend is built BEFORE the queue so the queue can
+    # hydrate its status map from `tasks_runtime` (SQLite is the source of
+    # truth for runtime status). Without this the DAG resolver reads stale
+    # `tasks.json` statuses and the dashboard, `orch status`, and dispatch
+    # each report different values.
     from orchestrator.state import (  # noqa: E402
         get_backend,
         make_event_log,
@@ -4695,6 +4694,13 @@ def main(argv: list[str] | None = None) -> int:
         state_backend.bootstrap(tasks)
     except Exception as exc:  # noqa: BLE001
         print(f"state backend init failed: {exc}", file=sys.stderr)
+        return 1
+
+    # ---- (5b) queue construction (cycle + missing-dep detection) ---------
+    try:
+        queue = TaskQueue(tasks, backend=state_backend)
+    except (TaskCycleError, MissingDependencyError) as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
     # ---- (6) flock -------------------------------------------------------

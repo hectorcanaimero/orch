@@ -91,6 +91,40 @@ def _get_sse_idle_cutoff_s() -> float:
     return float(TUNNEL_SSE_IDLE_CUTOFF_S)
 
 
+def _load_tasks_hydrated(paths: ProjectPaths) -> list:
+    """Load tasks.json and overlay live statuses from the state backend.
+
+    Sprint F-8 (fix #72): every dashboard endpoint that ships task rows must
+    read runtime status from the backend, not from the stale `tasks.json`
+    seed. `_load_tasks` inside `_render_context` already did this locally;
+    F-8 extracts the same logic as a module-level helper so `/api/milestones`,
+    `/api/sprint`, and `/api/summary` share the single source of truth
+    instead of leaking `tasks.json` statuses into their payloads.
+    """
+    try:
+        tasks = load_tasks(paths.tasks_json)
+    except (OSError, ValueError):
+        return []
+    try:
+        import yaml
+        from dataclasses import replace as _replace
+        raw_cfg: dict = {}
+        try:
+            raw_cfg = yaml.safe_load(paths.config_yaml.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            pass
+        if isinstance(raw_cfg, dict):
+            runtime = _get_state_backend(paths, raw_cfg).get_all_task_status()
+            if runtime:
+                tasks = [
+                    _replace(t, status=runtime[t.id]) if t.id in runtime else t
+                    for t in tasks
+                ]
+    except Exception:  # noqa: BLE001 — fall back to tasks.json statuses
+        pass
+    return tasks
+
+
 # Sprint E-5 (TUN-9): auto_start knobs. Overridable in tests so we don't
 # actually sleep 0.5s × 3 while probing. Both are module-level so tests can
 # shrink them via monkeypatch without importing the handler closure.
@@ -268,36 +302,8 @@ def _load_project_view(state: AppState) -> dict[str, Any]:
         state_layout   — "legacy" | "namespaced"
     """
     paths = state.paths
-    def _load_tasks():
-        try:
-            tasks = load_tasks(paths.tasks_json)
-        except (OSError, ValueError):
-            return []
-        # Overlay live statuses from the configured state backend.
-        # SQLite is always the authoritative source for runtime status.
-        # Task is frozen, so we rebuild via dataclasses.replace().
-        try:
-            import yaml
-            from dataclasses import replace as _replace
-            raw_cfg: dict[str, Any] = {}
-            try:
-                raw_cfg = yaml.safe_load(
-                    paths.config_yaml.read_text(encoding="utf-8")
-                ) or {}
-            except Exception:  # noqa: BLE001
-                pass
-            if isinstance(raw_cfg, dict):
-                runtime = _get_state_backend(paths, raw_cfg).get_all_task_status()
-                if runtime:
-                    tasks = [
-                        _replace(t, status=runtime[t.id]) if t.id in runtime else t
-                        for t in tasks
-                    ]
-        except Exception:  # noqa: BLE001 — fall back to tasks.json statuses
-            pass
-        return tasks
-
-    tasks = state.cached("tasks", _load_tasks)
+    # F-8: shared helper — SQLite runtime status overlaid on tasks.json.
+    tasks = state.cached("tasks", lambda: _load_tasks_hydrated(paths))
     events = state.cached("events", lambda: read_all_events(paths.state_dir))
     hours = state.cached("human_hours", lambda: human_hours_by_task(events))
     last = state.cached("last_updated", lambda: last_updated_by_task(events))
@@ -829,7 +835,7 @@ def create_app(
         from orchestrator.dashboard.metrics import milestone_eta, sprint_health
 
         milestones = backend.get_milestones()
-        tasks = load_tasks(app_state.paths.tasks_json)
+        tasks = _load_tasks_hydrated(app_state.paths)
         done_7d = backend.count_done_last_n_days(7)
         velocity = sprint_health(tasks, done_7d, {}).get("velocity_per_day", 0.0)
         today = datetime.now(timezone.utc).date().isoformat()
@@ -860,7 +866,7 @@ def create_app(
         if not isinstance(backend, SqliteBackend):
             return JSONResponse({"available": False, "reason": "file_backend"})
 
-        tasks = load_tasks(app_state.paths.tasks_json)
+        tasks = _load_tasks_hydrated(app_state.paths)
         done_7d = backend.count_done_last_n_days(7)
         blocked_ids = [t.id for t in tasks if t.status == "blocked"]
         last_events = backend.get_task_last_events(blocked_ids) if blocked_ids else {}
@@ -896,7 +902,7 @@ def create_app(
         if not isinstance(backend, SqliteBackend):
             return JSONResponse({"available": False, "summary": None})
 
-        tasks = load_tasks(app_state.paths.tasks_json)
+        tasks = _load_tasks_hydrated(app_state.paths)
         done_7d = backend.count_done_last_n_days(7)
         blocked_ids = [t.id for t in tasks if t.status == "blocked"]
         last_events = (
