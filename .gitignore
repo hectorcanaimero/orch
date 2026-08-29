@@ -3,6 +3,9 @@
 state/*
 !state/.gitkeep
 
+# Runtime state when running orch from a non-repo-root cwd (SQLite backend etc.)
+orchestrator/state/
+
 # Python build / cache
 __pycache__/
 *.pyc
@@ -22,6 +25,7 @@ build/
 
 # Claude Code — personal overrides (settings.json is committed for team-wide config)
 .claude/settings.local.json
+.claude/worktrees/
 
 # Tooling caches
 .playwright-mcp/
