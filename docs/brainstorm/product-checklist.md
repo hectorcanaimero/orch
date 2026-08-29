@@ -1,8 +1,8 @@
 # orch — Product Checklist
 
-**Fecha**: 2026-08-26
+**Fecha**: 2026-08-29
 **Estado**: Living document — actualizar con cada sprint
-**Base**: vision-and-positioning.md + estado técnico v0.7.0 (post F-5)
+**Base**: vision-and-positioning.md + estado técnico v0.9.1 (post Serie H parcial)
 
 > Cuatro zonas: lo que ya es top, lo que necesita pulido, lo que hay que cambiar, y lo que falta para ganarle al mercado — todo pensado desde el eje **stakeholder**.
 
@@ -12,9 +12,9 @@
 
 Estas son las ventajas reales. Ningún competidor las tiene juntas.
 
-- [x] **Multi-backend dispatch** — Claude, Codex, OpenCode, Gemini en un solo DAG. Abstracción limpia via Protocol. Nadie más hace esto.
+- [x] **Multi-backend dispatch** — Claude, Codex, OpenCode, Gemini, Agy (Antigravity) en un solo DAG (5 backends). Abstracción limpia via Protocol. Nadie más hace esto. Nuevo (F-14 / PR #82): agy CLI shipped 2026-08-29.
 - [x] **Budget guardrails por proveedor** — control de gasto real con límites configurables. Combinado con el dashboard es transparencia total al cliente ("gastamos $12 esta semana en AI, el presupuesto es $50").
-- [x] **SQLite como single source of truth** (F-1) — sin split-brain, sin `tasks_json_precedence`. La arquitectura está sana.
+- [x] **SQLite como single source of truth** (F-1 + PR #75 / F-12) — el claim inicial de F-1 era aspiracional; el dashboard y dispatcher recién empezaron a leer de `tasks_runtime` con PR #75 (Closes #72). Sin split-brain hoy. La arquitectura está sana.
 - [x] **orch atomize pipeline** — spec markdown → tasks.json → SQLite. El trabajo se DEFINE antes de ejecutarse. Único en el mercado.
 - [x] **Perfiles operator/stakeholder/both** — el dev ve todo, el cliente ve lo curated. Separación de audiencias limpia.
 - [x] **Tunnel manager** — URL pública temporal via Pinggy sin infra adicional. El caso de uso "mandale este link al cliente" funciona hoy.
@@ -40,7 +40,7 @@ Esto ya está en el producto pero la experiencia es incompleta o técnica.
 - [ ] **Observability en el dashboard** — los logs existen pero la vista en browser es básica. Sin filtros, sin live tail, sin búsqueda. El dev trabaja con logs crudos.
 - [ ] **Error messaging para stakeholders** — errores como `ID_SPOOF`, `VERSION_DRIFT`, `PARSER` son útiles para el dev pero ilegibles para el cliente en el dashboard. Necesitan traducción a lenguaje humano.
 - [ ] **Retry policy configurable** — las estrategias de retry (TRANSIENT, TIMEOUT, VERSION_DRIFT) son hardcoded. Un policy declarativo en config.yaml daría control real.
-- [ ] **orch init wizard guiado** — sigue siendo CLI (no browser). El problema es que el flujo es lineal y el dev se pierde. Fix: pregunta el tipo de proyecto, sugiere template, muestra resumen de lo que va a crear antes de escribir, imprime checklist de próximos pasos al final. Se implementa en H-1 junto con el template system.
+- [x] **orch init wizard guiado** (H-7, PR #80) — sigue siendo CLI (no browser). El wizard ahora imprime resumen de lo que va a crear + pide confirmación antes de escribir + checklist coloreado de próximos pasos al final. La pieza de SELECCIÓN interactiva de template sigue atada a `--template <name>` (el flujo pleno de H-1 no está totalmente unificado en un solo prompt).
 - [ ] **Onboarding** — 5 archivos de config (config.yaml, budgets.yaml, model_router.yaml, dashboard.yaml, tasks.json). Curva empinada. Los templates van a aliviar esto, pero hay que pensar también en defaults inteligentes.
 
 ---
@@ -92,13 +92,16 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ### Templates y onboarding — Q2
 
-- [ ] **`orch init --template <name>`** — scaffolding completo con `dashboard.yaml` preconfigurado, token generado, tunnel config incluida, AGENTS.md. El README del template le dice al dev "cuando termines, mandá este URL al cliente".
-- [ ] **5 templates canónicos** (del brainstorm):
-  - `chatbot-whatsapp` — Waha + agentes
-  - `landing-page-nextjs`
-  - `saas-b2b-clerk-supabase`
-  - `mobile-expo-supabase`
-  - `data-pipeline`
+- [x] **`orch init --template <name>`** (H-1a, PR #66) — template mechanism shipped, 4/5 canonical templates in place. Scaffolding completo con `dashboard.yaml` preconfigurado, token generado, tunnel config incluida, AGENTS.md. El README del template le dice al dev "cuando termines, mandá este URL al cliente".
+- [x] **4 de 5 templates canónicos:**
+  - [x] `chatbot-whatsapp` (H-1b, PR #67)
+  - [x] `landing-page-nextjs` → shipped como `nextjs-saas` (H-1d, PR #77)
+  - [x] `saas-b2b-clerk-supabase` → equivalencia con `nextjs-saas` (H-1d, PR #77) (consolidado)
+  - [ ] `mobile-expo-supabase` → `expo-mobile` (H-1e, pendiente)
+  - [x] `data-pipeline` (H-1c, PR #68)
+  - [x] `python-api` (H-1a, PR #66) — no estaba en la lista original pero shippeó
+- [x] **`/orch` Claude Code skill + `orch install-skills`** (H-6, PR #78) — dev que usa Claude Code recibe un skill que le enseña al agente cómo operar orch.
+- [x] **Wizard summary + confirm gate** (H-7, PR #80) — `orch init` imprime resumen de lo que va a crear + pide confirmación + checklist coloreado de próximos pasos.
 - [ ] **Multi-project dashboard** — `orch dashboard --portfolio`. Vista de todos los proyectos activos para agencias con múltiples clientes.
 - [ ] **Client auth por proyecto** — hoy el token es global al dashboard. Cada cliente debería tener su token que le da acceso solo a SU proyecto.
 - [ ] **Registry local de templates** — `~/.orch/templates/`. Submit de nuevos templates via PR al repo `orch-templates`.
@@ -136,7 +139,7 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | CI workflow auto-gen + auto-merge | ❌ | ❌ | ❌ | ✅ | ✅ G-1 |
 | Slack/Discord webhooks | ❌ | ❌ | ❌ | ❌ | ✅ G-6 |
 | Config: 1 archivo obligatorio | ❌ | ❌ | ❌ | ❌ | ✅ H-2 |
-| Template system | ❌ | ❌ | ❌ | ❌ | 🔜 H-1 |
+| Template system | ❌ | ❌ | ❌ | ❌ | ✅ H-1 (4/5) |
 | Timeline / Gantt | ❌ | ❌ | ❌ | ❌ | ✅ G-3 |
 | PDF / email reports | ❌ | ❌ | ❌ | ❌ | 🔜 Q2 |
 | Executive summary (auto) | ❌ | ❌ | ❌ | ❌ | ✅ G-4 |
@@ -144,6 +147,8 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 | Browser tool use | ❌ | ❌ | ✅ | ✅ | ❌ |
 | IDE built-in | ❌ | ❌ | ✅ | ✅ | ❌ (plugin) |
 | Ecosystem / plugins | ✅✅ | ✅ | ✅ | ❌ | ❌ |
+
+**Multi-backend detail**: orch soporta 5 backends (Claude, Codex, OpenCode, Gemini, Agy). Ningún competidor listado soporta más de 1 activamente.
 
 **Conclusión**: orch gana en el eje stakeholder — y ese eje está completamente vacío en el mercado. Pierde en autonomía de agente (browser tools, long-horizon planning). La apuesta: el eje stakeholder vale más para el ICP (freelancers, agencias) que la autonomía absoluta.
 
@@ -155,13 +160,13 @@ Cierra el loop de calidad. Hoy orch marca `done` sin saber si el código funcion
 
 ```
 Q1 (mes 1-2)  ── Stakeholder polish: ✅ timeline/Gantt (G-3), ✅ exec summary (G-4), PDF, ✅ budget chart (G-5), ✅ blockers view (F-5)
-               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1) + ✅ commit_pending fix (F-6, bugfix crítico #60)
+               ── CI/CD: ✅ worktrees (F-2) + ✅ PR automático + ✅ CI polling (F-4) + ✅ CI workflow auto-gen/auto-merge (G-1) + ✅ commit_pending fix (F-6)
                ── ✅ Notificaciones: Slack/Discord + `orch notify digest` (G-6)
                ── ✅ Config consolidation (H-2, opción B)
-               ── README hero image + GIF + HN launch prep
+               ── ✅ Brand integration (H-3) + ✅ README/HN prep (H-4)
 
-Q2 (mes 3-4)  ── Wizard guiado + 5 templates canónicos (H-1)
-               ── Brand integration (H-3) + README/HN prep (H-4)
+Q2 (mes 3-4)  ── ✅ 4/5 templates canónicos (H-1a/b/c/d) + wizard confirm gate (H-7) + `/orch` skill (H-6)
+               ── 🔜 `expo-mobile` template (H-1e) — último pendiente
                ── Multi-project dashboard + client auth por proyecto
                ── VS Code / Cursor extension
 
@@ -173,4 +178,4 @@ Q3 (mes 5-6)  ── DAG visual interactivo
 
 ---
 
-*Última actualización: 2026-08-28 — v0.8.0. Serie G completa (G-0..G-6). F-6 bugfix crítico #60 (worktree commit before push, PR #61) + G-6 notificaciones Slack/Discord + `orch notify` (PR #62) + H-2 consolidación config opción B (PR #63). Serie previa: G-0 `orch --version` (#54), G-1 CI workflow auto-gen + auto_merge (#53), G-3 Gantt timeline, G-4 exec summary determinista (#59, consolidó E-7), G-5 budget vs actual (#58), F-2 worktree dispatch (#48), F-3 config + milestones + status labels + README (#49), F-4 PR automation + CI polling (#51), F-5 sprint health (#52). Próximo: H-1 (wizard + 5 templates).*
+*Última actualización: 2026-08-29 — sync a v0.9.1. Serie H parcial: H-1a/b/c/d templates (#66/#67/#68/#77), H-3 brand (#65), H-4 README+HN (#66), H-6 /orch skill (#78, off-plan), H-7 wizard confirm (#80). Fixes fuera de serie: F-11 upgrade robustness (#79), F-12 SQLite SoT real (#75 closes #72), F-13 bootstrap hygiene (#74/#76/#83 closes #71/#73/#81), F-14 agy backend (#82). Pendientes explícitos: H-1e expo-mobile template. Serie previa: G-0..G-6 completa + F-6 (#61) + H-2 (#63).*
