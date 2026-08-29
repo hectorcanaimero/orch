@@ -136,6 +136,7 @@ def test_wizard_scaffold_passes_validate(
         "",  # standard (default)
         "",  # cheap (default)
         "n",  # sdd
+        "y",  # H-7: confirm proceed
         "n",  # open dashboard in browser?
     ])
     args = argparse.Namespace()

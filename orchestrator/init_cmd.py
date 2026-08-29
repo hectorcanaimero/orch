@@ -761,8 +761,32 @@ def run_wizard(
         input_fn=input_fn,
     ) == "y"
 
-    # ---- Confirm + scaffold ---------------------------------------------
+    # ---- H-7: summary + confirmation before writing --------------------
+    # Everything above is a prompt with a default; nothing has touched the
+    # disk yet. Show the operator the full set of choices in one glance so
+    # they can bail out with "n" instead of Ctrl-C-then-clean-up.
+    _print_wizard_summary(
+        _say,
+        project_id=project_id,
+        project_root=project_root,
+        template=template_choice,
+        state_backend=state_backend,
+        budget_preset=budget_preset,
+        spec_root=spec_root,
+        tier_choices=tier_choices,
+        sdd=sdd_flag,
+    )
+    if prompt(
+        "Proceed with scaffolding?",
+        default="y",
+        choices=["y", "n"],
+        input_fn=input_fn,
+    ) != "y":
+        _say("")
+        _say("Aborted. Nothing written.")
+        return 0
 
+    # ---- Scaffold ------------------------------------------------------
     project_root.mkdir(parents=True, exist_ok=True)
 
     # Per-file overwrite prompts.
@@ -845,12 +869,11 @@ def run_wizard(
             _say(f"    ... and {len(errors) - 10} more.")
 
     _say("")
-    _say("Setup complete! 🎉")
-    _say("")
-    _say("Next steps:")
-    _say(f"  orch dry-run --project-root {project_root}")
-    _say(f"  orch atomize --project-root {project_root} --file specs/YOUR-SPEC.md")
-    _say(f"  orch doctor  --project-root {project_root}")
+    _print_next_steps_checklist(
+        project_root,
+        template=template_choice,
+        output_stream=output_stream,
+    )
     _say("")
 
     # Offer to launch dashboard
@@ -867,6 +890,101 @@ def run_wizard(
 
     _say("")
     return 0
+
+
+def _print_wizard_summary(
+    say: Callable[[str], None],
+    *,
+    project_id: str,
+    project_root: Path,
+    template: str | None,
+    state_backend: str,
+    budget_preset: str,
+    spec_root: str,
+    tier_choices: dict[str, str | None],
+    sdd: bool,
+) -> None:
+    """Print the pre-write summary block the operator confirms against.
+
+    Plain text (no rich markup): the block is a data checklist, not a
+    marketing surface, and stays readable in every terminal and every
+    captured test stream.
+    """
+    say("")
+    say("Ready to scaffold with these settings:")
+    say(f"  project id       {project_id}")
+    say(f"  destination      {project_root}")
+    say(f"  template         {template or 'blank'}")
+    say(f"  state backend    {state_backend}")
+    say(f"  budget preset    {budget_preset}")
+    say(f"  spec root        {spec_root}")
+    for tier in ("premium", "standard", "cheap"):
+        model = tier_choices.get(tier)
+        if model:
+            say(f"  {tier + ' model':<16} {model}")
+    say(f"  SDD layout       {'yes' if sdd else 'no'}")
+    say("")
+
+
+def _rich_console(output_stream):
+    """Return a rich Console bound to `output_stream` (falls back to stdout).
+
+    Rich autodetects ANSI support: when `file` is a StringIO/pipe the
+    output is plain text (so tests capturing via `io.StringIO` see stable
+    strings); on a real TTY it renders color + markup.
+    """
+    from rich.console import Console  # noqa: PLC0415
+
+    return Console(file=output_stream if output_stream is not None else sys.stdout)
+
+
+def _print_next_steps_checklist(
+    project_root: Path,
+    *,
+    template: str | None,
+    output_stream=None,
+) -> None:
+    """Colorized post-scaffold checklist for the wizard.
+
+    Uses rich markup so command tokens pop on a real terminal, but the
+    text is still readable in a captured StringIO (rich strips styles when
+    the target isn't a TTY).
+    """
+    console = _rich_console(output_stream)
+    console.print("[bold green]✓ Setup complete![/bold green] 🎉")
+    console.print()
+    console.print("[bold]Next steps[/bold]")
+    console.print(
+        f"  1. Preview the plan   [cyan]orch dry-run --project-root {project_root}[/cyan]"
+    )
+    if template is None:
+        console.print(
+            "  2. Author a spec      "
+            f"[cyan]$EDITOR {project_root / 'specs' / 'YOUR-SPEC.md'}[/cyan]"
+        )
+        console.print(
+            "  3. Atomize the spec   "
+            f"[cyan]orch atomize --project-root {project_root} "
+            "--file specs/YOUR-SPEC.md --apply[/cyan]"
+        )
+    else:
+        console.print(
+            f"  2. Inspect tasks      [cyan]orch tasks --project-root {project_root}[/cyan]"
+        )
+        console.print(
+            f"  3. Run the DAG        [cyan]orch --project-root {project_root} --mode semi[/cyan]"
+        )
+    console.print(
+        f"  4. Health check       [cyan]orch doctor --project-root {project_root}[/cyan]"
+    )
+    console.print(
+        f"  5. Dashboard          [cyan]orch dashboard --project-root {project_root}[/cyan]"
+    )
+    console.print()
+    console.print(
+        "[dim]tip: `orch install-skills` teaches Claude Code the /orch skill "
+        "(token-cheap, loads on demand).[/dim]"
+    )
 
 
 def _post_process_config(
