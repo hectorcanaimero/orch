@@ -1253,15 +1253,33 @@ class AgyBackend:
         # `--print-timeout` is intentionally omitted — the orchestrator's own
         # `_wait_with_timeout` supervises via SIGTERM/SIGKILL (dispatcher
         # convention: no per-backend timeout knobs).
-        return [
+        #
+        # Issue #88 — `--agent executor`: agy's default agent is the
+        # coordinator, which DELEGATES to a sub-agent instead of executing
+        # in-process. That returns a "he lanzado el subagente" message but
+        # never calls `task-finish.sh`, so orch marks every dispatch as
+        # failed. `executor` runs the prompt directly, which is what the
+        # orch protocol expects. Routes can override via `agent:` in
+        # model_router.yaml.
+        #
+        # Issue #87 — `--effort`: base-name Gemini models
+        # (`gemini-3.7-flash`, `gemini-3.5-flash`) require an effort tier.
+        # Only emitted when the route sets `effort:`; suffix-baked models
+        # (`gemini-3.7-flash-high`) don't need it.
+        agent = route.agent or "executor"
+        cmd: list[str] = [
             "agy",
             "--output-format",
             "json",
+            "--agent",
+            agent,
             "--model",
             route.cli_model,
-            "--print",
-            prompt_text,
         ]
+        if route.effort:
+            cmd.extend(["--effort", route.effort])
+        cmd.extend(["--print", prompt_text])
+        return cmd
 
     def spawn(
         self,
@@ -1320,6 +1338,8 @@ class AgyBackend:
     ) -> DispatchResult:
         tokens_in = 0
         tokens_out = 0
+        thinking_tokens = 0
+        response_field = ""
         status_field: str | None = None
         payload: dict[str, Any] | None = None
 
@@ -1334,18 +1354,42 @@ class AgyBackend:
                 raw_status = payload.get("status")
                 if isinstance(raw_status, str):
                     status_field = raw_status
+                raw_response = payload.get("response")
+                if isinstance(raw_response, str):
+                    response_field = raw_response
                 usage = payload.get("usage")
                 if isinstance(usage, dict):
                     tokens_in = int(usage.get("input_tokens") or 0)
                     tokens_out = int(usage.get("output_tokens") or 0)
+                    thinking_tokens = int(usage.get("thinking_tokens") or 0)
 
         # agy always emits JSON in --output-format json mode; if we couldn't
         # parse it, that's a failure regardless of exit_code.
         success = exit_code == 0 and status_field == "SUCCESS"
 
+        # Issue #86: thinking-mode absorption. When a Gemini model with
+        # thinking-mode ON reports SUCCESS but leaves `response` empty
+        # (every emitted token went into the internal reasoning buffer),
+        # orch would attempt+retry+escalate silently, burning ~1.5k
+        # thinking tokens per attempt. Downgrade the result to failure but
+        # with a diagnostic error message the operator can act on: the fix
+        # is a non-thinking cli_model variant OR letting the route encode
+        # a smaller effort tier.
+        if success and not response_field.strip() and thinking_tokens > 0:
+            success = False
+            status_field = "EMPTY_RESPONSE_THINKING_MODE"
+
         error_message: str | None = None
         if not success:
-            if status_field and status_field != "SUCCESS":
+            if status_field == "EMPTY_RESPONSE_THINKING_MODE":
+                error_message = (
+                    f"agy returned SUCCESS but response is empty — model "
+                    f"emitted {thinking_tokens} thinking token(s) with no "
+                    "visible reply (thinking-mode absorption). Use a "
+                    "non-thinking cli_model variant or lower `effort:` on "
+                    "this route (see issue #86)."
+                )
+            elif status_field and status_field != "SUCCESS":
                 error_message = f"agy status={status_field}"
             elif payload is None and exit_code == 0:
                 # Exit code 0 but body wasn't parseable JSON — treat as failure.

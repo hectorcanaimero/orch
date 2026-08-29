@@ -85,6 +85,22 @@ def load_router(path: str | Path) -> dict[str, RouteEntry]:
             raise RouterFormatError(
                 f"{path}: entry {key!r} missing non-empty cli_model"
             )
+        # Issues #87 / #88: agy-specific extras. Validate light-touch —
+        # both are strings when present, otherwise router load stays
+        # backward-compat for every non-agy row.
+        agent = row.get("agent")
+        effort = row.get("effort")
+        if agent is not None and not isinstance(agent, str):
+            raise RouterFormatError(
+                f"{path}: entry {key!r} field `agent` must be a string, got "
+                f"{type(agent).__name__}"
+            )
+        if effort is not None:
+            if not isinstance(effort, str) or effort not in {"low", "medium", "high"}:
+                raise RouterFormatError(
+                    f"{path}: entry {key!r} field `effort` must be one of "
+                    f"'low' | 'medium' | 'high', got {effort!r}"
+                )
         router[key] = RouteEntry(
             backend=backend,
             cli_model=cli_model,
@@ -92,6 +108,8 @@ def load_router(path: str | Path) -> dict[str, RouteEntry]:
             is_premium=(tier == "premium"),
             fallback_cli_model=row.get("fallback_cli_model"),
             escalation_model=row.get("escalation_model"),
+            agent=agent,
+            effort=effort,
         )
 
     # FR-D-8: `escalation_model` must be a valid route KEY in this same file.

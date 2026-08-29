@@ -77,6 +77,8 @@ def _mk_route(
     backend: str = "claude",
     cli_model: str = "opus",
     tier: str = "premium",
+    agent: str | None = None,
+    effort: str | None = None,
 ) -> RouteEntry:
     return RouteEntry(
         backend=backend,  # type: ignore[arg-type]
@@ -84,6 +86,8 @@ def _mk_route(
         tier=tier,  # type: ignore[arg-type]
         is_premium=(tier == "premium"),
         fallback_cli_model=None,
+        agent=agent,
+        effort=effort,
     )
 
 
@@ -622,6 +626,8 @@ def test_agy_build_cmd_ordering() -> None:
 
     The agy CLI parses `--print` positionally — anything after it gets
     swallowed as part of the prompt. build_cmd must lock the exact ordering.
+    Issue #88: `--agent executor` is emitted by default so agy executes the
+    prompt instead of delegating (coordinator persona).
     """
     task = _mk_task(tid="A-001", model="agy/pro")
     route = _mk_route(backend="agy", cli_model="gemini-3.1-pro-high", tier="premium")
@@ -630,6 +636,8 @@ def test_agy_build_cmd_ordering() -> None:
         "agy",
         "--output-format",
         "json",
+        "--agent",
+        "executor",
         "--model",
         "gemini-3.1-pro-high",
         "--print",
@@ -638,6 +646,42 @@ def test_agy_build_cmd_ordering() -> None:
     # Ordering constraint: --print is last, prompt right after.
     assert cmd[-2] == "--print"
     assert cmd[-1] == "hello prompt body"
+
+
+def test_agy_build_cmd_route_agent_override() -> None:
+    """Issue #88: a route can override the default `executor` agent."""
+    task = _mk_task(tid="A-002", model="agy/coord")
+    route = _mk_route(
+        backend="agy", cli_model="gemini-3.7-flash-high", tier="standard",
+        agent="coordinator",
+    )
+    cmd = AgyBackend().build_cmd(task, route, "prompt")
+    idx = cmd.index("--agent")
+    assert cmd[idx + 1] == "coordinator"
+
+
+def test_agy_build_cmd_emits_effort_when_route_sets_it() -> None:
+    """Issue #87: base-name Gemini models require `--effort`. Route field
+    surfaces it; when None, no `--effort` flag is emitted."""
+    task = _mk_task(tid="A-003", model="agy/flash")
+    route = _mk_route(
+        backend="agy", cli_model="gemini-3.7-flash", tier="cheap", effort="high",
+    )
+    cmd = AgyBackend().build_cmd(task, route, "p")
+    assert "--effort" in cmd
+    idx = cmd.index("--effort")
+    assert cmd[idx + 1] == "high"
+    # --print still last.
+    assert cmd[-2] == "--print"
+
+
+def test_agy_build_cmd_no_effort_flag_when_route_omits_it() -> None:
+    task = _mk_task(tid="A-004", model="agy/flash-suffix")
+    route = _mk_route(
+        backend="agy", cli_model="gemini-3.7-flash-high", tier="cheap",
+    )
+    cmd = AgyBackend().build_cmd(task, route, "p")
+    assert "--effort" not in cmd
 
 
 def test_agy_parse_result_success() -> None:
@@ -683,6 +727,37 @@ def test_agy_parse_result_exit_nonzero() -> None:
     assert res.success is False
     assert res.error_message is not None
     assert res.exit_code == 1
+
+
+def test_agy_parse_result_flags_thinking_mode_empty_response() -> None:
+    """Issue #86: a Gemini thinking-mode model can return SUCCESS with an
+    empty `response` because all output stayed in `thinking_tokens`. Orch
+    must NOT treat that as a real success (task-finish.sh never fired) —
+    surface a diagnostic error message instead so the operator switches
+    to a non-thinking cli_model or lowers `effort`."""
+    payload = _json.dumps(
+        {
+            "conversation_id": "conv-thinker",
+            "status": "SUCCESS",
+            "response": "",
+            "duration_seconds": 6.4,
+            "num_turns": 1,
+            "usage": {
+                "input_tokens": 18179,
+                "output_tokens": 420,
+                "thinking_tokens": 350,
+                "cache_read_tokens": 8135,
+            },
+        }
+    )
+    res = AgyBackend().parse_result(exit_code=0, log_text=payload)
+    assert res.success is False
+    assert res.error_message is not None
+    assert "thinking-mode absorption" in res.error_message
+    assert "issue #86" in res.error_message
+    # Token counts are preserved so the budget gate sees the burn.
+    assert res.tokens_in == 18179
+    assert res.tokens_out == 420
 
 
 def test_agy_extract_cost_from_usage() -> None:
