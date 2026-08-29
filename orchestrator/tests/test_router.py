@@ -105,6 +105,59 @@ def test_load_router_rejects_missing_cli_model(tmp_path: Path) -> None:
         load_router(p)
 
 
+# ---- agy extras: agent + effort (issues #87 / #88) --------------------
+
+
+def test_load_router_parses_agent_and_effort_fields(tmp_path: Path) -> None:
+    """Fix #87 + #88: agy routes can carry `agent:` and `effort:` fields
+    that the AgyBackend surfaces to the CLI."""
+    p = tmp_path / "agy.yaml"
+    p.write_text(
+        "agy/flash:\n"
+        "  backend: agy\n"
+        "  cli_model: gemini-3.7-flash\n"
+        "  tier: cheap\n"
+        "  agent: executor\n"
+        "  effort: high\n"
+    )
+    router = load_router(p)
+    entry = router["agy/flash"]
+    assert entry.agent == "executor"
+    assert entry.effort == "high"
+
+
+def test_load_router_defaults_agent_effort_to_none(tmp_path: Path) -> None:
+    """Routes without the new fields still load — backward compat with
+    every non-agy route on disk."""
+    p = tmp_path / "plain.yaml"
+    p.write_text(
+        "m:\n  backend: claude\n  cli_model: opus\n  tier: premium\n"
+    )
+    router = load_router(p)
+    assert router["m"].agent is None
+    assert router["m"].effort is None
+
+
+def test_load_router_rejects_bad_effort_value(tmp_path: Path) -> None:
+    p = tmp_path / "bad-effort.yaml"
+    p.write_text(
+        "m:\n  backend: agy\n  cli_model: gemini-3.7-flash\n  tier: cheap\n"
+        "  effort: extreme\n"
+    )
+    with pytest.raises(RouterFormatError, match="effort.*low.*medium.*high"):
+        load_router(p)
+
+
+def test_load_router_rejects_non_string_agent(tmp_path: Path) -> None:
+    p = tmp_path / "bad-agent.yaml"
+    p.write_text(
+        "m:\n  backend: agy\n  cli_model: gemini-3.7-flash-high\n  tier: cheap\n"
+        "  agent: 42\n"
+    )
+    with pytest.raises(RouterFormatError, match="agent"):
+        load_router(p)
+
+
 # ---- validate_all_models -----------------------------------------------
 
 

@@ -224,6 +224,25 @@ def resolve_project_paths(
         ):
             state_layout = "namespaced"
 
+    # Issue #84: when both a legacy AND a namespaced sqlite DB exist under
+    # the same project root, the operator has diverging state — CLI writes
+    # go one way, dashboard reads go the other. Always prefer the
+    # namespaced DB (superset in every observed case) so both surfaces read
+    # the same file, and warn once to stderr so the operator knows to
+    # inspect/delete the stale legacy copy.
+    legacy_db = root / ".orchestrator" / "state" / "orch.db"
+    namespaced_db = root / ".orchestrator" / "state" / pid / "orch.db"
+    if legacy_db.exists() and namespaced_db.exists():
+        state_layout = "namespaced"
+        import sys as _sys  # noqa: PLC0415 — local, no runtime cost
+        print(
+            f"warning: two SQLite state DBs found under {root}/.orchestrator/state/ "
+            f"— using {namespaced_db} and IGNORING {legacy_db}. "
+            "Inspect the legacy DB and delete it (or merge it in) to silence this. "
+            "See `orch doctor --only state.no_divergent_dbs`.",
+            file=_sys.stderr,
+        )
+
     return ProjectPaths(
         project_root=root,
         project_id=pid,

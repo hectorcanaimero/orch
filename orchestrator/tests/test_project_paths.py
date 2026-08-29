@@ -445,3 +445,65 @@ def test_render_prompt_missing_spec_ref_ignores_spec_root(tmp_path: Path) -> Non
     text = out.read_text(encoding="utf-8")
     assert "no spec ref provided" in text
     assert "whatever/" not in text
+
+
+# ---- Issue #84: divergent SQLite DBs -----------------------------------
+
+
+def test_resolve_prefers_namespaced_when_both_dbs_exist(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Fix for #84: when a project has BOTH `state/orch.db` (legacy) AND
+    `state/<pid>/orch.db` (namespaced), resolve_project_paths must pick
+    namespaced consistently — otherwise CLI writes and dashboard reads
+    end up on different files."""
+    pid = tmp_path.name
+    (tmp_path / ".orchestrator" / "state").mkdir(parents=True)
+    (tmp_path / ".orchestrator" / "state" / "orch.db").write_bytes(b"legacy")
+    (tmp_path / ".orchestrator" / "state" / pid).mkdir()
+    (tmp_path / ".orchestrator" / "state" / pid / "orch.db").write_bytes(b"namespaced")
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("ORCH_PROJECT_ROOT", None)
+        os.environ.pop("ORCH_PROJECT_ID", None)
+        old_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            paths = resolve_project_paths(
+                project_root_arg=None,  # emulate the bare `orch dashboard` case
+                project_id_arg=None,
+                config_arg=".orchestrator/config.yaml",
+            )
+        finally:
+            os.chdir(old_cwd)
+
+    assert paths.state_layout == "namespaced"
+    assert paths.state_dir == tmp_path / ".orchestrator" / "state" / pid
+    # The warning is emitted on stderr so operators notice the divergence.
+    captured = capsys.readouterr()
+    assert "two SQLite state DBs" in captured.err
+    assert "IGNORING" in captured.err
+
+
+def test_resolve_no_warning_when_only_one_db_exists(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Divergence warning must NOT fire on the common single-DB case."""
+    pid = tmp_path.name
+    (tmp_path / ".orchestrator" / "state" / pid).mkdir(parents=True)
+    (tmp_path / ".orchestrator" / "state" / pid / "orch.db").write_bytes(b"solo")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        paths = resolve_project_paths(
+            project_root_arg=None,
+            project_id_arg=None,
+            config_arg=".orchestrator/config.yaml",
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert paths.state_layout == "namespaced"
+    captured = capsys.readouterr()
+    assert "two SQLite state DBs" not in captured.err

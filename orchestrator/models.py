@@ -87,6 +87,18 @@ class RouteEntry:
     is_premium: bool
     fallback_cli_model: str | None = None
     escalation_model: str | None = None
+    # ---- backend-specific extras (agy — issues #87 / #88) --------------
+    # `agent`   — agy `--agent <role>` selector. Without one, agy uses the
+    #             default coordinator persona which DELEGATES instead of
+    #             executing (see #88), so AgyBackend defaults this to
+    #             "executor" when the route leaves it unset.
+    # `effort`  — agy `--effort {low,medium,high}` for base-name Gemini
+    #             models that require it (`gemini-3.7-flash`, etc). Not
+    #             emitted when None; users who already encode effort as a
+    #             cli_model suffix (`gemini-3.7-flash-high`) can leave it
+    #             blank.
+    agent: str | None = None
+    effort: str | None = None
 
 
 @dataclass

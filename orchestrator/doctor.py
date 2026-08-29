@@ -148,6 +148,45 @@ def _check_sqlite_orphan_rows(
     )
 
 
+def _check_state_db_divergence(paths: ProjectPaths) -> preflight.CheckResult:
+    """Issue #84: report when a project has BOTH a legacy `state/orch.db`
+    AND a namespaced `state/<project_id>/orch.db` — historically the CLI
+    wrote to one and the dashboard read the other, so operators saw
+    silently divergent state.
+
+    ``resolve_project_paths`` now prefers namespaced when both exist and
+    warns to stderr; this check surfaces the same signal in the standard
+    doctor report with a concrete remediation.
+    """
+    legacy = paths.project_root / ".orchestrator" / "state" / "orch.db"
+    namespaced = paths.project_root / ".orchestrator" / "state" / paths.project_id / "orch.db"
+    if not (legacy.exists() and namespaced.exists()):
+        return preflight.CheckResult(
+            name="state.no_divergent_dbs",
+            status="ok",
+            detail="single SQLite state DB (or none) — no divergence risk",
+        )
+    try:
+        legacy_size = legacy.stat().st_size
+        namespaced_size = namespaced.stat().st_size
+    except OSError:
+        legacy_size = namespaced_size = -1
+    return preflight.CheckResult(
+        name="state.no_divergent_dbs",
+        status="warn",
+        detail=(
+            f"two SQLite DBs coexist under {paths.project_root}/.orchestrator/state/ "
+            f"(legacy={legacy_size}B, namespaced={namespaced_size}B). "
+            f"orch is using {namespaced} and IGNORING {legacy}."
+        ),
+        remediation=(
+            f"Inspect both, then either merge rows into {namespaced} or "
+            f"delete the stale legacy copy: `rm {legacy}`. "
+            "Backup first if unsure."
+        ),
+    )
+
+
 def build_doctor_report(
     paths: ProjectPaths,
     *,
@@ -265,6 +304,9 @@ def build_doctor_report(
     # a silent DAG failure before it burns tokens. Only meaningful for the
     # sqlite backend; skipped cleanly for file.
     checks.append(_check_sqlite_orphan_rows(paths, cfg, backend_kind))
+
+    # Issue #84: warn when both legacy and namespaced SQLite DBs coexist.
+    checks.append(_check_state_db_divergence(paths))
 
     # H-6: check whether the packaged /orch Claude Code skill is installed
     # under ~/.claude/skills/orch/. Skipped when Claude Code isn't set up.
