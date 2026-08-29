@@ -305,3 +305,51 @@ def test_doctor_referenced_backends_only(
     assert "backend.claude" in names
     assert "backend.codex" not in names
     assert "backend.opencode" not in names
+
+
+# ---- Issue #84: divergent SQLite DB doctor check -----------------------
+
+
+def test_doctor_reports_ok_when_only_one_state_db_exists(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch
+) -> None:
+    """No divergence risk → status ok."""
+    root = tmp_path / "one-db"
+    _scaffold_project(root, backend_kind="sqlite")
+    monkeypatch.setattr("shutil.which", _fake_which({"jq": "/usr/bin/jq"}))
+    monkeypatch.setattr(
+        "orchestrator.preflight._probe_version",
+        lambda cli: (True, f"{cli} 1.0.0"),
+    )
+    _run_doctor_subcommand([*_common_args(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    div_check = next(c for c in payload["checks"] if c["name"] == "state.no_divergent_dbs")
+    assert div_check["status"] == "ok"
+
+
+def test_doctor_warns_when_both_legacy_and_namespaced_state_dbs_exist(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch
+) -> None:
+    """Fix #84: doctor surfaces the divergence with a concrete remediation."""
+    root = tmp_path / "diverged"
+    _scaffold_project(root, backend_kind="sqlite")
+    # Create BOTH DBs by hand.
+    state_dir = root / ".orchestrator" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "orch.db").write_bytes(b"legacy-blob")
+    ns_dir = state_dir / "proj-doctor"
+    ns_dir.mkdir(exist_ok=True)
+    (ns_dir / "orch.db").write_bytes(b"namespaced-blob-bigger")
+
+    monkeypatch.setattr("shutil.which", _fake_which({"jq": "/usr/bin/jq"}))
+    monkeypatch.setattr(
+        "orchestrator.preflight._probe_version",
+        lambda cli: (True, f"{cli} 1.0.0"),
+    )
+    _run_doctor_subcommand([*_common_args(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    div_check = next(c for c in payload["checks"] if c["name"] == "state.no_divergent_dbs")
+    assert div_check["status"] == "warn"
+    assert "two SQLite DBs coexist" in div_check["detail"]
+    assert "IGNORING" in div_check["detail"]
+    assert "rm " in (div_check.get("remediation") or "")
