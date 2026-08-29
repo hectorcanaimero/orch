@@ -63,7 +63,10 @@ git checkout main
 git pull --ff-only origin main
 
 # Verify the branch is clean.
-[[ -z "$(git status --porcelain)" ]] || die "working tree is not clean — commit or stash first"
+# Only care about tracked-file changes — untracked files (local design docs,
+# worktrees, runtime state) don't affect what ships in the release.
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] \
+  || die "working tree has uncommitted tracked changes — commit or stash first"
 
 # ---------- bump version ------------------------------------------------------
 
