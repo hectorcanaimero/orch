@@ -18,10 +18,14 @@ Split of concerns:
 from __future__ import annotations
 
 import fnmatch
-from typing import Iterable
+import logging
+from datetime import datetime, timezone
+from typing import Any, Iterable
 
 from .models import Status, Task
 from .state import load_tasks  # re-export — canonical home is `state.py`
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "TaskQueue",
@@ -64,9 +68,16 @@ class TaskQueue:
     `tasks.json` is read-only from the orchestrator's perspective (FR-STATE-2);
     this class holds the ephemeral view that reacts to `mark_done`,
     `mark_blocked`, and `mark_in_flight` between reap ticks.
+
+    Sprint F-8 (fix #72): when a `backend` is supplied, the queue treats it
+    as the authoritative source for runtime status — it hydrates from
+    ``backend.get_all_task_status()`` at construction time and mirrors every
+    ``mark_*`` mutation back via ``backend.set_task_status(...)``. Without a
+    backend the queue keeps its pre-F-8 behaviour (tasks.json is the seed,
+    no persistence), so tests and the file backend keep working unchanged.
     """
 
-    def __init__(self, tasks: Iterable[Task]):
+    def __init__(self, tasks: Iterable[Task], backend: Any | None = None):
         self._by_id: dict[str, Task] = {}
         for t in tasks:
             if t.id in self._by_id:
@@ -80,6 +91,24 @@ class TaskQueue:
         self._status: dict[str, Status] = {
             tid: t.status for tid, t in self._by_id.items()
         }
+
+        # F-8: SQLite backend, when present, is the source of truth.
+        self._backend = backend
+        if backend is not None:
+            try:
+                runtime = backend.get_all_task_status() or {}
+            except Exception as exc:  # noqa: BLE001
+                # A backend that can't answer at init time isn't a fatal
+                # error — fall back to tasks.json seed so the dispatch loop
+                # still starts. The real symptom would surface elsewhere.
+                log.warning(
+                    "task queue: backend hydration failed, using tasks.json: %s",
+                    exc,
+                )
+            else:
+                for tid, st in runtime.items():
+                    if tid in self._status:
+                        self._status[tid] = st
 
     # ---- validation ------------------------------------------------------
 
@@ -167,16 +196,40 @@ class TaskQueue:
     def mark_in_flight(self, task_id: str) -> None:
         self._require_known(task_id)
         self._status[task_id] = "in-progress"
+        self._persist(task_id, "in-progress")
 
     def mark_done(self, task_id: str) -> None:
         """Mark a task done — dependents become ready on the next `ready()`."""
         self._require_known(task_id)
         self._status[task_id] = "done"
+        self._persist(task_id, "done")
 
     def mark_blocked(self, task_id: str) -> None:
         """Mark blocked. Dependents do NOT become ready (see AS-02)."""
         self._require_known(task_id)
         self._status[task_id] = "blocked"
+        self._persist(task_id, "blocked")
+
+    def _persist(self, task_id: str, status: Status) -> None:
+        """F-8: mirror the in-memory mark into the backend (SQLite is the
+        source of truth). Silent-fail on transition errors / missing rows
+        so the dispatch loop can't be stalled by a backend hiccup — the
+        in-memory value is already updated for the current run."""
+        if self._backend is None:
+            return
+        try:
+            self._backend.set_task_status(
+                task_id,
+                status,
+                author="orch",
+                note=f"queue mark {status}",
+                ts=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "task queue: backend set_task_status(%s, %s) failed: %s",
+                task_id, status, exc,
+            )
 
     def _require_known(self, task_id: str) -> None:
         if task_id not in self._by_id:

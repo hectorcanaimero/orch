@@ -191,3 +191,109 @@ def test_pending_false_when_all_terminal() -> None:
         q.mark_done(tid)
     # T-E was seeded as blocked → terminal → pending is False.
     assert q.pending() is False
+
+
+# ---- F-8 (fix #72): backend hydration + persistence ------------------------
+
+
+class _FakeBackend:
+    """Minimal stand-in for SqliteBackend that exercises the F-8 contract."""
+
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self._status: dict[str, str] = dict(initial or {})
+        self.calls: list[tuple[str, str]] = []
+        self.raise_on_hydrate: Exception | None = None
+        self.raise_on_persist: Exception | None = None
+
+    def get_all_task_status(self) -> dict[str, str]:
+        if self.raise_on_hydrate:
+            raise self.raise_on_hydrate
+        return dict(self._status)
+
+    def set_task_status(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        author: str,
+        note: str,
+        ts: str,
+    ) -> None:
+        if self.raise_on_persist:
+            raise self.raise_on_persist
+        self.calls.append((task_id, status))
+        self._status[task_id] = status
+
+
+def test_backend_hydration_overrides_tasksjson_seed() -> None:
+    """Runtime status in the backend wins over the tasks.json seed —
+    that's the whole point of F-8. Without this, a task marked `done` in
+    the DB would still show as `todo` here because tasks.json is stale."""
+    tasks = [_mk("T-A", status="todo"), _mk("T-B", deps=["T-A"], status="todo")]
+    backend = _FakeBackend({"T-A": "done"})
+    q = TaskQueue(tasks, backend=backend)
+
+    assert q.status("T-A") == "done"
+    # And because T-A is `done`, T-B is now ready without any local mutation.
+    assert [t.id for t in q.ready()] == ["T-B"]
+
+
+def test_hydration_ignores_ids_not_in_tasksjson() -> None:
+    tasks = [_mk("T-A", status="todo")]
+    backend = _FakeBackend({"T-A": "done", "T-GHOST": "done"})
+    q = TaskQueue(tasks, backend=backend)
+
+    assert q.status("T-A") == "done"
+    with pytest.raises(KeyError):
+        q.status("T-GHOST")  # ghost id must not leak into the queue
+
+
+def test_hydration_swallowed_when_backend_raises() -> None:
+    """A hiccup at init must not stop the dispatch loop — we fall back to
+    the tasks.json seed and log a warning."""
+    tasks = [_mk("T-A", status="todo")]
+    backend = _FakeBackend()
+    backend.raise_on_hydrate = RuntimeError("db is locked")
+    q = TaskQueue(tasks, backend=backend)  # must not raise
+    assert q.status("T-A") == "todo"
+
+
+def test_mark_done_persists_to_backend() -> None:
+    tasks = [_mk("T-A", status="todo")]
+    backend = _FakeBackend({"T-A": "todo"})
+    q = TaskQueue(tasks, backend=backend)
+    q.mark_done("T-A")
+    assert backend.calls == [("T-A", "done")]
+    assert backend._status["T-A"] == "done"
+
+
+def test_mark_blocked_and_in_flight_persist_to_backend() -> None:
+    tasks = [_mk("T-A", status="todo")]
+    backend = _FakeBackend({"T-A": "todo"})
+    q = TaskQueue(tasks, backend=backend)
+    q.mark_in_flight("T-A")
+    q.mark_blocked("T-A")
+    assert backend.calls == [
+        ("T-A", "in-progress"),
+        ("T-A", "blocked"),
+    ]
+
+
+def test_mark_persistence_failure_does_not_abort_the_mutation() -> None:
+    """The in-memory value must still update even when the backend rejects
+    the write — otherwise a single DB hiccup would stall the whole loop."""
+    tasks = [_mk("T-A", status="todo")]
+    backend = _FakeBackend({"T-A": "todo"})
+    backend.raise_on_persist = RuntimeError("illegal transition")
+    q = TaskQueue(tasks, backend=backend)
+    q.mark_done("T-A")  # must not raise
+    assert q.status("T-A") == "done"
+
+
+def test_no_backend_keeps_pre_F8_behavior() -> None:
+    """Regression guard: constructing without `backend=` matches every call
+    site that hasn't been ported (file backend, all existing unit tests)."""
+    tasks = [_mk("T-A", status="todo")]
+    q = TaskQueue(tasks)  # no backend kwarg
+    q.mark_done("T-A")
+    assert q.status("T-A") == "done"
