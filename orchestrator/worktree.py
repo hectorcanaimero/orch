@@ -77,6 +77,14 @@ class WorktreeManager:
         If a stale worktree directory already exists (e.g. from a crashed prior
         run), it is removed first. Returns the path to the new worktree.
 
+        Fixes #71 (Sprint F-7): a prior ``git worktree add -b`` call may have
+        created the branch ref before failing (rate-limit / sqlite contention
+        / partial disk write). ``remove()`` cleans up the worktree directory
+        but leaves the branch ref, so the next attempt fails with "a branch
+        named 'orch/…' already exists" and the task blocks permanently. We
+        pre-purge the branch ref before ``add -b`` — best-effort, `check=False`
+        because "branch doesn't exist" is the healthy case.
+
         Raises:
             WorktreeError: if ``git worktree add`` fails.
         """
@@ -86,6 +94,14 @@ class WorktreeManager:
         if wt_path.exists():  # remove() swallows errors — verify cleanup succeeded
             raise WorktreeError(task_id, [], f"stale worktree at {wt_path} could not be removed")
         (self._root / ".worktrees").mkdir(parents=True, exist_ok=True)
+        # F-7: purge any orphan branch left by a prior partial `add -b`.
+        subprocess.run(
+            ["git", "branch", "-D", self.branch_name(task_id)],
+            capture_output=True,
+            text=True,
+            cwd=str(self._root),
+            check=False,
+        )
         self._run(
             ["git", "worktree", "add", str(wt_path), "-b", self.branch_name(task_id), base_branch],
             task_id,
