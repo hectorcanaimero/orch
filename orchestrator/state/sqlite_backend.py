@@ -52,11 +52,19 @@ _ALLOWED_CI_STATUSES: frozenset[str] = frozenset({"pending", "success", "failure
 # Legal transitions enforced by `set_task_status`. Same-status writes are
 # always allowed (idempotent). Unknown transitions raise ValueError so the
 # CLI can map to exit-code 3.
+#
+# Manual `orch task set --status ...` (issue #81) must accept the natural
+# operator shortcuts: `backlog → done` (work happened outside orch, mark it
+# done in one step), `backlog → in-progress` (pick up a backlog item
+# directly), and `blocked → done` (unblocked and finished in one step). The
+# FileBackend does no transition validation, so this backend matches that
+# permissive semantic for forward moves while still rejecting nonsense like
+# `done → in-progress` (must reset to `todo` first).
 _STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
-    "backlog": frozenset({"todo", "blocked", "backlog"}),
+    "backlog": frozenset({"todo", "in-progress", "blocked", "done", "backlog"}),
     "todo": frozenset({"in-progress", "blocked", "todo", "done"}),  # done = manual completion
     "in-progress": frozenset({"done", "blocked", "todo", "in-progress"}),
-    "blocked": frozenset({"todo", "in-progress", "blocked"}),
+    "blocked": frozenset({"todo", "in-progress", "done", "blocked"}),
     "done": frozenset({"todo", "done"}),  # allow re-open for reset
 }
 
@@ -599,7 +607,7 @@ class SqliteBackend:
                 started = ts
             if status == "done":
                 finished = ts
-            conn.execute(
+            update_rowcount = conn.execute(
                 "UPDATE tasks_runtime SET status = ?, "
                 "comments_json = ?, updated_at = ?, "
                 "started_at = COALESCE(?, started_at), "
@@ -614,6 +622,15 @@ class SqliteBackend:
                     self.project_id,
                     task_id,
                 ),
+            ).rowcount
+        # Defense in depth (issue #81): the transactional SELECT above
+        # already caught missing rows, but if UPDATE matches 0 rows the
+        # caller MUST hear about it — never let the CLI print success on
+        # a silent no-op.
+        if update_rowcount == 0:
+            raise KeyError(
+                f"task '{task_id}' vanished from tasks_runtime for project "
+                f"'{self.project_id}' between SELECT and UPDATE"
             )
 
     # ---- runs ----------------------------------------------------------
