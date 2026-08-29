@@ -521,3 +521,58 @@ def test_orch_init_data_pipeline_agents_md_documents_duckdb_and_apscheduler(
     assert "raw." in agents_text and "marts." in agents_text
     # Placeholders rendered.
     assert "PROJECT_NAME" not in agents_text
+
+
+# ---- nextjs-saas template (Sprint H-1d) ------------------------------------
+
+
+def test_list_templates_includes_nextjs_saas() -> None:
+    rows = list_templates()
+    assert "nextjs-saas" in rows
+    desc = rows["nextjs-saas"].lower()
+    assert "next.js" in desc
+
+
+def test_orch_init_nextjs_saas_writes_four_phase_dag(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="nextjs-saas") == 0
+
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["meta"]["template"] == "nextjs-saas"
+    phase_ids = {p["id"] for p in payload["phases"]}
+    assert phase_ids == {0, 1, 2, 3}
+    tasks_by_id = {t["id"]: t for t in payload["tasks"]}
+    # DAG: F2.T2 depends on both F1.T1 (Clerk) and F2.T1 (Drizzle schema).
+    assert "F1.T1" in tasks_by_id["F2.T2"]["dependencies"]
+    assert "F2.T1" in tasks_by_id["F2.T2"]["dependencies"]
+    # F3 depends on both foundation and schema.
+    assert "F0.T1" in tasks_by_id["F3.T1"]["dependencies"]
+    assert "F2.T1" in tasks_by_id["F3.T1"]["dependencies"]
+
+
+def test_orch_init_nextjs_saas_config_uses_pnpm_test(tmp_path: Path) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="nextjs-saas") == 0
+    cfg_text = (dest / ".orchestrator" / "config.yaml").read_text(encoding="utf-8")
+    # pnpm is the ICP-standard package manager for this stack.
+    assert "test_command: pnpm test" in cfg_text
+    # Same "share the URL" default as chatbot-whatsapp.
+    assert "enabled: true" in cfg_text
+    assert "auto_start: true" in cfg_text
+
+
+def test_orch_init_nextjs_saas_agents_md_documents_full_stack(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="nextjs-saas") == 0
+    agents_text = (dest / "AGENTS.md").read_text(encoding="utf-8")
+    # Stack keywords the agent needs at session start.
+    assert "Next.js" in agents_text
+    assert "Clerk" in agents_text
+    assert "Supabase" in agents_text
+    assert "Drizzle" in agents_text
+    # Security rule the agent must respect.
+    assert "CLERK_SECRET_KEY" in agents_text
+    # Placeholders rendered.
+    assert "PROJECT_NAME" not in agents_text
