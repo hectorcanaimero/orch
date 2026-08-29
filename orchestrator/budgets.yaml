@@ -46,6 +46,10 @@ presets:
       window_hours: 24
       token_budget: 2000000
       threshold_pct: 70
+    agy:
+      window_hours: 24
+      token_budget: 2000000
+      threshold_pct: 70
 
   aggressive:
     claude:
@@ -60,6 +64,10 @@ presets:
       window_hours: 24
       token_budget: 2000000
       threshold_pct: 95
+    agy:
+      window_hours: 24
+      token_budget: 2000000
+      threshold_pct: 95
 
   shared:
     claude:
@@ -71,6 +79,10 @@ presets:
       token_budget: 400000
       threshold_pct: 40
     opencode:
+      window_hours: 24
+      token_budget: 2000000
+      threshold_pct: 60
+    agy:
       window_hours: 24
       token_budget: 2000000
       threshold_pct: 60

@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.dispatcher import (
+    AgyBackend,
     Backend,
     ClaudeBackend,
     CodexBackend,
@@ -489,6 +490,7 @@ def test_get_backend_dispatch() -> None:
     assert isinstance(get_backend("claude"), ClaudeBackend)
     assert isinstance(get_backend("codex"), CodexBackend)
     assert isinstance(get_backend("opencode"), OpencodeBackend)
+    assert isinstance(get_backend("agy"), AgyBackend)
 
 
 def test_get_backend_unknown_raises() -> None:
@@ -583,3 +585,126 @@ def test_wait_result_timeout_sends_sigterm(tmp_path: Path) -> None:
     # PID should be reaped by now.
     popen = dispatch._popen  # type: ignore[attr-defined]
     assert popen.returncode is not None
+
+
+# ---- AgyBackend --------------------------------------------------------
+#
+# agy is a non-interactive JSON-envelope CLI (single JSON blob on stdout, not
+# JSONL). Success requires BOTH exit_code == 0 AND payload.status == "SUCCESS".
+# Tokens come from `usage.input_tokens` / `usage.output_tokens`; cost stays 0
+# (dashboard's pricing.yaml estimates USD from token counts).
+
+
+import json as _json  # local alias to avoid touching module imports order
+
+
+def _agy_success_payload(input_tokens: int = 25580, output_tokens: int = 175) -> str:
+    return _json.dumps(
+        {
+            "conversation_id": "conv-abc",
+            "status": "SUCCESS",
+            "response": "hello world",
+            "duration_seconds": 1.9,
+            "num_turns": 1,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "thinking_tokens": 174,
+                "cache_read_tokens": 0,
+                "total_tokens": input_tokens + output_tokens,
+            },
+        }
+    )
+
+
+def test_agy_build_cmd_ordering() -> None:
+    """`--print` MUST be the LAST flag; its value is the prompt string.
+
+    The agy CLI parses `--print` positionally — anything after it gets
+    swallowed as part of the prompt. build_cmd must lock the exact ordering.
+    """
+    task = _mk_task(tid="A-001", model="agy/pro")
+    route = _mk_route(backend="agy", cli_model="gemini-3.1-pro-high", tier="premium")
+    cmd = AgyBackend().build_cmd(task, route, "hello prompt body")
+    assert cmd == [
+        "agy",
+        "--output-format",
+        "json",
+        "--model",
+        "gemini-3.1-pro-high",
+        "--print",
+        "hello prompt body",
+    ]
+    # Ordering constraint: --print is last, prompt right after.
+    assert cmd[-2] == "--print"
+    assert cmd[-1] == "hello prompt body"
+
+
+def test_agy_parse_result_success() -> None:
+    log_text = _agy_success_payload(input_tokens=100, output_tokens=50)
+    res = AgyBackend().parse_result(exit_code=0, log_text=log_text)
+    assert res.success is True
+    assert res.exit_code == 0
+    assert res.tokens_in == 100
+    assert res.tokens_out == 50
+    assert res.cost_usd == 0.0
+    assert res.error_message is None
+
+
+def test_agy_parse_result_non_success_status() -> None:
+    payload = _json.dumps(
+        {
+            "conversation_id": "conv-xyz",
+            "status": "TIMEOUT",
+            "response": "",
+            "usage": {"input_tokens": 10, "output_tokens": 0, "total_tokens": 10},
+        }
+    )
+    res = AgyBackend().parse_result(exit_code=0, log_text=payload)
+    assert res.success is False
+    assert res.error_message is not None
+    assert "TIMEOUT" in res.error_message
+    # Token counts still surfaced when present so the budget gate sees them.
+    assert res.tokens_in == 10
+    assert res.tokens_out == 0
+
+
+def test_agy_parse_result_malformed_json_exit_zero() -> None:
+    """agy always emits JSON in `--output-format json`; garbage output is a failure."""
+    res = AgyBackend().parse_result(exit_code=0, log_text="not json at all\n")
+    assert res.success is False
+    assert res.error_message is not None
+    assert res.tokens_in == 0
+    assert res.tokens_out == 0
+
+
+def test_agy_parse_result_exit_nonzero() -> None:
+    res = AgyBackend().parse_result(exit_code=1, log_text="fatal: connection refused\n")
+    assert res.success is False
+    assert res.error_message is not None
+    assert res.exit_code == 1
+
+
+def test_agy_extract_cost_from_usage() -> None:
+    log_text = _agy_success_payload(input_tokens=100, output_tokens=50)
+    cost, tin, tout = AgyBackend().extract_cost(log_text)
+    assert cost == 0.0
+    assert tin == 100
+    assert tout == 50
+
+
+def test_agy_extract_cost_missing_usage() -> None:
+    payload = _json.dumps({"status": "SUCCESS", "response": "ok"})
+    cost, tin, tout = AgyBackend().extract_cost(payload)
+    assert (cost, tin, tout) == (0.0, 0, 0)
+
+
+def test_agy_extract_cost_malformed_json() -> None:
+    """Defensive: garbage input must not raise."""
+    cost, tin, tout = AgyBackend().extract_cost("not json{{{")
+    assert (cost, tin, tout) == (0.0, 0, 0)
+
+
+def test_agy_registry_lookup() -> None:
+    assert isinstance(get_backend("agy"), AgyBackend)
+    assert get_backend("agy").name == "agy"

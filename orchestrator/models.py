@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 Status = Literal["backlog", "todo", "in-progress", "done", "blocked"]
-Backend = Literal["claude", "codex", "opencode", "gemini"]
+Backend = Literal["claude", "codex", "opencode", "gemini", "agy"]
 Tier = Literal["premium", "standard", "cheap"]
 Mode = Literal["auto", "semi"]
 

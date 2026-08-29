@@ -45,7 +45,7 @@ class RouterFormatError(Exception):
     """YAML shape doesn't match RouteEntry (missing keys, wrong types)."""
 
 
-_VALID_BACKENDS = {"claude", "codex", "opencode", "gemini"}
+_VALID_BACKENDS = {"claude", "codex", "opencode", "gemini", "agy"}
 _VALID_TIERS = {"premium", "standard", "cheap"}
 
 

@@ -276,6 +276,23 @@ opencode-go/qwen3.6-plus:
   is_premium: false
   fallback_cli_model: opencode-go/qwen3.7-plus
 
+# ----- Antigravity-family via agy CLI -----
+# agy is Google's Antigravity gateway (multi-model — Gemini + Claude + OSS).
+# Prompt is passed via `--print <text>` (last flag; agy parses it positionally).
+
+agy/pro:
+  backend: agy
+  cli_model: gemini-3.1-pro-high
+  tier: premium
+  is_premium: true
+  fallback_cli_model: gemini-3.7-flash-medium
+
+agy/flash:
+  backend: agy
+  cli_model: gemini-3.7-flash-medium
+  tier: cheap
+  is_premium: false
+
 # ----- TODO: evaluate ---------------------------------------------------
 # The following models are in the opencode-go accepted list but have not
 # been given routes yet — need evaluation for tier + fallback strategy:
