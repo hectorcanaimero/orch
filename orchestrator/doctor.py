@@ -65,6 +65,59 @@ def _resolve_sqlite_path(paths: ProjectPaths, cfg: dict[str, Any]) -> Path | Non
     return (paths.state_dir / candidate).resolve()
 
 
+def _check_sqlite_orphan_rows(
+    paths: ProjectPaths,
+    cfg: dict[str, Any],
+    backend_kind: str,
+) -> preflight.CheckResult:
+    """F-9 (fix #73): report tasks_runtime / tasks_definition rows whose
+    project_id has no matching row in `projects`. Pure read — never
+    deletes; the remediation hint prints the SQL for the operator.
+    """
+    if backend_kind != "sqlite":
+        return preflight.CheckResult(
+            name="sqlite.orphan_rows",
+            status="skip",
+            detail="not applicable to the file backend",
+        )
+    try:
+        from .state.sqlite_backend import SqliteBackend
+        backend = SqliteBackend(
+            project_id=paths.project_id,
+            db_path=_resolve_sqlite_path(paths, cfg),
+            project_root=paths.project_root,
+        )
+        orphans = backend.detect_orphan_rows()
+    except Exception as exc:  # noqa: BLE001
+        return preflight.CheckResult(
+            name="sqlite.orphan_rows",
+            status="warn",
+            detail=f"could not read DB: {exc}",
+        )
+    if not orphans:
+        return preflight.CheckResult(
+            name="sqlite.orphan_rows",
+            status="ok",
+            detail="no orphan rows",
+        )
+    total = sum(sum(v.values()) for v in orphans.values())
+    pids = sorted({pid for m in orphans.values() for pid in m})
+    return preflight.CheckResult(
+        name="sqlite.orphan_rows",
+        status="warn",
+        detail=(
+            f"{total} orphan row(s) across tables={sorted(orphans.keys())} "
+            f"project_ids={pids}"
+        ),
+        remediation=(
+            "sqlite3 <db> \"DELETE FROM tasks_runtime WHERE project_id NOT IN "
+            "(SELECT project_id FROM projects); "
+            "DELETE FROM tasks_definition WHERE project_id NOT IN "
+            "(SELECT project_id FROM projects);\""
+        ),
+    )
+
+
 def build_doctor_report(
     paths: ProjectPaths,
     *,
@@ -177,6 +230,11 @@ def build_doctor_report(
             expected_schema_version=2,
         )
     )
+
+    # F-9 (fix #73): surface orphan runtime rows so the operator can spot
+    # a silent DAG failure before it burns tokens. Only meaningful for the
+    # sqlite backend; skipped cleanly for file.
+    checks.append(_check_sqlite_orphan_rows(paths, cfg, backend_kind))
 
     # Sprint E-5 (TUN-11): tunnel config + provider binary checks. Read
     # dashboard.yaml from the project root — matches DashboardConfig.load()
