@@ -2174,6 +2174,7 @@ _SUBCOMMANDS = (
     "findings",
     "notify",
     "config",
+    "install-skills",
 )
 
 
@@ -2201,6 +2202,7 @@ def _print_subcommand_list() -> int:
     print("  orch findings <verb>      Dogfooding loop (capture/list/review/publish/dismiss)")
     print("  orch notify <verb>        Slack/Discord webhooks (test | digest) — Sprint G-6")
     print("  orch config <verb>        Config helpers (consolidate) — Sprint H-2")
+    print("  orch install-skills       Install the /orch Claude Code skill (~/.claude/skills)")
     print("  orch arch <verb>          Architecture diagram generation via archify skill")
     print("  orch upgrade [--check]    Self-update to the latest GitHub release")
     print("  orch list                 Print this list")
@@ -3999,6 +4001,112 @@ def _findings_dismiss_cli(argv: list[str]) -> int:
     return 0
 
 
+def _run_install_skills_subcommand(argv: list[str]) -> int:
+    """Handle `orch install-skills [--path DIR] [--force] [--dry-run]`.
+
+    H-6 (Claude Code skill discovery). `orchestrator/skills/*/` ships in the
+    wheel; this command copies each skill subdir into the operator's
+    `~/.claude/skills/` (or a `--path` override). Opt-in: `pipx install
+    orch` does NOT touch `~/.claude/skills/` on its own — cross-directory
+    installs from a Python package are sneaky and post-install hooks in
+    pip are deprecated. The user runs this once when they want the skill
+    active in Claude Code.
+
+    Skills already present at the destination are only overwritten with
+    `--force`; otherwise they're skipped and reported. Non-Claude-Code
+    agents (Codex, OpenCode, Gemini) don't read `~/.claude/skills/` — for
+    them the shipped `AGENTS.md` stub carries the equivalent minimum
+    context.
+
+    Exit codes: 0 = success, 1 = argparse / IO error.
+    """
+    import shutil
+
+    p = argparse.ArgumentParser(
+        prog="orch install-skills",
+        description=(
+            "Copy the packaged orch skill(s) into ~/.claude/skills/ so "
+            "Claude Code loads them on demand. Opt-in — run once."
+        ),
+    )
+    p.add_argument(
+        "--path",
+        default=None,
+        metavar="DIR",
+        help="Install destination (default: ~/.claude/skills).",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an already-installed skill of the same name.",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be copied without writing anything.",
+    )
+    args = p.parse_args(argv)
+
+    pkg_dir = Path(__file__).resolve().parent
+    src_root = pkg_dir / "skills"
+    if not src_root.is_dir():
+        print(f"error: no shipped skills at {src_root}", file=sys.stderr)
+        return 1
+
+    dst_root = (
+        Path(args.path).expanduser().resolve()
+        if args.path
+        else Path.home() / ".claude" / "skills"
+    )
+
+    skills = sorted(
+        [
+            entry
+            for entry in src_root.iterdir()
+            if entry.is_dir() and (entry / "SKILL.md").exists()
+        ]
+    )
+    if not skills:
+        print("error: no skills bundled with this build", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print(f"--dry-run: would install into {dst_root}")
+        for skill in skills:
+            print(f"  - {skill.name}")
+        return 0
+
+    dst_root.mkdir(parents=True, exist_ok=True)
+
+    installed: list[str] = []
+    skipped: list[str] = []
+    for skill in skills:
+        dst = dst_root / skill.name
+        if dst.exists() and not args.force:
+            skipped.append(skill.name)
+            continue
+        if dst.exists():
+            shutil.rmtree(dst)
+        try:
+            shutil.copytree(skill, dst)
+        except OSError as exc:
+            print(f"error: could not copy {skill.name}: {exc}", file=sys.stderr)
+            return 1
+        installed.append(skill.name)
+
+    if installed:
+        print(f"✓ installed {len(installed)} skill(s) into {dst_root}:")
+        for name in installed:
+            print(f"    {name}")
+    if skipped:
+        print(f"↷ skipped (already present — pass --force to overwrite):")
+        for name in skipped:
+            print(f"    {name}")
+    if not installed and not skipped:
+        print("nothing to do")
+    return 0
+
+
 def _run_config_subcommand(argv: list[str]) -> int:
     """Handle `orch config <verb>` — H-2 config helpers.
 
@@ -4555,6 +4663,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_notify_subcommand(incoming[1:])
     if incoming and incoming[0] == "config":
         return _run_config_subcommand(incoming[1:])
+    if incoming and incoming[0] == "install-skills":
+        return _run_install_skills_subcommand(incoming[1:])
     if incoming and incoming[0] == "arch":
         from orchestrator.arch import run_arch_cli
 

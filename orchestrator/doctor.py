@@ -65,6 +65,36 @@ def _resolve_sqlite_path(paths: ProjectPaths, cfg: dict[str, Any]) -> Path | Non
     return (paths.state_dir / candidate).resolve()
 
 
+def _check_orch_skill_installed() -> preflight.CheckResult:
+    """H-6: ok when `~/.claude/skills/orch/SKILL.md` exists.
+
+    - ``skip`` when `~/.claude/` doesn't exist (Claude Code not set up).
+    - ``ok`` when the skill file is present.
+    - ``warn`` when Claude Code is set up but the skill is missing — hint
+      the operator to run ``orch install-skills``.
+    """
+    claude_home = Path.home() / ".claude"
+    skill_path = claude_home / "skills" / "orch" / "SKILL.md"
+    if not claude_home.exists():
+        return preflight.CheckResult(
+            name="skill.orch",
+            status="skip",
+            detail="~/.claude/ not present (Claude Code not installed)",
+        )
+    if skill_path.exists():
+        return preflight.CheckResult(
+            name="skill.orch",
+            status="ok",
+            detail=f"loaded from {skill_path}",
+        )
+    return preflight.CheckResult(
+        name="skill.orch",
+        status="warn",
+        detail="the /orch skill is not installed for Claude Code",
+        remediation="orch install-skills",
+    )
+
+
 def _check_sqlite_orphan_rows(
     paths: ProjectPaths,
     cfg: dict[str, Any],
@@ -235,6 +265,10 @@ def build_doctor_report(
     # a silent DAG failure before it burns tokens. Only meaningful for the
     # sqlite backend; skipped cleanly for file.
     checks.append(_check_sqlite_orphan_rows(paths, cfg, backend_kind))
+
+    # H-6: check whether the packaged /orch Claude Code skill is installed
+    # under ~/.claude/skills/orch/. Skipped when Claude Code isn't set up.
+    checks.append(_check_orch_skill_installed())
 
     # Sprint E-5 (TUN-11): tunnel config + provider binary checks. Read
     # dashboard.yaml from the project root — matches DashboardConfig.load()
