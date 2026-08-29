@@ -41,18 +41,59 @@ def _fail_run(stderr: str = "fatal: something went wrong") -> MagicMock:
 
 
 def test_create_runs_correct_git_command(tmp_path: Path) -> None:
+    """create() first purges any orphan branch (F-7 fix for #71), then adds
+    the worktree. Only these two calls in the fresh path."""
     wm = _mk_manager(tmp_path)
-    with patch("subprocess.run", return_value=_ok_run()) as mock_run:
+    calls_made = []
+    def fake_run(args, **kwargs):
+        calls_made.append(args)
+        return _ok_run()
+
+    with patch("subprocess.run", side_effect=fake_run):
         result = wm.create("F2.1.T3", "main")
 
     expected_wt_path = tmp_path / ".worktrees" / "F2.1.T3"
-    mock_run.assert_called_once_with(
-        ["git", "worktree", "add", str(expected_wt_path), "-b", "orch/F2.1.T3", "main"],
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-    )
+    # 1) pre-purge orphan branch, 2) create worktree.
+    assert calls_made[0] == ["git", "branch", "-D", "orch/F2.1.T3"]
+    assert calls_made[1] == [
+        "git", "worktree", "add", str(expected_wt_path), "-b", "orch/F2.1.T3", "main"
+    ]
+    assert len(calls_made) == 2
     assert result == expected_wt_path
+
+
+def test_create_prepurges_orphan_branch_before_add(tmp_path: Path) -> None:
+    """F-7 (issue #71): a prior partial `git worktree add -b` leaves the
+    branch ref; the next create() must delete it or `add -b` fails with
+    'a branch named orch/… already exists' and the task blocks forever."""
+    wm = _mk_manager(tmp_path)
+    calls_made = []
+    def fake_run(args, **kwargs):
+        calls_made.append(args)
+        return _ok_run()
+
+    with patch("subprocess.run", side_effect=fake_run):
+        wm.create("F7.T1", "main")
+
+    # The branch -D call runs even in the happy path (best-effort, check=False).
+    branch_purge_call = calls_made[0]
+    assert branch_purge_call == ["git", "branch", "-D", "orch/F7.T1"]
+
+
+def test_create_ignores_prepurge_failure(tmp_path: Path) -> None:
+    """The branch-purge is best-effort — a missing branch (returncode=1) is
+    the healthy case and must NOT abort create()."""
+    wm = _mk_manager(tmp_path)
+
+    def fake_run(args, **kwargs):
+        if args[:2] == ["git", "branch"]:
+            return _fail_run("error: branch 'orch/X' not found.")
+        return _ok_run()
+
+    with patch("subprocess.run", side_effect=fake_run):
+        # Must not raise — the missing branch is normal, not an error.
+        path = wm.create("F7.T2", "main")
+    assert path == tmp_path / ".worktrees" / "F7.T2"
 
 
 def test_create_returns_worktree_path(tmp_path: Path) -> None:
@@ -87,10 +128,13 @@ def test_create_cleans_stale_path_first(tmp_path: Path) -> None:
     with patch("subprocess.run", side_effect=fake_run):
         wm.create("F2.1.T1", "main")
 
-    # First call must be the remove (for the stale path), then the add.
+    # Order: (1) remove stale worktree dir, (2) purge any orphan branch (F-7),
+    # (3) add the fresh worktree. remove_stale and branch_purge are both
+    # best-effort defensive steps; the add is the load-bearing one.
     assert calls_made[0] == ["git", "worktree", "remove", "--force", str(stale_path)]
+    assert calls_made[1] == ["git", "branch", "-D", "orch/F2.1.T1"]
     expected_wt_path = tmp_path / ".worktrees" / "F2.1.T1"
-    assert calls_made[1] == [
+    assert calls_made[2] == [
         "git", "worktree", "add", str(expected_wt_path), "-b", "orch/F2.1.T1", "main"
     ]
 
