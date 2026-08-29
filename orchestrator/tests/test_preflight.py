@@ -19,6 +19,8 @@ from orchestrator.models import Task
 from orchestrator.preflight import (
     CheckResult,
     ValidationError,
+    _probe_agy_auth,
+    _probe_gemini_auth,
     _probe_version,
     check_backends,
     check_config_files,
@@ -479,6 +481,36 @@ def test_check_backends_marks_missing_as_error(monkeypatch) -> None:
     for backend in ("claude", "codex", "opencode"):
         assert names[f"backend.{backend}"].status == "error"
         assert names[f"backend.{backend}.auth"].status == "skip"
+
+
+def test_probe_agy_auth_skips_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda x: None)
+    result = _probe_agy_auth()
+    assert result.name == "backend.agy.auth"
+    assert result.status == "skip"
+    assert "not installed" in result.detail
+
+
+def test_probe_agy_auth_ok_when_present(monkeypatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda x: "/usr/local/bin/agy" if x == "agy" else None)
+    result = _probe_agy_auth()
+    assert result.name == "backend.agy.auth"
+    assert result.status == "ok"
+    assert "agy" in result.detail.lower()
+
+
+def test_probe_gemini_auth_skips_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda x: None)
+    result = _probe_gemini_auth()
+    assert result.name == "backend.gemini.auth"
+    assert result.status == "skip"
+
+
+def test_probe_gemini_auth_ok_when_present(monkeypatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda x: "/usr/local/bin/gemini" if x == "gemini" else None)
+    result = _probe_gemini_auth()
+    assert result.name == "backend.gemini.auth"
+    assert result.status == "ok"
 
 
 def test_check_backends_respects_referenced_only(monkeypatch) -> None:

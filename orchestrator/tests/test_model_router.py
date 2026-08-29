@@ -102,9 +102,9 @@ EXPECTED_NEW_ROUTES: set[str] = {
 }
 
 
-# Route keys that use a NATIVE CLI (claude/codex/gemini) and therefore reference
-# a model outside opencode-go's accepted list — exempt from the check.
-NATIVE_BACKENDS: set[str] = {"claude", "codex", "gemini"}
+# Route keys that use a NATIVE CLI (claude/codex/gemini/agy) and therefore
+# reference a model outside opencode-go's accepted list — exempt from the check.
+NATIVE_BACKENDS: set[str] = {"claude", "codex", "gemini", "agy"}
 
 
 def test_rename_targets_present_with_expected_cli_model() -> None:

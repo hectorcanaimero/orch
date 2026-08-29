@@ -3,8 +3,8 @@
 Contracts respected here (from `orchestrator/spec.md` §1.3 and
 `orchestrator/design.md` §5):
 
-- Four concrete adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`,
-  `GeminiBackend`) implement a common `Backend` `Protocol`. The main loop
+- Five concrete adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`,
+  `GeminiBackend`, `AgyBackend`) implement a common `Backend` `Protocol`. The main loop
   (R-017/R-018) never imports the concrete classes — it dispatches on
   `route.backend`.
 - **Prompt delivery**: stdin for claude/codex/opencode; `-p <text>` arg for gemini (approved decision, see
@@ -1221,6 +1221,175 @@ class GeminiBackend:
         return 0.0, 0, 0
 
 
+# ---- AgyBackend ---------------------------------------------------------
+
+
+class AgyBackend:
+    """Adapter for the `agy` CLI (Antigravity — Google multi-model gateway).
+
+    Non-interactive mode:
+        ``agy --output-format json --model <cli_model> --print <prompt>``
+
+    Like `gemini`, the prompt is passed as a CLI arg (not stdin). The `--print`
+    flag MUST be LAST because its value is the prompt string and the CLI parses
+    it positionally — any flag ordered after `--print` gets swallowed as part
+    of the prompt.
+
+    Output shape (single JSON blob on stdout, NOT JSONL):
+        {"conversation_id": ..., "status": "SUCCESS", "response": ...,
+         "duration_seconds": ..., "num_turns": 1,
+         "usage": {"input_tokens": ..., "output_tokens": ..., "thinking_tokens":
+                   ..., "cache_read_tokens": ..., "total_tokens": ...}}
+
+    Success requires BOTH `exit_code == 0` AND `status == "SUCCESS"`. There is
+    no `cost_usd` field — the dashboard's `pricing.yaml` handles USD estimation
+    from the extracted token counts, so `cost_usd` is always 0.0 here.
+    """
+
+    name = "agy"
+
+    def build_cmd(self, task: Task, route: RouteEntry, prompt_text: str) -> list[str]:
+        # `--print` MUST be the last flag; its value is the prompt string.
+        # `--print-timeout` is intentionally omitted — the orchestrator's own
+        # `_wait_with_timeout` supervises via SIGTERM/SIGKILL (dispatcher
+        # convention: no per-backend timeout knobs).
+        return [
+            "agy",
+            "--output-format",
+            "json",
+            "--model",
+            route.cli_model,
+            "--print",
+            prompt_text,
+        ]
+
+    def spawn(
+        self,
+        task: Task,
+        route: RouteEntry,
+        prompt_path: Path,
+        log_path: Path,
+        cwd: Path,
+    ) -> Dispatch:
+        _ensure_logs_dir(log_path.parent.parent)
+        prompt_text = prompt_path.read_text(encoding="utf-8", errors="replace")
+        cmd = self.build_cmd(task, route, prompt_text)
+        log_fh = log_path.open("ab")
+        env = {**os.environ, "PWD": str(cwd)}
+        try:
+            popen = subprocess.Popen(  # noqa: S603
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                cwd=str(cwd),
+                env=env,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except (FileNotFoundError, OSError):
+            log_fh.close()
+            raise
+
+        dispatch = Dispatch(
+            task_id=task.id,
+            backend=self.name,  # type: ignore[arg-type]
+            pid=popen.pid,
+            session_id="",
+            started_at=_utc_now_iso(),
+            prompt_path=str(prompt_path),
+            log_path=str(log_path),
+            output_path="",
+        )
+        dispatch._popen = popen  # type: ignore[attr-defined]
+        dispatch._fhs = (log_fh,)  # type: ignore[attr-defined]
+        dispatch.extra = {}  # type: ignore[attr-defined]
+        return dispatch
+
+    def wait_result(self, dispatch: Dispatch, timeout_s: float) -> DispatchResult:
+        exit_code, err_msg, timed_out = _wait_with_timeout(dispatch, timeout_s)
+        log_text = _read_log(dispatch.log_path)
+        result = self.parse_result(exit_code, log_text)
+        if timed_out:
+            result.success = False
+            result.error_message = err_msg
+        return result
+
+    def parse_result(
+        self, exit_code: int, log_text: str, extra: dict[str, Any] | None = None
+    ) -> DispatchResult:
+        tokens_in = 0
+        tokens_out = 0
+        status_field: str | None = None
+        payload: dict[str, Any] | None = None
+
+        stripped = log_text.strip()
+        if stripped:
+            try:
+                loaded = json.loads(stripped)
+            except (json.JSONDecodeError, ValueError):
+                loaded = None
+            if isinstance(loaded, dict):
+                payload = loaded
+                raw_status = payload.get("status")
+                if isinstance(raw_status, str):
+                    status_field = raw_status
+                usage = payload.get("usage")
+                if isinstance(usage, dict):
+                    tokens_in = int(usage.get("input_tokens") or 0)
+                    tokens_out = int(usage.get("output_tokens") or 0)
+
+        # agy always emits JSON in --output-format json mode; if we couldn't
+        # parse it, that's a failure regardless of exit_code.
+        success = exit_code == 0 and status_field == "SUCCESS"
+
+        error_message: str | None = None
+        if not success:
+            if status_field and status_field != "SUCCESS":
+                error_message = f"agy status={status_field}"
+            elif payload is None and exit_code == 0:
+                # Exit code 0 but body wasn't parseable JSON — treat as failure.
+                lines = [ln.strip() for ln in log_text.splitlines() if ln.strip()]
+                error_message = (
+                    lines[-1]
+                    if lines
+                    else "agy produced no parseable JSON output"
+                )
+            else:
+                lines = [ln.strip() for ln in log_text.splitlines() if ln.strip()]
+                error_message = (
+                    lines[-1] if lines else f"agy exited with code {exit_code}"
+                )
+
+        return DispatchResult(
+            exit_code=exit_code,
+            success=success,
+            cost_usd=0.0,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            stdout=log_text,
+            stderr="",
+            error_message=error_message,
+        )
+
+    def extract_cost(self, log_text: str) -> tuple[float, int, int]:
+        try:
+            payload = json.loads(log_text.strip())
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            return 0.0, 0, 0
+        if not isinstance(payload, dict):
+            return 0.0, 0, 0
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return 0.0, 0, 0
+        try:
+            tokens_in = int(usage.get("input_tokens") or 0)
+            tokens_out = int(usage.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            return 0.0, 0, 0
+        return 0.0, tokens_in, tokens_out
+
+
 # ---- Backend registry ----------------------------------------------------
 
 
@@ -1229,6 +1398,7 @@ _BACKENDS: dict[str, type[Backend]] = {
     "codex": CodexBackend,
     "opencode": OpencodeBackend,
     "gemini": GeminiBackend,
+    "agy": AgyBackend,
 }
 
 
@@ -1255,6 +1425,7 @@ __all__ = [
     "CodexBackend",
     "OpencodeBackend",
     "GeminiBackend",
+    "AgyBackend",
     "classify_failure",
     "get_backend",
     "is_version_drift_error",

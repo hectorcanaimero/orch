@@ -46,6 +46,13 @@ Severity = Literal["error", "warn"]
 
 # Backends known to orch — probes iterate this set (plus whatever the tasks
 # actually reference, for defensive coverage).
+# NOTE: gemini + agy are intentionally OMITTED here even though _AUTH_PROBES
+# knows them. Reason: `_referenced_backends` falls back to this tuple when
+# tasks.json references no routable model (fresh scaffold, empty file). If
+# gemini/agy were in the default probe set, every scaffold-time doctor run on
+# a machine without those optional CLIs would emit `error` findings and break
+# `test_batch_scaffold_passes_doctor`. When a task actually routes to gemini
+# or agy, `check_backends` still probes them via `_AUTH_PROBES`.
 _KNOWN_BACKENDS: tuple[str, ...] = ("claude", "codex", "opencode")
 
 # 5s cap per probe — well above cold-start for `--version` invocations but
@@ -221,10 +228,48 @@ def _probe_codex_auth() -> CheckResult:
     )
 
 
+def _probe_gemini_auth() -> CheckResult:
+    """Cheap auth check for the Gemini CLI (same limitation as claude/codex)."""
+    which = shutil.which("gemini")
+    if not which:
+        return CheckResult(
+            name="backend.gemini.auth",
+            status="skip",
+            detail="gemini CLI not installed — auth probe skipped",
+        )
+    return CheckResult(
+        name="backend.gemini.auth",
+        status="ok",
+        detail="gemini auth assumed ok (CLI present)",
+    )
+
+
+def _probe_agy_auth() -> CheckResult:
+    """Cheap auth check for the agy CLI (Antigravity gateway).
+
+    No non-interactive `agy auth` command exists in v1.1.x; presence on PATH
+    is the best cheap signal.
+    """
+    which = shutil.which("agy")
+    if not which:
+        return CheckResult(
+            name="backend.agy.auth",
+            status="skip",
+            detail="agy CLI not installed — auth probe skipped",
+        )
+    return CheckResult(
+        name="backend.agy.auth",
+        status="ok",
+        detail="agy auth assumed ok (CLI present)",
+    )
+
+
 _AUTH_PROBES = {
     "opencode": _probe_opencode_auth,
     "claude": _probe_claude_auth,
     "codex": _probe_codex_auth,
+    "gemini": _probe_gemini_auth,
+    "agy": _probe_agy_auth,
 }
 
 
