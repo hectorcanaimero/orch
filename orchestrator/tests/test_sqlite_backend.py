@@ -137,10 +137,10 @@ def test_task_status_unknown_raises_key_error(tmp_path: Path) -> None:
 
 def test_task_status_illegal_transition_raises_value_error(tmp_path: Path) -> None:
     be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
-    be.bootstrap([_task("T-A", status="blocked")])
-    # blocked → done directly is illegal (must go through in-progress or todo first).
+    be.bootstrap([_task("T-A", status="done")])
+    # done → in-progress is illegal (must reset to todo first).
     with pytest.raises(ValueError, match="illegal transition"):
-        be.set_task_status("T-A", "done", author="x", note="", ts="2026-08-19T12:00:00Z")
+        be.set_task_status("T-A", "in-progress", author="x", note="", ts="2026-08-19T12:00:00Z")
 
 
 def test_status_transition_todo_to_done_allowed(tmp_path: Path) -> None:
@@ -158,6 +158,94 @@ def test_status_transition_todo_to_done_allowed(tmp_path: Path) -> None:
     ).fetchone()[0]
     conn.close()
     assert status == "done"
+
+
+# ---- issue #81 regression: manual `orch task set` transitions ----------
+
+
+def test_set_task_status_backlog_to_done_persists_to_tasks_runtime(tmp_path: Path) -> None:
+    """Regression for issue #81.
+
+    Bootstrap seeds a row at `backlog`. `orch task set --status done` (which
+    calls `set_task_status`) must be a legal transition AND the UPDATE must
+    persist. We assert via a FRESH sqlite3 connection to defeat any
+    session/WAL cache masking of a missing commit.
+    """
+    db = tmp_path / "orch.db"
+    be = SqliteBackend(db_path=db, project_id="p1")
+    be.bootstrap([_task("T-A", status="backlog")])
+    assert be.get_task_status("T-A") == "backlog"
+
+    # Must not raise — matches the FileBackend / operator manual path.
+    be.set_task_status(
+        "T-A", "done", author="operator", note="manual done",
+        ts="2026-08-29T12:00:00Z",
+    )
+
+    # Fresh connection — bypasses any per-connection cache.
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute(
+            "SELECT status FROM tasks_runtime "
+            "WHERE project_id='p1' AND task_id='T-A'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row[0] == "done", (
+        f"expected 'done' in tasks_runtime after set_task_status; "
+        f"got {row[0]!r} (issue #81)"
+    )
+
+
+def test_set_task_status_backlog_to_in_progress_persists(tmp_path: Path) -> None:
+    """backlog → in-progress is a legal manual transition (issue #81 sibling)."""
+    db = tmp_path / "orch.db"
+    be = SqliteBackend(db_path=db, project_id="p1")
+    be.bootstrap([_task("T-A", status="backlog")])
+
+    be.set_task_status(
+        "T-A", "in-progress", author="operator", note="picking up",
+        ts="2026-08-29T12:00:00Z",
+    )
+
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute(
+            "SELECT status, started_at FROM tasks_runtime "
+            "WHERE project_id='p1' AND task_id='T-A'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row[0] == "in-progress"
+    assert row[1] == "2026-08-29T12:00:00Z"
+
+
+def test_set_task_status_blocked_to_done_persists(tmp_path: Path) -> None:
+    """blocked → done is a legal manual completion (issue #81 sibling).
+
+    Operator finished the work outside orch, unblocks it as done in one step.
+    """
+    db = tmp_path / "orch.db"
+    be = SqliteBackend(db_path=db, project_id="p1")
+    be.bootstrap([_task("T-A", status="blocked")])
+
+    be.set_task_status(
+        "T-A", "done", author="operator", note="unblocked + done",
+        ts="2026-08-29T12:00:00Z",
+    )
+
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute(
+            "SELECT status FROM tasks_runtime "
+            "WHERE project_id='p1' AND task_id='T-A'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row[0] == "done"
 
 
 def test_task_status_comments_round_trip(tmp_path: Path) -> None:

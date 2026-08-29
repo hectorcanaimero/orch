@@ -129,11 +129,22 @@ def test_sqlite_unknown_task_exits_2(project: Path) -> None:
 
 
 def test_sqlite_illegal_transition_exits_3(project: Path) -> None:
-    # T-E starts as `blocked`; jumping straight to `done` is illegal
-    # (blocked → done has no direct path in _STATUS_TRANSITIONS).
-    argv = [
-        "T-E",
+    # T-A starts as `todo`. Move it to `done` (legal manual completion),
+    # then try `done → in-progress` (illegal — must reset to `todo` first).
+    # Issue #81 relaxed backlog/blocked forward transitions, so we exercise
+    # a transition that remains illegal by design.
+    argv_done = [
+        "T-A",
         "done",
+        "--project-root", str(project),
+        "--project-id", "proj-a",
+        "--config", ".orchestrator/config.yaml",
+    ]
+    assert _run_task_status_subcommand(argv_done) == 0
+
+    argv = [
+        "T-A",
+        "in-progress",
         "--project-root", str(project),
         "--project-id", "proj-a",
         "--config", ".orchestrator/config.yaml",

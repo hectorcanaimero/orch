@@ -298,6 +298,68 @@ def test_set_model_unknown_task_exits_1(tmp_path: Path, capsys) -> None:
     assert "NONEXISTENT" in err
 
 
+def test_task_set_status_backlog_to_done_persists_end_to_end(
+    tmp_path: Path, capsys
+) -> None:
+    """Regression for issue #81.
+
+    CLI-level check: `orch task set --id X --status done` on a row bootstrapped
+    at `backlog` MUST exit 0, print the success line, AND persist the change
+    to `tasks_runtime`. We re-open the DB with a fresh sqlite3 connection to
+    defeat any per-connection cache/WAL masking.
+    """
+    import sqlite3
+    from orchestrator.orch import _run_task_set_subcommand
+    from orchestrator.orch import _resolve_paths_from_argv
+    import argparse
+
+    root = tmp_path / "proj"
+    _make_sqlite_project(root)
+    _bootstrap_project(root)
+
+    # Force T-A to `backlog` (the fixture default is `todo`) to match the
+    # exact issue #81 repro shape.
+    ns = argparse.Namespace(
+        project_root=str(root),
+        project_id="proj-task-set",
+        config=".orchestrator/config.yaml",
+    )
+    paths = _resolve_paths_from_argv(ns)
+    db = paths.state_dir / "orch.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "UPDATE tasks_runtime SET status='backlog' "
+        "WHERE project_id='proj-task-set' AND task_id='T-A'"
+    )
+    conn.commit()
+    conn.close()
+
+    rc = _run_task_set_subcommand([
+        "--id", "T-A",
+        "--status", "done",
+        *_common_args(root),
+    ])
+    out = capsys.readouterr()
+    assert rc == 0, f"expected exit 0; stdout={out.out!r} stderr={out.err!r}"
+    assert "T-A: status -> done" in out.out
+    assert out.err == "", f"unexpected stderr: {out.err!r}"
+
+    # Fresh connection — issue #81 was originally hypothesized as a missing
+    # commit; a fresh handle would surface that immediately.
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute(
+            "SELECT status FROM tasks_runtime "
+            "WHERE project_id='proj-task-set' AND task_id='T-A'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row[0] == "done", (
+        f"issue #81 regression: CLI said done, DB says {row[0]!r}"
+    )
+
+
 def test_set_status_invalid_transition_exits_3(tmp_path: Path, capsys) -> None:
     """Invalid status transition (done → blocked) must exit 3."""
     from orchestrator.orch import _run_task_set_subcommand
