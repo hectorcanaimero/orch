@@ -14,7 +14,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1366 passed + 2 skipped (both SSE endpoints in `test_dashboard_security.py`, covered separately). Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
+- **Tests**: `pytest` from repo root. Full suite is 1370 passed + 2 skipped (both SSE endpoints in `test_dashboard_security.py`, covered separately). Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
 - **Never build after changes.** Type-check / test only.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
@@ -49,9 +49,11 @@ To keep context small, do not proactively call these MCP servers or skills on or
 
 ## Current context
 
-- **Branch**: `sprint-e3/spa-spike` (per `git status`; check for drift).
-- **Latest sprint**: E-3 SPA — Vite+React+shadcn frontend + JSON endpoints + dev CORS on FastAPI.
-- **Prior sprints** (auto-memory has details): 7 budget guardrails · 8 packaging (v0.2.0 on GitHub, MIT, pipx) · 9 `orch init` · A runtime robustness · B SQLite backend · C observability subcommands · D `doctor`/`validate`/interactive `init` · E-1 findings dogfooding loop · E-2 dashboard profiles.
+- **Branch**: `main` (per `git status`; check for drift — sprint branches like `sprint-e3/*` are historical).
+- **Version**: v0.9.1 on `main` (after PR #83).
+- **Latest sprints**: H-7 wizard confirm gate (#80), H-6 `/orch` skill (#78), H-1a/b/c/d templates (#66/#67/#68/#77), H-3 brand (#65), H-4 README+HN (#66). Fixes fuera de serie: F-11 upgrade (#79), F-12 SQLite SoT (#75), F-13 bootstrap hygiene (#74/#76/#83), F-14 `agy` backend (#82).
+- **Pending explicit**: H-1e `expo-mobile` template (last of the 5 canonical).
+- **Prior sprints** (auto-memory has details): 7 budget guardrails · 8 packaging (v0.2.0, MIT, pipx) · 9 `orch init` · A runtime robustness · B SQLite backend · C observability subcommands · D `doctor`/`validate`/interactive `init` · E-1..E-8 dashboard iterations · F-1..F-6 clean foundation + PR automation · G-0..G-6 stakeholder UX · H-2 config consolidation · H-3..H-7 templates + brand + wizard.
 
 ## Gotchas already learned
 

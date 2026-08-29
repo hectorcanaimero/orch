@@ -1,22 +1,22 @@
 # orch — Próximos Sprints
 
-**Fecha**: 2026-08-26
-**Estado**: Living document — actualizar al inicio de cada sprint
-**Base**: product-checklist.md + estado técnico v0.7.0 (post F-5)
+**Fecha**: 2026-08-29
+**Estado**: Living document — actualizar al inicio de cada sprint (versión actual: v0.9.1)
+**Base**: product-checklist.md + estado técnico v0.9.1 (post Serie H parcial)
 
 > Hoja de ruta táctica. Cada sprint es una unidad autónoma de valor — entregable, testeable, mergeable en un día. El orden responde a impacto en el eje stakeholder + deuda técnica que bloquea sprints posteriores.
 
 ---
 
-## Estado actual (post Serie G — v0.8.0)
+## Estado actual (post Serie H parcial — v0.9.1)
 
 | Capa | Qué hay | Qué falta |
 |------|---------|-----------|
-| **Dispatch** | DAG, worktrees, multi-backend, budget guardrails, server-side commit_pending (F-6) | — |
+| **Dispatch** | DAG, worktrees, multi-backend (5: claude/codex/opencode/gemini/agy), budget guardrails, server-side commit_pending (F-6) | — |
 | **CI/CD** | PR automático, CI polling, redispatch con logs, workflow auto-generado (`orch init`), `auto_merge` opt-in (G-1) | — |
 | **Dashboard** | KPIs, sprint health, ETA, blockers, velocity, milestones (G-2/F-3), Gantt timeline (G-3), exec summary (G-4) | — |
 | **Stakeholder UX** | Status labels, profiles, tunnel URL, budget/spend view (G-5) | PDF export, lenguaje de negocio |
-| **Onboarding** | `orch init` (1 archivo obligatorio — H-2), doctor, validate, `orch config consolidate` | Wizard guiado + templates canónicos (H-1) |
+| **Onboarding** | `orch init` (1 archivo obligatorio — H-2), doctor, validate, `orch config consolidate` | 1 template pendiente (`expo-mobile`, H-1e). Wizard summary+confirm gate ✅ (H-7) |
 | **Notificaciones** | Slack/Discord webhooks + `orch notify digest` (G-6) | — |
 
 ---
@@ -30,6 +30,32 @@
 **Fix (server-side, no prompt)**: `WorktreeManager.commit_pending(task_id, message) → bool` — `git add -A`, `status --porcelain` para detectar clean tree, `commit` con identidad inline. Llamado desde `_reap_once` justo antes de `wm.push()`. Best-effort: fallo de commit loguea warning pero no bloquea el push.
 
 **Fuera de scope**: semántica "empty diff → blocked" es feature, no fix. Queda para PR aparte si se pide.
+
+### F-11 — Upgrade path robustness (PR #79) ✅
+
+**Bug**: `orch upgrade` failed on stdlib-version detection when running from a source tree or non-`pipx`/`uv tool` install. Version fallback returned empty; upgrade probe couldn't determine current build.
+
+**Fix**: stdlib version fallback via `importlib.metadata` with tolerant guard for source installs. Detects `uv tool install` layout so the upgrade path works uniformly across install methods (`pipx`, `uv tool`, source).
+
+### F-12 — SQLite becomes real source of truth (PR #75) ✅ (Closes #72)
+
+**Bug crítico**: the dashboard and dispatcher read task status from `tasks.json`, but the SQLite backend wrote to `tasks_runtime`. Two writers, no reconciliation — total state divergence. The claim "SQLite as single source of truth (F-1)" was aspirational, not real.
+
+**Fix**: dashboard + dispatcher now read from `tasks_runtime` when `state.backend: sqlite`. `tasks.json` is source only for DAG definition (topology, dependencies), not runtime status.
+
+**Fuera de scope**: cross-backend parity audit for other status-mutating commands — see #81 / PR #83 below.
+
+### F-13 — SQLite bootstrap + doctor robustness (PRs #74 #76 #83) ✅ (Closes #71 #73 #81)
+
+Three related SQLite hygiene fixes in one arc:
+
+- **#74** (Closes #71) — `WorktreeManager.create()` pre-purges orphan branch when `git worktree add -b` fails partway. Prior behavior: retries blocked indefinitely.
+- **#76** (Closes #73) — `sqlite_backend.bootstrap()` and `orch doctor` detect orphan `tasks_runtime` rows (rows without a matching `tasks_definition`) and flag them.
+- **#83** (Closes #81) — `_STATUS_TRANSITIONS` widened so `backlog -> {todo, in-progress, blocked, done}` and `blocked -> done` are legal, matching `FileBackend` semantics. Plus rowcount==0 guard raises loudly on any UPDATE that touches zero rows. Cross-backend parity restored.
+
+### F-14 — `agy` (Antigravity CLI) as fifth backend (PR #82) ✅
+
+Adds `agy` as a first-class backend alongside claude/codex/opencode/gemini. Wired through router, budget gate, concurrency, preflight, dashboard pricing. CLI shape verified against `agy` v1.1.22: `agy --output-format json --model <cli_model> --print '<prompt>'`. Cost stays 0.0 in the adapter; dashboard's `pricing.yaml` estimates USD from tokens. Routes shipped: `agy/pro` (`gemini-3.1-pro-high`, premium) and `agy/flash` (`gemini-3.7-flash-medium`, cheap).
 
 ---
 
@@ -163,7 +189,7 @@
 
 ## Serie H — Onboarding y distribución (Q2)
 
-### H-1 — `orch init` wizard guiado por CLI + template system
+### H-1 — `orch init` wizard guiado por CLI + template system ✅ parcial (4/5 templates + wizard H-7)
 
 **Decisión**: el wizard se queda en CLI (no browser). El problema hoy es que el flujo es lineal y genérico — el dev no sabe qué contestar, se pierde entre archivos. La solución es hacerlo guiado e inteligente, no visual.
 
@@ -183,6 +209,13 @@
 
 Cada template incluye: `tasks.json` de ejemplo, `config.yaml` preconfigurado, `AGENTS.md` con contexto del stack, `.github/workflows/orch-ci.yml` listo.
 
+**Sub-sprints shipped**:
+- `H-1a — template mechanism + `python-api` template (PR #66) ✅`
+- `H-1b — `chatbot-whatsapp` template (PR #67) ✅`
+- `H-1c — `data-pipeline` template (PR #68) ✅`
+- `H-1d — `nextjs-saas` template (PR #77) ✅`
+- `H-1e — `expo-mobile` template (Expo SDK + Supabase + EAS) 🔜 pendiente`
+
 ### H-2 — Consolidación de configs (1 archivo obligatorio) ✅ (PR #63, opción B)
 
 **Decisión de diseño clave**: consolidación **selectiva**, no literal. Un merge total (budgets 76 líneas + model_router 286 líneas + dashboard 86 líneas → config.yaml) infla el archivo a ~500 líneas y fight the intent. Solo se consolidó lo que realmente ayuda:
@@ -194,7 +227,7 @@ Cada template incluye: `tasks.json` de ejemplo, `config.yaml` preconfigurado, `A
 - [x] Nuevo subcomando `orch config consolidate [--dry-run]` — migra proyectos existentes: deep-merge `dashboard.yaml` en `config.yaml`, backup `.bak-<ts>`.
 - [ ] Fuera de alcance (deliberado): consolidar `budgets.yaml` o `model_router.yaml` — son data (presets, mapping tables), no config narrativo. Separados son más legibles.
 
-### H-3 — Brand integration
+### H-3 — Brand integration ✅ (PR #65)
 
 Assets finales en `logos/export/` (combination mark + icon cuadrado, SVG + PNG en 7 tamaños).
 
@@ -204,7 +237,7 @@ Assets finales en `logos/export/` (combination mark + icon cuadrado, SVG + PNG e
 - Usar `logos/export/logo.svg` como hero image del README.
 - Actualizar `orchestrator/spa/` con el nuevo favicon (rebuild de la SPA).
 
-### H-4 — README reescritura + HN launch prep
+### H-4 — README reescritura + HN launch prep ✅ (PR #66)
 
 - Nuevo tagline: *"El primer orchestrator con dashboard para stakeholders. Mandá este link a tu cliente."*
 - Hero image: `logos/export/logo.svg` + screenshot del stakeholder view con ETA + blockers.
@@ -212,6 +245,14 @@ Assets finales en `logos/export/` (combination mark + icon cuadrado, SVG + PNG e
 - Comparison table honesta (ya existe en product-checklist).
 - Sección "Quick start" en 3 comandos.
 - Target: HN "Show HN" post cuando H-1, H-2 y H-3 estén listos.
+
+### H-6 — `/orch` Claude Code skill + `orch install-skills` ✅ (PR #78)
+
+Sub-sprint fuera del plan original: distribución del skill `/orch` para Claude Code, y subcomando `orch install-skills` para instalarlo. Reduce fricción de onboarding para devs que usan Claude Code — el skill le enseña a un agente cómo operar `orch` sin que el humano tenga que explicarlo cada vez.
+
+### H-7 — Wizard summary + confirm gate ✅ (PR #80)
+
+Sub-sprint que capturó la pieza "resumen + confirmación" mencionada en la descripción de H-1. Antes de escribir archivos, `orch init` imprime un resumen de lo que va a crear y pide confirmación. Al final imprime el checklist coloreado de próximos pasos.
 
 ---
 
@@ -248,12 +289,14 @@ G-4 (exec summary)         ──── depende de G-2 ✅ done (PR #59, consoli
 G-5 (budget chart)         ──── standalone ✅ done (PR #58)
 G-6 (notificaciones)       ──── ✅ done (PR #62) — reusa `executive_summary` (G-4) para digest
 
-H-1 (wizard + templates)   ──── depende de G-1 (CI workflow en template) + H-2 ✅
+H-1 (wizard + templates)   ──── depende de G-1 + H-2 ✅ parcial (4/5 templates + H-7)
 H-2 (config consolidation) ──── standalone ✅ done (PR #63, opción B)
-H-3 (brand integration)    ──── standalone
-H-4 (README + HN)          ──── depende de H-1 + H-3 (screenshots + brand)
+H-3 (brand integration)    ──── standalone ✅ done (PR #65)
+H-4 (README + HN)          ──── depende de H-1 + H-3 ✅ done (PR #66)
+H-6 (/orch skill)          ──── standalone ✅ done (PR #78) — off-plan
+H-7 (wizard confirm)       ──── ✅ done (PR #80) — completa el flujo de H-1
 ```
 
 ---
 
-*Documento creado: 2026-08-26 post Sprint F-5. Actualizado: 2026-08-28 — Serie G completa (G-0 PR #54, G-1 PR #53, G-2 en F-3 #49, G-3 Gantt, G-4 PR #59, G-5 PR #58, G-6 PR #62) + F-6 bugfix crítico #60 (PR #61) + H-2 consolidación config opción B (PR #63). v0.8.0 en `main`. Próximo sprint: H-1 (wizard + 5 templates canónicos). Próxima revisión: al completar H-1.*
+*Documento creado: 2026-08-26 post Sprint F-5. Última actualización: 2026-08-29 — sync a v0.9.1: Serie G completa, H-1a/b/c/d (#66/#67/#68/#77), H-2 (#63), H-3 (#65), H-4 (#66), H-6 (#78, off-plan), H-7 (#80). Fixes fuera de serie: F-11 upgrade (#79), F-12 SQLite SoT (#75 closes #72), F-13 bootstrap hygiene (#74/#76/#83 closes #71/#73/#81), F-14 agy backend (#82). Versión actual: v0.9.1. Próximo pendiente: H-1e (`expo-mobile` template).*
