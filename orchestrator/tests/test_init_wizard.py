@@ -132,6 +132,7 @@ def _wizard_answers(
     budget_preset: str = "conservative",
     spec_root: str = "specs",
     sdd: str = "n",
+    confirm: str = "y",
     open_dashboard: str = "n",
 ) -> list[str]:
     """Build the canonical answer sequence the wizard consumes.
@@ -139,7 +140,7 @@ def _wizard_answers(
     Order matches the run_wizard() prompt sequence:
         project_id, project_root, template (H-1a), state_backend,
         budget_preset, spec_root, 3 tier picks (defaults), sdd flag,
-        open_dashboard prompt.
+        confirm-proceed (H-7), open_dashboard prompt.
     """
     return [
         project_id,
@@ -152,6 +153,7 @@ def _wizard_answers(
         "",  # standard default
         "",  # cheap default
         sdd,
+        confirm,  # H-7: "Proceed with scaffolding?"
         open_dashboard,  # "Open dashboard in browser?"
     ]
 
@@ -318,6 +320,89 @@ def test_batch_scaffold_still_refuses_without_force(tmp_path: Path) -> None:
     assert rc == 1
     # And the existing file was not touched.
     assert (project_root / "tasks.json").read_text() == "existing"
+
+
+# ---- H-7: summary + confirm + colorized next-steps --------------------
+
+
+def test_wizard_summary_precedes_confirm(tmp_path: Path) -> None:
+    """The summary block must show every operator choice on one screen
+    before the confirm prompt fires."""
+    import argparse
+
+    project_root = tmp_path / "sum-proj"
+    answers = _wizard_answers(
+        "sumproj",
+        project_root,
+        state_backend="sqlite",
+        budget_preset="aggressive",
+        spec_root="docs/specs",
+    )
+    args = argparse.Namespace()
+    out = io.StringIO()
+    rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=out)
+    assert rc == 0
+    body = out.getvalue()
+    assert "Ready to scaffold with these settings" in body
+    assert "sumproj" in body
+    assert "sqlite" in body
+    assert "aggressive" in body
+    assert "docs/specs" in body
+
+
+def test_wizard_confirm_no_aborts_without_writing(tmp_path: Path) -> None:
+    """Answering 'n' at confirm must exit 0 and leave the disk untouched."""
+    import argparse
+
+    project_root = tmp_path / "abort-proj"
+    answers = _wizard_answers("abortproj", project_root, confirm="n")
+    # After abort the wizard returns before the dashboard prompt, so drop it.
+    answers = answers[:-1]
+    args = argparse.Namespace()
+    out = io.StringIO()
+    rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=out)
+    assert rc == 0
+    assert "Aborted" in out.getvalue()
+    # Nothing on disk — the wizard did not even create the project root.
+    assert not project_root.exists()
+
+
+def test_wizard_next_steps_checklist_matches_template(tmp_path: Path) -> None:
+    """Blank scaffolds get the 'author a spec' hint; a named template
+    (which ships tasks.json.tmpl) gets the 'inspect tasks / run' path."""
+    import argparse
+
+    # Blank path
+    blank_root = tmp_path / "blank-proj"
+    args = argparse.Namespace()
+    blank_out = io.StringIO()
+    rc = run_wizard(
+        args,
+        input_fn=_queue_input(_wizard_answers("blankproj", blank_root)),
+        output_stream=blank_out,
+    )
+    assert rc == 0
+    blank_body = blank_out.getvalue()
+    assert "Author a spec" in blank_body
+
+    # Templated path (python-api ships in every build).
+    tpl_root = tmp_path / "tpl-proj"
+    tpl_out = io.StringIO()
+    rc = run_wizard(
+        args,
+        input_fn=_queue_input(
+            _wizard_answers("tplproj", tpl_root, template="python-api")
+        ),
+        output_stream=tpl_out,
+    )
+    assert rc == 0
+    tpl_body = tpl_out.getvalue()
+    assert "Inspect tasks" in tpl_body
+    assert "Run the DAG" in tpl_body
+    assert "orch install-skills" in tpl_body  # skill hint tip is on both paths
+
+
+# ---- backwards-compat with existing batch behavior ---------------------
 
 
 def test_batch_scaffold_force_flag_still_overwrites(tmp_path: Path) -> None:
