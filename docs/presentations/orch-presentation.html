@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>orch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#09090b;
+  --s1:#18181b;
+  --s2:#27272a;
+  --border:#3f3f46;
+  --text:#fafafa;
+  --t2:#a1a1aa;
+  --t3:#52525b;
+  --accent:#7c3aed;
+  --a2:#a78bfa;
+  --asoft:rgba(124,58,237,.12);
+  --aborder:rgba(124,58,237,.3);
+  --green:#10b981;
+  --red:#f43f5e;
+  --amber:#f59e0b;
+}
+
+html,body{height:100%;overflow:hidden}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text)}
+
+/* ── SLIDES ── */
+.slides{height:100dvh;overflow-y:scroll;scroll-snap-type:y mandatory;scroll-behavior:smooth;scrollbar-width:none}
+.slides::-webkit-scrollbar{display:none}
+.slide{height:100dvh;scroll-snap-align:start;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:5rem 2rem 2rem}
+
+/* ── NAV ── */
+nav{position:fixed;top:0;left:0;right:0;z-index:200;display:flex;align-items:center;justify-content:space-between;padding:1.25rem 2rem;background:linear-gradient(to bottom,rgba(9,9,11,.95) 0%,transparent 100%)}
+.nav-brand{display:flex;align-items:center;gap:.625rem;text-decoration:none}
+.nav-icon-wrap{width:26px;height:26px}
+.nav-word{font-weight:700;font-size:1rem;letter-spacing:-.03em;color:var(--text)}
+
+.lang-sw{display:flex;gap:2px;background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:3px}
+.lang-btn{font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:600;padding:.25rem .625rem;border:none;background:transparent;color:var(--t2);border-radius:5px;cursor:pointer;transition:.15s;letter-spacing:.06em;text-transform:uppercase}
+.lang-btn.active{background:var(--accent);color:#fff}
+.lang-btn:hover:not(.active){color:var(--text);background:var(--s2)}
+
+/* ── DOT NAV ── */
+.dot-nav{position:fixed;right:1.5rem;top:50%;transform:translateY(-50%);z-index:200;display:flex;flex-direction:column;gap:8px}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--border);cursor:pointer;transition:.3s}
+.dot.active{background:var(--accent);transform:scale(1.6)}
+
+/* ── ANIMATED ELEMENTS ── */
+.a{opacity:0;transform:translateY(18px);transition:opacity .55s ease,transform .55s ease}
+.a.in{opacity:1;transform:none}
+.a.d1{transition-delay:.1s}.a.d2{transition-delay:.22s}.a.d3{transition-delay:.35s}
+.a.d4{transition-delay:.5s}.a.d5{transition-delay:.65s}
+
+/* ── TYPOGRAPHY ── */
+.display{font-size:clamp(2.2rem,5vw,4.2rem);font-weight:700;line-height:1.1;letter-spacing:-.03em}
+.display-sm{font-size:clamp(1.6rem,3.5vw,3rem);font-weight:700;line-height:1.15;letter-spacing:-.025em}
+.lead{font-size:1.0625rem;color:var(--t2);line-height:1.65;max-width:54ch}
+.mono{font-family:'JetBrains Mono',monospace}
+.accent-text{color:var(--a2)}
+.green-text{color:var(--green)}
+
+/* section label */
+.lbl{font-family:'JetBrains Mono',monospace;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:1rem;display:flex;align-items:center;gap:.625rem}
+.lbl::before{content:'';width:20px;height:1px;background:var(--accent);display:block}
+
+/* ── BG GLOW ── */
+.glow{position:absolute;border-radius:50%;pointer-events:none}
+.glow-tl{width:500px;height:500px;top:-150px;left:-150px;background:radial-gradient(circle,rgba(124,58,237,.08) 0%,transparent 70%)}
+.glow-br{width:400px;height:400px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(124,58,237,.06) 0%,transparent 70%)}
+.glow-center{width:600px;height:600px;top:50%;left:50%;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(124,58,237,.1) 0%,transparent 65%)}
+
+/* ── S0 HOOK ── */
+#s0{text-align:center}
+#s0 .inner{max-width:680px}
+.bubble{display:inline-flex;align-items:center;gap:.5rem;background:var(--s1);border:1px solid var(--border);border-radius:100px;padding:.4rem .875rem .4rem .625rem;font-size:.875rem;color:var(--t2);margin-bottom:2.5rem;animation:float 3.5s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.bubble-dot{width:8px;height:8px;border-radius:50%;background:var(--amber);animation:blink 2s ease infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── S1 PROBLEM ── */
+#s1 .inner{display:grid;grid-template-columns:1fr 1px 1fr;gap:2.5rem;max-width:860px;width:100%;align-items:start;padding-top:1rem}
+.col-lbl{font-family:'JetBrains Mono',monospace;font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:.875rem}
+.term{background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.term-bar{display:flex;align-items:center;gap:6px;padding:.5rem .875rem;background:var(--s2);border-bottom:1px solid var(--border)}
+.dr{width:9px;height:9px;border-radius:50%;background:#ff5f57}
+.dy{width:9px;height:9px;border-radius:50%;background:#ffbd2e}
+.dg{width:9px;height:9px;border-radius:50%;background:#28c840}
+.term-body{padding:.875rem 1rem;font-family:'JetBrains Mono',monospace;font-size:.7rem;line-height:1.9}
+.ll{display:flex;gap:.5rem;opacity:0;transform:translateX(-4px)}
+.slide-active .ll{animation:ll-in .3s ease forwards}
+.ll:nth-child(1){animation-delay:.3s}.ll:nth-child(2){animation-delay:.8s}
+.ll:nth-child(3){animation-delay:1.4s}.ll:nth-child(4){animation-delay:2.1s}
+.ll:nth-child(5){animation-delay:2.9s}.ll:nth-child(6){animation-delay:3.7s}
+@keyframes ll-in{to{opacity:1;transform:none}}
+.ts{color:var(--t3)}.ok{color:var(--green)}.run{color:var(--a2)}.inf{color:var(--t2)}
+.divv{background:linear-gradient(to bottom,transparent,var(--border) 20%,var(--border) 80%,transparent);align-self:stretch}
+.msgs{display:flex;flex-direction:column;gap:.75rem}
+.msg{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:.75rem 1rem;opacity:0;transform:translateX(14px)}
+.slide-active .msg{animation:msg-in .4s ease forwards}
+.msg:nth-child(1){animation-delay:.5s}.msg:nth-child(2){animation-delay:1.6s}.msg:nth-child(3){animation-delay:3.0s}
+@keyframes msg-in{to{opacity:1;transform:none}}
+.msg-from{font-size:.65rem;font-weight:600;color:var(--t3);margin-bottom:.2rem;letter-spacing:.05em;text-transform:uppercase}
+.msg-txt{font-size:.85rem;line-height:1.5;color:var(--t2)}
+
+/* ── S2 GAP ── */
+#s2 .inner{max-width:740px;width:100%}
+.ctable{width:100%;border-collapse:collapse;margin-top:2rem}
+.ctable th{font-family:'JetBrains Mono',monospace;font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);text-align:left;padding:.5rem 1rem;border-bottom:1px solid var(--border)}
+.ctable th:not(:first-child){text-align:center}
+.ctable td{padding:.8rem 1rem;border-bottom:1px solid rgba(63,63,70,.35);font-size:.875rem;color:var(--t2)}
+.ctable td:not(:first-child){text-align:center}
+.ctable .tn{font-weight:500;color:var(--text)}
+.orch-row td{background:var(--asoft);border-bottom:none !important;color:var(--text)}
+.orch-row .tn{color:var(--a2);font-weight:700}
+.orch-row td:first-child{border-radius:8px 0 0 8px}
+.orch-row td:last-child{border-radius:0 8px 8px 0}
+.chk{color:var(--green)}.crs{color:var(--red)}.slo{color:var(--amber);font-family:'JetBrains Mono',monospace;font-size:.75rem}
+.ctable tbody tr{opacity:0;transform:translateX(-6px);transition:opacity .4s ease,transform .4s ease}
+.ctable tbody tr.in{opacity:1;transform:none}
+
+/* ── S3 SOLUTION ── */
+#s3{text-align:center}
+#s3 .inner{max-width:640px}
+.logo-hero{width:min(400px,75vw);margin:0 auto 2.5rem;display:block}
+.logo-hero .bar{transform-origin:left center;animation:bar-grow .75s cubic-bezier(.16,1,.3,1) both}
+.logo-hero .bar:nth-child(1){animation-delay:.05s}
+.logo-hero .bar:nth-child(2){animation-delay:.2s}
+.logo-hero .bar:nth-child(3){animation-delay:.35s}
+.logo-hero .bar:nth-child(4){animation-delay:.5s}
+@keyframes bar-grow{from{transform:scaleX(0);opacity:0}to{transform:scaleX(1);opacity:1}}
+
+/* ── S4 HOW ── */
+#s4 .inner{max-width:860px;width:100%}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1.25rem;margin-top:2rem}
+.step{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:1.5rem;transition:border-color .2s}
+.step:hover{border-color:var(--aborder)}
+.step-n{font-family:'JetBrains Mono',monospace;font-size:.65rem;letter-spacing:.1em;color:var(--accent);margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
+.step-n::after{content:'';flex:1;height:1px;background:var(--border)}
+.step-ttl{font-size:.95rem;font-weight:600;margin-bottom:.5rem}
+.step-desc{font-size:.8rem;line-height:1.65;color:var(--t2);margin-bottom:.875rem}
+.snippet{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:.625rem .75rem;font-family:'JetBrains Mono',monospace;font-size:.68rem;line-height:1.8;overflow-x:auto}
+.k{color:var(--a2)}.v{color:var(--green)}.s{color:#fbbf24}.c{color:var(--accent)}.cm{color:var(--t3)}
+
+/* ── S5 DEMO ── */
+#s5 .inner{max-width:820px;width:100%}
+.browser{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.bbar{display:flex;align-items:center;gap:.875rem;padding:.625rem 1rem;background:var(--s2);border-bottom:1px solid var(--border)}
+.bdots{display:flex;gap:6px}
+.burl{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:.3rem .75rem;font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--t2);display:flex;align-items:center;gap:.375rem}
+.block-green{color:var(--green)}.url-host{color:var(--text)}.url-path{color:var(--a2)}
+.dash{padding:1.25rem;display:grid;grid-template-columns:1fr 1fr;gap:.875rem}
+.dc{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.875rem}
+.dc-lbl{font-family:'JetBrains Mono',monospace;font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-bottom:.5rem}
+.dc-big{font-size:1.875rem;font-weight:700;letter-spacing:-.03em}
+.dc-sub{font-size:.72rem;color:var(--t3);margin-top:.125rem}
+.pbar-bg{margin-top:.625rem;background:var(--s2);border-radius:100px;height:5px;overflow:hidden}
+.pbar-fill{height:100%;border-radius:100px;background:var(--accent);width:0;transition:width 1s cubic-bezier(.16,1,.3,1)}
+.slide-active .pbar-fill{width:65%}
+.tlist{display:flex;flex-direction:column;gap:.4rem;margin-top:.375rem}
+.ti{display:flex;align-items:center;gap:.5rem;font-size:.78rem;color:var(--t2)}
+.tdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.tdot.done{background:var(--green)}.tdot.run{background:var(--accent);animation:pulse-d 1.5s ease infinite}.tdot.pend{background:var(--border)}
+@keyframes pulse-d{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+.dc-eta{font-size:1.375rem;font-weight:600;letter-spacing:-.02em;color:var(--a2)}
+
+/* ── S6 PERSONAS ── */
+#s6 .inner{max-width:860px;width:100%}
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:2rem}
+.pcard{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:1.375rem;display:flex;flex-direction:column;gap:.875rem}
+.pavatar{width:38px;height:38px;border-radius:9px;background:var(--asoft);border:1px solid var(--aborder);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pavatar svg{width:18px;height:18px;stroke:var(--a2);fill:none;stroke-width:1.5}
+.prole{font-family:'JetBrains Mono',monospace;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.pname{font-size:.875rem;font-weight:600;margin-top:.125rem}
+.pquote{font-size:.82rem;line-height:1.65;color:var(--t2);font-style:italic;border-left:2px solid var(--border);padding-left:.75rem;flex:1}
+.ptags{display:flex;gap:.375rem;flex-wrap:wrap}
+.tag{font-family:'JetBrains Mono',monospace;font-size:.6rem;padding:.175rem .45rem;border:1px solid var(--border);border-radius:4px;color:var(--t3)}
+
+/* ── S7 CTA ── */
+#s7{text-align:center}
+#s7 .inner{max-width:600px}
+.term-cta{background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:1.75rem 0;text-align:left}
+.tcta-bar{display:flex;align-items:center;gap:6px;padding:.5rem .875rem;background:var(--s2);border-bottom:1px solid var(--border)}
+.tcta-body{padding:1.125rem 1.375rem;font-family:'JetBrains Mono',monospace;font-size:.83rem;line-height:2.2}
+.cl{display:flex;gap:.75rem;opacity:0}
+.slide-active .cl{animation:cl-in .35s ease forwards}
+.slide-active .cl:nth-child(1){animation-delay:.25s}
+.slide-active .cl:nth-child(2){animation-delay:.9s}
+.slide-active .cl:nth-child(3){animation-delay:1.65s}
+@keyframes cl-in{to{opacity:1}}
+.prompt{color:var(--accent)}.cmd{color:var(--text)}
+.btns{display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap;opacity:0}
+.slide-active .btns{animation:cl-in .35s ease 2.3s forwards}
+.btn-p{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:.7rem 1.375rem;font-family:'DM Sans',sans-serif;font-size:.875rem;font-weight:600;cursor:pointer;transition:.15s;text-decoration:none}
+.btn-p:hover{background:#6d28d9;transform:translateY(-1px)}
+.btn-s{background:transparent;color:var(--t2);border:1px solid var(--border);border-radius:8px;padding:.7rem 1.375rem;font-family:'DM Sans',sans-serif;font-size:.875rem;font-weight:500;cursor:pointer;transition:.15s;text-decoration:none}
+.btn-s:hover{border-color:var(--t2);color:var(--text)}
+
+/* ── S8 CLOSE ── */
+#s8{text-align:center}
+#s8 .inner{max-width:580px}
+.close-icon{width:72px;height:72px;margin:0 auto 2rem}
+.close-icon .bg-sq{fill:#09090b}
+.close-icon .bar-close{transition:fill .5s ease}
+.close-icon.green-all .bar-close:nth-child(1){fill:var(--green);transition-delay:.15s}
+.close-icon.green-all .bar-close:nth-child(2){fill:var(--green);transition-delay:.4s}
+.close-icon.green-all .bar-close:nth-child(3){fill:var(--green);transition-delay:.65s}
+.close-icon.green-all .bar-close:nth-child(4){fill:var(--green);transition-delay:.9s}
+.close-ft{margin-top:2.5rem;display:flex;gap:1.5rem;justify-content:center;align-items:center}
+.close-ft a{font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--t3);text-decoration:none;transition:.15s}
+.close-ft a:hover{color:var(--a2)}
+.close-ft span{color:var(--border)}
+
+/* ── MOBILE ── */
+@media(max-width:700px){
+  #s1 .inner{grid-template-columns:1fr;grid-template-rows:auto auto}
+  .divv{display:none}
+  .steps{grid-template-columns:1fr}
+  .pgrid{grid-template-columns:1fr}
+  .dash{grid-template-columns:1fr}
+  .display{font-size:2rem}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-brand" href="#">
+    <div class="nav-icon-wrap">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect width="512" height="512" rx="88" fill="#09090b"/>
+        <rect x="106" y="139" width="262" height="30" rx="15" fill="#7c3aed"/>
+        <rect x="106" y="177" width="194" height="30" rx="15" fill="#a78bfa"/>
+        <rect x="106" y="215" width="290" height="30" rx="15" fill="#7c3aed"/>
+        <rect x="106" y="253" width="162" height="30" rx="15" fill="#a78bfa"/>
+      </svg>
+    </div>
+    <span class="nav-word">orch</span>
+  </a>
+  <div class="lang-sw">
+    <button class="lang-btn active" data-lang="es">es</button>
+    <button class="lang-btn" data-lang="pt">pt</button>
+    <button class="lang-btn" data-lang="en">en</button>
+  </div>
+</nav>
+
+<!-- DOT NAV -->
+<div class="dot-nav" id="dots"></div>
+
+<!-- SLIDES -->
+<div class="slides" id="slides">
+
+  <!-- S0: HOOK -->
+  <section class="slide" id="s0">
+    <div class="glow glow-tl"></div>
+    <div class="glow glow-br"></div>
+    <div class="inner">
+      <div class="bubble a" data-i18n="bubble">
+        <span class="bubble-dot"></span>
+        <span>¿Alguna novedad?</span>
+      </div>
+      <h1 class="display a d1" data-i18n-html="hook.title">Tus agentes trabajan.<br>Tu cliente no lo sabe.</h1>
+      <p class="lead a d2" style="margin:1.5rem auto 0;text-align:center" data-i18n="hook.sub">Cada hora sin respuesta es un cliente que empieza a dudar.</p>
+    </div>
+  </section>
+
+  <!-- S1: PROBLEM -->
+  <section class="slide" id="s1">
+    <div class="glow glow-tl"></div>
+    <div class="inner">
+      <div>
+        <p class="col-lbl a" data-i18n="problem.left">Tu terminal</p>
+        <div class="term a d1">
+          <div class="term-bar"><div class="dr"></div><div class="dy"></div><div class="dg"></div></div>
+          <div class="term-body">
+            <div class="ll"><span class="ts">10:42:01</span><span class="ok">[OK]</span><span class="inf" data-i18n="log1">agent:landing — iniciando</span></div>
+            <div class="ll"><span class="ts">10:42:03</span><span class="run">[RUN]</span><span class="inf" data-i18n="log2">claude — analizando requirements</span></div>
+            <div class="ll"><span class="ts">10:42:11</span><span class="run">[RUN]</span><span class="inf" data-i18n="log3">claude — escribiendo componentes</span></div>
+            <div class="ll"><span class="ts">10:42:29</span><span class="ok">[OK]</span><span class="inf" data-i18n="log4">agent:api — 12/12 endpoints</span></div>
+            <div class="ll"><span class="ts">10:42:34</span><span class="run">[RUN]</span><span class="inf" data-i18n="log5">claude — corriendo tests...</span></div>
+            <div class="ll"><span class="ts">10:43:01</span><span class="ok">[OK]</span><span class="inf" data-i18n="log6">✓ 24 tests passed</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="divv a d1"></div>
+      <div>
+        <p class="col-lbl a" data-i18n="problem.right">Tu cliente</p>
+        <div class="msgs">
+          <div class="msg">
+            <div class="msg-from" data-i18n="msg1.from">Cliente — WhatsApp</div>
+            <div class="msg-txt" data-i18n="msg1.txt">¿Alguna novedad del chatbot?</div>
+          </div>
+          <div class="msg">
+            <div class="msg-from" data-i18n="msg2.from">Cliente — Email</div>
+            <div class="msg-txt" data-i18n="msg2.txt">¿Podés mandarme un update del proyecto?</div>
+          </div>
+          <div class="msg">
+            <div class="msg-from" data-i18n="msg3.from">Cliente — Slack</div>
+            <div class="msg-txt" data-i18n="msg3.txt">¿Cuándo lo tenemos listo? El equipo está esperando.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S2: GAP -->
+  <section class="slide" id="s2">
+    <div class="glow glow-center"></div>
+    <div class="inner">
+      <div class="lbl a" data-i18n="gap.lbl">El gap</div>
+      <h2 class="display-sm a d1" data-i18n-html="gap.title">Todas te dan logs.<br>Ninguna le da algo a tu cliente.</h2>
+      <table class="ctable a d2">
+        <thead>
+          <tr>
+            <th data-i18n="gap.c1">Herramienta</th>
+            <th data-i18n="gap.c2">Orquesta agentes</th>
+            <th data-i18n="gap.c3">Dashboard cliente</th>
+            <th data-i18n="gap.c4">Setup rápido</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="tn">LangGraph</td><td><span class="chk">✓</span></td><td><span class="crs">✗</span></td><td><span class="crs">✗</span></td></tr>
+          <tr><td class="tn">CrewAI</td><td><span class="chk">✓</span></td><td><span class="crs">✗</span></td><td><span class="chk">✓</span></td></tr>
+          <tr><td class="tn" data-i18n="gap.custom">Custom</td><td><span class="chk">✓</span></td><td><span class="chk">✓</span></td><td><span class="slo" data-i18n="gap.weeks">3 semanas</span></td></tr>
+          <tr class="orch-row"><td class="tn">orch</td><td><span class="chk">✓</span></td><td><span class="chk">✓</span></td><td><span class="chk">✓</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- S3: SOLUTION -->
+  <section class="slide" id="s3">
+    <div class="glow glow-center"></div>
+    <div class="inner">
+      <div class="lbl a" data-i18n="sol.lbl">La solución</div>
+      <svg class="logo-hero a d1" viewBox="0 0 1024 512" xmlns="http://www.w3.org/2000/svg">
+        <g id="icon">
+          <rect class="bar" x="100" y="139" width="210" height="24" rx="12" fill="#7c3aed"/>
+          <rect class="bar" x="100" y="185" width="155" height="24" rx="12" fill="#a78bfa"/>
+          <rect class="bar" x="100" y="231" width="232" height="24" rx="12" fill="#7c3aed"/>
+          <rect class="bar" x="100" y="277" width="128" height="24" rx="12" fill="#a78bfa"/>
+        </g>
+        <g id="wordmark">
+          <text x="410" y="304" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-weight="600" font-size="172" letter-spacing="-0.04em" fill="#fafafa">orch</text>
+        </g>
+      </svg>
+      <p class="lead a d2" style="margin:0 auto;text-align:center" data-i18n="sol.sub">Orquestá agentes AI y mostrales el progreso a tus clientes — en tiempo real.</p>
+      <p class="a d3" style="margin-top:1.25rem;font-size:1rem;color:var(--a2);font-weight:500;text-align:center" data-i18n="sol.tag">Un link. Eso es todo lo que tu cliente necesita.</p>
+    </div>
+  </section>
+
+  <!-- S4: HOW IT WORKS -->
+  <section class="slide" id="s4">
+    <div class="inner">
+      <div class="lbl a" data-i18n="how.lbl">Cómo funciona</div>
+      <h2 class="display-sm a d1" data-i18n="how.title">Tres pasos. No más.</h2>
+      <div class="steps">
+        <div class="step a d2">
+          <div class="step-n">01</div>
+          <div class="step-ttl" data-i18n="h1.ttl">Definís las tareas</div>
+          <p class="step-desc" data-i18n="h1.desc">Describís lo que cada agente tiene que hacer en un JSON simple.</p>
+          <div class="snippet"><span class="c">{</span><br>&nbsp;<span class="k">"id"</span>: <span class="s">"landing"</span>,<br>&nbsp;<span class="k">"description"</span>: <span class="s">"Build landing"</span>,<br>&nbsp;<span class="k">"depends_on"</span>: <span class="v">[]</span><br><span class="c">}</span></div>
+        </div>
+        <div class="step a d3">
+          <div class="step-n">02</div>
+          <div class="step-ttl" data-i18n="h2.ttl">orch despacha</div>
+          <p class="step-desc" data-i18n="h2.desc">Camina el grafo de dependencias y corre cada tarea en el agente correcto.</p>
+          <div class="snippet"><span class="k">$</span> <span class="cm">orch</span> dispatch<br><span class="v">→ landing</span> <span style="color:var(--t3)">queued</span><br><span class="v">→ api</span> <span style="color:var(--t3)">queued</span><br><span class="v">→ auth</span> <span style="color:var(--amber)">blocked</span></div>
+        </div>
+        <div class="step a d4">
+          <div class="step-n">03</div>
+          <div class="step-ttl" data-i18n="h3.ttl">Tu cliente ve el dashboard</div>
+          <p class="step-desc" data-i18n="h3.desc">Compartís una URL. El cliente ve ETA y estado de cada tarea en tiempo real.</p>
+          <div class="snippet"><span style="color:var(--green)">🔒</span> <span class="k">orch.local</span><span style="color:var(--a2)">/dashboard</span><br><span class="cm"># compartí este link</span><br><span class="cm"># no se necesita cuenta</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S5: DEMO -->
+  <section class="slide" id="s5">
+    <div class="glow glow-tl"></div>
+    <div class="inner">
+      <div class="lbl a" data-i18n="demo.lbl">El dashboard</div>
+      <h2 class="display-sm a d1" style="margin-bottom:1.5rem">
+        <span data-i18n="demo.title">Esto es lo que ve tu cliente.</span>
+        <span class="accent-text"> <span data-i18n="demo.sub">Sin que vos expliques nada.</span></span>
+      </h2>
+      <div class="browser a d2">
+        <div class="bbar">
+          <div class="bdots"><div class="dr"></div><div class="dy"></div><div class="dg"></div></div>
+          <div class="burl">
+            <span class="block-green">🔒</span>
+            <span class="url-host">orch.local</span>
+            <span class="url-path">/dashboard?view=stakeholder</span>
+          </div>
+        </div>
+        <div class="dash">
+          <div class="dc">
+            <div class="dc-lbl" data-i18n="demo.health">Sprint Health</div>
+            <div class="dc-big" style="color:var(--a2)">65%</div>
+            <div class="dc-sub" data-i18n="demo.tasks-done">7 de 11 tareas completadas</div>
+            <div class="pbar-bg"><div class="pbar-fill"></div></div>
+          </div>
+          <div class="dc">
+            <div class="dc-lbl" data-i18n="demo.eta">ETA</div>
+            <div class="dc-eta">2 sep</div>
+            <div class="dc-sub" data-i18n="demo.eta-conf">confianza alta · 4 días</div>
+          </div>
+          <div class="dc" style="grid-column:span 2">
+            <div class="dc-lbl" data-i18n="demo.tasks">Tareas</div>
+            <div class="tlist">
+              <div class="ti"><div class="tdot done"></div><span data-i18n="t1">Auth module — OAuth2</span></div>
+              <div class="ti"><div class="tdot done"></div><span data-i18n="t2">Landing page build</span></div>
+              <div class="ti"><div class="tdot run"></div><span data-i18n="t3">API endpoints — en progreso</span></div>
+              <div class="ti"><div class="tdot pend"></div><span data-i18n="t4">Email templates — pendiente</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S6: PERSONAS -->
+  <section class="slide" id="s6">
+    <div class="inner">
+      <div class="lbl a" data-i18n="per.lbl">Para vos</div>
+      <h2 class="display-sm a d1" data-i18n="per.title">¿Con cuál te identificás?</h2>
+      <div class="pgrid">
+        <div class="pcard a d2">
+          <div style="display:flex;align-items:center;gap:.75rem">
+            <div class="pavatar">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            </div>
+            <div><div class="prole" data-i18n="p1.role">Freela solo</div><div class="pname" data-i18n="p1.name">Santiago · Dev freelance</div></div>
+          </div>
+          <div class="pquote" data-i18n="p1.quote">"Tengo 2 clientes activos. Les mandé el dashboard link el primer día — no me preguntaron más nada en 3 semanas."</div>
+          <div class="ptags"><span class="tag">Python</span><span class="tag">1 dev</span><span class="tag">2 clientes</span></div>
+        </div>
+        <div class="pcard a d3">
+          <div style="display:flex;align-items:center;gap:.75rem">
+            <div class="pavatar">
+              <svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M2 21c0-4 3.1-7 7-7"/><circle cx="17" cy="11" r="3"/><path d="M14 21c0-3 1.3-5 3-5s3 2 3 5"/></svg>
+            </div>
+            <div><div class="prole" data-i18n="p2.role">Agencia pequeña</div><div class="pname" data-i18n="p2.name">Valentina · CTO, agencia de 3</div></div>
+          </div>
+          <div class="pquote" data-i18n="p2.quote">"Somos 3 con 5 proyectos activos. orch nos ahorró las reuniones de status de toda una semana."</div>
+          <div class="ptags"><span class="tag">Mixed stack</span><span class="tag">3 devs</span><span class="tag">5 clientes</span></div>
+        </div>
+        <div class="pcard a d4">
+          <div style="display:flex;align-items:center;gap:.75rem">
+            <div class="pavatar">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <div><div class="prole" data-i18n="p3.role">Startup founder</div><div class="pname" data-i18n="p3.name">Mateo · Side project → product</div></div>
+          </div>
+          <div class="pquote" data-i18n="p3.quote">"Cuando los inversores pidieron ver el progreso del sprint, les mandamos el link del dashboard. Quedaron impactados."</div>
+          <div class="ptags"><span class="tag">FastAPI</span><span class="tag">Board</span><span class="tag">PMF</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S7: CTA -->
+  <section class="slide" id="s7">
+    <div class="glow glow-center"></div>
+    <div class="inner">
+      <div class="lbl" style="justify-content:center" data-i18n="cta.lbl">Empezá ahora</div>
+      <h2 class="display-sm a" data-i18n="cta.title">10 minutos. Tu primer dashboard funcionando.</h2>
+      <div class="term-cta a d1">
+        <div class="tcta-bar"><div class="dr"></div><div class="dy"></div><div class="dg"></div></div>
+        <div class="tcta-body">
+          <div class="cl"><span class="prompt">$</span><span class="cmd">pip install orch</span></div>
+          <div class="cl"><span class="prompt">$</span><span class="cmd">orch init</span></div>
+          <div class="cl"><span class="prompt">$</span><span class="cmd">orch dispatch</span></div>
+        </div>
+      </div>
+      <div class="btns">
+        <a class="btn-p" href="https://github.com/hectorcanaimero/orch" target="_blank" data-i18n="cta.b1">Instalá orch</a>
+        <a class="btn-s" href="#" data-i18n="cta.b2">Ver demo</a>
+        <a class="btn-s" href="#" data-i18n="cta.b3">Leer docs</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- S8: CLOSE -->
+  <section class="slide" id="s8">
+    <div class="glow glow-center"></div>
+    <div class="inner">
+      <svg class="close-icon" id="closeIcon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <rect class="bg-sq" width="512" height="512" rx="88"/>
+        <rect class="bar-close" x="106" y="139" width="262" height="30" rx="15" fill="#7c3aed"/>
+        <rect class="bar-close" x="106" y="177" width="194" height="30" rx="15" fill="#a78bfa"/>
+        <rect class="bar-close" x="106" y="215" width="290" height="30" rx="15" fill="#7c3aed"/>
+        <rect class="bar-close" x="106" y="253" width="162" height="30" rx="15" fill="#a78bfa"/>
+      </svg>
+      <p class="display-sm a" style="font-weight:700" data-i18n-html="close.tag">Los mejores freelas no trabajan más —<br>muestran mejor lo que hacen.</p>
+      <div class="close-ft a d2">
+        <a href="https://github.com/hectorcanaimero/orch" target="_blank" data-i18n="close.gh">GitHub</a>
+        <span>·</span>
+        <a href="#" data-i18n="close.docs">Docs</a>
+        <span>·</span>
+        <a href="#" data-i18n="close.lic">MIT License</a>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /slides -->
+
+<script>
+const SLIDES_COUNT = 9;
+
+// ── i18n ──
+const T = {
+  es: {
+    bubble:'¿Alguna novedad?',
+    'hook.title':'Tus agentes trabajan.<br>Tu cliente no lo sabe.',
+    'hook.sub':'Cada hora sin respuesta es un cliente que empieza a dudar.',
+    'problem.left':'Tu terminal','problem.right':'Tu cliente',
+    log1:'agent:landing — iniciando',log2:'claude — analizando requirements',
+    log3:'claude — escribiendo componentes',log4:'agent:api — 12/12 endpoints',
+    log5:'claude — corriendo tests...',log6:'✓ 24 tests passed',
+    'msg1.from':'Cliente — WhatsApp','msg1.txt':'¿Alguna novedad del chatbot?',
+    'msg2.from':'Cliente — Email','msg2.txt':'¿Podés mandarme un update del proyecto?',
+    'msg3.from':'Cliente — Slack','msg3.txt':'¿Cuándo lo tenemos listo? El equipo está esperando.',
+    'gap.lbl':'El gap','gap.title':'Todas te dan logs.<br>Ninguna le da algo a tu cliente.',
+    'gap.c1':'Herramienta','gap.c2':'Orquesta agentes','gap.c3':'Dashboard cliente','gap.c4':'Setup rápido',
+    'gap.custom':'Custom','gap.weeks':'3 semanas',
+    'sol.lbl':'La solución','sol.sub':'Orquestá agentes AI y mostrales el progreso a tus clientes — en tiempo real.',
+    'sol.tag':'Un link. Eso es todo lo que tu cliente necesita.',
+    'how.lbl':'Cómo funciona','how.title':'Tres pasos. No más.',
+    'h1.ttl':'Definís las tareas','h1.desc':'Describís lo que cada agente tiene que hacer en un JSON simple.',
+    'h2.ttl':'orch despacha','h2.desc':'Camina el grafo de dependencias y corre cada tarea en el agente correcto.',
+    'h3.ttl':'Tu cliente ve el dashboard','h3.desc':'Compartís una URL. El cliente ve ETA y estado de cada tarea en tiempo real.',
+    'demo.lbl':'El dashboard','demo.title':'Esto es lo que ve tu cliente.','demo.sub':'Sin que vos expliques nada.',
+    'demo.health':'Sprint Health','demo.tasks-done':'7 de 11 tareas completadas',
+    'demo.eta':'ETA','demo.eta-conf':'confianza alta · 4 días','demo.tasks':'Tareas',
+    t1:'Auth module — OAuth2',t2:'Landing page build',t3:'API endpoints — en progreso',t4:'Email templates — pendiente',
+    'per.lbl':'Para vos','per.title':'¿Con cuál te identificás?',
+    'p1.role':'Freela solo','p1.name':'Santiago · Dev freelance',
+    'p1.quote':'"Tengo 2 clientes activos. Les mandé el dashboard link el primer día — no me preguntaron más nada en 3 semanas."',
+    'p2.role':'Agencia pequeña','p2.name':'Valentina · CTO, agencia de 3',
+    'p2.quote':'"Somos 3 con 5 proyectos activos. orch nos ahorró las reuniones de status de toda una semana."',
+    'p3.role':'Startup founder','p3.name':'Mateo · Side project → product',
+    'p3.quote':'"Cuando los inversores pidieron ver el progreso, les mandamos el link del dashboard. Quedaron impactados."',
+    'cta.lbl':'Empezá ahora','cta.title':'10 minutos. Tu primer dashboard funcionando.',
+    'cta.b1':'Instalá orch','cta.b2':'Ver demo','cta.b3':'Leer docs',
+    'close.tag':'Los mejores freelas no trabajan más —<br>muestran mejor lo que hacen.',
+    'close.gh':'GitHub','close.docs':'Docs','close.lic':'MIT License',
+  },
+  pt: {
+    bubble:'Tem novidade?',
+    'hook.title':'Seus agentes trabalham.<br>Seu cliente não sabe disso.',
+    'hook.sub':'Cada hora sem resposta é um cliente que começa a duvidar.',
+    'problem.left':'Seu terminal','problem.right':'Seu cliente',
+    log1:'agent:landing — iniciando',log2:'claude — analisando requirements',
+    log3:'claude — escrevendo componentes',log4:'agent:api — 12/12 endpoints',
+    log5:'claude — rodando testes...',log6:'✓ 24 testes passaram',
+    'msg1.from':'Cliente — WhatsApp','msg1.txt':'Tem alguma atualização do chatbot?',
+    'msg2.from':'Cliente — Email','msg2.txt':'Você pode me mandar um update do projeto?',
+    'msg3.from':'Cliente — Slack','msg3.txt':'Quando fica pronto? O time está esperando.',
+    'gap.lbl':'O gap','gap.title':'Todas te dão logs.<br>Nenhuma dá algo pro seu cliente.',
+    'gap.c1':'Ferramenta','gap.c2':'Orquestra agentes','gap.c3':'Dashboard pro cliente','gap.c4':'Setup rápido',
+    'gap.custom':'Custom','gap.weeks':'3 semanas',
+    'sol.lbl':'A solução','sol.sub':'Orquestre agentes AI e mostre o progresso para seus clientes — em tempo real.',
+    'sol.tag':'Um link. É tudo que seu cliente precisa.',
+    'how.lbl':'Como funciona','how.title':'Três passos. Não mais.',
+    'h1.ttl':'Você define as tarefas','h1.desc':'Descreve o que cada agente precisa fazer em um JSON simples.',
+    'h2.ttl':'orch despacha','h2.desc':'Percorre o grafo de dependências e executa cada tarefa no agente correto.',
+    'h3.ttl':'Seu cliente vê o dashboard','h3.desc':'Você compartilha uma URL. O cliente vê ETA e status de cada tarefa em tempo real.',
+    'demo.lbl':'O dashboard','demo.title':'Isso é o que seu cliente vê.','demo.sub':'Sem você explicar nada.',
+    'demo.health':'Saúde do Sprint','demo.tasks-done':'7 de 11 tarefas concluídas',
+    'demo.eta':'ETA','demo.eta-conf':'confiança alta · 4 dias','demo.tasks':'Tarefas',
+    t1:'Módulo Auth — OAuth2',t2:'Build da landing page',t3:'API endpoints — em andamento',t4:'Templates de email — pendente',
+    'per.lbl':'Para você','per.title':'Com qual você se identifica?',
+    'p1.role':'Freela solo','p1.name':'Lucas · Dev freelance',
+    'p1.quote':'"Tenho 2 clientes ativos. Mandei o link do dashboard no primeiro dia — não me perguntaram mais nada em 3 semanas."',
+    'p2.role':'Agência pequena','p2.name':'Fernanda · CTO, agência de 3',
+    'p2.quote':'"Somos 3 com 5 projetos ativos. O orch nos economizou as reuniões de status de uma semana inteira."',
+    'p3.role':'Founder de startup','p3.name':'Rafael · Side project → produto',
+    'p3.quote':'"Quando os investidores pediram ver o progresso, mandamos o link do dashboard. Ficaram impressionados."',
+    'cta.lbl':'Comece agora','cta.title':'10 minutos. Seu primeiro dashboard funcionando.',
+    'cta.b1':'Instale o orch','cta.b2':'Ver demo','cta.b3':'Ver docs',
+    'close.tag':'Os melhores freelas não trabalham mais —<br>mostram melhor o que fazem.',
+    'close.gh':'GitHub','close.docs':'Docs','close.lic':'MIT License',
+  },
+  en: {
+    bubble:'Any update?',
+    'hook.title':'Your agents are running.<br>Your client has no idea.',
+    'hook.sub':'Every hour without an answer is a client reconsidering.',
+    'problem.left':'Your terminal','problem.right':'Your client',
+    log1:'agent:landing — starting',log2:'claude — analyzing requirements',
+    log3:'claude — writing components',log4:'agent:api — 12/12 endpoints',
+    log5:'claude — running tests...',log6:'✓ 24 tests passed',
+    'msg1.from':'Client — WhatsApp','msg1.txt':'Any update on the chatbot?',
+    'msg2.from':'Client — Email','msg2.txt':'Can you send me a project status update?',
+    'msg3.from':'Client — Slack','msg3.txt':'When will it be ready? The team is waiting.',
+    'gap.lbl':'The gap','gap.title':'Every alternative gives you logs.<br>None gives your client anything.',
+    'gap.c1':'Tool','gap.c2':'Orchestrates agents','gap.c3':'Client dashboard','gap.c4':'Quick setup',
+    'gap.custom':'Custom','gap.weeks':'3 weeks',
+    'sol.lbl':'The solution','sol.sub':'Run AI agents and show clients live progress — no Slack required.',
+    'sol.tag':'One link. That\'s all your client needs.',
+    'how.lbl':'How it works','how.title':'Three steps. No more.',
+    'h1.ttl':'Define your tasks','h1.desc':'Describe what each agent needs to do in a simple JSON file.',
+    'h2.ttl':'orch dispatches','h2.desc':'Walks the dependency graph and runs each task on the right agent.',
+    'h3.ttl':'Your client sees the dashboard','h3.desc':'Share a URL. Your client sees live ETA and task status.',
+    'demo.lbl':'The dashboard','demo.title':'This is what your client sees.','demo.sub':'Without you explaining anything.',
+    'demo.health':'Sprint Health','demo.tasks-done':'7 of 11 tasks completed',
+    'demo.eta':'ETA','demo.eta-conf':'high confidence · 4 days','demo.tasks':'Tasks',
+    t1:'Auth module — OAuth2',t2:'Landing page build',t3:'API endpoints — in progress',t4:'Email templates — pending',
+    'per.lbl':'For you','per.title':'Which one is you?',
+    'p1.role':'Solo freelancer','p1.name':'Sam · Freelance developer',
+    'p1.quote':'"I have 2 active clients. I sent them the dashboard link on day one — they haven\'t asked for a status update in 3 weeks."',
+    'p2.role':'Small agency','p2.name':'Alex · CTO, 3-person agency',
+    'p2.quote':'"We\'re 3 devs with 5 active projects. orch saved us an entire week of status meetings."',
+    'p3.role':'Startup founder','p3.name':'Jordan · Side project → product',
+    'p3.quote':'"When investors asked to see sprint progress, we sent them the dashboard link. They were impressed."',
+    'cta.lbl':'Get started','cta.title':'10 minutes. Your first dashboard running.',
+    'cta.b1':'Install orch','cta.b2':'See demo','cta.b3':'Read docs',
+    'close.tag':'The best freelancers don\'t work more —<br>they show their work better.',
+    'close.gh':'GitHub','close.docs':'Docs','close.lic':'MIT License',
+  }
+};
+
+let lang = 'es';
+
+function applyLang(l) {
+  lang = l;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (T[l][key] !== undefined) el.textContent = T[l][key];
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.dataset.i18nHtml;
+    if (T[l][key] !== undefined) el.innerHTML = T[l][key];
+  });
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === l));
+}
+
+document.querySelectorAll('.lang-btn').forEach(b => {
+  b.addEventListener('click', () => applyLang(b.dataset.lang));
+});
+
+// ── DOTS ──
+const dotsContainer = document.getElementById('dots');
+const container = document.getElementById('slides');
+const slides = document.querySelectorAll('.slide');
+
+slides.forEach((_, i) => {
+  const d = document.createElement('div');
+  d.className = 'dot' + (i === 0 ? ' active' : '');
+  d.addEventListener('click', () => container.scrollTo({top: i * window.innerHeight, behavior:'smooth'}));
+  dotsContainer.appendChild(d);
+});
+const dots = document.querySelectorAll('.dot');
+
+// ── ACTIVE SLIDE ──
+let currentSlide = 0;
+
+function activateSlide(idx) {
+  if (idx === currentSlide) return;
+  slides[currentSlide]?.classList.remove('slide-active');
+  currentSlide = idx;
+  slides[idx]?.classList.add('slide-active');
+  dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+
+  // animate table rows in s2
+  if (idx === 2) {
+    const rows = document.querySelectorAll('.ctable tbody tr');
+    rows.forEach((r, i) => setTimeout(() => r.classList.add('in'), 300 + i * 150));
+  }
+
+  // green bars in s8
+  if (idx === 8) {
+    setTimeout(() => document.getElementById('closeIcon')?.classList.add('green-all'), 400);
+  }
+
+  // animate .a elements in current slide
+  slides[idx].querySelectorAll('.a').forEach(el => {
+    el.classList.remove('in');
+    void el.offsetWidth;
+    requestAnimationFrame(() => el.classList.add('in'));
+  });
+}
+
+// init first slide
+slides[0].classList.add('slide-active');
+slides[0].querySelectorAll('.a').forEach(el => { void el.offsetWidth; requestAnimationFrame(() => el.classList.add('in')); });
+
+container.addEventListener('scroll', () => {
+  const idx = Math.round(container.scrollTop / container.clientHeight);
+  activateSlide(idx);
+}, {passive: true});
+
+// ── KEYBOARD ──
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+    e.preventDefault();
+    const next = Math.min(currentSlide + 1, SLIDES_COUNT - 1);
+    container.scrollTo({top: next * container.clientHeight, behavior:'smooth'});
+  }
+  if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+    e.preventDefault();
+    const prev = Math.max(currentSlide - 1, 0);
+    container.scrollTo({top: prev * container.clientHeight, behavior:'smooth'});
+  }
+});
+
+applyLang('es');
+</script>
+</body>
+</html>
