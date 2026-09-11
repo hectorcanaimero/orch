@@ -576,3 +576,28 @@ def test_orch_init_nextjs_saas_agents_md_documents_full_stack(
     assert "CLERK_SECRET_KEY" in agents_text
     # Placeholders rendered.
     assert "PROJECT_NAME" not in agents_text
+
+
+# ---- G0.2: sqlite + worktrees + auto PR are the shipped defaults -----------
+
+
+@pytest.mark.parametrize(
+    "template", [None, "python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_init_ships_sqlite_worktrees_and_auto_pr_on(
+    tmp_path: Path, template: str | None
+) -> None:
+    """Every scaffold path — blank or templated — must produce a config with
+    state.backend=sqlite, dispatch.worktree_mode=true and vcs.auto_pr=true.
+    github.auto_merge stays off: it needs branch protection the user owns."""
+    import yaml
+
+    dest = tmp_path / (template or "blank")
+    assert orch_init(dest, template=template) == 0
+    cfg = yaml.safe_load(
+        (dest / ".orchestrator" / "config.yaml").read_text(encoding="utf-8")
+    )
+    assert cfg["state"]["backend"] == "sqlite"
+    assert cfg["dispatch"]["worktree_mode"] is True
+    assert cfg["vcs"]["auto_pr"] is True
+    assert cfg["github"]["auto_merge"] is False

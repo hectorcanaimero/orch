@@ -11,13 +11,17 @@ concurrency:
     codex: 1
     opencode: 2
 
+state:
+  backend: sqlite           # default since v0.11 — single orch.db, WAL journaling
+  sqlite_path: null
+
 dispatch:
   worktree_mode: true       # per-task git isolation — recommended for python-api
   base_branch: main
 
 vcs:
   provider: github
-  auto_pr: false            # flip to true once you're ready for auto PRs
+  auto_pr: true             # PR per task — turn off if you prefer raw branches
   ci_max_retries: 1
 
 github:

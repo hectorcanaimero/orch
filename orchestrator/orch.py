@@ -5026,20 +5026,35 @@ def main(argv: list[str] | None = None) -> int:
             cli_preset=args.budgets_preset,
             config_path=paths.config_yaml,
         )
-        # Sprint F-2: worktree mode — opt-in via dispatch.worktree_mode in config.yaml
+        # Sprint F-2: worktree mode — on by default via dispatch.worktree_mode.
+        # G0.2: both worktree_mode and auto_pr ship enabled, so a project that
+        # is not a git repo (or has no remote, or no gh/glab) must DEGRADE to
+        # the working subset instead of blocking every task on worktree
+        # creation. `probe_vcs_readiness` is the same probe `orch doctor`
+        # reports, so the two surfaces can never disagree.
         _dispatch_cfg = cfg.get("dispatch") or {}
-        _worktree_mode = bool(_dispatch_cfg.get("worktree_mode", False))
+        _vcs_cfg = cfg.get("vcs") or {}
         _base_branch = str(_dispatch_cfg.get("base_branch", "main"))
+        from orchestrator import preflight as _preflight  # noqa: PLC0415
+        _vcs_ready = _preflight.probe_vcs_readiness(paths.project_root, cfg)
+        for _reason in _vcs_ready.reasons:
+            log.warning("degrading: %s", _reason)
+        _worktree_mode = _vcs_ready.worktree_ok
+        _auto_pr = _vcs_ready.auto_pr_ok
         if _worktree_mode:
             from orchestrator.worktree import WorktreeManager
-            wm: "WorktreeManager | None" = WorktreeManager(paths.project_root)
-            log.info("worktree mode enabled; base_branch=%s", _base_branch)
+            wm: "WorktreeManager | None" = WorktreeManager(
+                paths.project_root,
+                push_enabled=_vcs_ready.has_remote,
+            )
+            log.info(
+                "worktree mode enabled; base_branch=%s push=%s",
+                _base_branch, _vcs_ready.has_remote,
+            )
         else:
             wm = None
 
         # Sprint F-4: VCS provider — only active when worktree_mode AND auto_pr are both on.
-        _vcs_cfg = cfg.get("vcs") or {}
-        _auto_pr = bool(_vcs_cfg.get("auto_pr", False))
         from orchestrator.state.sqlite_backend import SqliteBackend as _SqliteBackend
         _sqlite_backend: "_SqliteBackend | None" = (
             state_backend if isinstance(state_backend, _SqliteBackend) else None

@@ -74,6 +74,9 @@ orch migrate --project-root /path/to/project --rollback --from 20260822T014752Z-
 
 ## Rollback to file backend
 
+Since v0.11 `state.backend: sqlite` is the default for new projects; `file`
+is legacy and goes away in the next major.
+
 The file backend still works after a migration. Flip the config back to
 `state.backend: file` and orch will read/write JSONL as before. The DB
 tenant rows remain in place (do not conflict). To fully undo the migration
