@@ -351,13 +351,25 @@ def _relpath_for_spec_ref(spec_path: Path, docs_root: Path) -> str:
     """Devolvé el relpath desde ``docs_root`` (POSIX) para ``spec_ref``.
 
     Si el spec cae fuera de ``docs_root`` (edge case: ``--file /otro/lado.md``),
-    caemos al ``.name`` a secas. Nunca devuelve rutas absolutas — el
-    ``spec_ref`` debe quedar portable entre máquinas.
+    caemos al ``.name`` a secas y avisamos por stderr. Nunca devuelve rutas
+    absolutas — el ``spec_ref`` debe quedar portable entre máquinas.
+
+    El aviso importa: el ``.name`` pierde cualquier subdirectorio, así que el
+    ``specRef`` resultante sólo resuelve si el spec está directamente bajo el
+    ``spec_root`` del proyecto. Hasta el bug 18 este camino se tomaba en
+    *todas* las ejecuciones —``specs_root`` caía a ``docs/`` mientras
+    ``prompt_builder`` resolvía contra ``specs``— y se quedaba callado.
     """
     try:
         rel = spec_path.relative_to(docs_root)
         return rel.as_posix()
     except ValueError:
+        print(
+            f"warning: {spec_path} is outside {docs_root}, so its specRef is "
+            f"just {spec_path.name!r} — any subdirectory is lost. Pass "
+            f"--specs-dir, or move the spec under the project's spec root.",
+            file=sys.stderr,
+        )
         return spec_path.name
 
 
@@ -457,7 +469,23 @@ def parse_spec_file(
     # ``lineno`` acá refiere a la línea DENTRO del body (post frontmatter);
     # es suficiente para warnings/debug. No mantenemos offset absoluto para
     # simplificar — mostrar "body line N" es más limpio que "file line N ±".
+    # Un bloque de código cercado no es contenido del spec: es documentación
+    # SOBRE el formato. El `specs/README.md` que escribe `orch init` lleva el
+    # formato mínimo dentro de un ```markdown, y sin esta comprobación el
+    # atomizador lo importa como dos tareas reales ("Setup monorepo", "Root
+    # README") en cuanto alguien corre `orch atomize --apply` sin `--file`.
+    #
+    # Salió al arreglar el bug 18: antes `specs_root` caía a `docs/`, que no
+    # existe, así que el escaneo no encontraba nada y el problema estaba
+    # tapado por otro.
+    in_fence = False
     for lineno, line in enumerate(body.splitlines(keepends=False), start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+
         # ---- Headers rompen cualquier estado de task ----
         m_phase = _RE_PHASE.match(line)
         if m_phase:
@@ -1016,10 +1044,27 @@ def main(argv: list[str] | None = None) -> int:
         with open(paths.config_yaml, encoding="utf-8") as fh:
             cfg = yaml.safe_load(fh) or {}
 
+    # Bug 18: this used to default to `project_root / "docs"`, which nothing
+    # else in orch agrees with. `prompt_builder` resolves a task's `specRef`
+    # against `spec_root` from config.yaml (default `specs`), and `orch init`
+    # creates `specs/` and tells the operator to write their first spec there.
+    # The `docs/` default has no written justification anywhere — not in the
+    # manual, not in the init banner — so it is the default that contradicts
+    # the product, not the other way round.
+    #
+    # With the two roots disagreeing, `_relpath_for_spec_ref` fell to its
+    # "outside the root" branch on every run and returned the bare filename.
+    # That happens to be right for a spec sitting directly under `spec_root`,
+    # which is why nobody noticed — and wrong for one in a subdirectory:
+    # `specs/api/auth.md` became `auth.md`, and the prompt's READ FIRST line
+    # pointed at `specs/auth.md`, which does not exist.
+    #
+    # Migration for a project that really does keep its specs in `docs/`:
+    # pass `--specs-dir docs`, or set `spec_root: docs` in config.yaml.
     specs_root = (
         Path(args.specs_dir).expanduser().resolve()
         if args.specs_dir
-        else paths.project_root / "docs"
+        else (paths.project_root / str(cfg.get("spec_root") or "specs")).resolve()
     )
     single_file = Path(args.file).expanduser().resolve() if args.file else None
     tasks_json = (
