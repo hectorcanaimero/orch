@@ -68,6 +68,9 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newTasksCmd(flags))
 	root.AddCommand(newEventsCmd(flags))
 	root.AddCommand(newLogsCmd(flags))
+	root.AddCommand(newTaskCmd(flags))
+	root.AddCommand(newTaskStatusCmd(flags))
+	root.AddCommand(newResetCmd(flags))
 	return root
 }
 

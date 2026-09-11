@@ -1,0 +1,25 @@
+# scripts/task-{start,finish,block}.sh from the parity fixture must still
+# work when `orch` on PATH resolves to the Go binary — they `exec orch
+# task-status ...` (task-start.sh takes --project-root as a flag;
+# task-finish.sh/task-block.sh read PROJECT_ROOT from the environment
+# instead — different historic argv contracts, both still valid).
+
+env PROJECT_ROOT=proj
+
+exec bash proj/scripts/task-start.sh F2.T2 --project-root proj
+! stderr .
+
+exec bash proj/scripts/task-finish.sh F2.T2 'shipped it' tester
+! stderr .
+
+exec orch tasks --json --project-root proj --project-id proj
+stdout '"id":"F2.T2","status":"done"'
+
+# F2.T3 ships already `blocked` — block->block is a legal idempotent
+# transition, so this exercises the script wiring without needing a prior
+# reset to get a fresh transition.
+exec bash proj/scripts/task-block.sh F2.T3 'waiting on review' tester
+! stderr .
+
+exec orch tasks --json --project-root proj --project-id proj
+stdout '"id":"F2.T3","status":"blocked"'
