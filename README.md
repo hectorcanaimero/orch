@@ -4,6 +4,12 @@
 
 # orch
 
+> **orch is being rewritten in Go as a single binary.** The `python-legacy`
+> branch and the `v0.11.0-py` tag are the last Python version — everything
+> below still describes it, and it still works. Background and the running
+> list of what the rewrite has to carry over:
+> [`docs/brainstorm/go-migration-notes.md`](docs/brainstorm/go-migration-notes.md).
+
 **Run AI agents as a team. Show clients a live dashboard — not a Slack thread.**
 
 orch is a local task orchestrator for freelancers and agencies building with AI.
