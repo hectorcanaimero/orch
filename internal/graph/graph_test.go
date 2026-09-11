@@ -2,6 +2,7 @@ package graph
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -548,8 +549,14 @@ func TestDOTEmptyGraph(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 
+// render pretty-prints problems for a failure message. The marshal error is
+// reported rather than dropped: a test that fails AND cannot show what it got
+// tells the reader nothing, which is the worst of both.
 func render(ps []Problem) string {
-	b, _ := json.MarshalIndent(ps, "", "  ")
+	b, err := json.MarshalIndent(ps, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("<%d problems, unrenderable: %v>", len(ps), err)
+	}
 	return string(b)
 }
 
