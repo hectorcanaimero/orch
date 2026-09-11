@@ -115,12 +115,16 @@ Optional overrides drop in as their own files at the project root: `budgets.yaml
 
 `orch dashboard --profile stakeholder --tunnel` publishes a read-only URL. Send it once; the numbers update themselves. The client gets:
 
-- **Milestones with a Gantt-like timeline** and an ETA per milestone (velocity-based, badge-colored by confidence).
-- **Executive summary** in plain business language, refreshed on every page load (`"Project 62% complete — 5 of 8 tasks delivered. 1 blocked. ETA 3 Sep. AI spend: $12."`).
-- **Blockers view** — which tasks are stuck, since when, with the reason next to each one.
-- **Budget vs actual** — tokens burned per provider vs the guardrail, USD on the side.
+![The stakeholder view — executive summary, phase timeline, ETA and blockers](docs/media/stakeholder.png)
 
-> _Live screenshots and a 30-second GIF (`orch init` → dispatch → PR merged → stakeholder ETA update) are pending — captured after the next release cut. See [`docs/DELIVERING-TO-STAKEHOLDERS.md`](docs/DELIVERING-TO-STAKEHOLDERS.md) for the walk-through._
+- **Executive summary** in plain business language, recomputed on every page load — no LLM call, so it is free and always says the same thing twice.
+- **Phase timeline** — progress per phase, bar width proportional to estimated effort, with the blocked phase called out.
+- **Blockers with the reason attached**, quoted straight into the summary: _"Stripe sandbox key still pending from the client."_
+- **ETA and AI spend** — hours remaining at the current measured pace, and what the run has cost so far.
+
+The client never sees a log line, a prompt, a diff, or a per-model cost breakdown. Flip `dashboard.show_spend_to_stakeholder` if you want them to see spend at all.
+
+> _GIF: not recorded yet. The shot list is written and reproducible — see [`docs/media/GIF-SCRIPT.md`](docs/media/GIF-SCRIPT.md). Walk-through in [`docs/DELIVERING-TO-STAKEHOLDERS.md`](docs/DELIVERING-TO-STAKEHOLDERS.md)._
 
 ---
 
