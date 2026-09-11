@@ -1,0 +1,22 @@
+TASK_ID=F2.T1
+You are executing task F2.T1.
+
+Working dir: /tmp/orch-golden-project
+Title: Load raw + transform into marts
+Description: pipeline/load.py: `load_raw(df, table)` writes to `raw.<table>` via duckdb.append_df, idempotent by dedupe on the natural key from sources.yaml. pipeline/transform.py: `run_sql_from(dir)` executes every .sql under transforms/ in filename order, each into `marts.<name>` (name = filename stem). Add tests/test_load.py + tests/test_transform.py using an in-memory DuckDB, asserting row counts + dedupe semantics.
+Files you may write: ['pipeline/load.py', 'pipeline/transform.py', 'transforms/.gitkeep', 'tests/test_load.py', 'tests/test_transform.py']
+Spec ref (READ FIRST): specs/f2-load-transform.md#T1
+Completed dependencies (context):
+  - F0.T1: created the warehouse schema
+  - F1.T1: (no comment)
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for F2.T1.
+2. Do the work. If blocked, run: scripts/task-block.sh F2.T1 "<reason>" "claude/claude-sonnet-4-6" and STOP.
+3. On success, run: scripts/task-finish.sh F2.T1 "<what you did>" "claude/claude-sonnet-4-6"
+   Note: the orchestrator will call scripts/task-start.sh F2.T1 BEFORE launching you.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress via the scripts above only.

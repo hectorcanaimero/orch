@@ -199,6 +199,32 @@ block) were all of that kind.
   the `spec_root` default, `dashboard:` twice, this) and all four came out of
   building something against the code rather than reading it.
 
+- **Two things the prompt renderer got wrong first, both invisible in ASCII.**
+  From writing `internal/prompt` (G2.3).
+
+  1. **Template substitution has to be one pass.** The first version chained
+     `strings.ReplaceAll`, which rescans its own output: a task description
+     containing the literal text `{model}` came out with the model name
+     substituted into it, because `{description}` is replaced first. Python's
+     `str.format` reads the template once and never looks at the values again.
+     Titles, descriptions and dependency comments are all free text written by
+     someone else — an agent's own comment lands in the next task's prompt —
+     so this is reachable, not theoretical. `prompt.expand` is a single
+     left-to-right pass and two tests pin it, one with `{model}` inside an
+     agent's comment.
+
+  2. **The 500-character comment cap counts characters, not bytes.** Python
+     slices a `str`. A byte-wise port passes every ASCII test and fails only on
+     text that is not ASCII, which is most comments an agent writes about
+     anything with a proper noun in it — and the failure is a half-written
+     rune, i.e. invalid UTF-8 in the prompt. Tested at 1, 2, 3 and 4 bytes per
+     character; the golden carries 600 `ñ` so a byte-wise cut would halve the
+     character count and move the file.
+
+  The general shape: both bugs are in the class where **the test that would
+  catch them has to be written in a character set the author does not use by
+  default**.
+
 ## Notes for the Go rewrite
 
 - **A run's three tallies degrade to zero; Python's `list_runs` raises.**
