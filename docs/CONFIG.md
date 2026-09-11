@@ -236,6 +236,51 @@ Delete the keys when convenient. Nothing breaks if you leave them.
 
 ---
 
+## Environment variables
+
+Config lives in `config.yaml`. These few things are environment variables
+instead, because they belong to one invocation rather than to the project.
+
+| Variable | What it does |
+|---|---|
+| `ORCH_FAKE_PROVIDER` | Replay canned CLI output instead of running any coding CLI |
+
+### `ORCH_FAKE_PROVIDER`
+
+Set it to a directory and no provider CLI is executed: every dispatch replays
+a file from that directory instead. Nothing is sent to an API and nothing is
+spent, while the rest of the dispatch path — the fork, the process group, the
+prompt on stdin, the timeout, the parse, the classification, the spend and
+event rows — runs exactly as it does in anger.
+
+The directory holds one file per canned response, per backend:
+
+```
+<dir>/<backend>/<task id>.out      what the CLI would have printed
+<dir>/<backend>/<task id>.exit     its exit code, as decimal text (default 0)
+<dir>/<backend>/<task id>.sleep    seconds to sleep first (default 0)
+```
+
+A file named `_default` answers any task the directory has no specific file
+for, so one response can cover a whole run:
+
+```
+mkdir -p /tmp/fake/claude
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0,"usage":{}}' \
+    > /tmp/fake/claude/_default.out
+ORCH_FAKE_PROVIDER=/tmp/fake orch run
+```
+
+`.sleep` is what makes a timeout reproducible: a response that sleeps longer
+than a task's timeout (`estimateHours × default_timeout_multiplier`) drives
+the real SIGTERM → 10s → SIGKILL escalation against a real process.
+
+A task with no matching `.out` file and no `_default.out` is an error, not an
+empty response. A fake run that silently dispatched nothing would look green
+while testing nothing.
+
+---
+
 ## Related
 
 - [`SQLITE-BACKEND.md`](SQLITE-BACKEND.md) — the state backend and `orch migrate`
