@@ -28,6 +28,7 @@ from orchestrator.init_cmd import (
     orch_init,
     run_init_cli,
 )
+from orchestrator.models import Task
 
 
 # ---- Fresh init --------------------------------------------------------
@@ -576,6 +577,31 @@ def test_orch_init_nextjs_saas_agents_md_documents_full_stack(
     assert "CLERK_SECRET_KEY" in agents_text
     # Placeholders rendered.
     assert "PROJECT_NAME" not in agents_text
+
+
+# ---- Regression: templates must use Task's camelCase JSON keys ------------
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_template_tasks_are_readable_by_task_from_json(
+    template: str, tmp_path: Path
+) -> None:
+    """Regression guard: `tasks.json.tmpl` used snake_case `estimate_hours` /
+    `spec_ref` keys, which `Task.from_json` never reads (it looks for
+    `estimateHours` / `specRef`) — every task scaffolded from a template
+    silently got `estimate_hours=0.0` and `spec_ref=""`, so the dashboard ETA
+    showed "—" and the dispatch prompt dropped the "Spec ref (READ FIRST)"
+    line for every templated project."""
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template=template) == 0
+    payload = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    assert payload["tasks"], f"{template} template produced zero tasks"
+    for raw in payload["tasks"]:
+        task = Task.from_json(raw)
+        assert task.estimate_hours > 0, f"{template}/{task.id}: estimate_hours <= 0"
+        assert task.spec_ref, f"{template}/{task.id}: spec_ref is empty"
 
 
 # ---- G0.2: sqlite + worktrees + auto PR are the shipped defaults -----------
