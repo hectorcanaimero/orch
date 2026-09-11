@@ -1,0 +1,4 @@
+{"ts":"2026-01-01T10:00:00Z","task_id":"F1.T1","event_type":"dispatch","backend":"claude","extra":{}}
+{"ts":"2026-01-01T10:05:00Z","task_id":"F1.T1","event_type":"success","backend":"claude","extra":{}}
+{"ts":"2026-01-01T10:10:00Z","task_id":"F1.T2","event_type":"dispatch","backend":"claude","extra":{"pid":4242}}
+{"ts":"2026-01-01T10:15:00Z","task_id":"F1.T2","event_type":"retry","backend":"claude","extra":{}}

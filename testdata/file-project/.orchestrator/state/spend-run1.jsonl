@@ -1,0 +1,2 @@
+{"ts":"2026-01-01T10:05:00Z","task_id":"F1.T1","backend":"claude","model":"claude-sonnet-4-6","tokens_in":1200,"tokens_out":300,"cost_usd":0.045,"duration_s":12.5}
+{"ts":"2026-01-01T10:16:00Z","task_id":"F1.T2","backend":"claude","model":"claude-sonnet-4-6","tokens_in":800,"tokens_out":150,"cost_usd":0.021,"duration_s":8.2}

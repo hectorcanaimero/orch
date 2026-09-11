@@ -1,0 +1,77 @@
+{
+  "events": [
+    {
+      "backend": "claude",
+      "event_type": "dispatch",
+      "extra_json": "{}",
+      "run_id": "run1",
+      "task_id": "F1.T1",
+      "ts": "2026-01-01T10:00:00Z"
+    },
+    {
+      "backend": "claude",
+      "event_type": "success",
+      "extra_json": "{}",
+      "run_id": "run1",
+      "task_id": "F1.T1",
+      "ts": "2026-01-01T10:05:00Z"
+    },
+    {
+      "backend": "claude",
+      "event_type": "dispatch",
+      "extra_json": "{\"pid\": 4242}",
+      "run_id": "run1",
+      "task_id": "F1.T2",
+      "ts": "2026-01-01T10:10:00Z"
+    },
+    {
+      "backend": "claude",
+      "event_type": "retry",
+      "extra_json": "{}",
+      "run_id": "run1",
+      "task_id": "F1.T2",
+      "ts": "2026-01-01T10:15:00Z"
+    }
+  ],
+  "spend": [
+    {
+      "backend": "claude",
+      "cost_usd": 0.045,
+      "duration_s": 12.5,
+      "estimated": 0,
+      "model": "claude-sonnet-4-6",
+      "task_id": "F1.T1",
+      "tokens_in": 1200,
+      "tokens_out": 300,
+      "ts": "2026-01-01T10:05:00Z"
+    },
+    {
+      "backend": "claude",
+      "cost_usd": 0.021,
+      "duration_s": 8.2,
+      "estimated": 0,
+      "model": "claude-sonnet-4-6",
+      "task_id": "F1.T2",
+      "tokens_in": 800,
+      "tokens_out": 150,
+      "ts": "2026-01-01T10:16:00Z"
+    }
+  ],
+  "tasks_runtime": [
+    {
+      "comments_json": "[]",
+      "status": "done",
+      "task_id": "F1.T1"
+    },
+    {
+      "comments_json": "[]",
+      "status": "in-progress",
+      "task_id": "F1.T2"
+    },
+    {
+      "comments_json": "[]",
+      "status": "todo",
+      "task_id": "F1.T3"
+    }
+  ]
+}

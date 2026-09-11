@@ -83,6 +83,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newResetCmd(flags))
 	root.AddCommand(newValidateCmd(flags))
 	root.AddCommand(newGraphCmd(flags))
+	root.AddCommand(newMigrateCmd(flags))
 	return root
 }
 

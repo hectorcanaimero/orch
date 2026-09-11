@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "project": "file-project",
+    "generatedAt": "2026-01-01",
+    "note": "Synthetic fixture for internal/cli's `orch migrate` — see make-fixture.py."
+  },
+  "phases": [
+    { "id": 1, "name": "F1 — Only phase" }
+  ],
+  "tasks": [
+    {
+      "id": "F1.T1",
+      "phase": 1,
+      "title": "Task one",
+      "description": "Finished before the project ever moved to sqlite.",
+      "model": "claude/claude-sonnet-4-6",
+      "reason": "",
+      "status": "done",
+      "dependencies": [],
+      "estimateHours": 1.0,
+      "files": [],
+      "specRef": ""
+    },
+    {
+      "id": "F1.T2",
+      "phase": 1,
+      "title": "Task two",
+      "description": "In progress when the file backend was last used.",
+      "model": "claude/claude-sonnet-4-6",
+      "reason": "",
+      "status": "in-progress",
+      "dependencies": ["F1.T1"],
+      "estimateHours": 2.0,
+      "files": [],
+      "specRef": ""
+    },
+    {
+      "id": "F1.T3",
+      "phase": 1,
+      "title": "Task three",
+      "description": "Never dispatched — no events or spend reference it.",
+      "model": "codex/gpt-5-codex",
+      "reason": "",
+      "status": "todo",
+      "dependencies": ["F1.T2"],
+      "estimateHours": 0.5,
+      "files": [],
+      "specRef": ""
+    }
+  ]
+}
