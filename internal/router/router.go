@@ -17,8 +17,10 @@
 package router
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -100,6 +102,16 @@ func Load(path string) (Router, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, &FormatError{Path: path, Msg: fmt.Sprintf("invalid YAML: %v", err)}
+	}
+	// `yaml.Unmarshal` reads the FIRST document and silently ignores whatever
+	// follows it. On this file that is a data-loss bug rather than a nicety:
+	// the stub `orch init` wrote before #141 ended with an explicit `{}`, and
+	// a block mapping appended after a complete document is a second document
+	// — so a router with routes in it loaded as empty, with no error, and the
+	// tasks using those models failed as unrouted. PyYAML raises on the same
+	// file, which is how the Python side of this was caught.
+	if err := rejectTrailingDocuments(raw); err != nil {
+		return nil, &FormatError{Path: path, Msg: err.Error()}
 	}
 	if len(doc.Content) == 0 {
 		return Router{}, nil // an empty file is an empty router, not an error
@@ -297,8 +309,9 @@ func AddMissing(path string, keys []string, defaultTier model.Tier) (added, skip
 	}
 
 	var b strings.Builder
-	b.Write(body)
-	if len(body) > 0 && !strings.HasSuffix(string(body), "\n") {
+	header := dropEmptyFlowMapping(string(body))
+	b.WriteString(header)
+	if len(header) > 0 && !strings.HasSuffix(header, "\n") {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n# ---- auto-added by `orch router add-missing` (review tiers) ----\n")
@@ -315,6 +328,62 @@ func AddMissing(path string, keys []string, defaultTier model.Tier) (added, skip
 		return nil, skipped, fmt.Errorf("write %s: %w", path, err)
 	}
 	return added, skipped, nil
+}
+
+// rejectTrailingDocuments reports content after the first YAML document.
+//
+// `yaml.Unmarshal` stops at the first document. A decoder reads them one at a
+// time, so asking for a second is how we find out there is one — and on this
+// file a second document means routes nobody will ever read.
+func rejectTrailingDocuments(raw []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	var first any
+	if err := dec.Decode(&first); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil // empty file
+		}
+		return fmt.Errorf("invalid YAML: %v", err)
+	}
+	var second any
+	err := dec.Decode(&second)
+	switch {
+	case errors.Is(err, io.EOF):
+		return nil
+	case err != nil:
+		// The usual shape: a block mapping written after a `{}` line, which
+		// the parser reports as a document that never started.
+		return fmt.Errorf("content after the first YAML document (%v) — "+
+			"a router written below a `{}` line is ignored, so those routes "+
+			"would never load. Delete the `{}` and leave the entries at the "+
+			"top level", err)
+	default:
+		return errors.New("more than one YAML document — a router file holds " +
+			"exactly one mapping, and only the first document would be read")
+	}
+}
+
+// dropEmptyFlowMapping removes a lone `{}` line from a router file's header.
+//
+// `orch init` wrote `{}` as the empty router until #141, because
+// `load_router` needed a mapping. Appending a block mapping after it produces
+// a file neither PyYAML nor Load will read. Removing the line keeps every
+// comment above it — which is the part worth preserving, since the header
+// explains what the file is — and leaves a document the appended entries can
+// join.
+//
+// Only an EMPTY flow mapping is dropped, and only when it is alone on its
+// line. A file with real routes in flow style is left exactly as it is: this
+// repairs a stub, it does not reformat anyone's file.
+func dropEmptyFlowMapping(body string) string {
+	lines := strings.Split(body, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "{}" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // Fallback is one route that can substitute a different CLI model when the
