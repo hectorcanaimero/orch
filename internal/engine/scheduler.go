@@ -10,6 +10,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/providers"
 )
 
@@ -410,6 +411,26 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		return false, nil
 	}
 
+	// Render the prompt and write it before forking. The provider pipes this
+	// file to the child's stdin, so a dispatch without it is a CLI with no
+	// instructions — Python renders it at the same point, for the same
+	// reason.
+	promptPath, warnings, err := prompt.Write(task, s.completedDeps(task), task.SpecRef, prompt.Options{
+		RunID:       s.Opts.RunID,
+		StateDir:    s.Opts.StateDir,
+		ProjectRoot: s.Opts.Cwd,
+		SpecRoot:    s.Opts.Cfg.SpecRoot,
+	})
+	if err != nil {
+		release()
+		s.logger().Error("rendering the prompt failed", "task", task.ID, "err", err)
+		s.blockAtDispatch(ctx, task, route, fmt.Sprintf("prompt render failed: %v", err))
+		return false, nil
+	}
+	for _, w := range warnings {
+		s.logger().Warn(w, "task", task.ID)
+	}
+
 	d := Dispatch{
 		Provider: provider,
 		Req: providers.Request{
@@ -419,7 +440,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 			SessionID: providers.NewSessionID(),
 			BudgetUSD: s.Opts.BudgetUSD,
 		},
-		PromptPath: PromptPathFor(s.Opts.StateDir, task.ID),
+		PromptPath: promptPath,
 		LogPath:    LogPathFor(s.Opts.StateDir, task.ID),
 		Cwd:        s.Opts.Cwd,
 		Timeout:    TimeoutFor(task.EstimateHours, s.Opts.TimeoutMultiplier),
@@ -437,9 +458,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		// A spawn failure is this task's problem, not the run's: block it
 		// and carry on, which is what Python does.
 		s.logger().Error("spawn failed", "task", task.ID, "err", err)
-		if markErr := s.Queue.MarkBlocked(task.ID); markErr != nil {
-			s.logger().Error("spawn failure: mark blocked failed", "task", task.ID, "err", markErr)
-		}
+		s.blockAtDispatch(ctx, task, route, fmt.Sprintf("spawn failed: %v", err))
 		return false, nil
 	}
 
@@ -472,6 +491,46 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 	}
 
 	return true, nil
+}
+
+// blockAtDispatch gives up on a task that could not be started, in the live
+// view AND in the database.
+//
+// Both, because they are read by different people: the queue decides what
+// this run does next, and the row is what `orch status` shows afterwards.
+// Marking only the queue — which is what an earlier version of this did —
+// leaves a run that gave up on a task while the database still calls it todo.
+func (s *Scheduler) blockAtDispatch(ctx context.Context, task model.Task, route model.RouteEntry, reason string) {
+	reason = truncateReason(reason)
+	if err := s.Queue.MarkBlocked(task.ID); err != nil {
+		s.logger().Error("mark blocked failed", "task", task.ID, "err", err)
+	}
+	if s.Backend == nil {
+		return
+	}
+	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventBlock, task.ID,
+		string(route.Backend), map[string]any{"reason": reason}); err != nil {
+		s.logger().Error("recording the block failed", "task", task.ID, "err", err)
+	}
+	if err := s.Backend.Transition(ctx, task.ID, model.StatusBlocked, reason); err != nil {
+		s.logger().Error("recording blocked failed", "task", task.ID, "err", err)
+	}
+}
+
+// completedDeps are the task's dependencies that are done, for the prompt's
+// "what came before" section.
+func (s *Scheduler) completedDeps(task model.Task) []model.Task {
+	var out []model.Task
+	for _, id := range task.Dependencies {
+		dep, ok := s.Queue.Task(id)
+		if !ok {
+			continue
+		}
+		if st, _ := s.Queue.Status(id); st == model.StatusDone {
+			out = append(out, dep)
+		}
+	}
+	return out
 }
 
 // checkBudget consults the guardrail, and fails OPEN.
