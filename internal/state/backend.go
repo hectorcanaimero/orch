@@ -53,6 +53,18 @@ type Backend interface {
 	// means every event.
 	Events(ctx context.Context, taskID string, n int) ([]Event, error)
 
+	// SpendSince returns one backend's spend rows newer than `since`,
+	// oldest first — the rolling window the budget gate reads.
+	SpendSince(ctx context.Context, backend string, since time.Time) ([]Spend, error)
+	// TotalSpendUSD sums cost across every backend since `since`.
+	TotalSpendUSD(ctx context.Context, since time.Time) (float64, error)
+
+	// LatestRun returns the most recently started run. ErrNoRuns when the
+	// project has never been run.
+	LatestRun(ctx context.Context) (Run, error)
+	// Runs returns every run, newest first.
+	Runs(ctx context.Context) ([]Run, error)
+
 	// Milestones returns every milestone with its progress counts.
 	Milestones(ctx context.Context) ([]Milestone, error)
 
