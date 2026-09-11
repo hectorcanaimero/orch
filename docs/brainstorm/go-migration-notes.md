@@ -154,6 +154,25 @@ block) were all of that kind.
 
 ## Notes for the Go rewrite
 
+- **A run's three tallies degrade to zero; Python's `list_runs` raises.**
+  `state.Run` exposes `CompletedCount`/`BlockedCount`/`DeferredCount` from the
+  `completed_json`/`blocked_json`/`deferred_json` columns. Python does
+  `json.loads(col or "[]")` with nothing around it, so one column holding text
+  that is not a JSON array takes `orch status` down entirely. Go counts that
+  column as 0 and reads the other two.
+
+  The line this draws is worth keeping: these three feed no decision — they are
+  rendered by `orch status --json` and nothing reads the ids back — so trading
+  "a tally says 0" for "orch cannot tell you anything about this project" is the
+  wrong way round. Where the same lists DO feed a decision (`blocked_json` in
+  the reconciler, `sqlite_backend.py:1129`) the error has to surface, and that
+  path is not this one.
+
+  Also worth knowing before writing a test here: the parity fixture's three
+  arrays are all empty, so an implementation that always answered 0 passes both
+  the fixture and `scripts/parity.sh`. The rows that prove the parsing are built
+  by hand in `reads_test.go`.
+
 - **The budget gate returns its read errors; Python swallows them.** A
   deliberate divergence, agreed with the coordinator, recorded so neither side
   looks like a bug to the other.

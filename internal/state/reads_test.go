@@ -495,3 +495,131 @@ func TestRunsKeepAnUndatedRunAtTheEnd(t *testing.T) {
 		t.Errorf("order = %s, %s; want the dated run first", got[0].RunID, got[1].RunID)
 	}
 }
+
+// ---- run tallies -----------------------------------------------------------
+
+// The fixture cannot test this and that is exactly why the rows are built here.
+//
+// `orch-py-0.11.0.db` has one run whose three JSON columns are empty arrays, so
+// a parser that always answered 0 would pass against it — and pass
+// `scripts/parity.sh` too, because Python reports 0 for the same rows. The same
+// blind spot that let `orch status` report no spend on a project full of it.
+func TestRunTalliesCountTheJSONLists(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	const ts = "2026-09-11T12:00:00Z"
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO runs (run_id, project_id, started_at, updated_at, mode,
+		                   parent_pid, status,
+		                   completed_json, blocked_json, deferred_json)
+		 VALUES ('run-tally', 'proj', ?, ?, 'auto', 0, 'live', ?, ?, ?)`,
+		ts, ts,
+		`["F0.T1","F0.T2","F1.T1"]`,
+		`["F1.T2"]`,
+		`["F2.T1","F2.T2"]`); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	got, err := b.LatestRun(ctx)
+	if err != nil {
+		t.Fatalf("LatestRun: %v", err)
+	}
+	if got.CompletedCount != 3 {
+		t.Errorf("CompletedCount = %d, want 3", got.CompletedCount)
+	}
+	if got.BlockedCount != 1 {
+		t.Errorf("BlockedCount = %d, want 1", got.BlockedCount)
+	}
+	if got.DeferredCount != 2 {
+		t.Errorf("DeferredCount = %d, want 2", got.DeferredCount)
+	}
+	// All three distinct, so a scan that read the same column three times
+	// cannot pass.
+	if got.CompletedCount == got.BlockedCount || got.BlockedCount == got.DeferredCount {
+		t.Error("the three tallies must come from three different columns")
+	}
+}
+
+// An empty string and `[]` are both zero — Python's `json.loads(col or "[]")`.
+//
+// NULL is not tested because the schema forbids it: `completed_json TEXT NOT
+// NULL DEFAULT '[]'` (001_init.sql). The COALESCE in the query is there for a
+// database that predates that constraint, not for one this code could write.
+func TestRunTalliesTreatEmptyAsZero(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	const ts = "2026-09-11T12:00:00Z"
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO runs (run_id, project_id, started_at, updated_at, mode,
+		                   parent_pid, status,
+		                   completed_json, blocked_json, deferred_json)
+		 VALUES ('run-empty', 'proj', ?, ?, 'auto', 0, 'live', '[]', '', '[]')`,
+		ts, ts); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	got, err := b.LatestRun(ctx)
+	if err != nil {
+		t.Fatalf("LatestRun: %v", err)
+	}
+	if got.CompletedCount != 0 || got.BlockedCount != 0 || got.DeferredCount != 0 {
+		t.Errorf("tallies = %d/%d/%d, want 0/0/0",
+			got.CompletedCount, got.BlockedCount, got.DeferredCount)
+	}
+}
+
+// The divergence, asserted: a column that does not hold a JSON array counts as
+// zero instead of failing the read.
+//
+// Python's `list_runs` lets `json.loads` raise, so one corrupt column takes
+// `orch status` down entirely. These three numbers feed no decision — they are
+// rendered and nothing else — and "a tally says 0" beats "orch cannot tell you
+// anything about this project".
+func TestRunTalliesDegradeOnUnparseableJSON(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	const ts = "2026-09-11T12:00:00Z"
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO runs (run_id, project_id, started_at, updated_at, mode,
+		                   parent_pid, status,
+		                   completed_json, blocked_json, deferred_json)
+		 VALUES ('run-corrupt', 'proj', ?, ?, 'auto', 0, 'live', ?, ?, ?)`,
+		ts, ts,
+		`{"not":"an array"}`, // parses, wrong shape
+		`["unterminated`,     // does not parse
+		`["F2.T1"]`); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	got, err := b.LatestRun(ctx)
+	if err != nil {
+		t.Fatalf("a corrupt tally column must not fail the read: %v", err)
+	}
+	if got.CompletedCount != 0 {
+		t.Errorf("CompletedCount = %d, want 0 for JSON that is not an array", got.CompletedCount)
+	}
+	if got.BlockedCount != 0 {
+		t.Errorf("BlockedCount = %d, want 0 for JSON that does not parse", got.BlockedCount)
+	}
+	// The good column is still read: one bad value must not zero the others.
+	if got.DeferredCount != 1 {
+		t.Errorf("DeferredCount = %d, want 1 — a corrupt sibling must not affect it",
+			got.DeferredCount)
+	}
+}
+
+// The fixture still has to report its real (zero) tallies rather than erroring,
+// because empty arrays are the common case on a fresh project.
+func TestRunTalliesOnThePythonFixture(t *testing.T) {
+	got, err := pythonBackend(t).LatestRun(context.Background())
+	if err != nil {
+		t.Fatalf("LatestRun: %v", err)
+	}
+	if got.CompletedCount != 0 || got.BlockedCount != 0 || got.DeferredCount != 0 {
+		t.Errorf("tallies = %d/%d/%d, want 0/0/0 — the fixture's arrays are empty",
+			got.CompletedCount, got.BlockedCount, got.DeferredCount)
+	}
+}
