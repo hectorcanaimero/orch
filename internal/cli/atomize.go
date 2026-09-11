@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/atomize"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // newAtomizeCmd ports `orch atomize` (orchestrator/atomize.py's `main`) —
@@ -17,11 +18,15 @@ import (
 // default (prints a diff); `--apply` writes.
 //
 // Flags, defaults, and exit codes match Python: `--specs-dir` defaults to
-// `<project-root>/docs`, `--tasks-json` to `<project-root>/tasks.json`,
-// `--file` bypasses the directory walk for a single spec. Exit 2 only for
-// `--file` naming a path that doesn't exist; 0 otherwise, including "no
-// spec files found" and "--apply passed but nothing to apply" — Python
-// treats both as successful no-ops, not errors.
+// `<project-root>/<cfg.spec_root>` (bug 18 — see docs/brainstorm/go-
+// migration-notes/sonnet.md; `spec_root` defaults to "specs", the same
+// config key `prompt_builder` uses to compose a dispatched task's
+// read-first path, not the `docs` this command used to hardcode),
+// `--tasks-json` to `<project-root>/tasks.json`, `--file` bypasses the
+// directory walk for a single spec. Exit 2 only for `--file` naming a path
+// that doesn't exist; 0 otherwise, including "no spec files found" and
+// "--apply passed but nothing to apply" — Python treats both as
+// successful no-ops, not errors.
 //
 // One thing Python's `--apply` does that this does not: after writing
 // tasks.json, `main` best-effort syncs the parsed tasks into SQLite's
@@ -37,12 +42,12 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 		Use:   "atomize",
 		Short: "Parse markdown specs and merge them into tasks.json (read-only unless --apply)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := resolveAndValidate(flags)
+			paths, cfg, err := loadProjectConfig(flags)
 			if err != nil {
 				return err
 			}
 
-			specsRoot := filepath.Join(paths.Root, "docs")
+			specsRoot := filepath.Join(paths.Root, cfg.SpecRoot)
 			if specsDir != "" {
 				specsRoot, err = filepath.Abs(specsDir)
 				if err != nil {
@@ -65,6 +70,14 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 				}
 				if _, serr := os.Stat(abs); serr != nil {
 					return withExitCode(2, fmt.Errorf("spec file not found: %s", abs))
+				}
+				if outsideRoot(abs, specsRoot) {
+					if _, werr := fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: %s is outside %s, so its specRef is just %s — any subdirectory "+
+							"is lost. Pass --specs-dir, or move the spec under the project's spec root.\n",
+						abs, specsRoot, pyfmt.Quote(filepath.Base(abs))); werr != nil {
+						return werr
+					}
 				}
 				specFiles = []string{abs}
 			} else {
@@ -181,4 +194,23 @@ func renderAtomizeList(cmd *cobra.Command, parse atomize.ParseResult) error {
 		}
 	}
 	return w.Flush()
+}
+
+// outsideRoot reports whether abs does not live under root — the same
+// out-of-bounds check `internal/atomize`'s own (unexported)
+// relpathForSpecRef makes when it falls back to a bare filename for
+// `specRef`. Duplicated here (rather than exported from that package)
+// because it exists for a different reason on this side: not to compute a
+// path, but to warn an operator their `--file` won't get a specRef
+// prompt_builder can resolve.
+func outsideRoot(abs, root string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return true
+	}
+	rel, err := filepath.Rel(absRoot, abs)
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
