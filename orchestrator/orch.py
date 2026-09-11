@@ -1637,8 +1637,8 @@ def _spawn_one(
     completed_dep_tasks = _completed_dep_tasks(queue, task)
     try:
         # `spec_root` viene de config.yaml (Fase 3). `_load_config` garantiza
-        # el default rupies histórico (`docs/rewrite-plan`) cuando la clave
-        # no está presente — no hace falta un fallback defensivo acá.
+        # el default (`specs`) cuando la clave no está presente — no hace
+        # falta un fallback defensivo acá.
         prompt_path = render_prompt(
             task=task,
             completed_deps=completed_dep_tasks,

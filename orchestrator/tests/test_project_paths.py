@@ -402,7 +402,7 @@ def test_ensure_valid_does_not_create_state_dir_when_legacy(
 
 
 def test_render_prompt_uses_default_spec_root_for_backcompat(tmp_path: Path) -> None:
-    """Sin `spec_root` explícito → default rupies (`docs/rewrite-plan/...`)."""
+    """Sin `spec_root` explícito → default (`specs/...`)."""
     from orchestrator.prompt_builder import DEFAULT_SPEC_ROOT
 
     out = render_prompt(
@@ -427,9 +427,11 @@ def test_render_prompt_honors_custom_spec_root(tmp_path: Path) -> None:
         spec_root="sdd/specs",
     )
     text = out.read_text(encoding="utf-8")
-    assert "sdd/specs/p1/foo.md" in text
-    # Y NO debe aparecer el default rupies.
-    assert "docs/rewrite-plan/p1/foo.md" not in text
+    assert "Spec ref (READ FIRST): sdd/specs/p1/foo.md" in text
+    # Y NO debe aparecer el default: la línea entera arranca con el root
+    # explícito. (Un `not in` sobre "specs/..." no sirve — el default es
+    # ahora `specs`, que es sufijo del root custom.)
+    assert "Spec ref (READ FIRST): specs/p1/foo.md" not in text
 
 
 def test_render_prompt_missing_spec_ref_ignores_spec_root(tmp_path: Path) -> None:

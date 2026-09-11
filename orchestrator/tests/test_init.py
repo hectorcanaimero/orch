@@ -627,3 +627,60 @@ def test_init_ships_sqlite_worktrees_and_auto_pr_on(
     assert cfg["dispatch"]["worktree_mode"] is True
     assert cfg["vcs"]["auto_pr"] is True
     assert cfg["github"]["auto_merge"] is False
+
+
+# ---- spec_root: a templated project must point at its own specs ----------
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_template_config_pins_spec_root_to_specs(tmp_path: Path, template: str) -> None:
+    """Without this, `_apply_defaults` supplied `docs/rewrite-plan` — a path
+    from orch's own repo — to every project scaffolded from a template."""
+    import yaml
+
+    from orchestrator.config_loader import load_config
+
+    dest = tmp_path / template
+    assert orch_init(dest, template=template) == 0
+    cfg_path = dest / ".orchestrator" / "config.yaml"
+
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    assert raw["spec_root"] == "specs", "the written config must say so out loud"
+
+    effective = load_config(cfg_path, project_root=dest)
+    assert effective["spec_root"] == "specs"
+
+
+def test_templated_task_prompt_points_at_the_projects_own_specs(
+    tmp_path: Path,
+) -> None:
+    """The symptom the default caused: every agent dispatched from a templated
+    project was told to read a file under `docs/rewrite-plan/`, which exists in
+    neither the project nor anywhere else."""
+    from orchestrator.config_loader import load_config
+    from orchestrator.prompt_builder import render_prompt
+    from orchestrator.state import load_tasks
+
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="python-api") == 0
+
+    cfg = load_config(dest / ".orchestrator" / "config.yaml", project_root=dest)
+    tasks = load_tasks(dest / "tasks.json")
+    task = tasks[0]
+    assert task.spec_ref, "the template seeds a specRef — see PR #96"
+
+    out = render_prompt(
+        task=task,
+        completed_deps=[],
+        spec_ref=task.spec_ref,
+        run_id="r-spec-root",
+        state_dir=tmp_path / "state",
+        project_root=dest,
+        spec_root=cfg["spec_root"],
+    )
+    text = out.read_text(encoding="utf-8")
+    assert f"Spec ref (READ FIRST): specs/{task.spec_ref.split('specs/')[-1]}" in text \
+        or "Spec ref (READ FIRST): specs/" in text
+    assert "docs/rewrite-plan" not in text
