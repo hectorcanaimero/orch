@@ -84,7 +84,7 @@ que sale con código 2. CI en `.github/workflows/go.yml` (jobs `go-test` /
 
 Regla de la migración: **no se añaden features nuevas en la versión Python.**
 Los bugs que aparezcan mientras dure la migración se anotan en
-`docs/brainstorm/go-migration-notes.md` en lugar de arreglarse con una
+`docs/brainstorm/go-migration-notes/<carril>.md` (el fichero único quedó congelado el 2026-09-12) en lugar de arreglarse con una
 feature nueva o un refactor grande — fixes puntuales sí, features no.
 
 ## Things NOT to invoke unless the user asks

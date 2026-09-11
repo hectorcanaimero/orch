@@ -1,5 +1,13 @@
 # Go migration notes
 
+> **Frozen on 2026-09-12.** This file caused a merge conflict on nearly every
+> PR once four lanes were appending to it. New entries go to the per-lane
+> files under `docs/brainstorm/go-migration-notes/` (`opus.md`, `sonnet.md`,
+> `opus-2.md`, `sonnet-2.md`, `orch-98.md`); this file keeps everything up to
+> that date and is read-only from here on. Numbering of Python bugs continues
+> across the lane files (next: 15).
+
+
 Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migración a Go (en curso)") is in progress get logged here instead of fixed with a new feature or a large refactor in Python. Small, targeted fixes are still fine — this file is for anything that would otherwise tempt scope creep in the version being replaced.
 
 ## Porting rules
