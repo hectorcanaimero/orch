@@ -61,6 +61,9 @@ type Runner struct {
 	Budget BudgetWindow
 	// Dispatches backs the orphan sweep. Nil disables it.
 	Dispatches DispatchReader
+	// CI watches the pull requests this run opened. Nil disables it, which
+	// is every project not running worktree mode with auto-PR.
+	CI *CIPoller
 
 	// Signals, when non-nil, is used instead of installing real handlers —
 	// the tests drive it directly rather than signalling the test binary.
@@ -131,6 +134,14 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 
 		if _, err := s.Reap(ctx); err != nil {
 			return 1, fmt.Errorf("reap: %w", err)
+		}
+
+		// CI runs on its own interval, after the reap that may have just
+		// opened a PR. A sweep that cannot happen is logged and the loop
+		// carries on: being briefly blind to CI is better than a poller
+		// that can end a run.
+		if _, err := r.CI.Poll(ctx, s); err != nil {
+			s.logger().Warn("CI poll failed; continuing", "err", err)
 		}
 
 		if s.Draining() && len(s.InFlight()) == 0 {

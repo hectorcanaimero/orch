@@ -79,7 +79,7 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
 
 ## G3.3 — the run loop
 
-- **Bug 17 — the main loop spins forever on a task it can never dispatch.**
+- **Bug 20 — the main loop spins forever on a task it can never dispatch.**
   `orch.py`'s terminate condition is "nothing in flight, nothing ready, no
   retries pending". A task whose model has no route keeps the ready set
   non-empty forever: `_refill` logs `route missing at dispatch time` and
@@ -133,3 +133,30 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   work finished" when it can also mean "one task is stuck half-done and
   nobody is going to notice". If `orch run` ever grows a closing summary, the
   count of tasks left `in-progress` belongs in it.
+
+## The CI poller
+
+- **Nothing new about Python here, and that is worth saying.** `_check_ci_once`
+  ported cleanly: the poll interval, the both-conditions filter (a PR **and**
+  an unresolved CI status), the attempts-before-increment comparison, the
+  re-dispatch through the ordinary retry queue, the `.orch-ci-feedback.md`
+  file in the recreated worktree, and the pair of `pr_auto_merged` /
+  `pr_auto_merge_failed` events. Every piece had a reason that survived
+  reading, which after four rounds of finding the opposite is a result in
+  itself.
+
+  Three details that would be easy to get wrong and are pinned by their own
+  tests, because each is invisible in normal operation:
+
+  1. **The retry event counts the attempt just started**, not the stored
+     counter: Python emits `ci_attempts + 1`. An off-by-one only shows with
+     `ci_max_retries > 1`, which no default config has.
+  2. **The counter goes up after the re-dispatch is queued**, not before. If
+     the process dies between the two, the task is queued with the count
+     unchanged and the next run tries again — biased towards retrying once
+     too often rather than giving up too early, which for CI is the right
+     side of the trade.
+  3. **A row with an empty `pr_url` is skipped before the provider is asked.**
+     Asking `gh` about an empty URL is an error every tick, forever, and the
+     filter that should prevent it lives in SQL where this code cannot see
+     it.
