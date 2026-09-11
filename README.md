@@ -44,22 +44,31 @@ orch dashboard --profile stakeholder --tunnel
 
 ## What makes it different
 
-| Feature | LangChain | CrewAI | Devin | **orch** |
-|---------|:---------:|:------:|:-----:|:--------:|
-| Multi-backend in one DAG | ❌ | ❌ | ❌ | ✅ |
-| Budget guardrails per provider | ❌ | ❌ | ❌ | ✅ |
-| Client-shareable dashboard | ❌ | ❌ | ❌ | ✅ |
-| Spec → tasks pipeline | ❌ | ❌ | ❌ | ✅ |
-| Git worktree isolation per task | ❌ | ❌ | ❌ | ✅ |
-| PR per task + CI auto-validation | ❌ | ❌ | ✅ | ✅ |
-| CI workflow + auto-merge on green | ❌ | ❌ | ✅ | ✅ |
-| Sprint velocity + ETA | ❌ | ❌ | ❌ | ✅ |
-| Milestones with Gantt timeline | ❌ | ❌ | ❌ | ✅ |
-| Executive summary (deterministic) | ❌ | ❌ | ❌ | ✅ |
-| Slack / Discord webhooks | ❌ | ❌ | ❌ | ✅ |
-| Single config file (`config.yaml`) | ❌ | ❌ | ❌ | ✅ |
-| Browser tool use / long-horizon | ❌ | ❌ | ✅ | ❌ |
-| IDE built-in | ❌ | ❌ | ✅ | ❌ |
+orch isn't competing with LangChain or Devin — it's one of several small,
+open-source boards for running CLI coding agents (Claude Code, Codex,
+OpenCode…) in parallel. Here's an honest comparison against the projects
+builders in that space actually reach for today.
+
+| | [Multica](https://github.com/multica-ai/multica) | [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) | [Agetor](https://github.com/alamops/agetor) | [Claude Squad](https://github.com/smtg-ai/claude-squad) | **orch** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| GitHub stars | 49.6k | 28.1k | 65 | 8.5k | **1** |
+| Stack | Go + Next.js + Postgres | Rust | TypeScript (Electrobun) | Go | Python |
+| License | Apache-2.0 + commercial | Apache-2.0 | MIT | AGPL-3.0 | MIT |
+| CLIs/agents supported | 26 | 10+ | 5 | ~6 | 5 |
+| Desktop app | ✅ Electron | ❌ | ✅ macOS | ❌ (TUI) | ❌ |
+| Mobile app | ✅ iOS | ❌ | ❌ | ❌ | ❌ |
+| Cloud-hosted option | ✅ multica.ai | ❌ (shut down w/ Bloop) | ❌ | ❌ | ❌ |
+| Single binary | ❌ | ❌ | ❌ | ✅ | ❌ 🚧 (coming with the Go rewrite) |
+| Read-only stakeholder view | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Per-provider budget guardrail (blocks dispatch) | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Deterministic executive summary | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Static export | ❌ | ❌ | ❌ | ❌ | 🚧 in progress |
+
+*Vibe Kanban: Bloop shut down in April 2026 and handed the project to the
+community as Apache-2.0; cloud features were switched off, local/self-host
+use continues. Star counts and feature notes are current as of this
+writing — verify before citing them elsewhere, these projects move fast.*
 
 ---
 
