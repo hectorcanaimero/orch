@@ -41,3 +41,24 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `config.Show(stdout, res)`. `newConfigCmd` is a parent command (like
   `router`) so `consolidate` can land under it later without moving `show`
   or breaking the CLI shape.
+
+- **`orch atomize` lands in G1.6, closing G1.6/G4.3's CLI side.**
+  `internal/atomize` (G4.3) already had every piece
+  (`WalkSpecFiles`/`ParseFiles`/`LoadExisting`/`MergeTasks`/`RenderDiff`/
+  `Apply`) — the CLI is the flag parsing and call order `orchestrator/
+  atomize.py`'s `main` already establishes, ported flag-for-flag
+  (`--specs-dir`, `--file`, `--tasks-json`, `--list`, `--apply`,
+  `--no-backup`) and exit-code-for-exit-code. Verified against a real
+  `python -m orchestrator.atomize` run over the same spec fixture: section
+  layout, counts, and every literal message match — the one difference
+  (`16h` vs `16.0h` on an estimate) is inside `RenderDiff` itself, already
+  a documented non-goal there, not something this PR touches.
+
+  **Known gap, same shape as `task set`'s:** Python's `--apply` also
+  best-effort syncs the parsed tasks into SQLite's `tasks_definition` via
+  `state_backend.upsert_task_definition` after writing tasks.json.
+  `state.Backend` has no method shaped for that write — `task set
+  --model/--backend/--milestone` already documents the same absence — so
+  the sync step is skipped rather than faked. tasks.json itself is
+  authoritative either way; the sync is `orch status`/`tasks`'s route
+  resolution catching up faster, not a second source of truth.

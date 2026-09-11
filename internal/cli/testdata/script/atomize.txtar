@@ -1,0 +1,68 @@
+# orch atomize against a small inline spec. Diff/list text ports Python's
+# render_diff/render_list (own doc comment: parity is which sections exist
+# and what they say, not byte-identical formatting — Python's own tests
+# only assert on substrings too), cross-checked against a real
+# `python -m orchestrator.atomize` run for the same fixture shape.
+
+exec orch atomize --project-root atomizeproj --project-id atomizeproj
+! stderr .
+stdout '=== Atomizer diff ==='
+stdout 'Specs escaneados: 1 archivos, 2 tasks encontradas'
+stdout '\+ NUEVAS \(2\)'
+stdout 'F0\.1\.T1'
+stdout 'F0\.1\.T2'
+stdout 'Para aplicar: agregá --apply'
+
+# Dry-run never writes.
+exec cat atomizeproj/tasks.json
+stdout '"tasks":\[\]'
+
+exec orch atomize --list --project-root atomizeproj --project-id atomizeproj
+stdout 'Specs escaneados: 1 archivos'
+stdout 'ID\s+PHASE\s+TITLE\s+MODEL\s+EST\s+DEPS'
+stdout 'F0\.1\.T1.*0.*First task.*claude-sonnet-4-6.*2h'
+
+# --apply writes tasks.json and a timestamped backup of the pre-apply file.
+exec orch atomize --apply --project-root atomizeproj --project-id atomizeproj
+stdout '✓ Escrito:'
+stdout 'backup:'
+exec cat atomizeproj/tasks.json
+stdout '"id": "F0\.1\.T1"'
+stdout '"id": "F0\.1\.T2"'
+
+exec bash -c 'ls atomizeproj/tasks.json.bak-*'
+
+# Idempotent: re-running --apply finds nothing new to write.
+exec orch atomize --apply --project-root atomizeproj --project-id atomizeproj
+stdout 'SIN CAMBIOS \(2\)'
+stdout '\-\-apply pasado pero no hay cambios que aplicar\.'
+
+! exec orch atomize --file nonexistent.md --project-root atomizeproj --project-id atomizeproj
+stderr 'spec file not found'
+
+# --specs-dir pointing at an empty/missing directory: nothing to do, exit 0.
+exec orch atomize --specs-dir atomizeproj/no-such-dir --project-root atomizeproj --project-id atomizeproj
+stdout 'Nada que hacer\.'
+
+-- atomizeproj/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- atomizeproj/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- atomizeproj/docs/spec.md --
+# F0 — Foundation
+
+## F0.1 — Package: core
+
+### F0.1.T1 — First task
+
+Body text for the first task.
+
+- **Modelo**: claude-sonnet-4-6
+- **Estimación**: 2h
+
+### F0.1.T2 — Second task
+
+- **Modelo**: claude-opus-4-7
+- **Estimación**: 1h
+- **Dependencies**: F0.1.T1
