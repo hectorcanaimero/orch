@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -37,6 +38,38 @@ type Run struct {
 	// non-zero value on a run whose process is gone is what the reconciler
 	// cleans up after a crash.
 	InFlight int
+
+	// The three tallies `runs` keeps as JSON arrays of task ids, reported as
+	// lengths because that is all any caller wants — `orch status --json`
+	// renders them and nothing reads the ids back out of here.
+	//
+	// A column holding JSON that does not parse counts as 0 rather than
+	// failing the read. Python's `list_runs` lets the `json.loads` raise, so
+	// one corrupt column takes down `orch status` entirely; trading "a tally
+	// says 0" for "orch cannot tell you anything about this project" is the
+	// wrong trade for three numbers that feed no decision. Where these lists
+	// DO feed a decision — `blocked_json` in the reconciler — the error has
+	// to surface, and that path is not this one.
+	CompletedCount int
+	BlockedCount   int
+	DeferredCount  int
+}
+
+// countJSONList returns the length of a JSON array of task ids.
+//
+// Empty or NULL is 0, matching Python's `json.loads(col or "[]")`. So is
+// anything that does not parse, or that parses as something other than an
+// array — see the note on Run's tallies for why this does not return an
+// error.
+func countJSONList(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	var ids []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return 0
+	}
+	return len(ids)
 }
 
 // SpendSince returns the spend rows for one backend newer than `since`,
@@ -215,7 +248,9 @@ func (b *SQLite) Runs(ctx context.Context) ([]Run, error) {
 		`SELECT r.run_id, r.started_at, r.updated_at, r.mode, r.status,
 		        COALESCE(r.parent_pid, 0),
 		        (SELECT COUNT(*) FROM dispatches d
-		          WHERE d.run_id = r.run_id AND d.status = 'in_flight')
+		          WHERE d.run_id = r.run_id AND d.status = 'in_flight'),
+		        COALESCE(r.completed_json, ''), COALESCE(r.blocked_json, ''),
+		        COALESCE(r.deferred_json, '')
 		   FROM runs r
 		  WHERE r.project_id = ?`, b.projectID)
 	if err != nil {
@@ -230,10 +265,15 @@ func (b *SQLite) Runs(ctx context.Context) ([]Run, error) {
 	var all []runAt
 	for rows.Next() {
 		var r Run
+		var completed, blocked, deferred string
 		if err := rows.Scan(&r.RunID, &r.StartedAt, &r.UpdatedAt, &r.Mode,
-			&r.Status, &r.ParentPID, &r.InFlight); err != nil {
+			&r.Status, &r.ParentPID, &r.InFlight,
+			&completed, &blocked, &deferred); err != nil {
 			return nil, fmt.Errorf("scan run row: %w", err)
 		}
+		r.CompletedCount = countJSONList(completed)
+		r.BlockedCount = countJSONList(blocked)
+		r.DeferredCount = countJSONList(deferred)
 		// An undated run is kept, unlike an undated spend row: dropping a run
 		// would hide a project's history, whereas counting it costs nothing.
 		// It sorts last, where an unknown date belongs.
