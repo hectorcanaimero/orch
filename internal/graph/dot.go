@@ -33,7 +33,21 @@ func DOT(tasks []model.Task) string {
 	b.WriteString("  node [shape=box, style=rounded, fontname=\"Helvetica\"];\n")
 	b.WriteString("  edge [color=\"#666666\"];\n")
 
-	ordered := DisplayOrder(tasks)
+	// A task with no id is dropped, for the same reason a dangling dependency
+	// is: DOT names nodes by string, so an id-less task becomes a node named
+	// "" — and a second one silently becomes the SAME node, so a graph with
+	// two of them draws one box and the reader has no way to tell. Its label
+	// would also start with a newline, `nodeLabel` being id + "\n" + title.
+	//
+	// A task with no id is a validation error (`schema.tasks`), and
+	// `orch validate` is where it gets said out loud. DOT's job is to draw
+	// what is there, and there is nothing here it can draw honestly.
+	ordered := make([]model.Task, 0, len(tasks))
+	for _, t := range DisplayOrder(tasks) {
+		if t.ID != "" {
+			ordered = append(ordered, t)
+		}
+	}
 
 	// Group by phase, preserving the (phase, id) order within each group.
 	byPhase := map[int][]model.Task{}
