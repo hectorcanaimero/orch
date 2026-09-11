@@ -234,3 +234,96 @@ block) were all of that kind.
   for real router resolution, not a design choice. Revisit
   `buildStatusRows` in `internal/cli/project.go` once `internal/router`
   exists.
+
+- **`classify_failure`'s marker table has three real holes.** All three were
+  found by pinning `internal/providers` against captured CLI output (G2.4),
+  all three are Python bugs, and all three are ported as-is — the Go tests
+  assert the wrong-but-current answer and name the note, so fixing one means
+  changing Python, Go and the test together.
+
+  1. **Version drift never classifies as version drift, for claude.** The
+     whole point of `FailureClass.VERSION_DRIFT` is to trigger the one
+     `fallback_cli_model` retry when a backend rejects the requested model.
+     Real `claude 2.1.269` answers a bad `--model` with
+     `"It may not exist or you may not have access to it"` on stdout and
+     `[claude-code:unrecognized_model]` on stderr. None of the six
+     `_VERSION_DRIFT_MARKERS` ("model not found", "unknown model", "no such
+     model", "invalid model", "model does not exist", "unsupported model")
+     appears in either. So the dispatch lands in `OTHER` and retries the same
+     broken model instead of the fallback. Fixture:
+     `internal/providers/testdata/claude/2.1.269/unrecognized-model.log`.
+     The fix is to add the CLI's actual phrasing (and `api_error_status: 404`
+     with an `unrecognized_model` marker) to the table.
+
+  2. **The numeric markers match inside longer numbers.** `"401"`, `"403"`,
+     `"429"`, `"500"` are plain substring checks against a haystack that
+     includes 2 KB of stdout — and a claude envelope is nothing but numbers.
+     `"cache_read_input_tokens":40321` contains `403`, so a truncated
+     envelope, which is squarely a `PARSER` failure, classifies as
+     `PERMISSION` — terminal, never retried. A `duration_ms` of 1500 or a
+     token count of 4291 do the same for `TRANSIENT` and `RATE_LIMIT`. Pinned
+     by `TestClaude2_1_269TruncatedEnvelopeMisclassifiesAsPermission`. The fix
+     is to anchor those four to an HTTP-status context (`http 429`,
+     `status 403`, `"api_error_status": 401`, …) rather than matching bare
+     digits.
+
+  3. **Real auth failures do not match the permission markers.** claude sends
+     `code: "authentication_error"` with the message `"Invalid API key"`;
+     codex sends `"OpenAI API auth expired; run codex auth"`. The table has
+     `"authentication failed"` and `"auth error"` — neither is a substring of
+     either. So the one failure class that is guaranteed not to fix itself
+     gets `OTHER`'s retry-once treatment. Note this interacts with (2): the
+     claude case only *looks* right today when a stray `401`/`403` happens to
+     appear in the token counts.
+
+- **`internal/providers` — where the ported interface departs from the plan,
+  and why.** The G2.4 brief sketched `Argv(prompt, route, budgetUSD) []string`,
+  `Parse(stdout []byte) (Result, error)` and a per-provider
+  `Classify(exit int, stderr []byte)`. `orchestrator/dispatcher.py` does none
+  of those three things, and the code won:
+
+  - **`Argv(Request)`.** The inputs are not just a prompt, a route and a
+    budget. codex needs the resolved `-o` artefact path (Python writes a
+    `__OUTPUT__<task id>` placeholder into the argv and has `spawn` rewrite it
+    in place); opencode needs an absolute `--dir`; gemini and agy need the
+    prompt text itself, while claude and codex take it on stdin. A struct of
+    plain values carries all of that and keeps `Argv` pure — which also moves
+    claude's `--session-id` uuid out of `build_cmd`, so nothing has to dig it
+    back out of the argv afterwards the way `_extract_session_id` does.
+  - **`Parse(exitCode, output) Result`, no error.** The exit code is a third
+    of claude's success predicate (`exit == 0 && !is_error && subtype ==
+    "success"`), so a parser that never sees it cannot decide success. And a
+    parse failure is not an error return: Python builds a `DispatchResult`
+    whose `error_message` is what `classify_failure` maps to `PARSER`, and
+    still extracts cost from output that failed, because a failed dispatch has
+    usually already been paid for.
+  - **`Classify` is package-level, over a `Result`.** In Python it is one
+    module-level pure function every backend shares. Per-provider copies would
+    drift; and it reads `error_message` plus the stdout tail, not stderr — the
+    two highest-priority classes, `ID_SPOOF` and `TIMEOUT`, are set by orch and
+    never printed by any CLI.
+
+- **codex's `-o` file is markdown, not JSONL.** The brief (and the older
+  design note) describe cost coming from `Σ step_finish.cost` in the `-o`
+  file. Since codex 0.148 the `--json` event stream goes to **stdout** and
+  `-o` (`--output-last-message`) holds only the final message in markdown;
+  `dispatcher.py` says so in a comment above `CodexBackend.wait_result` and
+  parses the captured log. `internal/providers/codex.go` does the same. The
+  `-o` flag is still passed because the argv is a contract, but nothing reads
+  the file.
+
+- **`pyFloat` now exists twice.** `internal/state/pyfloat.go` needs CPython's
+  `repr(float)` for the spend dedup preimage; `internal/providers/pyjson.go`
+  needs it because claude's `--max-budget-usd` value is built as
+  `str(budget)`. Checklist rule 14 keeps `providers` off everything but
+  `internal/model`, so the shared home would have to be `internal/model`
+  itself — a move across another lane's package mid-migration. Worth doing
+  once the lanes converge; both copies carry the same golden table so a drift
+  between them fails a test.
+
+- **Python's `extract_cost` can crash the reap loop on malformed output.**
+  `float(...)` / `int(...)` raise `ValueError` on an uncoercible value, and
+  `ClaudeBackend.extract_cost` catches nothing, so a CLI that writes
+  `"input_tokens": "n/a"` takes down `wait_result` rather than costing a wrong
+  number. (codex's and opencode's summers do catch it.) Go's `toFloat`/`toInt`
+  return 0 instead — a deliberate divergence, identical on well-formed output.
