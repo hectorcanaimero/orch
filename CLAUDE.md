@@ -87,7 +87,7 @@ To keep context small, do not proactively call these MCP servers or skills on or
 ## Current context
 
 - **Branch**: `main` (per `git status`; check for drift — sprint branches like `sprint-e3/*` are historical).
-- **Version**: v0.10.1 on `main` (after PR #90). G0 hygiene: #91 (defaults sqlite/worktrees/PR), #92 (repo defaults, README rivals, CLAUDE.md).
+- **Version**: v0.11.0 on `main` (PR #98, freeze of the Python line; `python-legacy` branch + `v0.11.0-py` tag). G0 hygiene: #91–#97.
 - **Latest sprints**: H-7 wizard confirm gate (#80), H-6 `/orch` skill (#78), H-1a/b/c/d templates (#66/#67/#68/#77), H-3 brand (#65), H-4 README+HN (#66). Fixes fuera de serie: F-11 upgrade (#79), F-12 SQLite SoT (#75), F-13 bootstrap hygiene (#74/#76/#83), F-14 `agy` backend (#82).
 - **Pending explicit**: H-1e `expo-mobile` template (last of the 5 canonical).
 - **Prior sprints** (auto-memory has details): 7 budget guardrails · 8 packaging (v0.2.0, MIT, pipx) · 9 `orch init` · A runtime robustness · B SQLite backend · C observability subcommands · D `doctor`/`validate`/interactive `init` · E-1..E-8 dashboard iterations · F-1..F-6 clean foundation + PR automation · G-0..G-6 stakeholder UX · H-2 config consolidation · H-3..H-7 templates + brand + wizard.
