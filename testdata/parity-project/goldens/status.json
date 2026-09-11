@@ -1,0 +1,108 @@
+{
+  "project": {
+    "project_id": "parity-project",
+    "project_root": "<PROJECT_ROOT>",
+    "backend": "sqlite",
+    "state_dir": "<PROJECT_ROOT>/.orchestrator/state/parity-project"
+  },
+  "totals": {
+    "done": 3,
+    "in-progress": 1,
+    "blocked": 1,
+    "_total": 5
+  },
+  "cost": {
+    "project_total_usd": 0,
+    "filtered_total_usd": 0.0
+  },
+  "latest_run": null,
+  "tasks": [
+    {
+      "id": "F0.T1",
+      "phase": 0,
+      "title": "Scaffold FastAPI project layout",
+      "status": "done",
+      "backend": "?",
+      "cli_model": "claude/claude-sonnet-4-6",
+      "model": "claude/claude-sonnet-4-6",
+      "tier": null,
+      "dependencies": [],
+      "cost_usd": 0.0,
+      "last_event": null,
+      "last_event_human": null,
+      "defer_reason": null
+    },
+    {
+      "id": "F1.T1",
+      "phase": 1,
+      "title": "Health endpoint + integration test",
+      "status": "done",
+      "backend": "?",
+      "cli_model": "claude/claude-sonnet-4-6",
+      "model": "claude/claude-sonnet-4-6",
+      "tier": null,
+      "dependencies": [
+        "F0.T1"
+      ],
+      "cost_usd": 0.0,
+      "last_event": null,
+      "last_event_human": null,
+      "defer_reason": null
+    },
+    {
+      "id": "F2.T1",
+      "phase": 2,
+      "title": "Add Item pydantic model",
+      "status": "done",
+      "backend": "?",
+      "cli_model": "claude/claude-sonnet-4-6",
+      "model": "claude/claude-sonnet-4-6",
+      "tier": null,
+      "dependencies": [
+        "F1.T1"
+      ],
+      "cost_usd": 0.0,
+      "last_event": null,
+      "last_event_human": null,
+      "defer_reason": null
+    },
+    {
+      "id": "F2.T2",
+      "phase": 2,
+      "title": "Add POST /items + GET /items endpoints",
+      "status": "in-progress",
+      "backend": "?",
+      "cli_model": "claude/claude-sonnet-4-6",
+      "model": "claude/claude-sonnet-4-6",
+      "tier": null,
+      "dependencies": [
+        "F2.T1"
+      ],
+      "cost_usd": 0.0,
+      "last_event": null,
+      "last_event_human": null,
+      "defer_reason": null
+    },
+    {
+      "id": "F2.T3",
+      "phase": 2,
+      "title": "Add DELETE /items/{id} + 404 handling",
+      "status": "blocked",
+      "backend": "?",
+      "cli_model": "claude/claude-sonnet-4-6",
+      "model": "claude/claude-sonnet-4-6",
+      "tier": null,
+      "dependencies": [
+        "F2.T2"
+      ],
+      "cost_usd": 0.0,
+      "last_event": null,
+      "last_event_human": null,
+      "defer_reason": null
+    }
+  ],
+  "filters": {
+    "only": null,
+    "status": null
+  }
+}
