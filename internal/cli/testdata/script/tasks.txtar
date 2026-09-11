@@ -1,0 +1,19 @@
+# orch tasks against the committed parity fixture.
+
+exec orch tasks --json --project-root proj --project-id parity-project
+! stderr .
+stdout '"id":"F0\.T1"'
+stdout '"id":"F2\.T3"'
+stdout '"status":"blocked"'
+! stdout '"title"' # tasks --json is the TRIMMED view; title is status-only
+
+exec orch tasks --project-root proj --project-id parity-project
+stdout 'Tasks \(5 shown\)'
+
+exec orch tasks --status blocked --json --project-root proj --project-id parity-project
+stdout '"id":"F2\.T3"'
+! stdout '"id":"F0\.T1"'
+
+exec orch tasks --only 'F2*' --json --project-root proj --project-id parity-project
+stdout '"id":"F2\.T1"'
+! stdout '"id":"F0\.T1"'

@@ -9,7 +9,7 @@ func TestRunExitCodes(t *testing.T) {
 		want int
 	}{
 		{"version flag succeeds", []string{"--version"}, 0},
-		{"status is a stub", []string{"status"}, 2},
+		{"status outside a project fails", []string{"status"}, 1},
 		{"unknown subcommand is a usage error", []string{"bogus"}, 1},
 	}
 
