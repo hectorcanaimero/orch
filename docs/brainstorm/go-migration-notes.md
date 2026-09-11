@@ -80,26 +80,37 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
 
 ## Notes for the Go rewrite
 
-- **`orch graph` changes its output format.** Python emits a self-contained
-  HTML page with inline SVG (`graph.py`: `build_html`, `_svg_nodes`,
-  `_svg_edges`); there is no DOT anywhere in the Python tree. Go emits **DOT**
-  instead — stdout by default, `--out file.dot`, `--only` kept. The visual DAG
-  lives in the dashboard (GraphPage + `/api/graph`), so the HTML generator is
-  not ported. This is a visible contract change for anyone scripting
-  `orch graph --out plan.html`; it belongs in the artifact's "Cambia o
-  desaparece" column. Parity for the graph package is therefore measured on
-  topological order, cycle sets and `validate` messages — the things both
-  implementations have — not on DOT, which has no Python counterpart to
-  diff against.
+- **The graph package: three gaps between the plan and the Python tree.**
+  Found while writing `internal/graph` (G1.6). They are listed together
+  because they are one discovery seen from three sides, and because the
+  artifact needs a single edit rather than three.
 
-- **Python has no topological sort either.** Alongside the missing DOT, worth
-  recording because the two mistakes rhyme: `TaskQueue.all()` sorts by
-  `(phase, id)` for display and `TaskQueue.ready()` picks whatever has its
-  dependencies satisfied right now. Nothing anywhere produces a dependency
-  order. `graph.TopoOrder` is therefore new, with no Python golden to be held
-  to; parity for the graph package is measured on `validate` messages, the
-  cycle set, and the `(phase, id)` display order, which all three exist on
-  both sides.
+  1. **Python emits HTML, not DOT.** `graph.py` writes a self-contained page
+     with inline SVG (`build_html`, `_svg_nodes`, `_svg_edges`). A search for
+     `digraph|graphviz|--dot` across `orchestrator/` returns nothing.
+  2. **So Go's DOT replaces it rather than porting it.** `orch graph` keeps
+     the subcommand and changes the output: DOT on stdout, `--out file.dot`,
+     `--only` kept. The visual DAG lives in the dashboard (GraphPage +
+     `/api/graph`), so the HTML generator is dropped. This is a **visible
+     contract change** for anyone scripting `orch graph --out plan.html` and
+     belongs in the artifact's "Cambia o desaparece" column.
+  3. **Python has no topological sort either.** `TaskQueue.all()` sorts by
+     `(phase, id)` for display; `TaskQueue.ready()` picks whatever is
+     unblocked right now. Nothing produces a dependency order, so
+     `graph.TopoOrder` is new as well.
+
+  **What this means for the parity harness.** Two of the four capabilities in
+  `internal/graph` have no Python counterpart, so neither DOT nor the
+  topological order can be diffed between the binaries. Parity for this
+  package is measured on the three things that exist on both sides:
+  `validate` messages, the cycle set, and the `(phase, id)` display order.
+  DOT and `TopoOrder` carry Go-generated goldens and their own tests instead.
+
+  **One consequence worth keeping.** Because `validate` output IS diffed,
+  its text is a contract down to the quoting: Python renders ids with
+  `{x!r}`, i.e. `'NOPE.T9'`, and Go's `%q` would write `"NOPE.T9"` and turn
+  every matching line into a permanent diff. `graph.pyQuote` exists for that
+  and nothing else.
 
 - **`internal/dashboard` — where the auth gate belongs.** Put the token check on
   the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,
