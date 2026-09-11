@@ -49,7 +49,7 @@ func validateSchema(tasks []model.Task) []Problem {
 		}
 		if t.Phase < 0 {
 			out = append(out, Problem{
-				TaskID:   t.ID,
+				TaskID:   ref(t.ID),
 				Field:    "phase",
 				Kind:     KindSchemaTasks,
 				Message:  fmt.Sprintf("phase must be a non-negative int, got %d", t.Phase),
@@ -58,7 +58,7 @@ func validateSchema(tasks []model.Task) []Problem {
 		}
 		if t.Model == "" {
 			out = append(out, Problem{
-				TaskID:   t.ID,
+				TaskID:   ref(t.ID),
 				Field:    "model",
 				Kind:     KindSchemaTasks,
 				Message:  "model must be a non-empty string",
@@ -85,7 +85,7 @@ func validateDependencies(tasks []model.Task) []Problem {
 		for _, dep := range t.Dependencies {
 			if dep == t.ID {
 				out = append(out, Problem{
-					TaskID:   t.ID,
+					TaskID:   ref(t.ID),
 					Field:    "dependencies",
 					Kind:     KindDepCycle,
 					Message:  fmt.Sprintf("task %s depends on itself", pyfmt.Quote(t.ID)),
@@ -95,7 +95,7 @@ func validateDependencies(tasks []model.Task) []Problem {
 			}
 			if !known[dep] {
 				out = append(out, Problem{
-					TaskID:   t.ID,
+					TaskID:   ref(t.ID),
 					Field:    "dependencies",
 					Kind:     KindDepMissing,
 					Message:  fmt.Sprintf("depends on unknown task %s", pyfmt.Quote(dep)),
@@ -113,11 +113,11 @@ func validateCycles(tasks []model.Task) []Problem {
 	var out []Problem
 	for _, cycle := range FindCycles(tasks) {
 		out = append(out, Problem{
-			TaskID:      cycle[0],
+			TaskID:      ref(cycle[0]),
 			Field:       "dependencies",
 			Kind:        KindDepCycle,
 			Message:     "dependency cycle: " + joinArrows(cycle),
-			Remediation: "Break the cycle by removing one of the edges above.",
+			Remediation: ref("Break the cycle by removing one of the edges above."),
 			Severity:    SeverityError,
 		})
 	}
@@ -139,11 +139,11 @@ func validateRoutes(tasks []model.Task, routes []string) []Problem {
 			continue
 		}
 		out = append(out, Problem{
-			TaskID:      t.ID,
+			TaskID:      ref(t.ID),
 			Field:       "model",
 			Kind:        KindRouteUnresolved,
 			Message:     fmt.Sprintf("model %s has no entry in model_router.yaml", pyfmt.Quote(t.Model)),
-			Remediation: "Add a route for this model or fix the task.model value.",
+			Remediation: ref("Add a route for this model or fix the task.model value."),
 			Severity:    SeverityError,
 		})
 	}

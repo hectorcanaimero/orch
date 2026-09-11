@@ -68,6 +68,13 @@
       "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
       "dependencies": ["CYC.B"], "estimateHours": 0.5, "files": [],
       "specRef": "", "comments": []
+    },
+    {
+      "id": "", "phase": 3, "title": "A task whose id never got filled in",
+      "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": [], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
     }
   ]
 }
