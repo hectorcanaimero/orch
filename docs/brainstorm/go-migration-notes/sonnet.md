@@ -32,3 +32,12 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   --yes` against a real copy of `testdata/parity-project` (its actual `{}`
   stub, untouched) and confirms the added route reloads via `router
   validate` afterward — the exact round trip the old code silently broke.
+
+- **`orch config show` lands in G1.6, new-in-Go.** Python's only `orch
+  config` verb is `consolidate` (H-2) — `show` has no source to port.
+  `internal/config.Show` already existed, built for exactly this ("`orch
+  config show` is a three-line command on top of this", its own doc
+  comment says), so the wiring is `resolveAndValidate` → `config.Load` →
+  `config.Show(stdout, res)`. `newConfigCmd` is a parent command (like
+  `router`) so `consolidate` can land under it later without moving `show`
+  or breaking the CLI shape.

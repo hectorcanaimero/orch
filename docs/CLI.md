@@ -13,11 +13,11 @@ flags Python does unless a difference is called out.
   to **G3.3** (it needs the engine's run tracking, not `Backend.Transition`
   — see `docs/brainstorm/go-migration-notes.md`).
 - **G1.6 — landed**: `validate`, `graph`, `router validate`, `router
-  add-missing`.
+  add-missing`, `config show`.
 - **G4.6 — landed**: `migrate` (narrower than Python — see its table row).
-- **G1.6 / G2+ — not yet in this table**: `config`, `atomize`, `stop`, and
-  everything else in Python's `_SUBCOMMANDS`. Add a row here in the same PR
-  that lands one.
+- **G1.6 / G2+ — not yet in this table**: `atomize`, `stop`, and everything
+  else in Python's `_SUBCOMMANDS`. Add a row here in the same PR that lands
+  one.
 
 ## Subcommands
 
@@ -34,6 +34,7 @@ flags Python does unless a difference is called out.
 | `graph` | `--out PATH` (default: stdout), `--only GLOB`, `--project-root`, `--project-id`, `--config` | n/a | **Replaces, not ports.** Python's `_run_graph_subcommand` writes a self-contained HTML+SVG page (`orchestrator/graph.py`'s `build_html`) to `plan.html` by default, with `--open` to launch a browser. Go emits Graphviz DOT instead — to stdout by default, or to `--out`'s path — since the visual DAG now lives in the dashboard (GraphPage + `/api/graph`); `--open` is dropped along with it. A deliberate, documented contract change (`docs/brainstorm/go-migration-notes.md`), not something `scripts/parity.sh` diffs — there is no Python DOT output to diff against. Filters tasks.json directly rather than going through the full status snapshot Python reuses, since DOT needs no runtime status. |
 | `router validate` | `--json`, `--project-root`, `--project-id`, `--config` | yes | **New in Go, no Python source.** Thin CLI wrapper over the already-existing `internal/router.Router.Validate` (AS-06, checked before dispatch) — lets an operator ask the route-coverage question without a full `orch validate` run or a live dispatch. Exit 0 clean, 2 any unrouted task or a router/tasks load failure. |
 | `router add-missing` | `--tier {premium,standard,cheap}` (default standard), `--yes`/`-y`, `--project-root`, `--project-id`, `--config` | no | Ports `_run_router_add_missing_subcommand` — plan output, y/N confirmation (skipped with `--yes`), then append. Deliberately not interactive-by-TTY-detection: Python's own comment says injecting a prompt mid-dispatch would break `--mode auto`, so this is a separate, fail-fast fix-up step — `--yes` is how scripted/non-interactive callers opt out of the prompt instead. Same exit codes as Python (0 success/nothing to do, 1 aborted, 2 missing/unparseable router or tasks file or nothing inferable). Plan/abort text verified byte-for-byte against a real Python run, and `internal/cli/testdata/script/router.txtar` runs it against `testdata/parity-project`'s own `model_router.yaml` (a bare `{}` — the shape #144 fixed a real `internal/router.AddMissing` corruption bug on, see `docs/brainstorm/go-migration-notes/sonnet.md`), confirming the added route reloads correctly afterward. |
+| `config show` | `--project-root`, `--project-id`, `--config` | no — prints YAML, not JSON | **New in Go, no Python source.** Python's only `orch config` verb is `consolidate` (H-2); `show` is a thin wrapper over the already-existing `config.Show` — the effective merged config as YAML, followed by the sources it came from (or a "no config file found" note) and any ignored keys, so an operator can see *where* a surprising value came from. `newConfigCmd` is a parent command so `consolidate` can join it later without a breaking CLI change. Exit 0 success, 1 project-layout or config-load error, matching the rest of this table's default convention. |
 | `migrate` | `--dry-run`, `--force`, `--project-root`, `--project-id`, `--config` | no — Python's never had one either | **Deliberately narrower than Python.** One-shot import of a file-mode project's history into `orch.db` via `Backend.Bootstrap`/`AppendEvent`/`RecordSpend`, so dedup is the same UNIQUE-constraint mechanism every other write path uses. Deprecated from day one (cobra's `Deprecated` field prints a notice on every invocation) — the file backend has no Go implementation and none is planned. `state/run-*.json` (runs + in-flight dispatches) is **not** imported: `Backend` has no method shaped for historical run data, and neither `status` nor `tasks` reads the runs/dispatches tables, so this can't affect their output. `--rollback`/`--backup-dir`/`--sqlite-path`/`--from` are not wired (the backup step itself still always runs). See `docs/brainstorm/go-migration-notes/sonnet-2.md`. |
 
 ## Conventions every row above follows

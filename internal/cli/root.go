@@ -85,6 +85,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newGraphCmd(flags))
 	root.AddCommand(newMigrateCmd(flags))
 	root.AddCommand(newRouterCmd(flags))
+	root.AddCommand(newConfigCmd(flags))
 	return root
 }
 
