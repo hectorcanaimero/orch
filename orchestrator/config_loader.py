@@ -56,7 +56,7 @@ def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("budgets_preset", "conservative")
     cfg.setdefault("typical_dispatch_tokens", 200_000)
     cfg.setdefault("findings", {})
-    cfg["findings"].setdefault("publish_repo", "hectorcanaimero/orch")
+    cfg["findings"].setdefault("publish_repo", "")
     cfg["findings"].setdefault("publish_rate_limit_per_hour", 3)
     cfg["findings"].setdefault("label", "auto-reported")
     cfg["findings"].setdefault("min_publish_confidence", "medium")

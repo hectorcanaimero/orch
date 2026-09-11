@@ -3820,8 +3820,9 @@ def _findings_review_cli(argv: list[str]) -> int:
         print(f"finding not found: {args.finding_id!r}", file=sys.stderr)
         return 2
 
-    repo = args.repo or (cfg.get("findings", {}) or {}).get(
-        "publish_repo", f_mod.DEFAULT_REPO
+    repo = f_mod.resolve_publish_repo(
+        args.repo, (cfg.get("findings", {}) or {}).get("publish_repo") or None,
+        required=False,
     )
     matches = f_mod.search_github_issues_for_duplicate(finding.summary, repo)
 
@@ -3923,7 +3924,13 @@ def _findings_publish_cli(argv: list[str]) -> int:
         return 2
 
     fcfg = cfg.get("findings", {}) or {}
-    repo = args.repo or fcfg.get("publish_repo", f_mod.DEFAULT_REPO)
+    try:
+        repo = f_mod.resolve_publish_repo(
+            args.repo, fcfg.get("publish_repo") or None
+        )
+    except f_mod.PublishRefusedError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
     label = fcfg.get("label", f_mod.DEFAULT_LABEL)
     rate = int(fcfg.get("publish_rate_limit_per_hour", f_mod.DEFAULT_RATE_LIMIT))
     min_conf = fcfg.get(

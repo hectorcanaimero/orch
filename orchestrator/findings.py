@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 
 # ---- constants ----------------------------------------------------------
 
-DEFAULT_REPO = "hectorcanaimero/orch"
+DEFAULT_REPO = ""
 DEFAULT_LABEL = "auto-reported"
 DEFAULT_RATE_LIMIT = 3  # publishes per rolling hour
 DEFAULT_MIN_PUBLISH_CONFIDENCE = "medium"
@@ -241,6 +241,58 @@ def capture(
     )
     backend.append_finding(finding)
     return finding
+
+
+def _parse_github_owner_repo(remote_url: str) -> str | None:
+    """Extract `owner/repo` from a GitHub remote URL (https or ssh form)."""
+    m = re.search(r"github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", remote_url.strip())
+    if not m:
+        return None
+    return f"{m.group(1)}/{m.group(2)}"
+
+
+def _derive_repo_from_git_remote(*, cwd: str | None = None, runner: Any = None) -> str | None:
+    """Best-effort `owner/repo` from the local `origin` remote. None if unavailable."""
+    fn = runner or subprocess.run
+    try:
+        proc = fn(
+            ["git", "remote", "get-url", "origin"],
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+        )
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return _parse_github_owner_repo(proc.stdout or "")
+
+
+def resolve_publish_repo(
+    explicit: str | None,
+    configured: str | None,
+    *,
+    required: bool = True,
+    cwd: str | None = None,
+    runner: Any = None,
+) -> str:
+    """Resolve the target repo for findings commands.
+
+    Precedence: `--repo` flag > `findings.publish_repo` in config > the local
+    git `origin` remote. When `required` and nothing resolves, raises
+    `PublishRefusedError` with a message telling the caller how to fix it —
+    there is no baked-in fallback repo, so a fresh install never files
+    issues against someone else's tracker.
+    """
+    repo = explicit or configured or _derive_repo_from_git_remote(cwd=cwd, runner=runner) or ""
+    if required and not repo:
+        raise PublishRefusedError(
+            "no publish repo configured — pass --repo OWNER/REPO, set "
+            "findings.publish_repo in config.yaml, or run inside a git repo "
+            "with a GitHub 'origin' remote"
+        )
+    return repo
 
 
 def list_findings(
