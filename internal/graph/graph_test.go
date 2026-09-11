@@ -730,3 +730,60 @@ func present(ok bool) string {
 	}
 	return "omits"
 }
+
+// Two id-less tasks are the case that decided this.
+//
+// DOT names nodes by string, so both would be the node `""` — one box for two
+// tasks, and no way for a reader to tell. That is the same implicit-node
+// hazard the dangling-dependency skip already guards against, and the fix is
+// the same: do not draw what cannot be drawn honestly. `orch validate` reports
+// a missing id as `schema.tasks`, which is where it belongs.
+func TestDOTSkipsTasksWithNoID(t *testing.T) {
+	tasks := []model.Task{
+		{ID: "A", Phase: 0, Title: "Alpha"},
+		{ID: "", Phase: 1, Title: "One with no id"},
+		{ID: "", Phase: 1, Title: "Another with no id"},
+		{ID: "B", Phase: 0, Title: "Beta", Dependencies: []string{"A"}},
+	}
+	got := DOT(tasks)
+
+	if strings.Contains(got, `"" [`) {
+		t.Error("DOT declared a node named \"\"")
+	}
+	for _, title := range []string{"One with no id", "Another with no id"} {
+		if strings.Contains(got, title) {
+			t.Errorf("DOT drew the id-less task %q", title)
+		}
+	}
+	// The real tasks and their edge survive.
+	for _, want := range []string{`"A" [label="A\nAlpha"]`, `"B" [label="B\nBeta"]`, `"A" -> "B";`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("DOT is missing %q", want)
+		}
+	}
+	// And the phase that held only id-less tasks leaves no empty cluster
+	// behind — a labelled box with nothing in it reads as "this phase has no
+	// work", which is a different and wrong statement.
+	if strings.Contains(got, "cluster_phase_1") {
+		t.Error("DOT emitted an empty cluster for a phase with only id-less tasks")
+	}
+}
+
+// The validator still reports what DOT declines to draw. Dropping it from the
+// picture must not drop it from the errors — that would turn a visible
+// problem into an invisible one.
+func TestValidateStillReportsWhatDOTSkips(t *testing.T) {
+	problems := Validate([]model.Task{{ID: "", Phase: 0, Model: "m"}}, []string{"m"})
+	var found bool
+	for _, p := range problems {
+		if p.Kind == KindSchemaTasks && p.Field == "id" {
+			found = true
+			if p.TaskID != nil {
+				t.Errorf("task_id = %q, want null", *p.TaskID)
+			}
+		}
+	}
+	if !found {
+		t.Error("a task with no id is not reported as a schema.tasks problem")
+	}
+}
