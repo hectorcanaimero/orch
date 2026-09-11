@@ -366,15 +366,15 @@ func TestParseTSAcceptsBothStoredForms(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := parseTS(c.in)
+			got, ok := ParseTS(c.in)
 			if ok != c.ok {
-				t.Fatalf("parseTS(%q) ok = %v, want %v", c.in, ok, c.ok)
+				t.Fatalf("ParseTS(%q) ok = %v, want %v", c.in, ok, c.ok)
 			}
 			if !ok {
 				return
 			}
 			if got.Format("2006-01-02T15:04:05Z") != c.want {
-				t.Errorf("parseTS(%q) = %s, want %s", c.in, got.Format(time.RFC3339), c.want)
+				t.Errorf("ParseTS(%q) = %s, want %s", c.in, got.Format(time.RFC3339), c.want)
 			}
 		})
 	}

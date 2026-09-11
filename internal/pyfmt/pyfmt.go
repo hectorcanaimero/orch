@@ -3,8 +3,9 @@
 //
 // These are not cosmetic helpers. `scripts/parity.sh` diffs the two binaries'
 // output line for line, so a message that says `"claude"` where Python said
-// `'claude'` is a failure. Go's own verbs do not produce Python's form: `%q`
-// writes double quotes with Go's escaping rules.
+// `'claude'` is a failure, and a cap printed `80000` where Python printed
+// `80,000` is another. Go's own verbs produce neither form: `%q` writes double
+// quotes with Go's escaping rules, and `%d` has no thousands separator.
 //
 // The package exists because the same function was about to be written a
 // third time. `internal/graph` and `internal/router` each carried a private
@@ -21,7 +22,10 @@
 // When a second package needs it, it belongs here.
 package pyfmt
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Quote renders a string the way Python's `{x!r}` does for the values that
 // reach orch's messages — task ids, model names, provider and preset names.
@@ -61,6 +65,35 @@ func escapeInner(s string, quote byte) string {
 		default:
 			b.WriteByte(c)
 		}
+	}
+	return b.String()
+}
+
+// Commas renders an integer the way Python's `{n:,}` does: groups of three
+// digits separated by commas, with the sign kept in front.
+//
+// Token counts and caps are printed this way in the budget gate's block
+// reason, which is the line an operator reads when a run stops dispatching.
+func Commas(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	// The first group is whatever is left over above a multiple of three.
+	lead := len(s) % 3
+	if lead == 0 {
+		lead = 3
+	}
+	b.WriteString(s[:lead])
+	for i := lead; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
 	}
 	return b.String()
 }
