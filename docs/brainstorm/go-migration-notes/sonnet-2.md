@@ -78,3 +78,58 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   the namespaced nor the legacy `orch.db` path exists afterward. Filed
   here rather than fixed in the Python source per the migration rule
   (bugs get reported, not patched, while both lines coexist).
+
+- **`internal/skills` + `install-skills` (G6.5) is new capability layered
+  on top of a straight port, not itself a port — the brief asked for both
+  explicitly, so this is scope-as-specified, not scope creep:**
+
+  1. **The port half.** `_run_install_skills_subcommand`'s Claude-Code
+     path — copy each shipped skill into `~/.claude/skills/<name>/`,
+     `--path` override, skip-unless-`--force` on a differing existing
+     install, `--dry-run` — is `Install(skill, TargetClaude, opts)` in
+     `internal/skills/install.go`. Same flag names, same skip/overwrite
+     semantics, same "nothing to do" / "installed N" / "skipped
+     (pass --force)" report shape.
+
+  2. **The new half.** `--target codex|opencode|cursor` has no Python
+     equivalent — Python ships one static `AGENTS.md` stub, generated once
+     at `orch init` time, and nothing for Cursor at all. codex/opencode
+     read no `~/.claude/skills/`-equivalent directory, so both targets
+     write a clearly-delimited section of the *project's* `AGENTS.md`
+     (`<!-- orch:skill:NAME:start/end -->` markers), replaceable in place
+     without disturbing anything else a human or another tool put in that
+     file — `TestInstallAgentsMDPreservesExistingContentOutsideMarkers`
+     pins that. Cursor gets `.cursor/rules/<name>.mdc`, using the
+     `description`/`body` SKILL.md-frontmatter helpers.
+
+  3. **Only `orch` exists to install.** The five pipeline skills this
+     repo's own `CLAUDE.md` calls out as relevant —
+     `orch-plan`/`orch-prd`/`orch-arch`/`orch-spec`/`orch-tasks` — live on
+     the operator's machine (per orch-98, confirmed absent from this VPS
+     entirely), not in this repository, so there is nothing to embed for
+     them yet. `internal/skills` embeds via `//go:embed */SKILL.md`
+     against the package directory rather than naming `orch` anywhere in
+     Go code, specifically so dropping in
+     `internal/skills/orch-plan/SKILL.md` later needs zero code change —
+     `List()`/`Get()`/`install-skills --all` all walk whatever the embed
+     glob matched. `internal/skills/orch/SKILL.md` itself was rewritten
+     from Python's copy (`orchestrator/skills/orch/SKILL.md`) into an
+     operational manual — hard rules, how to read/transition state via the
+     Go CLI, an `orch migrate` pointer for pre-SQLite projects — rather
+     than copied verbatim, since the audience (an agent session dropped
+     into a project mid-migration) needs the Go-binary-era command surface
+     documented, not just the SQLite architecture Python's version
+     already covered.
+
+  Two bugs `install_test.go`/`installskills_test.go` caught before this
+  shipped, both wrong on the first pass: `body()`'s frontmatter strip used
+  `TrimPrefix(rest, "\n")`, which removes only the closing fence's own
+  newline and leaves the conventional blank line before the body in place
+  (fixed to `TrimLeft`, since a Cursor `.mdc` body starting with a stray
+  blank line is cosmetic but real); and `mergeSection`'s "is the existing
+  AGENTS.md section already up to date" check compared the EXTRACTED
+  (trimmed, marker-stripped) existing section against the FULL
+  marker-wrapped candidate section, so a second `install-skills --target
+  codex` on an already-installed project always reported `skipped`
+  instead of `unchanged` — fixed to compare like for like (both sides
+  trimmed, both sides marker-stripped).
