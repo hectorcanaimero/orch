@@ -50,3 +50,7 @@ coverage/
 # push and shipped inside the release wheel. Regen locally with
 # `bash scripts/build-spa.sh` if you need to test the packaged mount.
 orchestrator/spa/
+
+# Go build output
+bin/
+coverage.out

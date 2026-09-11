@@ -34,11 +34,11 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 ## Migración a Go (en curso)
 
 orch se está reescribiendo en Go (ver checklist en el artefacto "Orch en Go";
-fases G0–G8). Layout objetivo — planificado (Go), ninguna de estas rutas
-existe todavía en este repo:
+fases G0–G8). Layout objetivo — las rutas marcadas **(existe)** ya están en
+el repo; el resto sigue planificado:
 
 ```
-cmd/orch/            — main package, arg parsing, entrypoint
+cmd/orch/            — main package, arg parsing, entrypoint (existe)
 internal/
   cli/               — subcomandos (status, tasks, dispatch, findings…)
   config/            — carga + merge de config.yaml / overrides
@@ -62,6 +62,14 @@ internal/
   tunnel/            — supervisor de túneles del dashboard
 web/                 — SPA (movida desde frontend/), servida embebida en el binario
 ```
+
+**Go tree**: `make build` (bin/orch, versión desde `git describe`), `make test`
+(`go test ./... -race -cover`), `make lint` (golangci-lint si está instalado,
+si no `go vet` con aviso), `make parity` (placeholder hasta G1.5). Hoy el
+árbol Go es solo `cmd/orch/main.go` — root cobra + `orch status` como stub
+que sale con código 2. CI en `.github/workflows/go.yml` (jobs `go-test` /
+`go-lint`); no confundir con `ci-build.yml` (smoke del wheel Python) ni
+`review.yml` (revisor Gemini).
 
 Regla de la migración: **no se añaden features nuevas en la versión Python.**
 Los bugs que aparezcan mientras dure la migración se anotan en
