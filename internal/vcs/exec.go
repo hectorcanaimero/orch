@@ -89,8 +89,7 @@ func run(binary string, extraEnv []string, args ...string) (string, error) {
 // (rather than sniffing another command's stderr) to tell "not
 // authenticated" apart from an ordinary failure. Both gh and glab support
 // this subcommand. Used by CreatePR/MergePR on failure (cheap relative to
-// their once-per-task call frequency) and by internal/doctor's readiness
-// check (G4.5).
+// their once-per-task call frequency) and by CheckAuth below.
 func checkAuth(binary string, extraEnv []string) error {
 	if err := checkBinary(binary); err != nil {
 		return err
@@ -99,6 +98,19 @@ func checkAuth(binary string, extraEnv []string) error {
 		return &CLIError{Binary: binary, Reason: "not authenticated", Err: err}
 	}
 	return nil
+}
+
+// CheckAuth reports whether binary ("gh" or "glab") is installed and
+// authenticated, as a *CLIError when it isn't. host, when non-empty, is
+// passed as GITLAB_HOST (glab reads it the same way GitLabProvider does);
+// ignored for gh. Exported for internal/doctor's readiness check (G4.5),
+// which needs this exact probe independent of opening or merging anything.
+func CheckAuth(binary, host string) error {
+	var env []string
+	if host != "" {
+		env = []string{"GITLAB_HOST=" + host}
+	}
+	return checkAuth(binary, env)
 }
 
 // lastNonEmptyLine returns the last non-blank line of s, trimmed — glab's

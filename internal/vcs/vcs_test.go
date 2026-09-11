@@ -76,6 +76,30 @@ func TestRunErrorMessageFormats(t *testing.T) {
 
 // ---- Binary-missing coverage across the remaining methods ---------------
 
+func TestCheckAuthOKWhenAuthenticated(t *testing.T) {
+	withFakeBin(t)
+	if err := CheckAuth("gh", ""); err != nil {
+		t.Fatalf("CheckAuth = %v, want nil", err)
+	}
+}
+
+func TestCheckAuthReturnsCLIErrorWhenNotAuthenticated(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GLAB_AUTH_EXIT", "1")
+	err := CheckAuth("glab", "gitlab.example.com")
+	var cliErr *CLIError
+	if !errors.As(err, &cliErr) || cliErr.Reason != "not authenticated" {
+		t.Fatalf("err = %v, want *CLIError{Reason: not authenticated}", err)
+	}
+}
+
+func TestCheckAuthReturnsCLIErrorWhenBinaryMissing(t *testing.T) {
+	withNoBin(t)
+	if !isCLIError(CheckAuth("gh", "")) {
+		t.Fatalf("expected *CLIError for a missing binary")
+	}
+}
+
 func TestGitHubCILogsReturnsCLIErrorWhenBinaryMissing(t *testing.T) {
 	withNoBin(t)
 	if _, err := NewGitHubProvider().CILogs("https://github.com/org/repo/pull/1"); !isCLIError(err) {
