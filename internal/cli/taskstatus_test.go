@@ -22,60 +22,71 @@ func newTestProject(t *testing.T) (root string, common []string) {
 	return root, []string{"--project-root", root, "--project-id", "parity-project"}
 }
 
-func TestTaskStatusHappyPathExitsZero(t *testing.T) {
-	root, common := newTestProject(t)
-	args := append([]string{"task-status", "F2.T2", "done", "--author", "test", "--note", "finished"}, common...)
-	if rc := cli.Run("test", args); rc != 0 {
-		t.Fatalf("task-status happy path: rc = %d, want 0", rc)
+// TestTaskStatusAndTaskSetExitCodes is a table over both commands' exit
+// codes — ported directly from test_task_status_cmd.py / test_task_set_cmd.py
+// assertions on `rc == N`. `pre` runs before the assertion (ignoring its own
+// exit code) to set up state the case needs, e.g. bootstrapping via
+// `status`, or moving a task somewhere first so the real command under test
+// can attempt an illegal transition out of it.
+func TestTaskStatusAndTaskSetExitCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		pre  [][]string
+		args []string
+		want int
+	}{
+		{
+			name: "task-status happy path",
+			args: []string{"task-status", "F2.T2", "done", "--author", "test", "--note", "finished"},
+			want: 0,
+		},
+		{
+			name: "task-status unknown task",
+			args: []string{"task-status", "NOPE", "done"},
+			want: 2,
+		},
+		{
+			name: "task-status invalid status",
+			args: []string{"task-status", "F0.T1", "bogus-status"},
+			want: 2,
+		},
+		{
+			// F0.T1 starts `done` in the fixture; done -> in-progress is
+			// illegal (must reset to todo first). `pre` bootstraps via
+			// `status` so the row exists before task-status is called.
+			name: "task-status illegal transition",
+			pre:  [][]string{{"status", "--json"}},
+			args: []string{"task-status", "F0.T1", "in-progress"},
+			want: 3,
+		},
+		{
+			name: "task set with no mutation flag",
+			args: []string{"task", "set", "--id", "F0.T1"},
+			want: 1,
+		},
+		{
+			name: "task set --status",
+			args: []string{"task", "set", "--id", "F2.T2", "--status", "done"},
+			want: 0,
+		},
+		{
+			// F0.T1 is `done`; done -> blocked is illegal.
+			name: "task set illegal transition",
+			args: []string{"task", "set", "--id", "F0.T1", "--status", "blocked"},
+			want: 3,
+		},
 	}
-	_ = root
-}
-
-func TestTaskStatusUnknownTaskExits2(t *testing.T) {
-	_, common := newTestProject(t)
-	// Bootstrap first (task-status itself best-effort bootstraps, so this
-	// isn't strictly required, but makes the "unknown" case unambiguous).
-	args := append([]string{"task-status", "NOPE", "done"}, common...)
-	if rc := cli.Run("test", args); rc != 2 {
-		t.Fatalf("task-status unknown task: rc = %d, want 2", rc)
-	}
-}
-
-func TestTaskStatusInvalidStatusExits2(t *testing.T) {
-	_, common := newTestProject(t)
-	args := append([]string{"task-status", "F0.T1", "bogus-status"}, common...)
-	if rc := cli.Run("test", args); rc != 2 {
-		t.Fatalf("task-status invalid status: rc = %d, want 2", rc)
-	}
-}
-
-func TestTaskStatusIllegalTransitionExits3(t *testing.T) {
-	_, common := newTestProject(t)
-	// F0.T1 starts `done` in the fixture; done -> in-progress is illegal
-	// (must reset to todo first).
-	statusArgs := append([]string{"status", "--json"}, common...)
-	if rc := cli.Run("test", statusArgs); rc != 0 {
-		t.Fatalf("bootstrap via status: rc = %d, want 0", rc)
-	}
-	args := append([]string{"task-status", "F0.T1", "in-progress"}, common...)
-	if rc := cli.Run("test", args); rc != 3 {
-		t.Fatalf("task-status illegal transition: rc = %d, want 3", rc)
-	}
-}
-
-func TestTaskSetNoFlagsExits1(t *testing.T) {
-	_, common := newTestProject(t)
-	args := append([]string{"task", "set", "--id", "F0.T1"}, common...)
-	if rc := cli.Run("test", args); rc != 1 {
-		t.Fatalf("task set no flags: rc = %d, want 1", rc)
-	}
-}
-
-func TestTaskSetStatusExitsZero(t *testing.T) {
-	_, common := newTestProject(t)
-	args := append([]string{"task", "set", "--id", "F2.T2", "--status", "done"}, common...)
-	if rc := cli.Run("test", args); rc != 0 {
-		t.Fatalf("task set --status: rc = %d, want 0", rc)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, common := newTestProject(t)
+			for _, p := range tc.pre {
+				_ = cli.Run("test", append(append([]string{}, p...), common...))
+			}
+			args := append(append([]string{}, tc.args...), common...)
+			if rc := cli.Run("test", args); rc != tc.want {
+				t.Fatalf("cli.Run(%v) = %d, want %d", tc.args, rc, tc.want)
+			}
+		})
 	}
 }
 
@@ -86,15 +97,6 @@ func TestTaskSetUnimplementedFlagsError(t *testing.T) {
 		if rc := cli.Run("test", args); rc == 0 {
 			t.Errorf("task set %s: rc = 0, want non-zero (not implemented)", flag)
 		}
-	}
-}
-
-func TestTaskSetIllegalTransitionExits3(t *testing.T) {
-	_, common := newTestProject(t)
-	// F0.T1 is `done`; done -> blocked is illegal.
-	args := append([]string{"task", "set", "--id", "F0.T1", "--status", "blocked"}, common...)
-	if rc := cli.Run("test", args); rc != 3 {
-		t.Fatalf("task set illegal transition: rc = %d, want 3", rc)
 	}
 }
 
@@ -120,5 +122,20 @@ func TestResetDryRunThenRequeue(t *testing.T) {
 	rows := append([]string{"tasks", "--status", "todo", "--json"}, common...)
 	if rc := cli.Run("test", rows); rc != 0 {
 		t.Fatalf("tasks --status todo: rc = %d, want 0", rc)
+	}
+}
+
+// TestResetInvalidOnlyGlobFails covers inProgressCandidates' error path: a
+// malformed --only glob (unterminated character class) must fail loudly,
+// not silently match nothing — same rule status.go's --only follows.
+func TestResetInvalidOnlyGlobFails(t *testing.T) {
+	_, common := newTestProject(t)
+	statusArgs := append([]string{"status", "--json"}, common...)
+	if rc := cli.Run("test", statusArgs); rc != 0 {
+		t.Fatalf("bootstrap via status: rc = %d, want 0", rc)
+	}
+	args := append([]string{"reset", "--only", "F0["}, common...)
+	if rc := cli.Run("test", args); rc == 0 {
+		t.Fatalf("reset --only 'F0[': rc = 0, want non-zero (malformed glob)")
 	}
 }

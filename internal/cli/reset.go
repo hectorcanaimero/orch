@@ -51,7 +51,9 @@ func newResetCmd(flags *projectFlags) *cobra.Command {
 			defer func() { _ = closeDB() }()
 
 			tasks := loadDAG(paths)
-			_ = backend.Bootstrap(ctx, tasks)
+			if err := backend.Bootstrap(ctx, tasks); err != nil {
+				return fmt.Errorf("bootstrap: %w", err)
+			}
 
 			candidates, err := inProgressCandidates(ctx, backend, only)
 			if err != nil {

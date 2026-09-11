@@ -57,7 +57,9 @@ func newTaskSetCmd(flags *projectFlags) *cobra.Command {
 				return err
 			}
 			defer func() { _ = closeDB() }()
-			_ = backend.Bootstrap(ctx, loadDAG(paths))
+			if err := backend.Bootstrap(ctx, loadDAG(paths)); err != nil {
+				return fmt.Errorf("bootstrap: %w", err)
+			}
 
 			st, err := model.ParseStatus(status)
 			if err != nil {

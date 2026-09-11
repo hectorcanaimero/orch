@@ -44,10 +44,15 @@ func newTaskStatusCmd(flags *projectFlags) *cobra.Command {
 			}
 			defer func() { _ = closeDB() }()
 
-			// Best-effort bootstrap, matching Python: a task-status call
-			// against a project that was never `orch status`'d yet still
-			// has to find its row.
-			_ = backend.Bootstrap(ctx, loadDAG(paths))
+			// A task-status call against a project that was never
+			// `orch status`'d yet still has to find its row — bootstrap is
+			// idempotent (INSERT OR IGNORE), so the only way this fails is
+			// a real database problem, which is exactly what the caller
+			// needs to see rather than a confusing "task not found" from
+			// the Transition call right below.
+			if err := backend.Bootstrap(ctx, loadDAG(paths)); err != nil {
+				return fmt.Errorf("bootstrap: %w", err)
+			}
 
 			err = backend.Transition(ctx, taskID, status, state.Note{Author: author, Body: note})
 			switch {
