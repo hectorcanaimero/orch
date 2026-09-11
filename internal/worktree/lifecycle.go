@@ -1,7 +1,9 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,28 +32,43 @@ func (m *Manager) PurgeOrphanBranch(taskID string) error {
 // stale worktree directory left by a crashed prior run is removed first;
 // PurgeOrphanBranch then clears any branch ref a partial prior attempt left
 // behind (see its doc comment) before `git worktree add -b` runs.
+//
+// Both cleanup steps are best-effort — Create can succeed despite either
+// failing — but neither error is dropped (rule 19): Remove already logs a
+// genuine failure at WARN; PurgeOrphanBranch's routine "branch doesn't
+// exist" is logged at DEBUG (see its doc comment for why not WARN). If
+// Create goes on to fail anyway, both are folded into the returned error
+// via errors.Join so nothing gets lost on the path that actually matters.
 func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 	wtPath := m.WorktreePath(taskID)
+	var cleanupErr error
 	if pathExists(wtPath) {
-		_ = m.Remove(taskID) // best-effort; a real failure was already logged
+		cleanupErr = m.Remove(taskID)
 	}
 	if pathExists(wtPath) {
-		// Remove is best-effort; this only fires if it silently failed to
-		// clear a directory it saw as present, which "git worktree remove
-		// --force" essentially never does — kept as a hard stop rather
-		// than letting `add -b` collide with it.
-		return "", fmt.Errorf("worktree: stale worktree at %s could not be removed", wtPath)
+		// This only fires if Remove silently failed to clear a directory it
+		// saw as present, which "git worktree remove --force" essentially
+		// never does — kept as a hard stop rather than letting `add -b`
+		// collide with it.
+		return "", errors.Join(
+			fmt.Errorf("worktree: stale worktree at %s could not be removed", wtPath),
+			cleanupErr,
+		)
 	}
 
 	worktreesDir := filepath.Join(m.root, ".worktrees")
 	if err := os.MkdirAll(worktreesDir, 0o750); err != nil {
-		return "", fmt.Errorf("worktree: create %s: %w", worktreesDir, err)
+		return "", errors.Join(fmt.Errorf("worktree: create %s: %w", worktreesDir, err), cleanupErr)
 	}
 
-	_ = m.PurgeOrphanBranch(taskID) // best-effort by design — see its doc comment
+	purgeErr := m.PurgeOrphanBranch(taskID)
+	if purgeErr != nil {
+		slog.Debug("worktree: orphan branch purge failed (expected when the task has no prior branch)",
+			"task_id", taskID, "error", purgeErr)
+	}
 
 	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, "-b", m.BranchName(taskID), baseBranch); err != nil {
-		return "", err
+		return "", errors.Join(err, cleanupErr, purgeErr)
 	}
 
 	m.mu.Lock()
@@ -131,15 +148,18 @@ func (m *Manager) Remove(taskID string) error {
 // per-attempt spawn) works unchanged regardless of whether the worktree is
 // fresh or recreated.
 func (m *Manager) Recreate(taskID string) (string, error) {
-	_ = m.Remove(taskID) // clean up any stale dir first; best-effort, already logged
+	// Clean up any stale dir first. Best-effort — Remove already logs a
+	// genuine failure at WARN — but folded into the returned error via
+	// errors.Join below if Recreate goes on to fail anyway (rule 19).
+	cleanupErr := m.Remove(taskID)
 	branch := m.BranchName(taskID)
 	wtPath := m.WorktreePath(taskID)
 
 	if _, err := m.run(taskID, "git", "fetch", "origin", branch); err != nil {
-		return "", err
+		return "", errors.Join(err, cleanupErr)
 	}
 	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, branch); err != nil {
-		return "", err
+		return "", errors.Join(err, cleanupErr)
 	}
 
 	m.mu.Lock()
