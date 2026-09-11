@@ -600,3 +600,55 @@ block) were all of that kind.
   any non-positive multiplier as "not configured" and uses 1.5, so that task
   keeps its real timeout. Reachable only by writing a negative number into
   `config.yaml` on purpose; pinned by a test that says so.
+
+- **`internal/doctor` (G4.5) is a narrower cut of `preflight.py`/`doctor.py`
+  than "merge the two files" suggests.** The brief named eight checks
+  (CLI presence+version, gh/glab auth, git remote, route resolution,
+  budget preset sanity, SQLite open+migrations, orphaned worktrees,
+  `.mcp.json`), and that list is what shipped — not the full
+  `build_doctor_report` run order. Explicitly NOT ported here, with where
+  each already lives or why it's out of scope:
+
+  - `validate_schema`/`validate_dependencies`/`validate_cycles` — already
+    `internal/graph.Validate` (G1.6, PR #111). Re-porting them into doctor
+    too would give two implementations of the same check to keep in sync.
+  - `check_config_files`, `check_scripts`, `check_tunnel`,
+    `_check_orch_skill_installed`, `_check_sqlite_orphan_rows`,
+    `_check_state_db_divergence` — real Python checks with no brief line
+    item asking for them. Left for whoever wires `internal/cli`'s `doctor`
+    subcommand to add if an operator actually needs them; nothing here
+    forecloses that.
+
+  - **`state.db.accessible` leans on `state.Open`'s auto-migrate instead of
+    porting `check_state_backend`'s read-only comparison.** Python opens
+    the DB, reads `PRAGMA user_version`, and *warns* if it doesn't match an
+    expected constant — it never migrates. `internal/state.Open` (F-12)
+    applies every pending migration as part of opening, by design (its own
+    doc comment: "Opening a database written by orch v0.11.0 must apply
+    zero"). `CheckSQLite` calls `Open` and reports what happened (opened
+    clean, or opened and applied N migrations) rather than re-implementing
+    a read-only comparison that would immediately contradict a function
+    it's sitting right next to — so running `orch doctor` against a
+    slightly-behind DB silently brings it current instead of just warning
+    about it, matching Go's `state` package's own contract rather than
+    Python's more cautious one. Worth knowing before someone expects
+    doctor to be side-effect-free.
+
+  - **`worktree.orphans` and `mcp.config` have no Python source at all.**
+    `internal/worktree` (G4.1) postdates `preflight.py` entirely — nothing
+    to port, so this is new coverage checking two things `internal/worktree`
+    itself cannot see across process restarts (an in-memory active-worktree
+    map, gone the moment the process exits): a `.worktrees/<id>` directory
+    git no longer recognizes as a worktree, and a local `orch/<id>` branch
+    with no matching worktree directory. `.mcp.json` presence is likewise
+    new — nothing in `preflight.py`/`doctor.py` checks for it.
+
+  - **`vcs.cli` checks authentication, not just presence — Python's
+    `check_vcs_readiness` never does.** `probe_vcs_readiness`'s `cli_path`
+    field is `shutil.which(cli)` and nothing more; a `gh` that's installed
+    but logged out reports `ok` in Python. `internal/vcs.CheckAuth` (G4.2)
+    already exists for exactly this, so `CheckVCSReadiness` calls it
+    instead of duplicating a presence-only check — an explicit brief ask
+    ("gh/glab autenticado"), not an unrequested improvement, but worth
+    naming since it means this one check can `warn` in a case Python's
+    never would.
