@@ -16,9 +16,12 @@
 // it. Quote below is graph's — the correct one — and both packages now call
 // it.
 //
-// Python's `repr(float)` is emulated separately, in `internal/state`, because
-// it is 150 lines with its own vector of values CPython actually printed.
-// When a second package needs it, it belongs here.
+// Python's `repr(float)` is here too, in float.go. It started in
+// `internal/state`, which needs it for the spend dedup preimage; it moved when
+// `internal/providers` turned out to need the same thing for claude's
+// `--max-budget-usd`, whose value dispatcher.py builds as `str(budget)`. Its
+// golden vector — values CPython actually printed, given as raw IEEE-754 bits
+// so the test file cannot round the case it is testing — came with it.
 package pyfmt
 
 import "strings"

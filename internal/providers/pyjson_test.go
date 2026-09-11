@@ -166,52 +166,6 @@ func TestToInt(t *testing.T) {
 	}
 }
 
-// TestPyFloat is the same golden table internal/state's pyFloat carries, kept
-// here because claude's --max-budget-usd value is built with Python's
-// str(float) and the two binaries must write the same flag.
-func TestPyFloat(t *testing.T) {
-	tests := []struct {
-		v    float64
-		want string
-	}{
-		{0, "0.0"},
-		{1, "1.0"},
-		{5, "5.0"},
-		{12, "12.0"},
-		{0.5, "0.5"},
-		{2.5, "2.5"},
-		{0.0285802, "0.0285802"},
-		{5400, "5400.0"},
-		{-1, "-1.0"},
-		{-0.25, "-0.25"},
-		{0.1, "0.1"},
-		{1e16, "1e+16"},
-		{1e21, "1e+21"},
-		{1.5e21, "1.5e+21"},
-		{0.0001, "0.0001"},
-		{0.00001, "1e-05"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			if got := pyFloat(tt.v); got != tt.want {
-				t.Errorf("pyFloat(%v) = %q, want %q", tt.v, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPyFloatNonFinite(t *testing.T) {
-	if got := pyFloat(negZero()); got != "-0.0" {
-		t.Errorf("pyFloat(-0.0) = %q, want %q", got, "-0.0")
-	}
-}
-
-func negZero() float64 {
-	z := 0.0
-	return -z
-}
-
 func TestAsStringAndAsObject(t *testing.T) {
 	if got := asString("x"); got != "x" {
 		t.Errorf("asString(string) = %q", got)

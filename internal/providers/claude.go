@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // ClaudeProvider adapts the `claude` CLI. Port of dispatcher.py's
@@ -52,7 +53,7 @@ func (ClaudeProvider) Argv(req Request) []string {
 		"--permission-mode", "acceptEdits",
 	)
 	if req.BudgetUSD != nil {
-		argv = append(argv, "--max-budget-usd", pyFloat(*req.BudgetUSD))
+		argv = append(argv, "--max-budget-usd", pyfmt.Float(*req.BudgetUSD))
 	}
 	return argv
 }

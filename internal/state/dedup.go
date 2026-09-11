@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // Event and spend rows are inserted with `INSERT OR IGNORE` against a UNIQUE
@@ -35,12 +38,12 @@ func eventDedupHash(projectID, ts, taskID, eventType, runID, pidHint string) str
 //
 //	sha256("{project_id}|{ts}|{task_id}|{backend}|{model}|{cost_usd}|{duration_s}")
 //
-// costUSD and durationS go through pyFloat because Python interpolates them
+// costUSD and durationS go through pyfmt.Float because Python interpolates them
 // with an f-string. See pyfloat.go for why that matters.
 func spendDedupHash(projectID, ts, taskID, backend, model string, costUSD, durationS float64) string {
 	return sha256Hex(strings.Join([]string{
 		projectID, ts, taskID, backend, model,
-		pyFloat(costUSD), pyFloat(durationS),
+		pyfmt.Float(costUSD), pyfmt.Float(durationS),
 	}, "|"))
 }
 
@@ -51,7 +54,7 @@ func spendDedupHash(projectID, ts, taskID, backend, model string, costUSD, durat
 // default for numbers), an int, or a string. Python holds an int there and
 // renders it without a decimal point, so an integral float64 must render the
 // same way — `4240`, never `4240.0`. A non-integral number is rendered by
-// pyFloat, which is what Python would do if something ever put one there.
+// pyfmt.Float, which is what Python would do if something ever put one there.
 func pidHintFromExtra(extra map[string]any) string {
 	v, ok := extra["pid"]
 	if !ok || v == nil {
@@ -68,7 +71,7 @@ func pidHintFromExtra(extra map[string]any) string {
 		if n == float64(int64(n)) {
 			return pyInt(int64(n))
 		}
-		return pyFloat(n)
+		return pyfmt.Float(n)
 	default:
 		return fmt.Sprint(v)
 	}
@@ -78,3 +81,10 @@ func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
+
+// pyInt renders an integer the way Python interpolates one into an f-string.
+// It lives here rather than in internal/pyfmt because Go and Python agree on
+// integers — there is nothing to emulate, and the function exists only so the
+// preimage's call sites read symmetrically with pyfmt.Float beside them. The
+// day a second package needs it, it belongs in pyfmt with the rest.
+func pyInt(v int64) string { return strconv.FormatInt(v, 10) }

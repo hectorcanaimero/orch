@@ -1,4 +1,4 @@
-package state
+package pyfmt
 
 import (
 	"math"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// pyFloat renders v exactly as Python's repr(float) does.
+// Float renders v exactly as Python's repr(float) does.
 //
 // This is not a cosmetic choice. `cost_usd` and `duration_s` are interpolated
 // into the `spend` dedup preimage through a Python f-string, so the hash a
@@ -24,7 +24,7 @@ import (
 // hashes for the same spend row, so `INSERT OR IGNORE` stops ignoring and the
 // budget gate double-counts every dispatch. The failure is silent and
 // permanent, which is why it has its own golden table in
-// testdata/README.md.
+// pyfmt_test.go.
 //
 // CPython's rule (`float_repr` → `PyOS_double_to_string(v, 'r', 0,
 // Py_DTSF_ADD_DOT_0)`):
@@ -37,7 +37,7 @@ import (
 //
 // `decpt` is the position of the decimal point relative to the digit string:
 // 5400.0 has digits "54" and decpt 4.
-func pyFloat(v float64) string {
+func Float(v float64) string {
 	switch {
 	case math.IsNaN(v):
 		return "nan"
