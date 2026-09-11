@@ -1,0 +1,38 @@
+# orch config show — new in Go, no Python source (Python's only `orch
+# config` verb is `consolidate`, H-2). Thin wrapper over config.Show; this
+# checks the CLI wiring (paths resolved, sources/warnings printed, exit
+# codes), not a byte-for-byte Python comparison — there is nothing to
+# compare against.
+
+exec orch config show --project-root proj --project-id parity-project
+! stderr .
+stdout '^state:'
+stdout '  backend: sqlite'
+stdout '# sources, in merge order:'
+stdout 'proj/\.orchestrator/config\.yaml'
+
+! exec orch config show --project-root nonexistent-dir
+stderr 'missing tasks\.json'
+
+# A project whose config.yaml is malformed: config.Load's own decode error
+# surfaces as a clear "config load failed" message, exit 1.
+! exec orch config show --project-root broken --project-id broken
+stderr 'config load failed'
+
+# A project with NO config.yaml at all: every value is a default, and
+# config.Show says so explicitly instead of printing an empty sources list.
+exec orch config show --project-root noconfig --project-id noconfig
+stdout 'no config file found — every value above is a default'
+
+-- broken/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- broken/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- broken/.orchestrator/config.yaml --
+state: [broken
+-- noconfig/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- noconfig/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
