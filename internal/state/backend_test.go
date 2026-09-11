@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -352,27 +353,105 @@ func TestEmptyNoteRecordsTheStatusAndTheClock(t *testing.T) {
 	}
 }
 
-// started_at and finished_at mark the FIRST entry into each state. A task
-// reopened and finished again keeps its original finish, which is what the
-// velocity metric is measured against.
-func TestTimestampsAreStampedOnceAndKept(t *testing.T) {
+// started_at and finished_at follow Python step for step.
+//
+// I had this backwards, and the comment asserted the wrong thing confidently:
+// `COALESCE(started_at, ?)` keeps the FIRST entry into a state, while
+// sqlite_backend.py writes `COALESCE(?, started_at)` and so keeps the MOST
+// RECENT. The difference only shows on a reopened task — and `metrics.py`
+// reads finished_at for 7-day velocity and for "done in the last N days", so
+// the same project would report different velocity depending on which binary
+// closed the task.
+//
+// The expectations are not written by hand. testdata/transition-timestamps.json
+// is the output of running the Python backend through these exact five steps
+// (see make-timestamps-vector.py), so this test compares against what Python
+// does rather than against what I believe it does.
+func TestTransitionTimestampsMatchPythonStepByStep(t *testing.T) {
+	ctx := context.Background()
+
+	raw, err := os.ReadFile("testdata/transition-timestamps.json") // #nosec G304 -- fixed testdata path
+	if err != nil {
+		t.Fatalf("read the Python vector: %v", err)
+	}
+	var vector []struct {
+		After      string  `json:"after"`
+		Status     string  `json:"status"`
+		StartedAt  *string `json:"started_at"`
+		FinishedAt *string `json:"finished_at"`
+		UpdatedAt  string  `json:"updated_at"`
+	}
+	if err := json.Unmarshal(raw, &vector); err != nil {
+		t.Fatalf("parse the Python vector: %v", err)
+	}
+	if len(vector) != 5 {
+		t.Fatalf("vector has %d steps, want the 5 the generator writes", len(vector))
+	}
+
+	// The same five steps the generator ran, in the same order.
+	steps := []struct {
+		to model.Status
+		at string
+	}{
+		{model.StatusInProgress, "2026-09-01T09:00:00Z"},
+		{model.StatusDone, "2026-09-01T11:00:00Z"},
+		{model.StatusTodo, "2026-09-05T09:00:00Z"},
+		{model.StatusInProgress, "2026-09-05T10:00:00Z"},
+		{model.StatusDone, "2026-09-05T12:00:00Z"},
+	}
+
+	b := seeded(t, "T1")
+	for i, s := range steps {
+		at, err := time.Parse(time.RFC3339, s.at)
+		if err != nil {
+			t.Fatalf("parse %q: %v", s.at, err)
+		}
+		if err := b.Transition(ctx, "T1", s.to, Note{At: at}); err != nil {
+			t.Fatalf("step %d (-> %s): %v", i, s.to, err)
+		}
+
+		got, err := b.Task(ctx, "T1")
+		if err != nil {
+			t.Fatalf("step %d: Task: %v", i, err)
+		}
+		want := vector[i]
+		if string(got.Status) != want.Status {
+			t.Errorf("after %s: status = %q, Python says %q", want.After, got.Status, want.Status)
+		}
+		if got.StartedAt != deref(want.StartedAt) {
+			t.Errorf("after %s: started_at = %q, Python says %q",
+				want.After, got.StartedAt, deref(want.StartedAt))
+		}
+		if got.FinishedAt != deref(want.FinishedAt) {
+			t.Errorf("after %s: finished_at = %q, Python says %q",
+				want.After, got.FinishedAt, deref(want.FinishedAt))
+		}
+		if got.UpdatedAt != want.UpdatedAt {
+			t.Errorf("after %s: updated_at = %q, Python says %q",
+				want.After, got.UpdatedAt, want.UpdatedAt)
+		}
+	}
+}
+
+// The headline of the vector, stated on its own so a failure reads as the
+// behaviour it protects rather than as "step 5 differs".
+func TestAReopenedTaskReportsItsSecondFinish(t *testing.T) {
 	ctx := context.Background()
 	b := seeded(t, "T1")
 
-	first := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
-	later := time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC)
+	first := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
+	second := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 
-	steps := []struct {
+	for _, s := range []struct {
 		to model.Status
 		at time.Time
 	}{
-		{model.StatusInProgress, first},
-		{model.StatusDone, first.Add(2 * time.Hour)},
-		{model.StatusTodo, later},       // reopened
-		{model.StatusInProgress, later}, // second run
-		{model.StatusDone, later.Add(time.Hour)},
-	}
-	for _, s := range steps {
+		{model.StatusInProgress, first.Add(-2 * time.Hour)},
+		{model.StatusDone, first},
+		{model.StatusTodo, second.Add(-3 * time.Hour)},
+		{model.StatusInProgress, second.Add(-2 * time.Hour)},
+		{model.StatusDone, second},
+	} {
 		if err := b.Transition(ctx, "T1", s.to, Note{At: s.at}); err != nil {
 			t.Fatalf("-> %s: %v", s.to, err)
 		}
@@ -382,15 +461,20 @@ func TestTimestampsAreStampedOnceAndKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Task: %v", err)
 	}
-	if got.StartedAt != "2026-09-01T09:00:00Z" {
-		t.Errorf("started_at = %q, want the FIRST start", got.StartedAt)
+	if got.FinishedAt != "2026-09-05T12:00:00Z" {
+		t.Errorf("finished_at = %q, want the SECOND finish — 7-day velocity "+
+			"and `done last N days` both read this column", got.FinishedAt)
 	}
-	if got.FinishedAt != "2026-09-01T11:00:00Z" {
-		t.Errorf("finished_at = %q, want the FIRST finish", got.FinishedAt)
+	if got.StartedAt != "2026-09-05T10:00:00Z" {
+		t.Errorf("started_at = %q, want the SECOND start", got.StartedAt)
 	}
-	if got.UpdatedAt != "2026-09-05T10:00:00Z" {
-		t.Errorf("updated_at = %q, want the LAST move", got.UpdatedAt)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
 	}
+	return *s
 }
 
 // ---- filters ---------------------------------------------------------------

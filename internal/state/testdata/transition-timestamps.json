@@ -1,0 +1,37 @@
+[
+  {
+    "after": "in-progress @ 2026-09-01T09:00:00Z",
+    "status": "in-progress",
+    "started_at": "2026-09-01T09:00:00Z",
+    "finished_at": null,
+    "updated_at": "2026-09-01T09:00:00Z"
+  },
+  {
+    "after": "done @ 2026-09-01T11:00:00Z",
+    "status": "done",
+    "started_at": "2026-09-01T09:00:00Z",
+    "finished_at": "2026-09-01T11:00:00Z",
+    "updated_at": "2026-09-01T11:00:00Z"
+  },
+  {
+    "after": "todo @ 2026-09-05T09:00:00Z",
+    "status": "todo",
+    "started_at": "2026-09-01T09:00:00Z",
+    "finished_at": "2026-09-01T11:00:00Z",
+    "updated_at": "2026-09-05T09:00:00Z"
+  },
+  {
+    "after": "in-progress @ 2026-09-05T10:00:00Z",
+    "status": "in-progress",
+    "started_at": "2026-09-05T10:00:00Z",
+    "finished_at": "2026-09-01T11:00:00Z",
+    "updated_at": "2026-09-05T10:00:00Z"
+  },
+  {
+    "after": "done @ 2026-09-05T12:00:00Z",
+    "status": "done",
+    "started_at": "2026-09-05T10:00:00Z",
+    "finished_at": "2026-09-05T12:00:00Z",
+    "updated_at": "2026-09-05T12:00:00Z"
+  }
+]

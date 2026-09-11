@@ -323,10 +323,18 @@ func (b *SQLite) Transition(ctx context.Context, id string, to model.Status, not
 			return fmt.Errorf("append the note for %q: %w", id, err)
 		}
 
-		// started_at and finished_at are stamped on the FIRST entry into
-		// each state and never overwritten — COALESCE keeps the original.
-		// A task that goes done → todo → done keeps its first finish, which
-		// is what the velocity metric is measured against.
+		// started_at and finished_at hold the MOST RECENT entry into each
+		// state, not the first. The argument comes before the column in
+		// COALESCE, so a non-NULL new timestamp wins and a NULL one leaves
+		// the stored value alone.
+		//
+		// The order is not incidental and not a preference: it is what
+		// sqlite_backend.py does, captured in
+		// testdata/transition-timestamps.json by running the Python backend.
+		// `metrics.py` reads finished_at for 7-day velocity and for "done in
+		// the last N days", so a task reopened and finished again must report
+		// the SECOND finish — otherwise the same project shows different
+		// velocity depending on which binary closed the task.
 		var started, finished any
 		if to == model.StatusInProgress {
 			started = at
@@ -338,8 +346,8 @@ func (b *SQLite) Transition(ctx context.Context, id string, to model.Status, not
 		res, err := tx.ExecContext(ctx,
 			`UPDATE tasks_runtime
 			    SET status = ?, comments_json = ?, updated_at = ?,
-			        started_at = COALESCE(started_at, ?),
-			        finished_at = COALESCE(finished_at, ?)
+			        started_at = COALESCE(?, started_at),
+			        finished_at = COALESCE(?, finished_at)
 			  WHERE project_id = ? AND task_id = ?`,
 			string(to), comments, at, started, finished, b.projectID, id)
 		if err != nil {
