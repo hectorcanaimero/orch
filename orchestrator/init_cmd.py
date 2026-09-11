@@ -1136,29 +1136,62 @@ def _post_process_config(
     Minimal (regex-based) edit rather than full YAML round-trip: preserves
     the comments in the shipped config.yaml so operators see the guidance
     when they open it in $EDITOR later.
+
+    A key the file does not contain is APPENDED rather than dropped. That
+    fallback is the fix for bug 17: `re.sub` with no match changes nothing,
+    and none of the four shipped templates carries `budgets_preset`. So for
+    every templated project the wizard asked for a preset, printed it in the
+    H-7 confirm summary, took the operator's "yes" — and the project then
+    loaded with the packaged default. The bug is in the gate, not the
+    setting: a confirmation screen that shows a choice which then has no
+    effect is worse than never asking, because the operator has been told it
+    took.
+
+    `state.backend` is the exception and is never appended: it is nested
+    under `state:`, and a bare `backend:` at the end of the file would be a
+    different, top-level key. A config with no `state:` block keeps its
+    default rather than gaining a wrong one.
     """
     if not config_yaml.exists():
         return
     text = config_yaml.read_text(encoding="utf-8")
-    text = re.sub(
-        r"(?m)^(\s*backend:\s*)\S+",
-        rf"\g<1>{state_backend}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(\s*backend:\s*)\S+", None, state_backend
     )
-    text = re.sub(
-        r"(?m)^budgets_preset:\s*\S+",
-        f"budgets_preset: {budget_preset}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(budgets_preset:\s*)\S+", "budgets_preset", budget_preset
     )
-    text = re.sub(
-        r"(?m)^spec_root:\s*\S+",
-        f"spec_root: {spec_root}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(spec_root:\s*)\S+", "spec_root", spec_root
     )
     config_yaml.write_text(text, encoding="utf-8")
+
+
+def _set_config_key(
+    text: str, pattern: str, key: str | None, value: str
+) -> tuple[str, bool]:
+    """Replace the first line matching `pattern`, or append `key: value`.
+
+    Returns `(text, appended)`. `key=None` means "never append" — used for a
+    nested key, where a bare top-level line would mean something else.
+
+    The prefix the pattern captures (indent, key, spacing) is preserved, so a
+    nested key keeps its indentation and does not silently move to the top
+    level.
+    """
+    if not value:
+        return text, False
+    match = re.search(pattern, text)
+    if match:
+        return (
+            text[: match.start()] + match.group(1) + value + text[match.end() :],
+            False,
+        )
+    if key is None:
+        return text, False
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + f"\n# Added by `orch init`.\n{key}: {value}\n", True
 
 
 def _post_process_tasks_meta(
