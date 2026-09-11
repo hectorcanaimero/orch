@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -24,25 +25,62 @@ type projectJSON struct {
 	StateDir    string `json:"state_dir"`
 }
 
-// costJSON is `status --json`'s `cost` object. Both totals are always zero
-// today — `state.Backend` has no way to read spend rows back yet
-// (RecordSpend has no reading counterpart) — but they keep Python's exact
-// int-vs-float shape: `project_total_usd` sums Python's (always empty)
-// per-task cost map, and `sum([])` is the int `0`; `filtered_total_usd`
-// sums one float per FILTERED task, and `sum([0.0, ...])` is a float even
-// when every term is zero — UNLESS the filtered set is itself empty, which
-// falls back to the same int `0`. See go-migration-notes.md.
+// costJSON is `status --json`'s `cost` object.
+//
+// Both totals keep Python's exact int-vs-float shape, a real CPython quirk
+// worth spelling out since it looks like a bug: `project_total_usd` is
+// `round(sum(cost_by_task.values()), 4)`, and Python's `sum()` over an
+// EMPTY sequence is the int `0` — but a non-empty list of floats sums to a
+// float even when every term is zero. Same story for `filtered_total_usd`,
+// summed over the filtered rows. So each field is "0" (no decimal point)
+// exactly when there is nothing to sum (no spend at all / an empty
+// filtered set), and a real decimal otherwise — never "0" once there is
+// at least one dollar amount behind it, even a $0.00 one.
 type costJSON struct {
 	ProjectTotalUSD  json.RawMessage `json:"project_total_usd"`
 	FilteredTotalUSD json.RawMessage `json:"filtered_total_usd"`
 }
 
-func costFor(filteredCount int) costJSON {
-	total := json.RawMessage("0")
-	if filteredCount > 0 {
-		total = json.RawMessage("0.0")
+func costFor(costByTask map[string]float64, filteredSum float64, filteredCount int) costJSON {
+	project := json.RawMessage("0")
+	if len(costByTask) > 0 {
+		total := 0.0
+		for _, v := range costByTask {
+			total += v
+		}
+		project = formatPyFloat(round4(total))
 	}
-	return costJSON{ProjectTotalUSD: json.RawMessage("0"), FilteredTotalUSD: total}
+	filtered := json.RawMessage("0")
+	if filteredCount > 0 {
+		filtered = formatPyFloat(round4(filteredSum))
+	}
+	return costJSON{ProjectTotalUSD: project, FilteredTotalUSD: filtered}
+}
+
+// runJSON is `status --json`'s `latest_run` object.
+//
+// Partial parity: Python's dict (`list_runs`, orchestrator/state/
+// sqlite_backend.py) also has completed_count/blocked_count/deferred_count
+// (from run-state JSON columns Backend.Run doesn't expose) and
+// run_file/events_file (paths into the file-backend layout, which doesn't
+// exist in Go — ADR-G4). Everything Backend.Run DOES carry is included, in
+// Python's field order. See go-migration-notes.md.
+type runJSON struct {
+	RunID         string `json:"run_id"`
+	StartedAt     string `json:"started_at"`
+	UpdatedAt     string `json:"updated_at"`
+	Mode          string `json:"mode"`
+	Status        string `json:"status"`
+	ParentPID     int    `json:"parent_pid"`
+	InFlightCount int    `json:"in_flight_count"`
+}
+
+func toRunJSON(r state.Run) runJSON {
+	return runJSON{
+		RunID: r.RunID, StartedAt: r.StartedAt, UpdatedAt: r.UpdatedAt,
+		Mode: r.Mode, Status: r.Status, ParentPID: r.ParentPID,
+		InFlightCount: r.InFlight,
+	}
 }
 
 type filtersJSON struct {
@@ -70,7 +108,13 @@ func buildSnapshot(ctx context.Context, paths config.Paths, backend state.Backen
 		return statusSnapshot{}, fmt.Errorf("bootstrap: %w", err)
 	}
 
-	all, err := buildStatusRows(ctx, backend, paths.ID, tasks)
+	rtr := loadRouterTolerant(paths)
+	costByTask, err := computeCostByTask(ctx, backend)
+	if err != nil {
+		return statusSnapshot{}, err
+	}
+
+	all, err := buildStatusRows(ctx, backend, paths.ID, tasks, rtr, costByTask)
 	if err != nil {
 		return statusSnapshot{}, err
 	}
@@ -82,6 +126,7 @@ func buildSnapshot(ctx context.Context, paths config.Paths, backend state.Backen
 	totals.Add("_total", len(all))
 
 	filtered := make([]statusRow, 0, len(all))
+	filteredSum := 0.0
 	for _, r := range all {
 		if only != "" {
 			ok, err := path.Match(only, r.ID)
@@ -96,6 +141,18 @@ func buildSnapshot(ctx context.Context, paths config.Paths, backend state.Backen
 			continue
 		}
 		filtered = append(filtered, r)
+		filteredSum += r.costUSDValue
+	}
+
+	var latestRun any
+	run, err := backend.LatestRun(ctx)
+	switch {
+	case err == nil:
+		latestRun = toRunJSON(run)
+	case errors.Is(err, state.ErrNoRuns):
+		latestRun = nil
+	default:
+		return statusSnapshot{}, fmt.Errorf("read latest run: %w", err)
 	}
 
 	var onlyPtr *string
@@ -118,12 +175,9 @@ func buildSnapshot(ctx context.Context, paths config.Paths, backend state.Backen
 			Backend:     "sqlite",
 			StateDir:    paths.StateDir(),
 		},
-		Totals: totals,
-		// latest_run is always null: state.Backend has no way to list runs
-		// yet (StartRun writes, nothing reads them back). See
-		// go-migration-notes.md.
-		LatestRun: nil,
-		Cost:      costFor(len(filtered)),
+		Totals:    totals,
+		LatestRun: latestRun,
+		Cost:      costFor(costByTask, filteredSum, len(filtered)),
 		Tasks:     filtered,
 		Filters:   filtersJSON{Only: onlyPtr, Status: statusList},
 	}, nil

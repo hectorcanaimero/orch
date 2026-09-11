@@ -7,20 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
-
-// costUSDZero is `cost_usd`'s always-current value — `state.Backend` has no
-// way to read spend rows back yet, so every task reports zero. It has to be
-// the literal bytes "0.0", not a plain float64(0): Python's
-// `round(cost_by_task.get(t.id, 0.0), 4)` always starts from a float, so it
-// always renders WITH a decimal point, and Go's encoding/json renders a
-// float64 zero as the bare integer "0" with no way to force the point. See
-// go-migration-notes.md.
-var costUSDZero = json.RawMessage("0.0")
 
 // resolveAndValidate resolves the project's paths and checks it looks like
 // a real orch project — ported from `ProjectPaths.ensure_valid()`
@@ -83,6 +78,77 @@ func loadDAG(paths config.Paths) []model.Task {
 	return tf.Tasks
 }
 
+// loadRouterTolerant loads model_router.yaml, falling back to an empty
+// router on any error — matching `build_status_snapshot`'s own
+// `try: router_map = load_router(...) except: router_map = {}`
+// (orchestrator/observability.py): a broken or missing router config
+// shouldn't hide the rest of `status`/`tasks`, only degrade the
+// backend/cli_model/tier columns to the "route not found" fallback.
+func loadRouterTolerant(paths config.Paths) router.Router {
+	rtr, err := router.Load(paths.RouterYAML())
+	if err != nil {
+		return router.Router{}
+	}
+	return rtr
+}
+
+// knownBackends enumerates model.Backend's five values — Backend.SpendSince
+// takes one backend at a time (it's shaped for the budget gate's rolling
+// window, not a project-wide report), so computing a per-task cost map
+// across every provider means calling it once per known value. There is no
+// bulk "every backend" query to fall back to.
+var knownBackends = []model.Backend{
+	model.BackendClaude, model.BackendCodex, model.BackendOpencode,
+	model.BackendGemini, model.BackendAgy,
+}
+
+// computeCostByTask sums cost_usd per task id across every backend and all
+// of history (since = the zero Time), mirroring Python's
+// `for row in backend.iter_all_spend(): cost_by_task[tid] += cost`
+// (orchestrator/observability.py). The project-wide total `orch status`
+// reports is this map's own values summed — not a second, separately
+// computed number — so the two can never disagree.
+func computeCostByTask(ctx context.Context, backend state.Backend) (map[string]float64, error) {
+	out := map[string]float64{}
+	for _, b := range knownBackends {
+		spend, err := backend.SpendSince(ctx, string(b), time.Time{})
+		if err != nil {
+			return nil, fmt.Errorf("read spend for %q: %w", b, err)
+		}
+		for _, s := range spend {
+			out[s.TaskID] += s.CostUSD
+		}
+	}
+	return out, nil
+}
+
+// round4 matches Python's `round(x, 4)`.
+func round4(v float64) float64 {
+	return float64(int64(v*10000+sign(v)*0.5)) / 10000
+}
+
+func sign(v float64) float64 {
+	if v < 0 {
+		return -1
+	}
+	return 1
+}
+
+// formatPyFloat renders v the way Python's json.dumps renders a float: a
+// decimal point always present, even at a whole number ("0.0", not "0").
+// Go's encoding/json drops the point for a whole-number float64, and this
+// package's cost fields need to look like Python's regardless of value —
+// not just at zero, now that real spend can flow through. Plain 'f'
+// formatting (no exponent) is enough here: cost_usd is always a small,
+// four-decimal dollar amount, never large or tiny enough to need one.
+func formatPyFloat(v float64) json.RawMessage {
+	s := strconv.FormatFloat(v, 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return json.RawMessage(s)
+}
+
 // statusRow is one task as `status`/`tasks --json` render it — the shape
 // `build_status_snapshot` builds in Python, field for field and in the same
 // order (json.dumps preserves dict insertion order, so this order is part
@@ -101,6 +167,12 @@ type statusRow struct {
 	LastEvent      *eventJSON      `json:"last_event"`
 	LastEventHuman *string         `json:"last_event_human"`
 	DeferReason    *string         `json:"defer_reason"`
+
+	// costUSDValue is the same value as CostUSD, kept as a real float64 for
+	// buildSnapshot's filtered_total_usd sum — parsing CostUSD's
+	// json.RawMessage back out just to add it up would be a strange way to
+	// avoid storing the number twice.
+	costUSDValue float64
 }
 
 // buildStatusRows joins tasks.json's DAG shape with the database's runtime
@@ -108,19 +180,7 @@ type statusRow struct {
 // task order (declaration order), NOT Backend.Tasks' `ORDER BY task_id` —
 // that's a different consumer's convention; Python's row order comes from
 // iterating tasks.json directly.
-//
-// `backend`/`cli_model`/`tier` are always the "route not found" fallback
-// ("?", the task's own model string, nil) — internal/router doesn't exist
-// yet. Once it does, resolve real routes here instead of hardcoding a miss;
-// until then this matches Python's own behavior on a project whose
-// model_router.yaml has no entry for a task's model, which is what
-// testdata/parity-project exercises (see go-migration-notes.md).
-//
-// `cost_usd` is always 0 for a similar reason: `state.Backend` has no way
-// to read spend rows back yet (RecordSpend has no reading counterpart).
-// Flagged in go-migration-notes.md — not something this command can fix on
-// its own.
-func buildStatusRows(ctx context.Context, backend state.Backend, projectID string, tasks []model.Task) ([]statusRow, error) {
+func buildStatusRows(ctx context.Context, backend state.Backend, projectID string, tasks []model.Task, rtr router.Router, costByTask map[string]float64) ([]statusRow, error) {
 	rows := make([]statusRow, 0, len(tasks))
 	for _, t := range tasks {
 		status := t.Status
@@ -139,20 +199,31 @@ func buildStatusRows(ctx context.Context, backend state.Backend, projectID strin
 			return nil, err
 		}
 
+		backendName, cliModel, tier := "?", t.Model, (*string)(nil)
+		if route, ok := rtr[t.Model]; ok {
+			backendName = string(route.Backend)
+			cliModel = route.CLIModel
+			tierStr := string(route.Tier)
+			tier = &tierStr
+		}
+
+		cost := round4(costByTask[t.ID])
+
 		rows = append(rows, statusRow{
 			ID:             t.ID,
 			Phase:          t.Phase,
 			Title:          t.Title,
 			Status:         status,
-			Backend:        "?",
-			CLIModel:       t.Model,
+			Backend:        backendName,
+			CLIModel:       cliModel,
 			Model:          t.Model,
-			Tier:           nil,
+			Tier:           tier,
 			Dependencies:   nonNilStrings(t.Dependencies),
-			CostUSD:        costUSDZero,
+			CostUSD:        formatPyFloat(cost),
 			LastEvent:      lastEvent,
 			LastEventHuman: lastEventHuman,
 			DeferReason:    nil,
+			costUSDValue:   cost,
 		})
 	}
 	return rows, nil
