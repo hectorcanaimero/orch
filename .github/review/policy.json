@@ -1,0 +1,49 @@
+{
+  "$comment": [
+    "Auto-merge eligibility policy. Read by .github/review/policy.sh, which runs",
+    "in the `policy` job of .github/workflows/review.yml.",
+    "",
+    "A PR is eligible only when EVERY rule below passes. Eligibility is",
+    "INFORMATIONAL today: the workflow publishes an `automerge-eligible` check",
+    "and a line in the review comment, and nothing merges. The step that would",
+    "act on it is written and disabled behind `vars.ORCH_AUTOMERGE == 'on'`",
+    "(sprint G4.7).",
+    "",
+    "Patterns are shell globs matched against the repo-relative path. `**` and",
+    "`*` both match across directory separators, so a pattern errs towards",
+    "protecting more rather than less."
+  ],
+
+  "max_changed_lines": 400,
+
+  "blocking_labels": ["needs-human"],
+
+  "protected_paths": [
+    ".github/**",
+
+    "go.mod",
+    "go.sum",
+    ".goreleaser.yaml",
+
+    "internal/engine/**",
+    "internal/state/**",
+    "internal/providers/**",
+    "internal/dashboard/auth*",
+
+    "orchestrator/dispatcher.py",
+    "orchestrator/state/**",
+    "orchestrator/dashboard/middleware.py",
+    "pyproject.toml"
+  ],
+
+  "protected_paths_notes": {
+    ".github/**": "CI is the thing deciding what merges. It does not get to change itself unattended.",
+    "go.mod / go.sum / .goreleaser.yaml": "Supply chain and release plumbing.",
+    "internal/engine/**": "The dispatch loop. Concurrency and process lifecycle bugs here are expensive.",
+    "internal/state/**": "SQLite schema and migrations — the compatibility contract.",
+    "internal/providers/**": "Shells out to external CLIs; argument handling is security-relevant.",
+    "internal/dashboard/auth*": "The token gate. See docs/CI-REVIEW.md.",
+    "orchestrator/**": "The Python tree, until it is removed. Same reasoning as the Go paths it maps to.",
+    "pyproject.toml": "Version and packaging."
+  }
+}

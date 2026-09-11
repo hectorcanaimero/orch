@@ -1,0 +1,351 @@
+name: PR review
+
+# Comment-only reviewer. It never merges, never pushes, never edits code.
+# See docs/CI-REVIEW.md for the whole design and how to turn it off.
+#
+# `pull_request`, NOT `pull_request_target`: this workflow reads the PR diff,
+# and `pull_request_target` would run it with a writable token in the context
+# of the base repo. Fork PRs get no secrets from GitHub anyway, so the jobs
+# below also skip them explicitly rather than failing halfway through.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# The whole workflow is read-only by default; each job asks for exactly what
+# it writes.
+permissions:
+  contents: read
+
+# One review per PR. A new push cancels the review of the commit it replaced —
+# that review is about to be wrong anyway.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Is this PR the kind of change that could merge itself once G4.7 turns
+  # auto-merge on? Informational today: it publishes a check and a line in the
+  # review comment, and nothing acts on it.
+  # --------------------------------------------------------------------------
+  policy:
+    name: Auto-merge policy
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    outputs:
+      eligible: ${{ steps.evaluate.outputs.eligible }}
+      reason: ${{ steps.evaluate.outputs.reason }}
+      changed_lines: ${{ steps.evaluate.outputs.changed_lines }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The rules decide what can merge unattended, so they get their own
+      # fixtures and they run before they are trusted.
+      - name: Self-test the policy rules
+        run: bash .github/review/policy.test.sh
+
+      - name: Collect the PR's files and labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr view "$PR" --repo "$REPO" --json files \
+            --jq '[.files[] | {path: .path, additions: .additions, deletions: .deletions}]' > files.json
+          gh pr view "$PR" --repo "$REPO" --json labels \
+            --jq '[.labels[].name]' > labels.json
+          echo "files:"; cat files.json
+          echo "labels:"; cat labels.json
+
+      - name: Evaluate
+        id: evaluate
+        run: |
+          bash .github/review/policy.sh --files files.json --labels labels.json \
+            | tee -a "$GITHUB_OUTPUT"
+
+      # `neutral` rather than `failure` when a PR is not eligible: needing a
+      # human is the normal case, not a broken build.
+      - name: Publish the automerge-eligible check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ELIGIBLE: ${{ steps.evaluate.outputs.eligible }}
+          REASON: ${{ steps.evaluate.outputs.reason }}
+        run: |
+          if [ "${ELIGIBLE:-}" = "true" ]; then
+            CONCLUSION=success
+            TITLE="Eligible for auto-merge"
+          else
+            CONCLUSION=neutral
+            TITLE="Needs a human"
+          fi
+          jq -n --arg sha "$HEAD_SHA" --arg c "$CONCLUSION" \
+                --arg t "$TITLE" --arg s "${REASON:-policy did not run}" \
+            '{name: "automerge-eligible", head_sha: $sha, status: "completed",
+              conclusion: $c, output: {title: $t, summary: $s}}' \
+            | gh api "repos/$REPO/check-runs" -X POST --input - >/dev/null
+
+      # ---- G4.7 -------------------------------------------------------------
+      # The step that will act on the verdict. Left here, disabled, so the
+      # thing being enabled later is reviewable now. Turning it on is setting
+      # one repo variable; see docs/CI-REVIEW.md.
+      #
+      # - name: Enable auto-merge
+      #   if: vars.ORCH_AUTOMERGE == 'on' && steps.evaluate.outputs.eligible == 'true'
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #     PR: ${{ github.event.pull_request.number }}
+      #     REPO: ${{ github.repository }}
+      #   run: gh pr merge "$PR" --repo "$REPO" --squash --auto
+      #
+      # Needs `pull-requests: write` on this job, branch protection on `main`
+      # with `smoke` and `gemini-review` required, and "Allow auto-merge"
+      # enabled on the repo. Auto-merge waits for the required checks, so the
+      # reviewer's verdict is what actually gates it.
+
+  # --------------------------------------------------------------------------
+  # The reviewer. Gets the diff and the checklist, returns JSON, and that is
+  # the whole of its authority — it is handed no GitHub token, and the Gemini
+  # CLI runs with every built-in tool disabled, so it cannot read the repo,
+  # run a command, or touch the PR. This job publishes the comment and the
+  # check on its behalf.
+  # --------------------------------------------------------------------------
+  gemini-review:
+    name: Gemini review
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Self-test the output parser
+        run: bash .github/review/parse-review.test.sh
+
+      # A missing key must be loud. Without this the action runs, fails
+      # somewhere inside the CLI, and the failure reads like a model problem.
+      - name: Is the API key configured?
+        id: key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No GEMINI_API_KEY::The review was skipped. Set it with: gh secret set GEMINI_API_KEY  (see docs/CI-REVIEW.md)"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the review prompt
+        if: steps.key.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # 200 KB of diff is already more than a reviewable PR. Truncating is
+          # better than blowing the context window and getting a confident
+          # review of the first half.
+          MAX_DIFF_BYTES=200000
+          gh pr diff "$PR" --repo "$REPO" > full.diff
+          DIFF_BYTES=$(wc -c < full.diff)
+          if [ "$DIFF_BYTES" -gt "$MAX_DIFF_BYTES" ]; then
+            head -c "$MAX_DIFF_BYTES" full.diff > pr.diff
+            printf '\n\n[diff truncated at %s bytes of %s]\n' "$MAX_DIFF_BYTES" "$DIFF_BYTES" >> pr.diff
+          else
+            cp full.diff pr.diff
+          fi
+
+          gh pr view "$PR" --repo "$REPO" --json files \
+            --jq '.files[] | "\(.path) (+\(.additions)/-\(.deletions))"' > files.txt
+
+          {
+            echo "You are reviewing a pull request for the orch repository."
+            echo "Apply the checklist below to the diff below. Nothing else."
+            echo
+            echo "Respond with a single JSON object and NOTHING ELSE — no prose"
+            echo "before it, no prose after it, no markdown fence. Schema:"
+            echo
+            echo '{'
+            echo '  "verdict": "approve" | "request_changes" | "comment",'
+            echo '  "blocking": [{"file": "path", "line": 12, "rule": "the checklist rule", "why": "one sentence"}],'
+            echo '  "minor":    [{"file": "path", "line": 12, "rule": "the checklist rule", "why": "one sentence"}],'
+            echo '  "summary": "two or three sentences for a human skimming the PR"'
+            echo '}'
+            echo
+            echo 'Use "request_changes" only when `blocking` is non-empty.'
+            echo 'Use "approve" when both lists are empty. "line" is optional.'
+            echo 'Every finding must name the checklist rule it comes from.'
+            echo
+            echo "=== CHECKLIST ==="
+            cat .github/review/CHECKLIST.md
+            echo
+            echo "=== PULL REQUEST ==="
+            echo "Title: ${PR_TITLE}"
+            echo "Body:"
+            echo "${PR_BODY:-(no description)}"
+            echo
+            echo "Files changed:"
+            cat files.txt
+            echo
+            echo "=== DIFF ==="
+            cat pr.diff
+          } > prompt.txt
+
+          echo "prompt is $(wc -c < prompt.txt) bytes"
+
+          # Hand it to the action through the environment. The delimiter is
+          # random because the diff is untrusted input and a fixed one could
+          # be closed early by a line inside the patch.
+          DELIM="EOF_$(openssl rand -hex 12)"
+          {
+            echo "REVIEW_PROMPT<<$DELIM"
+            cat prompt.txt
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
+
+      # Pinned to a commit SHA: this step is the one that receives the API key.
+      - name: Run the reviewer
+        id: gemini
+        if: steps.key.outputs.present == 'true'
+        continue-on-error: true
+        uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+        env:
+          # The CLI refuses to run in an untrusted directory and there is no
+          # way to pass `--skip-trust` through the action. Safe here because
+          # every built-in tool is disabled below: there is nothing in the
+          # workspace it can reach. Deliberately NOT setting GITHUB_TOKEN —
+          # the reviewer gets no credentials for this repo.
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          # Empty means "whatever the Gemini CLI defaults to", which is what
+          # the action's own docs do — pinning a model name here is a guess
+          # that goes stale. Override with the GEMINI_REVIEW_MODEL repo
+          # variable to pin one. See docs/CI-REVIEW.md.
+          gemini_model: ${{ vars.GEMINI_REVIEW_MODEL }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          settings: |-
+            {
+              "model": { "maxSessionTurns": 3 },
+              "tools": { "core": [] }
+            }
+
+      - name: Parse the verdict
+        id: parse
+        if: steps.key.outputs.present == 'true'
+        continue-on-error: true
+        env:
+          RAW: ${{ steps.gemini.outputs.summary }}
+          ERR: ${{ steps.gemini.outputs.error }}
+          ELIGIBLE: ${{ needs.policy.outputs.eligible }}
+          REASON: ${{ needs.policy.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '%s' "${RAW:-}" > raw.txt
+          if [ -n "${ERR:-}" ]; then
+            echo "reviewer stderr: $ERR"
+          fi
+          python3 .github/review/parse-review.py \
+            --raw raw.txt \
+            --out review.json \
+            --comment comment.md \
+            --eligible "${ELIGIBLE:-false}" \
+            --eligible-reason "${REASON:-policy did not run}" \
+            --run-url "$RUN_URL"
+
+      # One comment per PR, edited in place. A review that reappears at the
+      # bottom of the thread on every push buries the human conversation.
+      - name: Post or update the review comment
+        if: steps.parse.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          MARKER='<!-- orch:gemini-review -->'
+          # --paginate applies --jq per page, so a match on page 2 with matches
+          # on page 1 would print two ids. Only ever one comment carries the
+          # marker, but take the first line rather than trust that.
+          EXISTING=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq "[.[] | select(.body | contains(\"$MARKER\"))] | .[0].id // empty" \
+            | head -n 1)
+          if [ -n "$EXISTING" ]; then
+            gh api "repos/$REPO/issues/comments/$EXISTING" -X PATCH -F body=@comment.md >/dev/null
+            echo "updated comment $EXISTING"
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -X POST -F body=@comment.md >/dev/null
+            echo "posted a new comment"
+          fi
+
+      # Always runs, and is the only place a conclusion is decided:
+      #   request_changes           -> failure
+      #   approve / comment         -> success
+      #   no key, crash, bad output -> neutral, never success
+      - name: Publish the gemini-review check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          KEY_PRESENT: ${{ steps.key.outputs.present }}
+          GEMINI_OUTCOME: ${{ steps.gemini.outcome }}
+          PARSE_OUTCOME: ${{ steps.parse.outcome }}
+          GEMINI_ERROR: ${{ steps.gemini.outputs.error }}
+        run: |
+          set -euo pipefail
+          if [ "$KEY_PRESENT" != "true" ]; then
+            CONCLUSION=neutral
+            TITLE="Skipped — no API key"
+            SUMMARY="GEMINI_API_KEY is not set on this repository. Set it with \`gh secret set GEMINI_API_KEY\` — see docs/CI-REVIEW.md. The review did not run; this is not a pass."
+          elif [ "$GEMINI_OUTCOME" != "success" ]; then
+            CONCLUSION=neutral
+            TITLE="Reviewer failed"
+            SUMMARY="The Gemini CLI step did not complete. ${GEMINI_ERROR:-See the run log.} The review did not run; this is not a pass."
+          elif [ "$PARSE_OUTCOME" != "success" ]; then
+            CONCLUSION=neutral
+            TITLE="Unreadable verdict"
+            SUMMARY="The reviewer answered, but not with the required JSON schema. See the run log for what it returned. This is not a pass."
+          else
+            VERDICT=$(jq -r .verdict review.json)
+            SUMMARY=$(jq -r .summary review.json)
+            BLOCKING=$(jq -r '.blocking | length' review.json)
+            if [ "$VERDICT" = "request_changes" ]; then
+              CONCLUSION=failure
+              TITLE="$BLOCKING blocking issue(s)"
+            else
+              CONCLUSION=success
+              TITLE="No blocking issues"
+            fi
+          fi
+          echo "conclusion=$CONCLUSION title=$TITLE"
+          jq -n --arg sha "$HEAD_SHA" --arg c "$CONCLUSION" \
+                --arg t "$TITLE" --arg s "$SUMMARY" \
+            '{name: "gemini-review", head_sha: $sha, status: "completed",
+              conclusion: $c, output: {title: $t, summary: $s}}' \
+            | gh api "repos/$REPO/check-runs" -X POST --input - >/dev/null

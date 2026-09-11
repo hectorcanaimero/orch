@@ -19,6 +19,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
 - **Branches**: sprint-scoped (e.g. `sprint-e3/spa-spike`). Merge to `main` via PR.
+- **PRs are reviewed by Gemini in CI**; see `docs/CI-REVIEW.md`.
 - **Backups**: `orch atomize --apply` writes `tasks.json.bak-<ts>` — leave those alone.
 - **Docs live in `docs/`**: `MANUAL.{en,es,pt}.md`, dashboard/tunnel guides.
 
