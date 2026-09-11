@@ -1,0 +1,21 @@
+# orch logs — no --json (checked directly in orchestrator/orch.py's
+# _run_logs_subcommand: only --tail/--all exist). F2.T3 was never
+# dispatched, so it has no log file; exit code 2 distinguishes "no such
+# log" from a config/layout error (1). F0.T1's log is planted below to
+# exercise the file-exists path and --tail.
+
+! exec orch logs F2.T3 --project-root proj --project-id parity-project
+stderr 'no log file for task "F2\.T3"'
+
+exec orch logs F0.T1 --project-root proj --project-id parity-project
+stdout '^line one$'
+stdout '^line three$'
+
+exec orch logs F0.T1 --tail 1 --project-root proj --project-id parity-project
+stdout '^line three$'
+! stdout 'line one'
+
+-- proj/.orchestrator/state/parity-project/logs/F0.T1.log --
+line one
+line two
+line three

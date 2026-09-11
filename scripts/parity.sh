@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # scripts/parity.sh — diff the Python and Go `orch` CLIs' --json output
 # over the same real project (testdata/parity-project/): `status`, `tasks`,
-# and a filtered `tasks --status` (events/logs land in the next PR). This is
-# the paridad gate from the "Orch en Go" migration plan (ADR-G6): while it
-# stays green, the Go rewrite hasn't drifted from the Python behavior it is
-# replacing. See testdata/parity-project/README.md for how the fixture was
-# built and why --project-id is pinned explicitly.
+# a filtered `tasks --status`, and `events`. This is the paridad gate from
+# the "Orch en Go" migration plan (ADR-G6): while it stays green, the Go
+# rewrite hasn't drifted from the Python behavior it is replacing. See
+# testdata/parity-project/README.md for how the fixture was built and why
+# --project-id is pinned explicitly. `orch logs` has no --json and isn't
+# compared here — see its golden under testdata/parity-project/goldens/.
 #
 # Usage:
 #   make build && scripts/parity.sh
@@ -98,5 +99,6 @@ compare() {
 compare "status --json" status --json
 compare "tasks --json" tasks --json
 compare "tasks --status todo,in-progress --json" tasks --status todo,in-progress --json
+compare "events F2.T3 --json" events F2.T3 --json
 
 exit "$fail"

@@ -43,9 +43,55 @@ func TestCLICommands(t *testing.T) {
 			// Copy the fixture into $WORK/proj, skipping the checked-in
 			// goldens/README — they aren't part of a real project tree
 			// (same exclusion scripts/parity.sh applies).
-			return copyProjectFixture(src, filepath.Join(env.WorkDir, "proj"))
+			if err := copyProjectFixture(src, filepath.Join(env.WorkDir, "proj")); err != nil {
+				return err
+			}
+			// A second project, backed by the real Python-written
+			// internal/state/testdata/orch-py-0.11.0.db (4 real events
+			// across 3 tasks — see its README.md) — testdata/parity-project
+			// has none, so the non-empty `events` path (tabwriter, --json,
+			// --run, shortRunID) has nothing to exercise without it.
+			return setUpEventsFixture(filepath.Join(env.WorkDir, "billing-api"))
 		},
 	})
+}
+
+// setUpEventsFixture scaffolds just enough of a project for `orch events`
+// to work against a real database: `events` never reads tasks.json, so its
+// content doesn't matter beyond existing (ensureValidProject's check).
+func setUpEventsFixture(root string) error {
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o750); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(root, "tasks.json"),
+		[]byte(`{"meta":{},"phases":[],"tasks":[]}`), 0o600); err != nil {
+		return err
+	}
+	// #nosec G306 -- a shell script needs the executable bit; this is a
+	// throwaway test fixture, not a real project's script.
+	if err := os.WriteFile(filepath.Join(root, "scripts", "task-start.sh"),
+		[]byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		return err
+	}
+	cfgDir := filepath.Join(root, ".orchestrator")
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"),
+		[]byte("state:\n  backend: sqlite\n"), 0o600); err != nil {
+		return err
+	}
+	// project-root is passed explicitly in the scripts below, which
+	// selects the NAMESPACED state layout: .orchestrator/state/<id>/orch.db.
+	stateDir := filepath.Join(cfgDir, "state", "billing-api")
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		return err
+	}
+	pyDB, err := filepath.Abs(filepath.Join("..", "state", "testdata", "orch-py-0.11.0.db"))
+	if err != nil {
+		return err
+	}
+	return copyFile(pyDB, filepath.Join(stateDir, "orch.db"))
 }
 
 func copyProjectFixture(src, dst string) error {
