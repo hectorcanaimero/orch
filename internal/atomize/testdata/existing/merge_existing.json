@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "note": "custom project note"
+  },
+  "phases": [
+    { "id": 2, "name": "merge phase" }
+  ],
+  "tasks": [
+    {
+      "id": "F2.1.T1",
+      "phase": 2,
+      "title": "old title",
+      "description": "old desc",
+      "model": "old-model",
+      "reason": "old reason",
+      "status": "in-progress",
+      "dependencies": [],
+      "estimateHours": 1.0,
+      "files": ["real/path.go"],
+      "specRef": "old.md#F2.1.T1",
+      "comments": [{"note": "existing comment"}]
+    },
+    {
+      "id": "F5.5.T5",
+      "phase": 5,
+      "title": "orphan task",
+      "description": "",
+      "model": "x",
+      "reason": "",
+      "status": "done",
+      "dependencies": [],
+      "estimateHours": 0,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    },
+    {
+      "id": "R-001",
+      "phase": 0,
+      "title": "legacy bootstrap",
+      "description": "",
+      "model": "legacy",
+      "reason": "",
+      "status": "done",
+      "dependencies": [],
+      "estimateHours": 0,
+      "files": [],
+      "specRef": "",
+      "comments": []
+    }
+  ]
+}
