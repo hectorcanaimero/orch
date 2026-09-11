@@ -58,3 +58,18 @@ func TestCheckOrphanWorktreesRegisteredWorktreeIsNotOrphan(t *testing.T) {
 		t.Errorf("c = %+v, want ok (registered worktree + matching branch)", c)
 	}
 }
+
+func TestCheckOrphanWorktreesWarnsWhenWorktreesDirUnreadable(t *testing.T) {
+	root := newTestGitRepo(t)
+	// A plain file where .worktrees/ should be a directory makes ReadDir
+	// fail with something other than "not exist" — the read failure rule
+	// 19 says must not read as "found zero orphans".
+	if err := os.WriteFile(filepath.Join(root, ".worktrees"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := CheckOrphanWorktrees(root)
+	if c.Status != StatusWarn {
+		t.Errorf("c = %+v, want warn", c)
+	}
+}

@@ -40,19 +40,35 @@ func CheckOrphanWorktrees(root string) Check {
 	}
 
 	var orphanDirs []string
-	entries, _ := os.ReadDir(filepath.Join(root, ".worktrees"))
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	entries, err := os.ReadDir(filepath.Join(root, ".worktrees"))
+	switch {
+	case err == nil:
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			p := filepath.Join(root, ".worktrees", e.Name())
+			if !registered[filepath.Clean(p)] {
+				orphanDirs = append(orphanDirs, e.Name())
+			}
 		}
-		p := filepath.Join(root, ".worktrees", e.Name())
-		if !registered[filepath.Clean(p)] {
-			orphanDirs = append(orphanDirs, e.Name())
-		}
+	case os.IsNotExist(err):
+		// No .worktrees/ at all — a project that has never dispatched a
+		// task under worktree mode. Nothing to find, not a failure.
+	default:
+		// A real read failure (permissions, ...) must not read as "found
+		// zero orphans" (rule 19) — a doctor check that can't see the
+		// directory can't vouch for it either.
+		return Check{Name: name, Status: StatusWarn,
+			Detail: "could not read .worktrees/: " + err.Error()}
 	}
 
 	var orphanBranches []string
-	branchOut, _ := gitCapture(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/orch/*")
+	branchOut, err := gitCapture(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/orch/*")
+	if err != nil {
+		return Check{Name: name, Status: StatusWarn,
+			Detail: "could not list orch/* branches: " + err.Error()}
+	}
 	for _, branch := range strings.Split(branchOut, "\n") {
 		branch = strings.TrimSpace(branch)
 		if branch == "" {

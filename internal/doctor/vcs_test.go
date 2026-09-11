@@ -17,6 +17,11 @@ func newTestGitRepo(t *testing.T) string {
 		}
 	}
 	run("init", "-q")
+	// A CI runner has no global git identity configured (unlike a dev
+	// machine, where this worked by accident) — set one locally so
+	// `commit` doesn't fail with "Please tell me who you are".
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
 	run("commit", "--allow-empty", "-q", "-m", "initial")
 	return dir
 }
