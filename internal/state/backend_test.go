@@ -337,7 +337,10 @@ func TestEmptyNoteRecordsTheStatusAndTheClock(t *testing.T) {
 	if err := b.Transition(ctx, "T1", model.StatusInProgress, Note{}); err != nil {
 		t.Fatalf("Transition: %v", err)
 	}
-	got, _ := b.Task(ctx, "T1")
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
 	var entry map[string]string
 	if err := json.Unmarshal(got.Comments[0], &entry); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -557,7 +560,10 @@ func TestTasksAreScopedToTheProject(t *testing.T) {
 	if err := z.Transition(ctx, "Z1", model.StatusDone, Note{}); err != nil {
 		t.Fatalf("zulu transition: %v", err)
 	}
-	a1, _ := a.Task(ctx, "A1")
+	a1, err := a.Task(ctx, "A1")
+	if err != nil {
+		t.Fatalf("read alpha's task after zulu wrote: %v", err)
+	}
 	if a1.Status != model.StatusTodo {
 		t.Errorf("alpha's task moved to %q when zulu transitioned", a1.Status)
 	}
@@ -607,7 +613,10 @@ func TestEventsWithDifferentTimestampsAreBothKept(t *testing.T) {
 			t.Fatalf("AppendEvent: %v", err)
 		}
 	}
-	got, _ := b.Events(ctx, "T1", 0)
+	got, err := b.Events(ctx, "T1", 0)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
 	if len(got) != 2 {
 		t.Errorf("got %d events, want 2", len(got))
 	}
@@ -1084,5 +1093,49 @@ func TestStartRunSeedsTheProjectRow(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("got %d project rows, want 1", n)
+	}
+}
+
+// The guard at the top of Transition: a status string that is not one of the
+// five is refused before any database work happens.
+//
+// Reachable in practice — `orch task set --status <anything>` hands the CLI
+// argument straight through, and "skipped" in particular looks plausible
+// because it appears in presentation.status_labels.
+func TestTransitionRefusesAStatusOutsideTheEnum(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct{ name, status string }{
+		{"a display label that is not a state", "skipped"},
+		{"a typo", "in_progress"}, // underscore, not hyphen
+		{"empty", ""},
+		{"something invented", "halfway"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := seeded(t, "T1")
+			err := b.Transition(ctx, "T1", model.Status(c.status), Note{})
+			if err == nil {
+				t.Fatalf("Transition accepted %q", c.status)
+			}
+			// It must NOT be reported as an illegal transition: the status
+			// is not a state at all, and telling the caller "you cannot go
+			// from todo to skipped" would imply skipped exists.
+			if errors.Is(err, ErrIllegalTransition) {
+				t.Errorf("%q was reported as an illegal transition rather "+
+					"than an unknown status: %v", c.status, err)
+			}
+
+			// And nothing moved.
+			got, err := b.Task(ctx, "T1")
+			if err != nil {
+				t.Fatalf("Task: %v", err)
+			}
+			if got.Status != model.StatusTodo {
+				t.Errorf("the task moved to %q on a rejected status", got.Status)
+			}
+			if len(got.Comments) != 0 {
+				t.Errorf("a rejected status left %d comments", len(got.Comments))
+			}
+		})
 	}
 }
