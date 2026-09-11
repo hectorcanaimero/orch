@@ -1,0 +1,34 @@
+[
+  {
+    "field": "dependencies",
+    "kind": "dep.missing",
+    "message": "depends on unknown task 'NOPE.T9'",
+    "remediation": null,
+    "severity": "error",
+    "task_id": "BAD.MISSING"
+  },
+  {
+    "field": "dependencies",
+    "kind": "dep.cycle",
+    "message": "task 'BAD.SELF' depends on itself",
+    "remediation": null,
+    "severity": "error",
+    "task_id": "BAD.SELF"
+  },
+  {
+    "field": "dependencies",
+    "kind": "dep.cycle",
+    "message": "dependency cycle: CYC.A -> CYC.C -> CYC.B -> CYC.A",
+    "remediation": "Break the cycle by removing one of the edges above.",
+    "severity": "error",
+    "task_id": "CYC.A"
+  },
+  {
+    "field": "model",
+    "kind": "route.unresolved",
+    "message": "model 'someone/never-configured' has no entry in model_router.yaml",
+    "remediation": "Add a route for this model or fix the task.model value.",
+    "severity": "error",
+    "task_id": "BAD.ROUTE"
+  }
+]
