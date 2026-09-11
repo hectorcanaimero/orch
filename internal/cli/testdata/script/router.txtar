@@ -3,13 +3,17 @@
 # internal/router.Router.Validate). `router add-missing` is verified
 # byte-for-byte against real Python `orch router add-missing` output for
 # the plan/abort text.
-#
-# Deliberately NOT tested against the repo-root parity fixture
-# (testdata/parity-project's model_router.yaml is a bare `{}`): a known bug
-# in internal/router.AddMissing corrupts a router file that starts as `{}`
-# (reported separately, owner fixing it) — this fixture's router starts
-# from real block content instead, the shape every real project has once
-# `orch init`/`add-missing` has run once.
+
+# The repo-root parity fixture's model_router.yaml is a bare `{}` — the
+# exact shape internal/router.AddMissing used to corrupt silently (#144
+# fixed it). Exercising `add-missing` here proves the fix end to end
+# through the CLI: the `{}` stub is replaced with a real block mapping and
+# the added route actually loads back.
+exec orch router add-missing --yes --project-root proj --project-id parity-project
+stdout 'Added 1 entry\(ies\)'
+exec orch router validate --json --project-root proj --project-id parity-project
+! stderr .
+stdout '"offenders":\[\],"ok":true'
 
 ! exec orch router validate --json --project-root routerproj --project-id routerproj
 ! stderr .

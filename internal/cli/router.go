@@ -72,7 +72,7 @@ func newRouterValidateCmd(flags *projectFlags) *cobra.Command {
 			}
 
 			verr := rtr.Validate(tf.Tasks)
-			var offenders []routerOffenderJSON
+			offenders := []routerOffenderJSON{}
 			var unrouted *router.UnroutedError
 			if errors.As(verr, &unrouted) {
 				for _, o := range unrouted.Offenders {
@@ -138,8 +138,13 @@ func newRouterAddMissingCmd(flags *projectFlags) *cobra.Command {
 			rtr, err := router.Load(paths.RouterYAML())
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "error: router file not found: %s\n", paths.RouterYAML())
-					fmt.Fprintln(cmd.ErrOrStderr(), "Run `orch init` to scaffold it first.")
+					if _, err := fmt.Fprintf(cmd.ErrOrStderr(),
+						"error: router file not found: %s\n", paths.RouterYAML()); err != nil {
+						return err
+					}
+					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Run `orch init` to scaffold it first."); err != nil {
+						return err
+					}
 					return withSilentExitCode(2)
 				}
 				return withExitCode(2, err)

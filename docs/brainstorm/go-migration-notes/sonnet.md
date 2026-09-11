@@ -11,20 +11,24 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   faithfully — same plan/confirm/apply flow, same exit codes, plan and
   abort text verified byte-for-byte against a real Python run.
 
-- **Bug 15 — `internal/router.AddMissing` silently corrupts a router file
-  that starts as a bare `{}`.** Found while wiring `router add-missing`
-  against `testdata/parity-project`, whose `model_router.yaml` is exactly
-  `{}` (the shape every project scaffolded before #141 has). `{}` is a
-  complete YAML document; `AddMissing` appends a block mapping after it
-  with no `---` separator, which is invalid YAML — Python's equivalent bug
-  (#14, fixed in #141) at least raised loudly. Go's `Load()` on the
-  resulting file returned an **empty router with no error**: `AddMissing`
-  reported success, the file visibly contained the new routes, and
-  re-loading it silently discarded all of them — worse than Python's
-  crash, because nothing anywhere said a problem existed. Reported to
-  `internal/router`'s owner rather than patched here (PR #144); `internal/
-  cli/testdata/script/router.txtar` deliberately uses a fixture whose
-  router file starts from real block content instead of `{}`, documented
-  inline as a known gap until #144 lands — at which point `testdata/
-  parity-project`'s own fixture should get a `router add-missing` test
-  too, since it's exactly the shape that was broken.
+- ~~**Bug 15 — `internal/router.AddMissing` silently corrupts a router file
+  that starts as a bare `{}`.**~~ — **RESOLVED** (#144, same day). Found
+  while wiring `router add-missing` against `testdata/parity-project`,
+  whose `model_router.yaml` is exactly `{}` (the shape every project
+  scaffolded before #141 has). `{}` is a complete YAML document;
+  `AddMissing` appended a block mapping after it with no `---` separator,
+  which is invalid YAML — Python's equivalent bug (#14, fixed in #141) at
+  least raised loudly. Go's `Load()` on the resulting file returned an
+  **empty router with no error**: `AddMissing` reported success, the file
+  visibly contained the new routes, and re-loading it silently discarded
+  all of them — worse than Python's crash, because nothing anywhere said a
+  problem existed. Reported to `internal/router`'s owner rather than
+  patched here; #144 removes the bare `{}` in place (keeping any comments
+  above it) instead of appending below it, and rejects a file the old code
+  already corrupted rather than guessing at a repair.
+
+  Verified end to end through the CLI once #144 landed:
+  `internal/cli/testdata/script/router.txtar` now runs `router add-missing
+  --yes` against a real copy of `testdata/parity-project` (its actual `{}`
+  stub, untouched) and confirms the added route reloads via `router
+  validate` afterward — the exact round trip the old code silently broke.
