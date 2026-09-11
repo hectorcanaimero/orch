@@ -1,0 +1,137 @@
+{
+  "generatedBy": "python3 -c \"from orchestrator.state.sqlite_backend import _STATUS_TRANSITIONS; ...\" \u2014 see internal/model/testdata/README.md",
+  "statuses": [
+    "backlog",
+    "todo",
+    "in-progress",
+    "done",
+    "blocked"
+  ],
+  "transitions": [
+    {
+      "from": "backlog",
+      "to": "backlog",
+      "legal": true
+    },
+    {
+      "from": "backlog",
+      "to": "todo",
+      "legal": true
+    },
+    {
+      "from": "backlog",
+      "to": "in-progress",
+      "legal": true
+    },
+    {
+      "from": "backlog",
+      "to": "done",
+      "legal": true
+    },
+    {
+      "from": "backlog",
+      "to": "blocked",
+      "legal": true
+    },
+    {
+      "from": "todo",
+      "to": "backlog",
+      "legal": false
+    },
+    {
+      "from": "todo",
+      "to": "todo",
+      "legal": true
+    },
+    {
+      "from": "todo",
+      "to": "in-progress",
+      "legal": true
+    },
+    {
+      "from": "todo",
+      "to": "done",
+      "legal": true
+    },
+    {
+      "from": "todo",
+      "to": "blocked",
+      "legal": true
+    },
+    {
+      "from": "in-progress",
+      "to": "backlog",
+      "legal": false
+    },
+    {
+      "from": "in-progress",
+      "to": "todo",
+      "legal": true
+    },
+    {
+      "from": "in-progress",
+      "to": "in-progress",
+      "legal": true
+    },
+    {
+      "from": "in-progress",
+      "to": "done",
+      "legal": true
+    },
+    {
+      "from": "in-progress",
+      "to": "blocked",
+      "legal": true
+    },
+    {
+      "from": "done",
+      "to": "backlog",
+      "legal": false
+    },
+    {
+      "from": "done",
+      "to": "todo",
+      "legal": true
+    },
+    {
+      "from": "done",
+      "to": "in-progress",
+      "legal": false
+    },
+    {
+      "from": "done",
+      "to": "done",
+      "legal": true
+    },
+    {
+      "from": "done",
+      "to": "blocked",
+      "legal": false
+    },
+    {
+      "from": "blocked",
+      "to": "backlog",
+      "legal": false
+    },
+    {
+      "from": "blocked",
+      "to": "todo",
+      "legal": true
+    },
+    {
+      "from": "blocked",
+      "to": "in-progress",
+      "legal": true
+    },
+    {
+      "from": "blocked",
+      "to": "done",
+      "legal": true
+    },
+    {
+      "from": "blocked",
+      "to": "blocked",
+      "legal": true
+    }
+  ]
+}
