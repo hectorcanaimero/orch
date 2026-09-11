@@ -1,0 +1,1 @@
+{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":1200,"num_turns":0,"result":"","total_cost_usd":0.0012,"usage":{"input_tokens":50,"output_tokens":0},"api_error_status":{"code":"authentication_error","message":"Invalid API key"},"permission_denials":[],"terminal_reason":"error","session_id":"01a01c1e-dead-beef-0000-000000000001"}
