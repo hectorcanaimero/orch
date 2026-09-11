@@ -132,6 +132,8 @@ block) were all of that kind.
   duplicate can't hide behind last-wins), and the warning loader fires (or
   stays silent) exactly when expected.
 
+- ~~**Bugs 6, 7, 8 — `classify_failure` markers against real claude 2.1.269 output**~~ — **RESOLVED in Python** (fix/classify-failure-markers, 2026-09-11); the Go mirror in `internal/providers` follows in a separate PR with the same fixtures (until then its tests deliberately assert the old answers). Found by opus-2 capturing real CLI bytes for G2.4. (6) None of `_VERSION_DRIFT_MARKERS` matched claude's real rejection text "It may not exist or you may not have access to it" nor its `[claude-code:unrecognized_model]` line, so the `fallback_cli_model` retry never fired for the one case it exists for — markers added. (7) Numeric status codes `401/403/429/500..504` were bare substrings against a haystack that includes 2 KB of stdout; a claude envelope is full of numbers (`"cacheReadInputTokens":40321` contains `403`), so a truncated envelope — PARSER, retryable — classified PERMISSION, terminal. Codes now match only as standalone numbers (`_has_status_code`). (8) Real auth failures spell it `authentication_error` / `auth expired`, neither a substring of the old markers — added. Fixtures: `orchestrator/tests/fixtures/dispatcher/claude-2.1.269/`. Go rule: same three changes in `providers.Classify`, same fixtures.
+
 ## Notes for the Go rewrite
 
 - **Timestamps in `orch.db` are stored in two forms.** Not a bug to fix, a

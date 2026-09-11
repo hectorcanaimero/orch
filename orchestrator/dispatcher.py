@@ -138,6 +138,13 @@ _VERSION_DRIFT_MARKERS: tuple[str, ...] = (
     "invalid model",
     "model does not exist",
     "unsupported model",
+    # claude 2.1.269 rejects an unknown --model with exactly this sentence and
+    # a `[claude-code:unrecognized_model]` stderr line mixed into stdout. None
+    # of the markers above appear in it, so the fallback_cli_model retry never
+    # fired for the one case it exists for (bug 6 of the Go port; fixtures under
+    # tests/fixtures/dispatcher/claude-2.1.269/).
+    "may not exist or you may not have access",
+    "unrecognized_model",
 )
 
 # Substrings set explicitly by orch/wait_result — these live in `error_message`
@@ -147,10 +154,10 @@ _TIMEOUT_MARKER = "orchestrator timeout"
 
 # Rate-limit markers (specific — checked before generic TRANSIENT 5xx).
 _RATE_LIMIT_MARKERS: tuple[str, ...] = (
-    "429",
     "rate limit",
     "too many requests",
 )
+_RATE_LIMIT_CODES: tuple[str, ...] = ("429",)
 
 # Permission/auth markers.
 _PERMISSION_MARKERS: tuple[str, ...] = (
@@ -159,9 +166,13 @@ _PERMISSION_MARKERS: tuple[str, ...] = (
     "unauthorized",
     "auth error",
     "authentication failed",
-    "401",
-    "403",
+    # Real auth failures from the CLIs use these spellings, which are not
+    # substrings of the two above (bug 8 of the Go port).
+    "authentication error",
+    "authentication_error",
+    "auth expired",
 )
+_PERMISSION_CODES: tuple[str, ...] = ("401", "403")
 
 # Budget markers — the orchestrator's per-dispatch budget cap, or a backend's
 # own budget rejection.
@@ -174,10 +185,6 @@ _BUDGET_MARKERS: tuple[str, ...] = (
 # Transient markers — server-side hiccups where a simple retry usually clears.
 # `_ERR_CODE_RE` catches opencode/opencodego's `err_xxxxxxxx` correlation ids.
 _TRANSIENT_MARKERS: tuple[str, ...] = (
-    "500",
-    "502",
-    "503",
-    "504",
     "internal server error",
     "bad gateway",
     "service unavailable",
@@ -187,7 +194,20 @@ _TRANSIENT_MARKERS: tuple[str, ...] = (
     "connection dropped",
     "econnreset",
 )
+_TRANSIENT_CODES: tuple[str, ...] = ("500", "502", "503", "504")
 _ERR_CODE_RE = re.compile(r"\berr_[0-9a-f]{6,}\b", re.IGNORECASE)
+
+
+def _has_status_code(blob: str, codes: tuple[str, ...]) -> bool:
+    """True if any HTTP status code in `codes` appears as a standalone number.
+
+    Bug 7 of the Go port: the codes used to be bare substrings, and the
+    haystack includes 2 KB of stdout — for claude, a JSON envelope full of
+    numbers. `"cache_read_input_tokens":40321` contains `403`, so a truncated
+    envelope (a PARSER failure, retryable) classified as PERMISSION (terminal).
+    A code only counts when it is not glued to other digits or a decimal point.
+    """
+    return any(re.search(rf"(?<![0-9.]){code}(?![0-9.])", blob) for code in codes)
 
 # Parser markers — our own error_message strings when parse_result gives up.
 _PARSER_MARKERS: tuple[str, ...] = (
@@ -237,11 +257,11 @@ def classify_failure(result: "DispatchResult") -> FailureClass:
     blob = _classify_haystack(result)
 
     # 3) RATE_LIMIT — specific keywords, checked before generic 5xx TRANSIENT.
-    if any(m in blob for m in _RATE_LIMIT_MARKERS):
+    if any(m in blob for m in _RATE_LIMIT_MARKERS) or _has_status_code(blob, _RATE_LIMIT_CODES):
         return FailureClass.RATE_LIMIT
 
     # 4) PERMISSION — auth errors are terminal; no retry.
-    if any(m in blob for m in _PERMISSION_MARKERS):
+    if any(m in blob for m in _PERMISSION_MARKERS) or _has_status_code(blob, _PERMISSION_CODES):
         return FailureClass.PERMISSION
 
     # 5) BUDGET — spend cap hit; no retry.
@@ -253,7 +273,11 @@ def classify_failure(result: "DispatchResult") -> FailureClass:
         return FailureClass.VERSION_DRIFT
 
     # 7) TRANSIENT — 5xx / UnknownError / err_xxxxxxxx correlation ids.
-    if any(m in blob for m in _TRANSIENT_MARKERS) or _ERR_CODE_RE.search(blob):
+    if (
+        any(m in blob for m in _TRANSIENT_MARKERS)
+        or _has_status_code(blob, _TRANSIENT_CODES)
+        or _ERR_CODE_RE.search(blob)
+    ):
         return FailureClass.TRANSIENT
 
     # 8) PARSER — our own error_message strings when parse_result gives up.
