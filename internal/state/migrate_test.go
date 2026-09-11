@@ -9,6 +9,25 @@ import (
 
 const pythonFixture = "testdata/orch-py-0.11.0.db"
 
+// copyPythonFixture returns a writable copy of the checked-in Python database.
+//
+// Opening it in WAL mode writes -wal/-shm sidecars and can rewrite the header,
+// so a test must never open the file in the repo: that would let a Go-side bug
+// quietly edit the very evidence it is being checked against.
+func copyPythonFixture(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile(pythonFixture)
+	if err != nil {
+		t.Fatalf("read the Python fixture: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "orch.db")
+	// #nosec G703 -- the destination is t.TempDir(), not caller input.
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatalf("copy the fixture: %v", err)
+	}
+	return path
+}
+
 func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
 	ms, err := loadMigrations()
 	if err != nil {
@@ -43,6 +62,8 @@ func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
 		t.Skip("the Python tree is gone; the embedded copies are now the only source")
 	}
 	for _, m := range ms {
+		// #nosec G304 -- m.name comes from our own embedded migrations, and
+		// pythonDir is a constant relative path inside the repo.
 		want, err := os.ReadFile(filepath.Join(pythonDir, m.name))
 		if err != nil {
 			t.Errorf("read %s from the Python tree: %v", m.name, err)
@@ -105,16 +126,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 func TestOpenPythonWrittenDatabaseAppliesNothing(t *testing.T) {
 	ctx := context.Background()
 
-	// Copy it — opening in WAL mode writes sidecar files, and the fixture is
-	// checked in. A test must not dirty its own evidence.
-	src, err := os.ReadFile(pythonFixture)
-	if err != nil {
-		t.Fatalf("read the Python fixture: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "orch.db")
-	if err := os.WriteFile(path, src, 0o644); err != nil {
-		t.Fatalf("copy the fixture: %v", err)
-	}
+	path := copyPythonFixture(t)
 
 	db, applied, err := Open(ctx, path)
 	if err != nil {
@@ -140,14 +152,7 @@ func TestOpenPythonWrittenDatabaseAppliesNothing(t *testing.T) {
 // tests once the model types land.
 func TestPythonFixtureHasTheExpectedRows(t *testing.T) {
 	ctx := context.Background()
-	src, err := os.ReadFile(pythonFixture)
-	if err != nil {
-		t.Fatalf("read the Python fixture: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "orch.db")
-	if err := os.WriteFile(path, src, 0o644); err != nil {
-		t.Fatalf("copy the fixture: %v", err)
-	}
+	path := copyPythonFixture(t)
 	db, _, err := Open(ctx, path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -190,14 +195,7 @@ func TestPythonFixtureHasTheExpectedRows(t *testing.T) {
 // test cannot drift from the file it is defending.
 func TestDedupHashesInThePythonFixtureMatchGo(t *testing.T) {
 	ctx := context.Background()
-	src, err := os.ReadFile(pythonFixture)
-	if err != nil {
-		t.Fatalf("read the Python fixture: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "orch.db")
-	if err := os.WriteFile(path, src, 0o644); err != nil {
-		t.Fatalf("copy the fixture: %v", err)
-	}
+	path := copyPythonFixture(t)
 	db, _, err := Open(ctx, path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)

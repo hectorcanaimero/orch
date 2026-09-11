@@ -51,7 +51,9 @@ func Open(ctx context.Context, path string) (*DB, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("resolve %q: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	// 0750, not 0755: the directory holds a project's task history and spend.
+	// Nothing outside the owner's group needs to traverse it.
+	if err := os.MkdirAll(filepath.Dir(abs), 0o750); err != nil {
 		return nil, 0, fmt.Errorf("create state dir for %q: %w", abs, err)
 	}
 

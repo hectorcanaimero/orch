@@ -35,7 +35,18 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 orch se está reescribiendo en Go (ver checklist en el artefacto "Orch en Go";
 fases G0–G8). Layout objetivo — las rutas marcadas **(existe)** ya están en
-el repo; el resto sigue planificado:
+el repo; el resto sigue planificado.
+
+**Go 1.25.0** es el mínimo, y la directiva `go` de `go.mod` es la única
+fuente: `.github/workflows/go.yml` la lee con `go-version-file: go.mod` en
+vez de repetir el número. No es una preferencia — `modernc.org/sqlite` (y
+`modernc.org/libc`, y `golang.org/x/sys`) declaran `go 1.25.0`, así que el
+piso lo fija la dependencia, no nosotros. El artefacto dice "1.23+"; eso era
+antes de elegir el driver de SQLite. `golangci-lint` tiene que estar
+compilado con un Go **igual o más nuevo** que esa directiva o se niega a
+correr, de ahí el v2.13.2 del workflow (el esquema de config de v2 es
+distinto al de v1 — ver `.golangci.yml`).
+
 
 ```
 cmd/orch/            — main package, arg parsing, entrypoint (existe)

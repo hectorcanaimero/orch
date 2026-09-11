@@ -24,6 +24,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v6.1.1
+      # golangci-lint must be built with a Go at least as new as go.mod's
+      # directive, or it refuses to run. modernc.org/sqlite requires 1.25.0,
+      # so v1.61.0 (built with 1.23) no longer works here. v2 changed the
+      # config schema — see .golangci.yml.
+      - uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: v1.61.0
+          version: v2.13.2
