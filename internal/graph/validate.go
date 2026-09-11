@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // Validate runs every static check and returns the problems in the same order
@@ -87,7 +88,7 @@ func validateDependencies(tasks []model.Task) []Problem {
 					TaskID:   t.ID,
 					Field:    "dependencies",
 					Kind:     KindDepCycle,
-					Message:  fmt.Sprintf("task %s depends on itself", pyQuote(t.ID)),
+					Message:  fmt.Sprintf("task %s depends on itself", pyfmt.Quote(t.ID)),
 					Severity: SeverityError,
 				})
 				continue
@@ -97,7 +98,7 @@ func validateDependencies(tasks []model.Task) []Problem {
 					TaskID:   t.ID,
 					Field:    "dependencies",
 					Kind:     KindDepMissing,
-					Message:  fmt.Sprintf("depends on unknown task %s", pyQuote(dep)),
+					Message:  fmt.Sprintf("depends on unknown task %s", pyfmt.Quote(dep)),
 					Severity: SeverityError,
 				})
 			}
@@ -141,7 +142,7 @@ func validateRoutes(tasks []model.Task, routes []string) []Problem {
 			TaskID:      t.ID,
 			Field:       "model",
 			Kind:        KindRouteUnresolved,
-			Message:     fmt.Sprintf("model %s has no entry in model_router.yaml", pyQuote(t.Model)),
+			Message:     fmt.Sprintf("model %s has no entry in model_router.yaml", pyfmt.Quote(t.Model)),
 			Remediation: "Add a route for this model or fix the task.model value.",
 			Severity:    SeverityError,
 		})

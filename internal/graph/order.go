@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // DisplayOrder returns tasks sorted by (phase, id) — the order `orch tasks`
@@ -57,11 +58,11 @@ func TopoOrder(tasks []model.Task) ([]string, error) {
 		n := 0
 		for _, dep := range t.Dependencies {
 			if dep == t.ID {
-				return nil, fmt.Errorf("task %s depends on itself", pyQuote(t.ID))
+				return nil, fmt.Errorf("task %s depends on itself", pyfmt.Quote(t.ID))
 			}
 			if _, ok := byID[dep]; !ok {
 				return nil, fmt.Errorf("task %s depends on unknown task %s",
-					pyQuote(t.ID), pyQuote(dep))
+					pyfmt.Quote(t.ID), pyfmt.Quote(dep))
 			}
 			n++
 			dependents[dep] = append(dependents[dep], t.ID)

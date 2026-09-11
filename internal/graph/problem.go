@@ -19,8 +19,6 @@
 // go-migration-notes.md), so its tests are its own.
 package graph
 
-import "strings"
-
 // Severity mirrors the Python field. Every static validator currently emits
 // "error"; the field exists because `validate_files_writable` and
 // `validate_preset_sanity` emit warnings, and they will land here later.
@@ -55,49 +53,3 @@ const (
 	KindDepCycle        = "dep.cycle"
 	KindRouteUnresolved = "route.unresolved"
 )
-
-// pyQuote renders a string the way Python's `{x!r}` does for the values that
-// reach these messages — task ids and model names.
-//
-// Not cosmetic: `orch validate` output is what a user reads and what
-// `scripts/parity.sh` diffs between the two binaries. Go's `%q` would write
-// double quotes and turn a matching line into a diff on every run.
-//
-// Python's repr prefers single quotes and switches to double only when the
-// value contains a single quote and no double quote. Ids and model names are
-// `[A-Za-z0-9._/-]` in practice, so the simple case is the only one that
-// happens — but the rule is implemented rather than assumed, because a task
-// id comes from a user's file.
-func pyQuote(s string) string {
-	hasSingle := strings.Contains(s, "'")
-	hasDouble := strings.Contains(s, `"`)
-
-	if hasSingle && !hasDouble {
-		return `"` + escapePyInner(s, '"') + `"`
-	}
-	return "'" + escapePyInner(s, '\'') + "'"
-}
-
-// escapePyInner escapes backslashes, the quote character in use, and the
-// control characters Python's repr escapes.
-func escapePyInner(s string, quote byte) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; c {
-		case '\\':
-			b.WriteString(`\\`)
-		case quote:
-			b.WriteByte('\\')
-			b.WriteByte(c)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
