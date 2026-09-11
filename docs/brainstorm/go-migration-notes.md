@@ -153,3 +153,27 @@ block) were all of that kind.
   it), and a wrong method on a data route resolves to that route, not to the
   static fallback. The equivalent of the route-table sweep test is cheap in Go
   and worth keeping.
+
+- **`state.Backend` has no way to read spend or runs back.** `orch status
+  --json` needs `cost_usd` per task and `latest_run` project-wide — Python's
+  `build_status_snapshot` gets them from `iter_all_spend()` and `list_runs()`.
+  The Backend interface from #107 has `RecordSpend`/`StartRun` (write) but
+  nothing symmetric to read them back. `internal/cli/status.go` currently
+  hardcodes `cost_usd`/`project_total_usd`/`filtered_total_usd` to zero and
+  `latest_run` to `null` — which happens to be the CORRECT output for
+  testdata/parity-project (no spend ever recorded, no run ever started), so
+  `scripts/parity.sh` passes, but this is a known gap, not a finished
+  feature. Whoever adds spend/run reading to Backend should also come back
+  to `buildStatusRows`/`buildSnapshot` in `internal/cli/project.go` and
+  `status.go` and wire the real values in.
+
+- **`internal/router` doesn't exist yet, so `status`/`tasks` never resolve a
+  route.** `backend`/`cli_model`/`tier` in `orch status`/`tasks --json`
+  always report the "no route found" fallback (`"?"`, the task's own model
+  string, `null`) rather than actually reading `model_router.yaml`. Same
+  situation as spend/runs above: this happens to match Python's real output
+  on testdata/parity-project (its `model_router.yaml` has no entry for
+  `claude/claude-sonnet-4-6` either), so parity holds, but it's a stand-in
+  for real router resolution, not a design choice. Revisit
+  `buildStatusRows` in `internal/cli/project.go` once `internal/router`
+  exists.

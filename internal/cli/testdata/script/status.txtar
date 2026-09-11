@@ -1,0 +1,36 @@
+# orch status against the committed parity fixture (see
+# testdata/parity-project/README.md at the repo root). Full byte-for-byte
+# parity against Python is scripts/parity.sh's job; this checks the Go
+# command's wiring end to end (exit codes, JSON shape, the human table).
+
+exec orch status --json --project-root proj --project-id parity-project
+! stderr .
+stdout '"project_id":"parity-project"'
+stdout '"_total":5'
+stdout '"done":3'
+stdout '"in-progress":1'
+stdout '"blocked":1'
+stdout '"backend":"sqlite"' # the project.backend field, not a per-task one
+
+exec orch status --project-root proj --project-id parity-project
+stdout 'Project parity-project'
+stdout 'F2\.T3'
+
+# --status and --only both narrow the JSON tasks array without changing
+# the project-wide totals.
+exec orch status --json --status blocked --project-root proj --project-id parity-project
+stdout '"_total":5'
+stdout '"id":"F2\.T3"'
+! stdout '"id":"F0\.T1"'
+
+exec orch status --json --only 'F0*' --project-root proj --project-id parity-project
+stdout '"id":"F0\.T1"'
+! stdout '"id":"F1\.T1"'
+
+! exec orch status --project-root nonexistent-dir
+stderr 'missing tasks\.json'
+
+# A malformed --only glob (unterminated character class) is a user-input
+# error, not something to swallow and treat as "matches nothing".
+! exec orch status --json --only 'F0[' --project-root proj --project-id parity-project
+stderr 'syntax error in pattern'
