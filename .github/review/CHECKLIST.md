@@ -79,8 +79,11 @@ These apply to files under `cmd/` and `internal/`.
 13. **`internal/dashboard` reads state; it never drives the engine.** A
     dashboard file importing `internal/engine` is blocking — the dashboard is
     read-only by design and that is the property it rests on.
-14. **`internal/providers` imports `model` and `config`, nothing else from
-    `internal/`.** Each provider is a thin adapter over one external CLI.
+14. **`internal/providers` imports `model`, `config` and `pyfmt`, nothing else
+    from `internal/`.** Each provider is a thin adapter over one external CLI.
+    `pyfmt` is a formatting leaf (Python-repr quoting and float formatting,
+    PR #124) in the same category as `model`: it imports nothing from
+    `internal/` and exists so parity output has one spelling.
 15. **No import cycles**, and no package importing `cmd/`.
 
 ### Correctness
