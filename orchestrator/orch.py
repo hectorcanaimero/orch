@@ -889,6 +889,23 @@ def _install_sigint(
 # ---- Helpers ------------------------------------------------------------
 
 
+def _task_status_current(
+    task_id: str,
+    tasks_json_path: Path | str,
+    state_backend: "SqliteBackend | None",
+) -> str | None:
+    """Current status of `task_id`: the state backend when there is one,
+    otherwise tasks.json. See bug 16 in docs/brainstorm/go-migration-notes/."""
+    if state_backend is not None:
+        try:
+            status = state_backend.get_task_status(task_id)
+        except Exception:  # noqa: BLE001
+            status = None
+        if status is not None:
+            return str(status)
+    return _task_status_in_file(task_id, tasks_json_path)
+
+
 def _task_status_in_file(task_id: str, tasks_json_path: Path | str = "tasks.json") -> str | None:
     """Read tasks.json (fresh) and return the current `status` for `task_id`.
 
@@ -1275,7 +1292,15 @@ def _reap_once(
             # scripts/task-finish.sh (tasks.json status == "done") the CLI
             # wrapper's failure is spurious (skills-shortening warning,
             # step_finish buffering race, etc.). Respect the sub-agent.
-            file_status = _task_status_in_file(entry.task.id, cwd / "tasks.json")
+            # Bug 16 of the Go port: under `state.backend: sqlite` (the
+            # default since v0.11) `scripts/task-finish.sh` -> `orch
+            # task-status` writes the database and leaves tasks.json alone,
+            # so reading the file here saw `todo` forever and the guard was
+            # dead. Ask the backend first; the file stays as the fallback for
+            # file-backed projects.
+            file_status = _task_status_current(
+                entry.task.id, cwd / "tasks.json", state_backend
+            )
             if file_status == "done":
                 event_log.emit(
                     "success",
@@ -1853,9 +1878,18 @@ def _refill(
         retry_queue[:] = remaining
 
     # ---- (2) normal ready set ---------------------------------------------
+    # Bug 15 of the Go port: the retry branch of `_reap_once` resets the task
+    # to `todo` and stamps `retry_earliest_at`, but this pass used to know
+    # nothing about the retry queue — so the task came back through
+    # `queue.ready()` and was launched in the SAME tick, ignoring the backoff
+    # (and launched a second time when the queue item finally drained). A
+    # task the retry queue still owns is its alone until it drains.
+    retry_owned = {item.task.id for item in (retry_queue or [])}
     in_flight_ids = {entry.task.id for entry in in_flight.values()}
     for task in queue.ready(in_flight_ids=in_flight_ids, only=only):
         if task.id in deferred:
+            continue
+        if task.id in retry_owned:
             continue
         if max_tasks is not None and dispatched_count >= max_tasks:
             break
