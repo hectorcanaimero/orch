@@ -1,0 +1,12 @@
+[
+  {
+    "id": "F2.T2",
+    "status": "in-progress",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 2,
+    "dependencies": [
+      "F2.T1"
+    ]
+  }
+]

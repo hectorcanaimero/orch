@@ -17,11 +17,13 @@ lint:
 		go vet ./...; \
 	fi
 
-# Compares the Go and Python binaries on testdata/parity-project. Wired up
-# in G1.5 once cli/status and cli/tasks exist; until then it's a no-op so
-# `make lint test parity` is always a safe smoke sequence to run.
+# Compares the Go and Python binaries' --json output on
+# testdata/parity-project (see its README.md). Needs `make build` first and
+# a Python venv at .venv (python3 -m venv .venv && .venv/bin/pip install
+# -e ".[dev]") — scripts/parity.sh explains how to point it elsewhere.
+# Currently fails: internal/cli's status/tasks commands don't exist yet.
 parity:
-	@echo "parity: not implemented yet (G1.5)"
+	scripts/parity.sh
 
 clean:
 	rm -rf bin/ coverage.out

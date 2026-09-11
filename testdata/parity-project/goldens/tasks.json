@@ -1,0 +1,50 @@
+[
+  {
+    "id": "F0.T1",
+    "status": "done",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 0,
+    "dependencies": []
+  },
+  {
+    "id": "F1.T1",
+    "status": "done",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 1,
+    "dependencies": [
+      "F0.T1"
+    ]
+  },
+  {
+    "id": "F2.T1",
+    "status": "done",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 2,
+    "dependencies": [
+      "F1.T1"
+    ]
+  },
+  {
+    "id": "F2.T2",
+    "status": "in-progress",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 2,
+    "dependencies": [
+      "F2.T1"
+    ]
+  },
+  {
+    "id": "F2.T3",
+    "status": "blocked",
+    "backend": "?",
+    "cli_model": "claude/claude-sonnet-4-6",
+    "phase": 2,
+    "dependencies": [
+      "F2.T2"
+    ]
+  }
+]
