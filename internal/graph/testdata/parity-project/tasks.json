@@ -1,0 +1,73 @@
+{
+  "meta": {
+    "project": "parity-project",
+    "note": "Fixture for internal/graph parity. Deliberately contains every error kind validate_graph can report, PLUS a clean sub-DAG so ordering and DOT have something real to work on. See make-goldens.py."
+  },
+  "phases": [
+    {"id": 0, "name": "F0 - Foundation"},
+    {"id": 1, "name": "F1 - Customers"},
+    {"id": 2, "name": "F2 - Invoices"}
+  ],
+  "tasks": [
+    {
+      "id": "F0.T1", "phase": 0, "title": "Scaffold", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": [], "estimateHours": 0.3, "files": [],
+      "specRef": "specs/f0.md#T1", "comments": []
+    },
+    {
+      "id": "F0.T2", "phase": 0, "title": "Database", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["F0.T1"], "estimateHours": 0.8, "files": [],
+      "specRef": "specs/f0.md#T2", "comments": []
+    },
+    {
+      "id": "F1.T1", "phase": 1, "title": "Health endpoint", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["F0.T2"], "estimateHours": 0.4, "files": [],
+      "specRef": "specs/f1.md#T1", "comments": []
+    },
+    {
+      "id": "F1.T2", "phase": 1, "title": "Customers", "description": "",
+      "model": "claude/claude-opus-4-6", "reason": "", "status": "todo",
+      "dependencies": ["F0.T2", "F1.T1"], "estimateHours": 0.9, "files": [],
+      "specRef": "specs/f1.md#T2", "comments": []
+    },
+    {
+      "id": "BAD.MISSING", "phase": 1, "title": "Depends on a ghost", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["F0.T1", "NOPE.T9"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    },
+    {
+      "id": "BAD.SELF", "phase": 1, "title": "Depends on itself", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["BAD.SELF"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    },
+    {
+      "id": "BAD.ROUTE", "phase": 2, "title": "Unrouted model", "description": "",
+      "model": "someone/never-configured", "reason": "", "status": "todo",
+      "dependencies": ["F1.T1"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    },
+    {
+      "id": "CYC.A", "phase": 2, "title": "Cycle A", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["CYC.C"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    },
+    {
+      "id": "CYC.B", "phase": 2, "title": "Cycle B", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["CYC.A"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    },
+    {
+      "id": "CYC.C", "phase": 2, "title": "Cycle C", "description": "",
+      "model": "claude/claude-sonnet-4-6", "reason": "", "status": "todo",
+      "dependencies": ["CYC.B"], "estimateHours": 0.5, "files": [],
+      "specRef": "", "comments": []
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+digraph orch {
+  rankdir=LR;
+  node [shape=box, style=rounded, fontname="Helvetica"];
+  edge [color="#666666"];
+
+  subgraph cluster_phase_0 {
+    label="phase 0";
+    style=dashed;
+    color="#cccccc";
+    "F0.T1" [label="F0.T1\nScaffold"];
+    "F0.T2" [label="F0.T2\nDatabase"];
+  }
+
+  subgraph cluster_phase_1 {
+    label="phase 1";
+    style=dashed;
+    color="#cccccc";
+    "BAD.MISSING" [label="BAD.MISSING\nDepends on a ghost"];
+    "BAD.SELF" [label="BAD.SELF\nDepends on itself"];
+    "F1.T1" [label="F1.T1\nHealth endpoint"];
+    "F1.T2" [label="F1.T2\nCustomers"];
+  }
+
+  subgraph cluster_phase_2 {
+    label="phase 2";
+    style=dashed;
+    color="#cccccc";
+    "BAD.ROUTE" [label="BAD.ROUTE\nUnrouted model"];
+    "CYC.A" [label="CYC.A\nCycle A"];
+    "CYC.B" [label="CYC.B\nCycle B"];
+    "CYC.C" [label="CYC.C\nCycle C"];
+  }
+
+  "F0.T1" -> "F0.T2";
+  "F0.T1" -> "BAD.MISSING";
+  "F0.T2" -> "F1.T1";
+  "F0.T2" -> "F1.T2";
+  "F1.T1" -> "F1.T2";
+  "F1.T1" -> "BAD.ROUTE";
+  "CYC.C" -> "CYC.A";
+  "CYC.A" -> "CYC.B";
+  "CYC.B" -> "CYC.C";
+}

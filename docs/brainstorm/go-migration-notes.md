@@ -92,6 +92,15 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   implementations have — not on DOT, which has no Python counterpart to
   diff against.
 
+- **Python has no topological sort either.** Alongside the missing DOT, worth
+  recording because the two mistakes rhyme: `TaskQueue.all()` sorts by
+  `(phase, id)` for display and `TaskQueue.ready()` picks whatever has its
+  dependencies satisfied right now. Nothing anywhere produces a dependency
+  order. `graph.TopoOrder` is therefore new, with no Python golden to be held
+  to; parity for the graph package is measured on `validate` messages, the
+  cycle set, and the `(phase, id)` display order, which all three exist on
+  both sides.
+
 - **`internal/dashboard` — where the auth gate belongs.** Put the token check on
   the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,
   `/logs/stream`), never on the static surface. The embedded SPA's `index.html`

@@ -1,0 +1,9 @@
+claude/claude-sonnet-4-6:
+  backend: claude
+  cli_model: claude-sonnet-4-6
+  tier: standard
+claude/claude-opus-4-6:
+  backend: claude
+  cli_model: claude-opus-4-6
+  tier: premium
+  is_premium: true
