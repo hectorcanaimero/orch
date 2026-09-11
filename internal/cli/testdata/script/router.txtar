@@ -1,0 +1,77 @@
+# orch router validate / router add-missing. `router validate` has no
+# Python counterpart (new-in-Go, over the already-existing
+# internal/router.Router.Validate). `router add-missing` is verified
+# byte-for-byte against real Python `orch router add-missing` output for
+# the plan/abort text.
+
+# The repo-root parity fixture's model_router.yaml is a bare `{}` — the
+# exact shape internal/router.AddMissing used to corrupt silently (#144
+# fixed it). Exercising `add-missing` here proves the fix end to end
+# through the CLI: the `{}` stub is replaced with a real block mapping and
+# the added route actually loads back.
+exec orch router add-missing --yes --project-root proj --project-id parity-project
+stdout 'Added 1 entry\(ies\)'
+exec orch router validate --json --project-root proj --project-id parity-project
+! stderr .
+stdout '"offenders":\[\],"ok":true'
+
+! exec orch router validate --json --project-root routerproj --project-id routerproj
+! stderr .
+stdout '"offenders":\[\{"task_id":"A","model":"claude/claude-sonnet-4-6"\}'
+stdout '"ok":false'
+
+! exec orch router validate --project-root routerproj --project-id routerproj
+stdout 'model_router\.yaml is missing entries for 3 task\(s\)'
+stdout 'Run `orch router add-missing`'
+
+# Plan output + abort: feeding "n" declines the prompt, exit 1, file
+# untouched.
+stdin abort.txt
+! exec orch router add-missing --tier premium --project-root routerproj --project-id routerproj
+stdout 'Found 3 missing model\(s\) across 3 task\(s\)'
+stdout '\+ claude/claude-sonnet-4-6.*backend=claude, cli_model=claude-sonnet-4-6, tier=premium'
+stdout '\+ codex/gpt-5-codex.*backend=codex, cli_model=gpt-5-codex, tier=premium'
+stdout '! bogus-no-prefix.*cannot infer backend'
+stdout 'Aborted\. No changes written\.'
+
+exec cat routerproj/.orchestrator/model_router.yaml
+stdout '^# A header comment\.$'
+! stdout 'auto-added'
+
+# --yes applies without a prompt; the unparseable model is reported
+# separately and left for a human.
+exec orch router add-missing --yes --project-root routerproj --project-id routerproj
+stdout 'Added 2 entry\(ies\)'
+stdout '1 model\(s\) still need manual entries'
+
+exec cat routerproj/.orchestrator/model_router.yaml
+stdout 'auto-added by `orch router add-missing`'
+stdout 'claude/claude-sonnet-4-6:'
+stdout 'codex/gpt-5-codex:'
+
+# Idempotent: nothing left to infer now, exit 2 (matching Python: "nothing
+# can be auto-added" when every remaining model lacks a backend prefix).
+! exec orch router add-missing --yes --project-root routerproj --project-id routerproj
+stderr 'Nothing can be auto-added'
+
+! exec orch router add-missing --tier bogus --project-root routerproj --project-id routerproj
+stderr '\-\-tier must be one of premium, standard, cheap'
+
+-- abort.txt --
+n
+-- routerproj/tasks.json --
+{"meta":{},"phases":[],"tasks":[
+  {"id":"A","phase":0,"title":"A","model":"claude/claude-sonnet-4-6","dependencies":[]},
+  {"id":"B","phase":0,"title":"B","model":"codex/gpt-5-codex","dependencies":[]},
+  {"id":"C","phase":0,"title":"C","model":"bogus-no-prefix","dependencies":[]}
+]}
+-- routerproj/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- routerproj/.orchestrator/model_router.yaml --
+# A header comment.
+
+claude/existing:
+  backend: claude
+  cli_model: existing-model
+  tier: premium
