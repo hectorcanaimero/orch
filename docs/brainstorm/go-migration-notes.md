@@ -153,6 +153,18 @@ block) were all of that kind.
   same applies to `ORDER BY started_at`: Python sorts runs lexically in SQL
   and would mis-order such a database; Go sorts by parsed time.
 
+- **`orch stop` reads runs from SQLite in Go, not `state/run-*.json`.**
+  Python's `_run_stop_subcommand` finds the newest running orch by globbing
+  `state/run-*.json` for a live `parent_pid` and sending it SIGTERM. That
+  file doesn't exist in Go — no engine writes it, and ADR-G4 dropped the
+  file backend entirely. Decision (orch-98, during G3.6 scoping,
+  2026-09-11): when `stop` lands in **G3.3** (once the engine exists and
+  actually starts runs), it reads the `runs` table instead, via
+  `Backend.Runs`/`Backend.LatestRun` (#116, opus) — `parent_pid` lives on
+  that row already. `stop` itself is out of scope for G3.6, which only
+  covers `task`/`task-status`/`reset` (the three that route through
+  `Backend.Transition`).
+
 - **The graph package: three gaps between the plan and the Python tree.**
   Found while writing `internal/graph` (G1.6). They are listed together
   because they are one discovery seen from three sides, and because the

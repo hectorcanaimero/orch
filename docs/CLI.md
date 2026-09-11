@@ -9,9 +9,12 @@ flags Python does unless a difference is called out.
 **Status by phase** (see the "Orch en Go" migration plan):
 
 - **G1.5 — landed**: `status`, `tasks`, `events`, `logs`.
+- **G3.6 — landed**: `task set`, `task-status`, `reset`. `stop` was split out
+  to **G3.3** (it needs the engine's run tracking, not `Backend.Transition`
+  — see `docs/brainstorm/go-migration-notes.md`).
 - **G1.6 / G2+ — not yet in this table**: `validate`, `graph`, `router`,
-  `config`, `task`, `task-status`, `reset`, `stop`, and everything else in
-  Python's `_SUBCOMMANDS`. Add a row here in the same PR that lands one.
+  `config`, `stop`, and everything else in Python's `_SUBCOMMANDS`. Add a
+  row here in the same PR that lands one.
 
 ## Subcommands
 
@@ -21,6 +24,9 @@ flags Python does unless a difference is called out.
 | `tasks` | `--json`, `--only GLOB`, `--status LIST`, `--project-root`, `--project-id`, `--config` | yes | Identical trimmed wire shape — verified by `scripts/parity.sh`. Same route-field gap as `status`. |
 | `events` | `TASK_ID` (positional), `--tail N` (default 20, 0=all), `--run RUN_ID`, `--json`, `--project-root`, `--project-id`, `--config` | yes | Identical wire shape (`iter_events`'s row) — verified by `scripts/parity.sh`. `--run` filters client-side (`state.Backend.Events` has no run-id parameter); Python filters at the SQL layer — same result, different mechanism. |
 | `logs` | `TASK_ID` (positional), `--tail N` (default 200), `--all`, `--project-root`, `--project-id`, `--config` | **no** — Python's `_run_logs_subcommand` never had one either | Same human output shape and exit codes (0 = printed, 1 = config/layout error, 2 = no log file for that task). Not compared by `scripts/parity.sh` (nothing to diff as JSON); see the golden under `testdata/parity-project/goldens/logs-F2.T3.txt`. |
+| `task-status` | `TASK_ID STATUS` (positional), `--author`, `--note`, `--project-root`, `--project-id`, `--config` | n/a — no `--json`, ever (single-writer helper, machine-readable success is "exit 0") | Same exit codes as Python's `_run_task_status_subcommand`: 0 success, 1 config/layout error, 2 unknown task id **or** an invalid `STATUS`, 3 illegal transition. `scripts/task-{start,finish,block,reset}.sh` from `testdata/parity-project` `exec orch task-status …` and are exercised against `bin/orch` in `internal/cli/testdata/script/taskscripts.txtar`. |
+| `task set` | `--id` (required), `--status`, `--model`, `--backend`, `--milestone`, `--project-root`, `--project-id`, `--config` | no | **Partial.** `--status` routes through `Backend.Transition`, same exit codes as Python (0 success, 1 missing-flags/unknown-id, 3 illegal transition). `--model`/`--backend`/`--milestone` are registered (so the flags aren't silently rejected) but return a clear error — `state.Backend` has no method to write `tasks_definition` yet. See `docs/brainstorm/go-migration-notes.md`. |
+| `reset` | `--requeue`, `--only GLOB`, `--project-root`, `--project-id`, `--config` | no | **Deliberately not a literal port.** Python reads tasks.json's own (F-12-stale) `status` field to find in-progress candidates; Go reads the real runtime status via `Backend.Tasks` — see the doc comment on `newResetCmd` in `internal/cli/reset.go` for why. Dry-run vs `--requeue` output shape and the always-exit-0-after-partial-failure behavior match Python. Exit 2 on invalid project layout, matching Python (a different code than `status`/`tasks`/`events`, which use 1 for the same check). |
 
 ## Conventions every row above follows
 
@@ -28,10 +34,13 @@ flags Python does unless a difference is called out.
   persistent flags on the root command (`internal/cli/root.go`), not
   repeated per subcommand in the Go source — but they work identically to
   Python's per-subcommand `_add_common_project_flags`.
-- **Exit codes**: `0` success, `1` config/project-layout error, `2` reserved
-  for a command-specific "not found" case (`logs`'s missing log file today;
-  `errNotImplemented`/`exitError` in `root.go` is the shared mechanism for
-  future subcommands that need a third code).
+- **Exit codes**: `0` success, `1` config/project-layout error (except
+  `reset`, which uses `2` for that check, matching Python) — beyond that,
+  codes are per-command and match Python's own table: `2` for "not found"
+  (`logs`'s missing log file, `task-status`'s unknown task id or invalid
+  status), `3` for an illegal status transition (`task-status`, `task set`).
+  `errNotImplemented`/`exitError` in `root.go` is the shared mechanism any
+  command uses to pick a non-1 code.
 - **`--json` output** is compact (`encoding/json`'s default, HTML-escaping
   off) — same byte shape category as Python's
   `json.dumps(..., separators=(",", ":"))`, verified command-by-command in
