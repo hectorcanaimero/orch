@@ -234,3 +234,43 @@ block) were all of that kind.
   for real router resolution, not a design choice. Revisit
   `buildStatusRows` in `internal/cli/project.go` once `internal/router`
   exists.
+
+- **`internal/atomize` (G4.3) — project templates have no markdown specs to
+  atomize.** The G4 brief said to generate goldens by atomizing the specs
+  under `orchestrator/templates/projects/*/`; those directories only ship a
+  pre-built `tasks.json.tmpl`, never a spec `.md` (there is nothing for the
+  atomizer to consume there). The goldens instead come from the real specs
+  `orchestrator/atomize.py`'s own test suite already uses —
+  `sample_spec.md` and `orch_spec_output.md`, copied verbatim into
+  `internal/atomize/testdata/specs/` — plus two synthetic specs
+  (`merge_a.md`/`merge_b.md`) written for this port to exercise merge/
+  orphan/dep-warning/cross-file-duplicate-ID behavior the two real fixtures
+  don't touch. `internal/atomize/testdata/make-goldens.py` documents this.
+
+- **A preexisting Python bug in `extract_frontmatter` is ported as-is, not
+  fixed.** When a spec's frontmatter block's top-level YAML value isn't a
+  mapping (a list, a scalar, ...), `orchestrator/atomize.py` builds a
+  warning on one `Frontmatter` object and then returns a *different*,
+  freshly constructed `Frontmatter(present=False)` — discarding the warning
+  it just built. No test exercises this path, so it has shipped silently.
+  `internal/atomize/frontmatter.go`'s `extractFrontmatter` reproduces the
+  same observable behavior (treated as absent frontmatter, zero warnings)
+  rather than "fixing" it, per the migration rule that Go ports match
+  Python's actual behavior; a real fix belongs in a small Python PR of its
+  own; on the Go side this pins `TestExtractFrontmatterTopLevelNotAMapIsDiscardedSilently`.
+
+- **The atomizer's merge always emits every optional `tasks.json` field, by
+  construction rather than by touching `model.Task`'s private state.**
+  `model.Task.present` (unexported) exists so `LoadTasksFile`→`SaveTasksFile`
+  reproduces a row's exact source key set — the opposite of what the
+  Python atomizer does, where `merge_tasks`'s output dict for a touched row
+  always ends up with the full field set (`dict(old)` plus every changed
+  declarative key, plus the three runtime keys the loop always writes).
+  `internal/atomize` can't reach across the package boundary to flip
+  `present` anyway, so `mergeRow` (merge.go) sidesteps the question:
+  every merged/new row is a fresh `model.Task{...}` struct literal, which
+  has a nil `present` map and therefore always marshals every optional
+  field — matching Python's real output without needing model-package
+  changes. The only place this could theoretically diverge is a hand-edited
+  `tasks.json` missing an optional key entirely on a row that then goes
+  through a no-op merge; no shipped project's `tasks.json` looks like that.

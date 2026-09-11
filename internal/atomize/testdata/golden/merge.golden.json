@@ -1,0 +1,188 @@
+{
+  "diff": {
+    "depWarnings": [
+      "task F2.1.T1 depende de 'F9.9.MISSING' que no existe"
+    ],
+    "newTasks": [
+      "F2.1.T2",
+      "F2.1.T3"
+    ],
+    "orphans": [
+      "F5.5.T5",
+      "R-001"
+    ],
+    "unchanged": [],
+    "updated": [
+      {
+        "changed": [
+          "dependencies",
+          "description",
+          "estimateHours",
+          "model",
+          "reason",
+          "specRef",
+          "title"
+        ],
+        "id": "F2.1.T1"
+      }
+    ]
+  },
+  "merged": {
+    "meta": {
+      "note": "custom project note"
+    },
+    "phases": [
+      {
+        "id": 2,
+        "name": "merge phase"
+      }
+    ],
+    "tasks": [
+      {
+        "comments": [
+          {
+            "note": "existing comment"
+          }
+        ],
+        "dependencies": [
+          "F2.1.T2",
+          "F9.9.MISSING"
+        ],
+        "description": "Descripcion final de la task uno (gana sobre merge_a.md).",
+        "estimateHours": 5.0,
+        "files": [
+          "real/path.go"
+        ],
+        "id": "F2.1.T1",
+        "model": "claude-sonnet-4-6",
+        "phase": 2,
+        "reason": "segunda version, gana por orden lexicografico de archivos.",
+        "specRef": "merge_b.md#F2.1.T1",
+        "status": "in-progress",
+        "title": "Overridden title"
+      },
+      {
+        "comments": [],
+        "dependencies": [],
+        "description": "",
+        "estimateHours": 0,
+        "files": [],
+        "id": "F5.5.T5",
+        "model": "x",
+        "phase": 5,
+        "reason": "",
+        "specRef": "",
+        "status": "done",
+        "title": "orphan task"
+      },
+      {
+        "comments": [],
+        "dependencies": [],
+        "description": "",
+        "estimateHours": 0,
+        "files": [],
+        "id": "R-001",
+        "model": "legacy",
+        "phase": 0,
+        "reason": "",
+        "specRef": "",
+        "status": "done",
+        "title": "legacy bootstrap"
+      },
+      {
+        "comments": [],
+        "dependencies": [],
+        "description": "",
+        "estimateHours": 8.0,
+        "files": [],
+        "id": "F2.1.T2",
+        "model": "claude-opus-4-7",
+        "phase": 2,
+        "reason": "",
+        "specRef": "merge_a.md#F2.1.T2",
+        "status": "backlog",
+        "title": "Second task"
+      },
+      {
+        "comments": [],
+        "dependencies": [
+          "F2.1.T1"
+        ],
+        "description": "",
+        "estimateHours": 2.0,
+        "files": [],
+        "id": "F2.1.T3",
+        "model": "claude-opus-4-7",
+        "phase": 2,
+        "reason": "",
+        "specRef": "merge_b.md#F2.1.T3",
+        "status": "backlog",
+        "title": "Third task new"
+      }
+    ]
+  },
+  "parse": {
+    "filesScanned": [
+      "merge_a.md",
+      "merge_b.md"
+    ],
+    "tasks": [
+      {
+        "dependencies": [],
+        "description": "",
+        "estimate_hours": 8.0,
+        "files": [],
+        "id": "F2.1.T2",
+        "line": 16,
+        "model": "claude-opus-4-7",
+        "package": 1,
+        "phase": 2,
+        "reason": "",
+        "source_file": "merge_a.md",
+        "spec_ref": "merge_a.md#F2.1.T2",
+        "task_num": 2,
+        "title": "Second task"
+      },
+      {
+        "dependencies": [
+          "F2.1.T2",
+          "F9.9.MISSING"
+        ],
+        "description": "Descripcion final de la task uno (gana sobre merge_a.md).",
+        "estimate_hours": 5.0,
+        "files": [],
+        "id": "F2.1.T1",
+        "line": 5,
+        "model": "claude-sonnet-4-6",
+        "package": 1,
+        "phase": 2,
+        "reason": "segunda version, gana por orden lexicografico de archivos.",
+        "source_file": "merge_b.md",
+        "spec_ref": "merge_b.md#F2.1.T1",
+        "task_num": 1,
+        "title": "Overridden title"
+      },
+      {
+        "dependencies": [
+          "F2.1.T1"
+        ],
+        "description": "",
+        "estimate_hours": 2.0,
+        "files": [],
+        "id": "F2.1.T3",
+        "line": 14,
+        "model": "claude-opus-4-7",
+        "package": 1,
+        "phase": 2,
+        "reason": "",
+        "source_file": "merge_b.md",
+        "spec_ref": "merge_b.md#F2.1.T3",
+        "task_num": 3,
+        "title": "Third task new"
+      }
+    ],
+    "warnings": [
+      "task F2.1.T1 duplicada — primero en merge_a.md, ahora en merge_b.md (gana el segundo)"
+    ]
+  }
+}

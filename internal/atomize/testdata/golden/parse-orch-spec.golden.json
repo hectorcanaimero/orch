@@ -1,0 +1,72 @@
+{
+  "filesScanned": [
+    "orch_spec_output.md"
+  ],
+  "tasks": [
+    {
+      "dependencies": [
+        "F0.1.T1"
+      ],
+      "description": "Definir tipos base de auth (User, Session, AuthProvider).",
+      "estimate_hours": 4.0,
+      "files": [
+        "lib/features/auth/domain/models/user.dart",
+        "lib/features/auth/domain/models/session.dart"
+      ],
+      "id": "F1.1.T1",
+      "line": 9,
+      "model": "claude-sonnet-4-6",
+      "package": 1,
+      "phase": 1,
+      "reason": "Solo tipos, Sonnet alcanza.",
+      "source_file": "orch_spec_output.md",
+      "spec_ref": "orch_spec_output.md#F1.1.T1",
+      "task_num": 1,
+      "title": "Domain: Auth model"
+    },
+    {
+      "dependencies": [
+        "F1.1.T1"
+      ],
+      "description": "Implementar use cases SignIn, SignOut, RefreshToken.",
+      "estimate_hours": 8.0,
+      "files": [
+        "lib/features/auth/application/use_cases/sign_in_use_case.dart",
+        "lib/features/auth/application/use_cases/sign_out_use_case.dart"
+      ],
+      "id": "F1.1.T2",
+      "line": 21,
+      "model": "claude-sonnet-4-6",
+      "package": 1,
+      "phase": 1,
+      "reason": "Orchestration con manejo de errores, Sonnet.",
+      "source_file": "orch_spec_output.md",
+      "spec_ref": "orch_spec_output.md#F1.1.T2",
+      "task_num": 2,
+      "title": "Application: Auth use cases"
+    },
+    {
+      "dependencies": [
+        "F1.1.T2",
+        "F1.1.T1"
+      ],
+      "description": "Como usuario quiero firmar con email+password y recibir un token.\n\nCasos cubiertos:\n- Happy path: credenciales válidas → token + navegación\n- Edge: credenciales inválidas → error visible\n- Edge: red caída → retry visible",
+      "estimate_hours": 16.0,
+      "files": [
+        "lib/features/auth/presentation/screens/sign_in_screen.dart",
+        "lib/features/auth/presentation/widgets/auth_form.dart"
+      ],
+      "id": "F1.1.T3",
+      "line": 33,
+      "model": "claude-opus-4-7",
+      "package": 1,
+      "phase": 1,
+      "reason": "UI con lógica visual + manejo de errores complejos, Opus.",
+      "source_file": "orch_spec_output.md",
+      "spec_ref": "orch_spec_output.md#F1.1.T3",
+      "task_num": 3,
+      "title": "Presentation: Auth SignIn Screen"
+    }
+  ],
+  "warnings": []
+}
