@@ -60,26 +60,33 @@ func costFor(costByTask map[string]float64, filteredSum float64, filteredCount i
 // runJSON is `status --json`'s `latest_run` object.
 //
 // Partial parity: Python's dict (`list_runs`, orchestrator/state/
-// sqlite_backend.py) also has completed_count/blocked_count/deferred_count
-// (from run-state JSON columns Backend.Run doesn't expose) and
-// run_file/events_file (paths into the file-backend layout, which doesn't
-// exist in Go — ADR-G4). Everything Backend.Run DOES carry is included, in
-// Python's field order. See go-migration-notes.md.
+// sqlite_backend.py) also has run_file/events_file — paths into the
+// file-backend layout, which doesn't exist in Go (ADR-G4), so they are
+// deliberately dropped rather than faked. Everything else Backend.Run
+// carries is included, in Python's field order — completed_count/
+// blocked_count/deferred_count landed in state.Run via #130. See
+// go-migration-notes.md.
 type runJSON struct {
-	RunID         string `json:"run_id"`
-	StartedAt     string `json:"started_at"`
-	UpdatedAt     string `json:"updated_at"`
-	Mode          string `json:"mode"`
-	Status        string `json:"status"`
-	ParentPID     int    `json:"parent_pid"`
-	InFlightCount int    `json:"in_flight_count"`
+	RunID          string `json:"run_id"`
+	StartedAt      string `json:"started_at"`
+	UpdatedAt      string `json:"updated_at"`
+	Mode           string `json:"mode"`
+	Status         string `json:"status"`
+	ParentPID      int    `json:"parent_pid"`
+	InFlightCount  int    `json:"in_flight_count"`
+	CompletedCount int    `json:"completed_count"`
+	BlockedCount   int    `json:"blocked_count"`
+	DeferredCount  int    `json:"deferred_count"`
 }
 
 func toRunJSON(r state.Run) runJSON {
 	return runJSON{
 		RunID: r.RunID, StartedAt: r.StartedAt, UpdatedAt: r.UpdatedAt,
 		Mode: r.Mode, Status: r.Status, ParentPID: r.ParentPID,
-		InFlightCount: r.InFlight,
+		InFlightCount:  r.InFlight,
+		CompletedCount: r.CompletedCount,
+		BlockedCount:   r.BlockedCount,
+		DeferredCount:  r.DeferredCount,
 	}
 }
 

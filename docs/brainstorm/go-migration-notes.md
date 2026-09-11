@@ -412,27 +412,17 @@ block) were all of that kind.
   `status-real.txtar` fixture, which ships a `model_router.yaml` routing both
   models the fixture db's tasks use.
 
-- **`latest_run` is a partial shape: Go's `state.Run` doesn't carry
-  everything Python's `list_runs()` dict does.** Confirmed by diffing real
-  output side by side (`orch-py-0.11.0.db`, see above). Two different kinds
-  of gap, not one:
-  - `run_file`/`events_file` (literal `f"run-{run_id}.json"` /
-    `f"events-{run_id}.jsonl"` paths) are a file-backend naming convention
-    that's meaningless now that ADR-G4 dropped that backend entirely, even
-    though Python still emits it unconditionally for a sqlite project. This
-    one really is discarded by design — nothing to port.
-  - `completed_count`/`blocked_count`/`deferred_count` are **not** discarded
-    by design, just not wired yet: they come from the `completed_json`/
-    `blocked_json`/`deferred_json` columns already sitting on SQLite's
-    `runs` table (`state.Backend` just doesn't read them back). This is
-    reachable — `internal/state` (opus's package) needs to add these three
-    counts to `Run`/`LatestRun`, then `internal/cli/status.go`'s `runJSON`
-    picks them up. Tracked as a small follow-up PR, not closed here.
-
-  `internal/cli/status.go`'s `runJSON` carries every field `state.Run` has
-  today (`run_id`/`started_at`/`updated_at`/`mode`/`status`/`parent_pid`/
-  `in_flight_count`, same order Python uses for the fields it shares) and
-  stops there — it cannot fake the three counts from what it already has.
+- ~~**`latest_run` is a partial shape: Go's `state.Run` doesn't carry
+  everything Python's `list_runs()` dict does.**~~ — **RESOLVED** for
+  `completed_count`/`blocked_count`/`deferred_count` (#130, `state.Run`) and
+  `internal/cli/status.go`'s `runJSON`, in the same PR as this line. Verified
+  byte-for-byte against a real Python `build_status_snapshot` call over
+  `orch-py-0.11.0.db`: identical `latest_run` object field for field, except
+  the one gap that's staying — `run_file`/`events_file` (literal
+  `f"run-{run_id}.json"` / `f"events-{run_id}.jsonl"` paths), a file-backend
+  naming convention meaningless now that ADR-G4 dropped that backend
+  entirely, even though Python still emits it unconditionally for a sqlite
+  project. Discarded by design, nothing to port.
 
 - **`internal/atomize` (G4.3) — project templates have no markdown specs to
   atomize.** The G4 brief said to generate goldens by atomizing the specs
@@ -720,3 +710,47 @@ block) were all of that kind.
   task that reaches the dispatch loop can never become ready, so it stays
   todo, `Pending()` stays true, and the loop spins forever on a task it will
   never dispatch. A silent hang, not an error.
+
+- **`orch validate`/`orch graph` land in G1.6, `validate` as a partial port.**
+  `internal/graph.Validate` (schema, dependencies, cycles, unresolved
+  routes) is the only piece of `_run_validate_subcommand` with a Go home —
+  `preflight.validate_config_shape` (config.yaml key/type shape),
+  `preflight.validate_preset_sanity` (budgets preset vs typical dispatch
+  size) and `preflight.validate_files_writable` (`--files`) have none, and
+  are skipped rather than faked. `--files` is still registered on the Go
+  command (errors clearly if passed) so the flag surface matches Python's.
+
+  **Known divergence, not a bug**: Go's `config.Load` treats a missing
+  config.yaml as "use defaults", matching every other command in this CLI
+  (`status`/`tasks`/`events`/… all tolerate a project with no config.yaml).
+  Python's `config_loader.load_config` raises `FileNotFoundError` on a
+  missing file, and `_run_validate_subcommand` turns that into **two**
+  `schema.config` errors (one from `validate_config_shape`'s own existence
+  check, one from the exception). So on a project missing config.yaml
+  entirely, Go's `orch validate` reports fewer errors than Python's — this
+  is the tolerant-config design already baked into every other command
+  showing up for the first time in a command whose error *count* is part of
+  the contract. Verified byte-for-byte against real Python otherwise: a
+  clean project (zero errors) and a project with a cycle + missing
+  dependency + unresolved route all match exactly except this one path.
+
+  **A found-and-fixed shape gap in `internal/graph.Problem`** (PR #111,
+  fixed in #133, same day): `Remediation`/`TaskID` were `string` (the
+  former `json:",omitempty"`), so an empty remediation dropped the key
+  instead of Python's `"remediation": null`, and the one case where Python
+  writes `"task_id": null` (`validateSchema`'s "missing a non-empty string
+  id") rendered as `"task_id": ""`. Both are `*string` now — reported to
+  `internal/graph`'s owner rather than patched here, landed same-day. With
+  it in, `internal/cli`'s validate tests cover both edge cases and
+  `scripts/parity.sh` now includes `validate --json` in its diff.
+
+  **`orch graph` is a replacement, not a port** — see the existing "three
+  gaps" note above for why DOT exists at all. Nothing new here beyond
+  confirming the CLI wiring: `--out` defaults to stdout (Python defaults to
+  writing `plan.html` in cwd, since HTML needs a named file; DOT does not),
+  `--open` is dropped with the browser launch it triggered, and node
+  filtering (`--only`) happens directly against tasks.json rather than
+  through `build_status_snapshot` — DOT never renders runtime status, so
+  there is no reason to open a Backend at all. `graph` stays out of
+  `scripts/parity.sh` deliberately — there is no Python DOT output to diff
+  it against.

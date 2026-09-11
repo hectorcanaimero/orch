@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # scripts/parity.sh — diff the Python and Go `orch` CLIs' --json output
 # over the same real project (testdata/parity-project/): `status`, `tasks`,
-# a filtered `tasks --status`, and `events`. This is the paridad gate from
-# the "Orch en Go" migration plan (ADR-G6): while it stays green, the Go
-# rewrite hasn't drifted from the Python behavior it is replacing. See
-# testdata/parity-project/README.md for how the fixture was built and why
-# --project-id is pinned explicitly. `orch logs` has no --json and isn't
-# compared here — see its golden under testdata/parity-project/goldens/.
+# a filtered `tasks --status`, `events`, and `validate`. This is the paridad
+# gate from the "Orch en Go" migration plan (ADR-G6): while it stays green,
+# the Go rewrite hasn't drifted from the Python behavior it is replacing.
+# See testdata/parity-project/README.md for how the fixture was built and
+# why --project-id is pinned explicitly. `orch logs` has no --json and
+# isn't compared here — see its golden under testdata/parity-project/
+# goldens/. `orch graph` isn't either: it deliberately emits Graphviz DOT
+# where Python emits an HTML+SVG page, so there is nothing to diff (see
+# docs/brainstorm/go-migration-notes.md).
 #
 # Usage:
 #   make build && scripts/parity.sh
@@ -100,5 +103,6 @@ compare "status --json" status --json
 compare "tasks --json" tasks --json
 compare "tasks --status todo,in-progress --json" tasks --status todo,in-progress --json
 compare "events F2.T3 --json" events F2.T3 --json
+compare "validate --json" validate --json
 
 exit "$fail"
