@@ -794,7 +794,7 @@ def executive_summary(
         if eta_date:
             head.append(f"ETA estimado: {eta_date}.")
         elif eta_hours is not None:
-            head.append(f"Restan ~{eta_hours}h al ritmo actual.")
+            head.append(f"Restan ~{eta_hours:.1f}h al ritmo actual.")
         if total_spend_usd is not None:
             head.append(f"Gastado en AI: ${total_spend_usd:.2f}.")
     else:  # en
@@ -808,7 +808,7 @@ def executive_summary(
         if eta_date:
             head.append(f"Estimated ETA: {eta_date}.")
         elif eta_hours is not None:
-            head.append(f"~{eta_hours}h remaining at current pace.")
+            head.append(f"~{eta_hours:.1f}h remaining at current pace.")
         if total_spend_usd is not None:
             head.append(f"AI spend: ${total_spend_usd:.2f}.")
 

@@ -399,7 +399,7 @@ export function StakeholderSummaryPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">
-              {eta_hours == null ? "—" : `${eta_hours}h`}
+              {eta_hours == null ? "—" : `${eta_hours.toFixed(1)}h`}
             </div>
           </CardContent>
         </Card>

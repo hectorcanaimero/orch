@@ -86,3 +86,17 @@ def test_blocked_reasons_capped_at_three():
     r = executive_summary(done=1, total=8, blocked=5, blocked_reasons=reasons, language="es")
     assert "reason 0" in r["text"] and "reason 2" in r["text"]
     assert "reason 3" not in r["text"]  # capped at 3
+
+
+def test_eta_hours_is_rounded_for_display():
+    """`eta_hours_remaining` returns a raw ratio — a client-facing sentence
+    must not print `~9.145945945945947h`."""
+    raw = 9.145945945945947
+    es = executive_summary(done=9, total=15, eta_hours=raw, language="es")
+    en = executive_summary(done=9, total=15, eta_hours=raw, language="en")
+    assert "~9.1h al ritmo actual" in es["text"]
+    assert "~9.1h remaining at current pace" in en["text"]
+    assert "9.145945945945947" not in es["text"]
+    assert "9.145945945945947" not in en["text"]
+    # Provenance keeps the unrounded figure.
+    assert es["generated_from"]["eta_hours"] == raw
