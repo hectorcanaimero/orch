@@ -23,8 +23,8 @@ block) were all of that kind.
 
 ## Open notes
 
-- **P0: the budget guardrail does nothing on a sqlite project.** Found while
-  reading `budget.py` for G2.2 (opus), reproduced before reporting.
+- ~~**P0: the budget guardrail did nothing on a sqlite project**~~ — **RESOLVED** (#115, 2026-09-11). Found while reading `budget.py` for
+  G2.2 (opus), reproduced before reporting.
 
   `SqliteSpendLog.record()` (`state/adapters.py:151`) writes only to the
   `spend` table and returns a **synthetic** path — its own comment says
@@ -48,27 +48,15 @@ block) were all of that kind.
   The bug predates that (sprint B, when `SqliteSpendLog` landed); #91 turned
   it from a rare case into the common one.
 
-  Fix taken by orch-98: `_entries_since` also reads SQLite.
+  Fix (#115): `_entries_since` reads both sources and de-duplicates rows
+  present in both, so a migrated project that still has its JSONL is not
+  double-counted. Regression tests in `test_budget.py`. It filters the window
+  with `_parse_ts` rather than comparing strings — for the reason in the
+  timestamp note below, which was found independently while writing
+  `state.SpendSince`.
 
   **This cannot recur in Go**: `internal/budget` reads spend through
   `state.Backend.SpendSince`, and SQLite is the only place a spend row lives.
-
-- **Timestamps in `orch.db` are stored in two forms.** Not a bug to fix, a
-  fact to code against, found writing `state.SpendSince`. The same database
-  written by one Python version holds `2026-09-01T10:30:00+00:00` in
-  `spend.ts` and `2026-09-11T18:32:54Z` in `runs.started_at`, because
-  different call sites use `datetime.isoformat()` and `strftime("...Z")`.
-  Python's `budget._parse_ts` already accepts both "for robustness with older
-  rows".
-
-  The consequence for anyone writing a query: **a rolling window cannot be
-  `WHERE ts >= ?` in SQL.** Lexically `+` (0x2B) sorts before `Z` (0x5A), so a
-  cutoff formatted one way silently drops rows stored the other way — which
-  under-reports spend, which is how a guardrail stops guarding with no error
-  anywhere. `state.parseTS` handles both and the filtering happens in Go. The
-  same applies to `ORDER BY started_at`: Python sorts runs lexically in SQL
-  and would mis-order such a database; Go sorts by parsed time.
-
 
 - ~~Stale `jinja2` mentions~~ — **RESOLVED** (g0/sonnet-cleanup): `orchestrator/orch.py`'s
   dashboard-missing-deps hint no longer tells the user to install `jinja2 >= 3.1`, and
@@ -144,9 +132,23 @@ block) were all of that kind.
   duplicate can't hide behind last-wins), and the warning loader fires (or
   stays silent) exactly when expected.
 
-- ~~**Bug 5 — the budget guardrail never fired on a sqlite project**~~ — **RESOLVED** (fix/budget-reads-sqlite-spend, 2026-09-11). `SqliteSpendLog.record()` wrote only the `spend` table and returned a synthetic JSONL path that was never written; `BudgetGate._entries_since()` read only `state/spend-*.jsonl`. With `state.backend: sqlite` (the default since PR #91) the gate saw zero spend and never blocked a dispatch, while the dashboard (`metrics.read_all_spends`) showed the real number. Reproduced with 5 rows / 750K tokens against a 600-token cap → `can_dispatch` said ok. Found by opus reading `budget.py` for G2.2. Fix: `_entries_since` now reads both sources and de-duplicates rows present in both (a migrated project keeps its JSONL). Regression tests in `test_budget.py`. Go: `internal/budget` reads spend through `state.Backend` (SpendSince), never through files.
-
 ## Notes for the Go rewrite
+
+- **Timestamps in `orch.db` are stored in two forms.** Not a bug to fix, a
+  fact to code against, found writing `state.SpendSince`. The same database
+  written by one Python version holds `2026-09-01T10:30:00+00:00` in
+  `spend.ts` and `2026-09-11T18:32:54Z` in `runs.started_at`, because
+  different call sites use `datetime.isoformat()` and `strftime("...Z")`.
+  Python's `budget._parse_ts` already accepts both "for robustness with older
+  rows".
+
+  The consequence for anyone writing a query: **a rolling window cannot be
+  `WHERE ts >= ?` in SQL.** Lexically `+` (0x2B) sorts before `Z` (0x5A), so a
+  cutoff formatted one way silently drops rows stored the other way — which
+  under-reports spend, which is how a guardrail stops guarding with no error
+  anywhere. `state.parseTS` handles both and the filtering happens in Go. The
+  same applies to `ORDER BY started_at`: Python sorts runs lexically in SQL
+  and would mis-order such a database; Go sorts by parsed time.
 
 - **The graph package: three gaps between the plan and the Python tree.**
   Found while writing `internal/graph` (G1.6). They are listed together
@@ -203,7 +205,8 @@ block) were all of that kind.
   static fallback. The equivalent of the route-table sweep test is cheap in Go
   and worth keeping.
 
-- **`state.Backend` has no way to read spend or runs back.** `orch status
+- ~~**`state.Backend` has no way to read spend or runs back**~~ — **the read
+  side landed in #116**; the CLI wiring is still open. `orch status
   --json` needs `cost_usd` per task and `latest_run` project-wide — Python's
   `build_status_snapshot` gets them from `iter_all_spend()` and `list_runs()`.
   The Backend interface from #107 has `RecordSpend`/`StartRun` (write) but
@@ -212,9 +215,14 @@ block) were all of that kind.
   `latest_run` to `null` — which happens to be the CORRECT output for
   testdata/parity-project (no spend ever recorded, no run ever started), so
   `scripts/parity.sh` passes, but this is a known gap, not a finished
-  feature. Whoever adds spend/run reading to Backend should also come back
-  to `buildStatusRows`/`buildSnapshot` in `internal/cli/project.go` and
-  `status.go` and wire the real values in.
+  feature.
+
+  `SpendSince`, `TotalSpendUSD`, `LatestRun` and `Runs` now exist on the
+  Backend (#116). What remains is `buildStatusRows`/`buildSnapshot` in
+  `internal/cli/project.go` and `status.go` calling them instead of writing
+  zeroes. Note for whoever does: the parity fixture has no spend and no runs,
+  so `scripts/parity.sh` will keep passing either way — a project with real
+  history is the only thing that tells you it worked.
 
 - **`internal/router` doesn't exist yet, so `status`/`tasks` never resolve a
   route.** `backend`/`cli_model`/`tier` in `orch status`/`tasks --json`
