@@ -20,9 +20,9 @@
       "reason": "Docker+compose scaffolding is templated — Sonnet handles it.",
       "status": "todo",
       "dependencies": [],
-      "estimate_hours": 0.4,
+      "estimateHours": 0.4,
       "files": ["docker-compose.yml", ".env.example", "Makefile"],
-      "spec_ref": "specs/f0-foundation.md#T1"
+      "specRef": "specs/f0-foundation.md#T1"
     },
     {
       "id": "F0.T2",
@@ -33,9 +33,9 @@
       "reason": "Deterministic scaffold.",
       "status": "todo",
       "dependencies": [],
-      "estimate_hours": 0.3,
+      "estimateHours": 0.3,
       "files": ["pyproject.toml", "app/__init__.py", "app/main.py", "tests/__init__.py"],
-      "spec_ref": "specs/f0-foundation.md#T2"
+      "specRef": "specs/f0-foundation.md#T2"
     },
     {
       "id": "F1.T1",
@@ -46,9 +46,9 @@
       "reason": "One endpoint + tests — small task.",
       "status": "todo",
       "dependencies": ["F0.T2"],
-      "estimate_hours": 0.5,
+      "estimateHours": 0.5,
       "files": ["app/main.py", "app/store/__init__.py", "tests/test_webhook.py"],
-      "spec_ref": "specs/f1-ingress.md#T1"
+      "specRef": "specs/f1-ingress.md#T1"
     },
     {
       "id": "F2.T1",
@@ -59,9 +59,9 @@
       "reason": "SDK integration + one call site — small but not trivial.",
       "status": "todo",
       "dependencies": ["F1.T1", "F0.T1"],
-      "estimate_hours": 0.8,
+      "estimateHours": 0.8,
       "files": ["app/agent.py", "app/prompts/system.md", "app/main.py", "tests/test_agent.py"],
-      "spec_ref": "specs/f2-agent-loop.md#T1"
+      "specRef": "specs/f2-agent-loop.md#T1"
     }
   ]
 }

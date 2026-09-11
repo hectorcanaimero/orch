@@ -14,7 +14,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1404 passed + 3 skipped. Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
+- **Tests**: `pytest` from repo root. Full suite is 1409 passed + 3 skipped. Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
 - **Never build after changes.** Type-check / test only.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
@@ -94,6 +94,7 @@ To keep context small, do not proactively call these MCP servers or skills on or
 
 ## Gotchas already learned
 
-- `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. The dashboard itself is the React SPA now (server-rendered Jinja templates are gone) — `jinja2` is no longer a runtime dependency, though a couple of stale mentions of it linger in `orch.py`'s install hint and `orchestrator/dashboard/__init__.py`'s docstring (see `docs/brainstorm/go-migration-notes.md`).
+- `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. The dashboard itself is the React SPA now (server-rendered Jinja templates are gone) — `jinja2` is no longer a runtime dependency.
+- Project templates (`orchestrator/templates/projects/*/tasks.json.tmpl`) must use `Task.from_json`'s camelCase keys (`estimateHours`, `specRef`) — snake_case silently defaults to `0.0`/`""` instead of erroring (see `docs/brainstorm/go-migration-notes.md`).
 - `orch dashboard` ships templates + `pricing.yaml` + `dashboard.yaml` + `static/` inside the wheel (see `pyproject.toml [tool.setuptools.package-data]`).
 - Runtime YAML defaults (`config.yaml`, `model_router.yaml`, `budgets.yaml`) also ship in the wheel so `pipx`-installed `orch` works without a manual copy.
