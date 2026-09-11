@@ -63,10 +63,10 @@ the migration:
 
 These apply to files under `cmd/` and `internal/`.
 
-> The dependency rules below are read off the target layout in CLAUDE.md
-> ("Migración a Go"). Until the Go tree actually exists they are a proposal —
-> if a PR has a good reason to cross one of these lines, say so in the review
-> and let a human decide rather than blocking.
+> The dependency rules below are confirmed (plan "Orch en Go", ADR-G2 and the
+> Layout section) and apply from the first Go PR. If a PR has a good reason to
+> cross one of these lines, it must say so in the PR body; a crossing without
+> that justification is blocking.
 
 ### Package dependencies
 
