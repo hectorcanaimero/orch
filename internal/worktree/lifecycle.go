@@ -14,10 +14,16 @@ import (
 // (rate limit, sqlite contention, a partial disk write), and Remove only
 // cleans up the worktree directory, leaving the branch behind. Without
 // purging it first, the next Create fails with "a branch named ... already
-// exists" and the task blocks permanently. The result is discarded
-// entirely — "the branch doesn't exist" is the healthy, common case.
-func (m *Manager) PurgeOrphanBranch(taskID string) {
-	m.runBestEffort(taskID, "git", "branch", "-D", m.BranchName(taskID))
+// exists" and the task blocks permanently.
+//
+// Unlike Remove, a failure here is not logged: "the branch doesn't exist"
+// (git exits 1) is the expected outcome on every normal Create — logging
+// it would mean a WARN line on every single task, training whoever reads
+// the log to ignore them. The error is still returned rather than
+// swallowed inside this function, so a caller with reason to care about a
+// specific failure mode can inspect it.
+func (m *Manager) PurgeOrphanBranch(taskID string) error {
+	return m.runBestEffort(taskID, "git", "branch", "-D", m.BranchName(taskID))
 }
 
 // Create makes an isolated worktree for taskID branched off baseBranch. A
@@ -27,7 +33,7 @@ func (m *Manager) PurgeOrphanBranch(taskID string) {
 func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 	wtPath := m.WorktreePath(taskID)
 	if pathExists(wtPath) {
-		m.Remove(taskID)
+		_ = m.Remove(taskID) // best-effort; a real failure was already logged
 	}
 	if pathExists(wtPath) {
 		// Remove is best-effort; this only fires if it silently failed to
@@ -42,7 +48,7 @@ func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 		return "", fmt.Errorf("worktree: create %s: %w", worktreesDir, err)
 	}
 
-	m.PurgeOrphanBranch(taskID)
+	_ = m.PurgeOrphanBranch(taskID) // best-effort by design — see its doc comment
 
 	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, "-b", m.BranchName(taskID), baseBranch); err != nil {
 		return "", err
@@ -97,17 +103,25 @@ func (m *Manager) Push(taskID string) error {
 
 // Remove deletes taskID's worktree directory. A no-op if it's already
 // absent. Uses --force so a dirty tree (untracked files left by a failed
-// agent) is removed without complaint, and swallows any git error — this
-// is best-effort cleanup, matching Python (removal must never block a
-// caller cleaning up after a task that already failed for its own reason).
-func (m *Manager) Remove(taskID string) {
+// agent) is removed without complaint. A git failure here is best-effort —
+// matching Python, removal must never block a caller cleaning up after a
+// task that already failed for its own reason — but is logged (never
+// silenced, rule 19) and returned: a non-nil error means "removed with
+// warnings" (the active-worktree bookkeeping is cleared either way), not
+// that the task itself should be treated as failed.
+func (m *Manager) Remove(taskID string) error {
 	wtPath := m.WorktreePath(taskID)
+	var err error
 	if pathExists(wtPath) {
-		m.runBestEffort(taskID, "git", "worktree", "remove", "--force", wtPath)
+		args := []string{"git", "worktree", "remove", "--force", wtPath}
+		if err = m.runBestEffort(taskID, args...); err != nil {
+			logGitWarning(taskID, args, err)
+		}
 	}
 	m.mu.Lock()
 	delete(m.active, taskID)
 	m.mu.Unlock()
+	return err
 }
 
 // Recreate checks out the already-pushed branch orch/<taskID> into a fresh
@@ -117,7 +131,7 @@ func (m *Manager) Remove(taskID string) {
 // per-attempt spawn) works unchanged regardless of whether the worktree is
 // fresh or recreated.
 func (m *Manager) Recreate(taskID string) (string, error) {
-	m.Remove(taskID) // clean up any stale dir first
+	_ = m.Remove(taskID) // clean up any stale dir first; best-effort, already logged
 	branch := m.BranchName(taskID)
 	wtPath := m.WorktreePath(taskID)
 
@@ -136,8 +150,11 @@ func (m *Manager) Recreate(taskID string) (string, error) {
 
 // RemoveAll removes every tracked worktree. Called from the run loop's
 // shutdown path (SIGTERM/drain), after — not during — the drain wait: see
-// the package doc comment's caller-contract section.
-func (m *Manager) RemoveAll() {
+// the package doc comment's caller-contract section. Returns the task IDs
+// that were removed with warnings (Remove's error was non-nil — already
+// logged by runBestEffort), if a caller wants to report that; a shutdown
+// path that doesn't care can ignore the return.
+func (m *Manager) RemoveAll() []string {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.active))
 	for id := range m.active {
@@ -145,7 +162,11 @@ func (m *Manager) RemoveAll() {
 	}
 	m.mu.Unlock()
 
+	var withWarnings []string
 	for _, id := range ids {
-		m.Remove(id)
+		if err := m.Remove(id); err != nil {
+			withWarnings = append(withWarnings, id)
+		}
 	}
+	return withWarnings
 }

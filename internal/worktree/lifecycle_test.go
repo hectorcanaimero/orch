@@ -230,7 +230,9 @@ func TestPushFailsWithoutARemote(t *testing.T) {
 func TestRemoveIsNoopWhenDirectoryAbsent(t *testing.T) {
 	root := newTestRepo(t)
 	m := NewManager(root, true)
-	m.Remove("nonexistent-task") // must not panic or error
+	if err := m.Remove("nonexistent-task"); err != nil {
+		t.Errorf("Remove on an absent worktree returned an error: %v", err)
+	}
 }
 
 func TestRemoveDeletesWorktreeAndClearsActive(t *testing.T) {
@@ -241,7 +243,9 @@ func TestRemoveDeletesWorktreeAndClearsActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.Remove("F2.1.T1")
+	if err := m.Remove("F2.1.T1"); err != nil {
+		t.Errorf("Remove returned an error for a clean removal: %v", err)
+	}
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("worktree dir still present after Remove: err=%v", err)
@@ -261,8 +265,11 @@ func TestRemoveAllRemovesEveryActiveWorktree(t *testing.T) {
 		}
 	}
 
-	m.RemoveAll()
+	withWarnings := m.RemoveAll()
 
+	if len(withWarnings) != 0 {
+		t.Errorf("RemoveAll reported warnings for a clean removal: %v", withWarnings)
+	}
 	for _, id := range ids {
 		if m.Exists(id) {
 			t.Errorf("%s still exists after RemoveAll", id)
@@ -276,7 +283,9 @@ func TestRemoveAllRemovesEveryActiveWorktree(t *testing.T) {
 func TestRemoveAllIsNoopWithNoActiveWorktrees(t *testing.T) {
 	root := newTestRepo(t)
 	m := NewManager(root, true)
-	m.RemoveAll() // must not panic
+	if got := m.RemoveAll(); len(got) != 0 {
+		t.Errorf("RemoveAll = %v, want none", got)
+	}
 }
 
 // ---- Recreate --------------------------------------------------------------
@@ -299,7 +308,9 @@ func TestRecreateChecksOutThePushedBranch(t *testing.T) {
 	if err := m.Push("F9.T1"); err != nil {
 		t.Fatal(err)
 	}
-	m.Remove("F9.T1") // simulate the worktree being cleaned up between runs
+	if err := m.Remove("F9.T1"); err != nil { // simulate cleanup between runs
+		t.Fatal(err)
+	}
 
 	recreated, err := m.Recreate("F9.T1")
 	if err != nil {

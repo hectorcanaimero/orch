@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,11 +141,33 @@ func (m *Manager) run(taskID string, args ...string) (string, error) {
 	return "", fmt.Errorf("worktree: run %q for %s: %w", strings.Join(args, " "), taskID, err)
 }
 
-// runBestEffort runs args and discards the outcome entirely — for the two
-// cleanup steps (branch purge, worktree remove) Python deliberately treats
-// as non-fatal.
-func (m *Manager) runBestEffort(taskID string, args ...string) {
-	_, _ = m.run(taskID, args...)
+// runBestEffort runs args for one of the two cleanup steps (branch purge,
+// worktree remove) Python deliberately treats as non-fatal, returning
+// whatever error m.run produced (nil on success) without deciding for the
+// caller whether it's worth surfacing — see the doc comments on
+// PurgeOrphanBranch (whose common failure, "branch doesn't exist", is
+// entirely expected and not logged) and Remove (whose failure is not
+// expected and is logged at WARN) for why that decision belongs there
+// rather than here.
+func (m *Manager) runBestEffort(taskID string, args ...string) error {
+	_, err := m.run(taskID, args...)
+	return err
+}
+
+// logGitWarning reports a best-effort git command's failure at WARN with
+// enough context to debug it (rule 19: never silently drop an error),
+// truncating stderr the same way *Error.Error() does.
+func logGitWarning(taskID string, args []string, err error) {
+	stderr := err.Error()
+	var wtErr *Error
+	if errors.As(err, &wtErr) {
+		stderr = wtErr.Stderr
+		if len(stderr) > 200 {
+			stderr = stderr[:200]
+		}
+	}
+	slog.Warn("worktree: best-effort git command failed",
+		"task_id", taskID, "cmd", strings.Join(args, " "), "stderr", stderr)
 }
 
 func pathExists(path string) bool {
