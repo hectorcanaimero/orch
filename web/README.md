@@ -3,8 +3,8 @@
 Vite + React 18 + TypeScript SPA for the orch dashboard. Consumes the FastAPI
 backend's JSON endpoints (`/stakeholder/summary`, etc.) via `Authorization:
 Bearer <token>`. Coexists with the current FastAPI + Jinja dashboard — the SPA
-lives in this `frontend/` directory and does not touch anything under
-`orchestrator/`.
+lives in this `web/` directory (moved from `frontend/` in G5.1) and does not
+touch anything under `orchestrator/`.
 
 ## Stack
 
@@ -30,7 +30,7 @@ components later — the `components.json` at the repo root is already set up.
 ## Setup
 
 ```bash
-cd frontend
+cd web
 cp env.example .env      # copy defaults (VITE_API_BASE_URL=http://127.0.0.1:7420)
 pnpm install
 pnpm dev                 # opens on http://localhost:5173
@@ -72,8 +72,10 @@ browser will block cross-origin requests.
 ## Build
 
 ```bash
-pnpm build      # emits dist/
-pnpm preview    # serves dist/ locally
+pnpm build      # emits ../internal/dashboard/dist/build/ — see vite.config.ts's
+                # build.outDir (G5.1: go:embed can't reach outside its own
+                # package, so the Go binary's embed lives there, not web/dist/)
+pnpm preview    # serves that same build.outDir locally
 ```
 
 ## Layout
