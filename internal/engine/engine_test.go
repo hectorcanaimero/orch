@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -770,4 +771,61 @@ func leakedChildren() []int {
 		}
 	}
 	return pids
+}
+
+// TestWaitIsIdempotent guards the panic CI caught. exec.Cmd.Wait panics if
+// called twice, and since every dispatch got a supervising goroutine there
+// are two plausible callers: the supervisor, and a cleanup path making sure a
+// child is gone. The second caller must block until the first finishes and
+// get the same answer, not panic.
+func TestWaitIsIdempotent(t *testing.T) {
+	d := claudeDispatch(t, "B-070")
+	t.Setenv(FakeProviderEnv, fakeDir(t, model.BackendClaude, "B-070", "done\n", 0, ""))
+
+	sp, err := Spawn(context.Background(), SpawnRequest{
+		Provider:   d.Provider,
+		Req:        d.Req,
+		PromptPath: d.PromptPath,
+		LogPath:    d.LogPath,
+		Cwd:        d.Cwd,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	type result struct {
+		exit   int
+		reason string
+		timed  bool
+	}
+	results := make(chan result, 3)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			exit, reason, timed := sp.Wait(10 * time.Second)
+			results <- result{exit, reason, timed}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var first result
+	for i := 0; ; i++ {
+		r, ok := <-results
+		if !ok {
+			break
+		}
+		if i == 0 {
+			first = r
+			continue
+		}
+		if r != first {
+			t.Errorf("caller %d got %+v, want the same %+v", i, r, first)
+		}
+	}
+	if first.exit != 0 {
+		t.Errorf("exit = %d, want 0", first.exit)
+	}
 }

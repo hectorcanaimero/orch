@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/budget"
+	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/providers"
 )
@@ -41,6 +42,9 @@ type InFlight struct {
 	Lock *TaskLock
 	// StartedAt is when the child was forked, for the spend row's duration.
 	StartedAt time.Time
+	// Dispatch is what was asked of the provider, kept so the reaper can
+	// record the outcome against the same paths and route.
+	Dispatch Dispatch
 }
 
 // SchedulerOptions configures one run.
@@ -52,6 +56,8 @@ type SchedulerOptions struct {
 	PerProvider map[string]int
 	// TimeoutMultiplier is config's default_timeout_multiplier.
 	TimeoutMultiplier float64
+	// Cfg is the loaded config, for the retry policy and the budget cap.
+	Cfg config.Config
 	// BudgetUSD, when non-nil, is passed to providers that take a
 	// per-dispatch cap.
 	BudgetUSD *float64
@@ -87,9 +93,12 @@ type Scheduler struct {
 	Gate Gate
 	// Budget is consulted before the semaphores. Nil disables the check.
 	Budget BudgetGate
-	// Backend records dispatches and events. Nil skips recording, which is
-	// how the concurrency tests run without a database.
+	// Backend records dispatches, outcomes and events. Nil skips recording,
+	// which is how the concurrency tests run without a database.
 	Backend RecordBackend
+	// Worktree isolates each task in its own git worktree when the project
+	// asks for it. Nil turns the whole thing off.
+	Worktree Worktree
 	// Log receives the operator-facing lines. Nil uses slog's default.
 	Log *slog.Logger
 
@@ -107,15 +116,49 @@ type Scheduler struct {
 	// draining is set when the operator answers "quit": no new dispatches,
 	// but the children already running are left to finish.
 	draining bool
+
+	// done carries finished children from their supervising goroutines to
+	// Reap. Buffered to the global ceiling so a supervisor never blocks on a
+	// reaper that is mid-tick.
+	done chan completion
+	// retryQueue holds tasks waiting out a backoff. Drained BEFORE the ready
+	// set, so a retry never waits behind a newly-ready peer (FR-D-4).
+	retryQueue []RetryItem
+	// spentUSD accumulates each task's cost across attempts, for the
+	// escalation budget check (FR-D-8).
+	spentUSD map[string]float64
+	// now is the clock, injectable so the backoff tests do not wait.
+	now func() time.Time
 }
 
-// RecordBackend is the slice of state.Backend the scheduler writes through.
+// RecordBackend is the slice of state.Backend the engine writes through.
+//
+// A narrow interface rather than state.Backend itself, so the concurrency and
+// retry tests run without a database — they are about semaphores and policy,
+// not about SQL — and so every write the engine performs is listed in one
+// place.
 type RecordBackend interface {
+	// RecordDispatchAndEvent writes the in-flight row and the dispatch event.
 	RecordDispatchAndEvent(ctx context.Context, runID string, d Dispatch, sp *Spawned, attempt int) error
+	// RecordFinish writes the spend row and the outcome event, and clears
+	// the in-flight row.
+	RecordFinish(ctx context.Context, runID string, d Dispatch, o Outcome, attempt int) error
+	// AppendEngineEvent writes one event of the engine's own (retry,
+	// escalate, id_spoof_detected).
+	AppendEngineEvent(ctx context.Context, runID, eventType, taskID, backend string, extra map[string]any) error
+	// TaskStatus reads a task's current status back, for the guard that
+	// respects a sub-agent which finished despite a wrapper failure.
+	TaskStatus(ctx context.Context, taskID string) (model.Status, error)
+	// Transition moves a task, recording the note.
+	Transition(ctx context.Context, taskID string, to model.Status, note string) error
 }
 
 // NewScheduler wires a scheduler over a queue and a route table.
 func NewScheduler(q *TaskQueue, routes map[string]model.RouteEntry, opts SchedulerOptions) *Scheduler {
+	capacity := opts.GlobalMax
+	if capacity < 1 {
+		capacity = 1
+	}
 	return &Scheduler{
 		Queue:        q,
 		Routes:       routes,
@@ -124,6 +167,9 @@ func NewScheduler(q *TaskQueue, routes map[string]model.RouteEntry, opts Schedul
 		inFlight:     make(map[int]*InFlight),
 		deferred:     make(map[string]bool),
 		deferReasons: make(map[string]string),
+		done:         make(chan completion, capacity),
+		spentUSD:     make(map[string]float64),
+		now:          time.Now,
 	}
 }
 
@@ -152,10 +198,31 @@ func (s *Scheduler) Refill(ctx context.Context) (int, error) {
 	}
 
 	started := 0
+
+	// (1) Retries first. A task marked for retry must not wait behind a
+	// newly-ready peer (FR-D-4), and its backoff is checked passively: an
+	// item whose time has not come is left in the queue rather than slept
+	// on, because the loop already ticks.
+	n, err := s.drainRetryQueue(ctx)
+	started += n
+	if err != nil {
+		return started, err
+	}
+
+	// (2) Then the ready set, minus anything the retry queue still owns.
+	//
+	// That exclusion is a fix, not a port. A retry resets the task to todo so
+	// the queue will consider it again, which in Python also makes it
+	// immediately eligible in this very pass — so the backoff that was just
+	// computed is bypassed, and a rate-limited provider gets hammered again
+	// at once instead of waiting out its window. Worse, the RetryItem stays
+	// queued, so the same task can be dispatched a second time when its
+	// backoff finally expires. Bug 15; see the notes.
 	for _, task := range s.Queue.Ready(ReadyOpts{
 		InFlight: s.inFlightIDs(),
 		Only:     s.Opts.Only,
 		Deferred: s.deferred,
+		Waiting:  s.retryQueueIDs(),
 	}) {
 		if s.Opts.MaxTasks > 0 && s.dispatched >= s.Opts.MaxTasks {
 			break
@@ -196,6 +263,49 @@ func (s *Scheduler) Refill(ctx context.Context) (int, error) {
 			s.dispatched++
 		}
 	}
+	return started, nil
+}
+
+// drainRetryQueue dispatches everything whose backoff has expired, and
+// returns how many it started. Items still waiting stay queued.
+func (s *Scheduler) drainRetryQueue(ctx context.Context) (int, error) {
+	if len(s.retryQueue) == 0 {
+		return 0, nil
+	}
+
+	started := 0
+	now := s.now()
+	remaining := s.retryQueue[:0]
+
+	for _, item := range s.retryQueue {
+		switch {
+		case s.draining,
+			s.Opts.MaxTasks > 0 && s.dispatched >= s.Opts.MaxTasks,
+			item.EarliestAt.After(now):
+			remaining = append(remaining, item)
+			continue
+		}
+
+		ok, err := s.spawnOne(ctx, item.Task, item.Route, item.Attempt)
+		if err != nil {
+			remaining = append(remaining, item)
+			s.retryQueue = remaining
+			return started, err
+		}
+		if ok {
+			started++
+			s.dispatched++
+			continue
+		}
+		// Not dispatched. Requeue only if this was a capacity miss — if
+		// spawnOne blocked the task instead, its status has moved and
+		// requeuing would re-dispatch something already given up on.
+		if status, known := s.Queue.Status(item.Task.ID); known && status == model.StatusTodo {
+			remaining = append(remaining, item)
+		}
+	}
+
+	s.retryQueue = remaining
 	return started, nil
 }
 
@@ -344,8 +454,12 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		Spawned:   sp,
 		Lock:      lock,
 		StartedAt: sp.StartedAt,
+		Dispatch:  d,
 	}
 	delete(s.deferReasons, task.ID)
+
+	// One supervisor per child, posting to the reaper when it finishes.
+	go s.supervise(sp.PID, d, sp)
 
 	if s.Backend != nil {
 		if err := s.Backend.RecordDispatchAndEvent(ctx, s.Opts.RunID, d, sp, attempt); err != nil {
@@ -404,6 +518,19 @@ func resetAtText(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format("2006-01-02T15:04:05Z")
+}
+
+// retryQueueIDs are the tasks the retry queue owns until their backoff
+// expires. The ready set must not race it for them.
+func (s *Scheduler) retryQueueIDs() map[string]bool {
+	if len(s.retryQueue) == 0 {
+		return nil
+	}
+	ids := make(map[string]bool, len(s.retryQueue))
+	for _, item := range s.retryQueue {
+		ids[item.Task.ID] = true
+	}
+	return ids
 }
 
 func (s *Scheduler) inFlightIDs() map[string]bool {

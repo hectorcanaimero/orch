@@ -21,6 +21,18 @@ import (
 //
 // Wait always closes the handles Spawn opened, on every path.
 func (s *Spawned) Wait(timeout time.Duration) (exitCode int, reason string, timedOut bool) {
+	// Idempotent, and concurrency-safe: exec.Cmd.Wait panics if called twice,
+	// and since the reaper gave each dispatch a supervising goroutine there
+	// are two plausible callers — the supervisor, and any cleanup path that
+	// wants to make sure a child is gone. A second caller blocks until the
+	// first finishes and gets the same answer.
+	s.waitOnce.Do(func() {
+		s.exitCode, s.reason, s.timedOut = s.wait(timeout)
+	})
+	return s.exitCode, s.reason, s.timedOut
+}
+
+func (s *Spawned) wait(timeout time.Duration) (exitCode int, reason string, timedOut bool) {
 	defer s.closeHandles()
 	defer s.stopWatch()
 

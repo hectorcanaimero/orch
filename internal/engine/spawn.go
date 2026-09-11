@@ -61,6 +61,13 @@ type Spawned struct {
 	// a long-lived ctx does not leak one goroutine per dispatch.
 	watchStop     chan struct{}
 	watchStopOnce sync.Once
+
+	// waitOnce makes Wait idempotent; the results below are what every
+	// caller after the first sees.
+	waitOnce sync.Once
+	exitCode int
+	reason   string
+	timedOut bool
 }
 
 // SpawnRequest is what Spawn needs beyond the provider's own argv.

@@ -196,6 +196,11 @@ type ReadyOpts struct {
 	Only string
 	// Deferred excludes tasks the operator deferred at the semi gate.
 	Deferred map[string]bool
+	// Waiting excludes tasks another queue owns until it releases them —
+	// today, the retry queue's backoff. Without it a task reset to todo for
+	// a retry is dispatched by this pass before its backoff expires, and can
+	// then be dispatched a second time when the retry fires.
+	Waiting map[string]bool
 }
 
 // Ready returns the tasks whose dependencies are all done and which are
@@ -209,7 +214,7 @@ func (q *TaskQueue) Ready(opts ReadyOpts) []model.Task {
 		if q.status[id] != model.StatusTodo {
 			continue
 		}
-		if opts.InFlight[id] || opts.Deferred[id] {
+		if opts.InFlight[id] || opts.Deferred[id] || opts.Waiting[id] {
 			continue
 		}
 		if opts.Only != "" && !matchGlob(opts.Only, id) {
@@ -265,6 +270,14 @@ func (q *TaskQueue) Pending() bool {
 func (q *TaskQueue) MarkInFlight(id string) error { return q.mark(id, model.StatusInProgress) }
 func (q *TaskQueue) MarkDone(id string) error     { return q.mark(id, model.StatusDone) }
 func (q *TaskQueue) MarkBlocked(id string) error  { return q.mark(id, model.StatusBlocked) }
+
+// MarkTodo puts a task back in the ready set after a failed attempt.
+//
+// Python reaches into TaskQueue._status directly here, with a comment saying
+// retry is the only caller and the class has no mark_todo. It does now: a
+// retry is a legitimate move in this view, and reaching through the struct
+// would only hide who does it.
+func (q *TaskQueue) MarkTodo(id string) error { return q.mark(id, model.StatusTodo) }
 
 func (q *TaskQueue) mark(id string, st model.Status) error {
 	if _, ok := q.byID[id]; !ok {
