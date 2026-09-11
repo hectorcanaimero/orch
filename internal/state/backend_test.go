@@ -1,0 +1,1004 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hectorcanaimero/orch/internal/model"
+)
+
+// The cases here are ported from `test_sqlite_backend.py` (828 lines),
+// `test_backend_parity.py` and the sqlite half of `test_state.py`, grouped by
+// behaviour rather than by the order of the Python file. See
+// testdata/python-test-inventory.md for the mapping.
+
+const fixedNow = "2026-09-11T12:00:00Z"
+
+// newBackend gives a fresh database with a frozen clock, so a test never
+// races real time and a timestamp assertion means something.
+func newBackend(t *testing.T) *SQLite {
+	t.Helper()
+	db, _, err := Open(context.Background(), filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	b := NewSQLite(db, "proj", "/tmp/proj")
+	frozen, err := time.Parse(time.RFC3339, fixedNow)
+	if err != nil {
+		t.Fatalf("parse the frozen clock: %v", err)
+	}
+	b.now = func() time.Time { return frozen }
+	return b
+}
+
+func tasks(ids ...string) []model.Task {
+	out := make([]model.Task, 0, len(ids))
+	for i, id := range ids {
+		out = append(out, model.Task{
+			ID: id, Phase: i, Title: "Task " + id,
+			Model: "claude/claude-sonnet-4-6", Status: model.StatusTodo,
+			EstimateHours: 0.5, SpecRef: "specs/" + id + ".md",
+		})
+	}
+	return out
+}
+
+func seeded(t *testing.T, ids ...string) *SQLite {
+	t.Helper()
+	b := newBackend(t)
+	if err := b.Bootstrap(context.Background(), tasks(ids...)); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	return b
+}
+
+// ---- bootstrap -------------------------------------------------------------
+
+func TestBootstrapSeedsRuntimeAndDefinition(t *testing.T) {
+	ctx := context.Background()
+	b := newBackend(t)
+
+	want := model.Task{
+		ID: "F0.T1", Phase: 2, Title: "Scaffold", Model: "claude/claude-opus-4-6",
+		Reason: "risky", Status: model.StatusBacklog, Dependencies: []string{"F0.T0"},
+		EstimateHours: 1.25, Files: []string{"a.go", "b.go"}, SpecRef: "specs/f0.md#T1",
+	}
+	if err := b.Bootstrap(ctx, []model.Task{want}); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	got, err := b.Task(ctx, "F0.T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.Status != model.StatusBacklog {
+		t.Errorf("status = %q, want the value from tasks.json on first insert", got.Status)
+	}
+	if got.UpdatedAt != fixedNow {
+		t.Errorf("updated_at = %q, want %q", got.UpdatedAt, fixedNow)
+	}
+
+	// The definition half is what the dashboard and the scheduler read.
+	var (
+		title, mdl, deps, specRef, files, reason string
+		phase                                    int
+		estimate                                 float64
+	)
+	err = b.db.read.QueryRowContext(ctx,
+		`SELECT title, model, deps_json, spec_ref, phase, estimate_h, reason, files_json
+		   FROM tasks_definition WHERE project_id = 'proj' AND task_id = 'F0.T1'`,
+	).Scan(&title, &mdl, &deps, &specRef, &phase, &estimate, &reason, &files)
+	if err != nil {
+		t.Fatalf("read the definition row: %v", err)
+	}
+	for _, c := range []struct{ name, got, want string }{
+		{"title", title, "Scaffold"},
+		{"model", mdl, "claude/claude-opus-4-6"},
+		{"deps_json", deps, `["F0.T0"]`},
+		{"spec_ref", specRef, "specs/f0.md#T1"},
+		{"reason", reason, "risky"},
+		{"files_json", files, `["a.go","b.go"]`},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+	if phase != 2 {
+		t.Errorf("phase = %d, want 2", phase)
+	}
+	if estimate != 1.25 {
+		t.Errorf("estimate_h = %v, want 1.25", estimate)
+	}
+}
+
+// The property that makes Bootstrap safe to run on every startup, and the
+// reason tasks.json's status is ignored after the first insert: otherwise a
+// stale checkout would resurrect finished tasks.
+func TestBootstrapNeverOverwritesRuntimeStatus(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	if err := b.Transition(ctx, "T1", model.StatusDone, Note{Author: "orch"}); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+	// Same task, back to `todo` in tasks.json — a stale file, or a hand edit.
+	if err := b.Bootstrap(ctx, tasks("T1")); err != nil {
+		t.Fatalf("second Bootstrap: %v", err)
+	}
+
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.Status != model.StatusDone {
+		t.Errorf("status = %q; a re-bootstrap resurrected a finished task", got.Status)
+	}
+}
+
+func TestBootstrapIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2")
+	for i := 0; i < 3; i++ {
+		if err := b.Bootstrap(ctx, tasks("T1", "T2")); err != nil {
+			t.Fatalf("Bootstrap %d: %v", i, err)
+		}
+	}
+	got, err := b.Tasks(ctx, TaskFilter{})
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("got %d tasks after three bootstraps, want 2", len(got))
+	}
+}
+
+// tasks.json carrying a status the backend cannot hold is a hand-edit, not a
+// reason to crash. Python lands these on "todo"; so do we.
+func TestBootstrapLandsAnUnknownStatusOnTodo(t *testing.T) {
+	ctx := context.Background()
+	b := newBackend(t)
+	bad := tasks("T1")
+	bad[0].Status = model.Status("skipped") // a display label, never a stored status
+
+	if err := b.Bootstrap(ctx, bad); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.Status != model.StatusTodo {
+		t.Errorf("status = %q, want todo", got.Status)
+	}
+}
+
+// Python writes `json.dumps([])` for an empty list. A Go nil slice would
+// marshal to `null` and read back as a different thing.
+func TestBootstrapWritesEmptyListsNotNull(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	var deps, files, comments string
+	err := b.db.read.QueryRowContext(ctx,
+		`SELECT d.deps_json, d.files_json, r.comments_json
+		   FROM tasks_definition d
+		   JOIN tasks_runtime r ON r.task_id = d.task_id
+		  WHERE d.project_id = 'proj' AND d.task_id = 'T1'`,
+	).Scan(&deps, &files, &comments)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, c := range []struct{ name, got string }{
+		{"deps_json", deps}, {"files_json", files}, {"comments_json", comments},
+	} {
+		if c.got != "[]" {
+			t.Errorf("%s = %q, want `[]`", c.name, c.got)
+		}
+	}
+}
+
+// ---- transitions -----------------------------------------------------------
+
+func TestTransitionTable(t *testing.T) {
+	ctx := context.Background()
+	// The legal table lives in model and is verified there against Python.
+	// What this pins is that the BACKEND consults it — every legal move
+	// persists, every illegal one is refused and changes nothing.
+	cases := []struct {
+		name  string
+		path  []model.Status
+		final model.Status
+	}{
+		{"the happy path", []model.Status{model.StatusInProgress, model.StatusDone}, model.StatusDone},
+		{"blocked then recovered", []model.Status{model.StatusInProgress, model.StatusBlocked, model.StatusInProgress, model.StatusDone}, model.StatusDone},
+		{"todo straight to done (manual completion)", []model.Status{model.StatusDone}, model.StatusDone},
+		{"done reopened for a reset", []model.Status{model.StatusDone, model.StatusTodo}, model.StatusTodo},
+		{"same status twice is idempotent", []model.Status{model.StatusTodo, model.StatusTodo}, model.StatusTodo},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := seeded(t, "T1")
+			for i, to := range c.path {
+				if err := b.Transition(ctx, "T1", to, Note{Author: "orch"}); err != nil {
+					t.Fatalf("step %d (-> %s): %v", i, to, err)
+				}
+			}
+			got, err := b.Task(ctx, "T1")
+			if err != nil {
+				t.Fatalf("Task: %v", err)
+			}
+			if got.Status != c.final {
+				t.Errorf("final status = %q, want %q", got.Status, c.final)
+			}
+		})
+	}
+}
+
+func TestIllegalTransitionIsRefusedAndChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	if err := b.Transition(ctx, "T1", model.StatusDone, Note{}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// done -> blocked is not in the table.
+	err := b.Transition(ctx, "T1", model.StatusBlocked, Note{Author: "orch"})
+	if !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("got %v, want ErrIllegalTransition", err)
+	}
+	// The message has to tell a human what they CAN do — they just typed a
+	// status and got told no.
+	if !strings.Contains(err.Error(), "legal from done") {
+		t.Errorf("the error does not list the legal destinations: %v", err)
+	}
+
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.Status != model.StatusDone {
+		t.Errorf("a refused transition still moved the task to %q", got.Status)
+	}
+	if n := len(got.Comments); n != 1 {
+		t.Errorf("a refused transition left %d comments, want the 1 from setup", n)
+	}
+}
+
+func TestTransitionOnAnUnknownTaskIsNotFound(t *testing.T) {
+	b := seeded(t, "T1")
+	err := b.Transition(context.Background(), "nope", model.StatusDone, Note{})
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("got %v, want ErrTaskNotFound", err)
+	}
+}
+
+// Reading a missing task returns ErrTaskNotFound; writing one does too. The
+// pair is easy to get backwards — Python's read returns None and its write
+// raises — so both are pinned.
+func TestReadingAnUnknownTaskIsNotFound(t *testing.T) {
+	b := seeded(t, "T1")
+	_, err := b.Task(context.Background(), "nope")
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("got %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestTransitionRecordsTheNote(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	at := time.Date(2026, 9, 12, 8, 30, 0, 0, time.UTC)
+	err := b.Transition(ctx, "T1", model.StatusBlocked, Note{
+		Author: "agent-claude",
+		Body:   "Stripe sandbox key still pending from the client.",
+		At:     at,
+	})
+	if err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if len(got.Comments) != 1 {
+		t.Fatalf("got %d comments, want 1", len(got.Comments))
+	}
+	var entry map[string]string
+	if err := json.Unmarshal(got.Comments[0], &entry); err != nil {
+		t.Fatalf("decode the comment: %v", err)
+	}
+	if entry["author"] != "agent-claude" {
+		t.Errorf("author = %q", entry["author"])
+	}
+	if !strings.Contains(entry["body"], "Stripe sandbox key") {
+		t.Errorf("body = %q", entry["body"])
+	}
+	if entry["at"] != "2026-09-12T08:30:00Z" {
+		t.Errorf("at = %q, want the note's own timestamp", entry["at"])
+	}
+}
+
+// An empty note still records WHEN something moved. Python puts the status
+// name in the body; the entry exists even when nobody said why.
+func TestEmptyNoteRecordsTheStatusAndTheClock(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	if err := b.Transition(ctx, "T1", model.StatusInProgress, Note{}); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+	got, _ := b.Task(ctx, "T1")
+	var entry map[string]string
+	if err := json.Unmarshal(got.Comments[0], &entry); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if entry["body"] != "in-progress" {
+		t.Errorf("body = %q, want the status name", entry["body"])
+	}
+	if entry["author"] != "orch" {
+		t.Errorf("author = %q, want the default", entry["author"])
+	}
+	if entry["at"] != fixedNow {
+		t.Errorf("at = %q, want the backend clock %q", entry["at"], fixedNow)
+	}
+}
+
+// started_at and finished_at mark the FIRST entry into each state. A task
+// reopened and finished again keeps its original finish, which is what the
+// velocity metric is measured against.
+func TestTimestampsAreStampedOnceAndKept(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	first := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	later := time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC)
+
+	steps := []struct {
+		to model.Status
+		at time.Time
+	}{
+		{model.StatusInProgress, first},
+		{model.StatusDone, first.Add(2 * time.Hour)},
+		{model.StatusTodo, later},       // reopened
+		{model.StatusInProgress, later}, // second run
+		{model.StatusDone, later.Add(time.Hour)},
+	}
+	for _, s := range steps {
+		if err := b.Transition(ctx, "T1", s.to, Note{At: s.at}); err != nil {
+			t.Fatalf("-> %s: %v", s.to, err)
+		}
+	}
+
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.StartedAt != "2026-09-01T09:00:00Z" {
+		t.Errorf("started_at = %q, want the FIRST start", got.StartedAt)
+	}
+	if got.FinishedAt != "2026-09-01T11:00:00Z" {
+		t.Errorf("finished_at = %q, want the FIRST finish", got.FinishedAt)
+	}
+	if got.UpdatedAt != "2026-09-05T10:00:00Z" {
+		t.Errorf("updated_at = %q, want the LAST move", got.UpdatedAt)
+	}
+}
+
+// ---- filters ---------------------------------------------------------------
+
+func TestTasksFilter(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2", "T3", "T4")
+	for id, st := range map[string]model.Status{
+		"T1": model.StatusDone,
+		"T2": model.StatusInProgress,
+		"T3": model.StatusBlocked,
+	} {
+		if err := b.Transition(ctx, id, st, Note{}); err != nil {
+			t.Fatalf("setup %s: %v", id, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		filter TaskFilter
+		want   []string
+	}{
+		{"everything, ordered by id", TaskFilter{}, []string{"T1", "T2", "T3", "T4"}},
+		{"one status", TaskFilter{Statuses: []model.Status{model.StatusDone}}, []string{"T1"}},
+		{"several statuses", TaskFilter{Statuses: []model.Status{model.StatusDone, model.StatusBlocked}}, []string{"T1", "T3"}},
+		{"by id", TaskFilter{IDs: []string{"T4", "T2"}}, []string{"T2", "T4"}},
+		{"status and id together", TaskFilter{
+			Statuses: []model.Status{model.StatusDone, model.StatusBlocked},
+			IDs:      []string{"T3", "T4"},
+		}, []string{"T3"}},
+		{"no match", TaskFilter{IDs: []string{"nope"}}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := b.Tasks(ctx, c.filter)
+			if err != nil {
+				t.Fatalf("Tasks: %v", err)
+			}
+			ids := make([]string, 0, len(got))
+			for _, task := range got {
+				ids = append(ids, task.ID)
+			}
+			if strings.Join(ids, ",") != strings.Join(c.want, ",") {
+				t.Errorf("got %v, want %v", ids, c.want)
+			}
+		})
+	}
+}
+
+// One database holds several projects. Every statement is scoped by
+// project_id, and this is what keeps that true.
+func TestTasksAreScopedToTheProject(t *testing.T) {
+	ctx := context.Background()
+	db, _, err := Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	a := NewSQLite(db, "alpha", "/tmp/alpha")
+	z := NewSQLite(db, "zulu", "/tmp/zulu")
+	if err := a.Bootstrap(ctx, tasks("A1", "A2")); err != nil {
+		t.Fatalf("bootstrap alpha: %v", err)
+	}
+	if err := z.Bootstrap(ctx, tasks("Z1")); err != nil {
+		t.Fatalf("bootstrap zulu: %v", err)
+	}
+
+	got, err := a.Tasks(ctx, TaskFilter{})
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("alpha sees %d tasks, want its own 2", len(got))
+	}
+	if _, err := a.Task(ctx, "Z1"); !errors.Is(err, ErrTaskNotFound) {
+		t.Error("alpha can read zulu's task")
+	}
+	// And a transition in one project must not touch the other.
+	if err := z.Transition(ctx, "Z1", model.StatusDone, Note{}); err != nil {
+		t.Fatalf("zulu transition: %v", err)
+	}
+	a1, _ := a.Task(ctx, "A1")
+	if a1.Status != model.StatusTodo {
+		t.Errorf("alpha's task moved to %q when zulu transitioned", a1.Status)
+	}
+}
+
+// ---- events ----------------------------------------------------------------
+
+func TestEventsRoundTripAndDedup(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	e := Event{
+		EventType: "dispatch", TaskID: "T1", Backend: "claude",
+		TS: "2026-09-11T10:00:00Z", Extra: map[string]any{"pid": 4242},
+	}
+	for i := 0; i < 3; i++ {
+		if err := b.AppendEvent(ctx, "run-1", e); err != nil {
+			t.Fatalf("AppendEvent %d: %v", i, err)
+		}
+	}
+
+	got, err := b.Events(ctx, "T1", 0)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("appending the same event three times stored %d rows, want 1", len(got))
+	}
+	if got[0].EventType != "dispatch" || got[0].Backend != "claude" {
+		t.Errorf("round trip lost fields: %+v", got[0])
+	}
+	if pid, ok := got[0].Extra["pid"]; !ok || fmt.Sprint(pid) != "4242" {
+		t.Errorf("extra lost the pid: %v", got[0].Extra)
+	}
+}
+
+// The dedup key includes the timestamp and the pid, so a genuine retry of the
+// same task is a different row.
+func TestEventsWithDifferentTimestampsAreBothKept(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	for _, ts := range []string{"2026-09-11T10:00:00Z", "2026-09-11T10:05:00Z"} {
+		if err := b.AppendEvent(ctx, "run-1", Event{
+			EventType: "dispatch", TaskID: "T1", Backend: "claude", TS: ts,
+			Extra: map[string]any{"pid": 1},
+		}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+	}
+	got, _ := b.Events(ctx, "T1", 0)
+	if len(got) != 2 {
+		t.Errorf("got %d events, want 2", len(got))
+	}
+}
+
+func TestUnknownEventTypeIsRefused(t *testing.T) {
+	b := seeded(t, "T1")
+	err := b.AppendEvent(context.Background(), "run-1", Event{
+		EventType: "dispatchd", TaskID: "T1", TS: fixedNow, // a typo
+	})
+	if !errors.Is(err, ErrUnknownEventType) {
+		t.Fatalf("got %v, want ErrUnknownEventType", err)
+	}
+}
+
+// "Show me the last 3" means the newest three, read forwards.
+func TestEventsLimitReturnsTheTailInOrder(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	for i := 0; i < 6; i++ {
+		if err := b.AppendEvent(ctx, "run-1", Event{
+			EventType: "retry", TaskID: "T1",
+			TS: fmt.Sprintf("2026-09-11T10:0%d:00Z", i),
+		}); err != nil {
+			t.Fatalf("AppendEvent %d: %v", i, err)
+		}
+	}
+	got, err := b.Events(ctx, "T1", 3)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	wantTS := []string{"2026-09-11T10:03:00Z", "2026-09-11T10:04:00Z", "2026-09-11T10:05:00Z"}
+	for i, w := range wantTS {
+		if got[i].TS != w {
+			t.Errorf("event %d ts = %q, want %q (the tail, oldest first)", i, got[i].TS, w)
+		}
+	}
+}
+
+func TestEventsForAnUnknownTaskIsEmptyNotAnError(t *testing.T) {
+	got, err := seeded(t, "T1").Events(context.Background(), "nope", 0)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d events for an unknown task", len(got))
+	}
+}
+
+// ---- spend -----------------------------------------------------------------
+
+func TestSpendRoundTripAndDedup(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	s := Spend{
+		TS: "2026-09-11T10:00:00Z", TaskID: "T1", Backend: "claude",
+		Model: "claude/claude-sonnet-4-6", TokensIn: 1000, TokensOut: 250,
+		CostUSD: 0.42, DurationS: 5400.0,
+	}
+	for i := 0; i < 3; i++ {
+		if err := b.RecordSpend(ctx, s); err != nil {
+			t.Fatalf("RecordSpend %d: %v", i, err)
+		}
+	}
+
+	var n int
+	var cost, dur float64
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*), MAX(cost_usd), MAX(duration_s) FROM spend WHERE project_id = 'proj'`,
+	).Scan(&n, &cost, &dur); err != nil {
+		t.Fatalf("count spend: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("recording the same spend three times stored %d rows, want 1 — "+
+			"the budget gate reads these, so a duplicate double-counts", n)
+	}
+	if cost != 0.42 || dur != 5400.0 {
+		t.Errorf("round trip changed the numbers: cost %v duration %v", cost, dur)
+	}
+}
+
+// The compatibility check with teeth: the hash Go stores must be the one
+// Python would have computed for the same row.
+func TestSpendHashMatchesThePythonPreimage(t *testing.T) {
+	ctx := context.Background()
+	b := NewSQLite(newBackend(t).db, "billing-api", "/tmp/billing-api")
+	if err := b.Bootstrap(ctx, tasks("F0.T1")); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	// Exactly the row in testdata/orch-py-0.11.0.db.
+	if err := b.RecordSpend(ctx, Spend{
+		TS: "2026-09-01T10:30:00+00:00", TaskID: "F0.T1", Backend: "claude",
+		Model: "claude/claude-sonnet-4-6", TokensIn: 18000, TokensOut: 5200,
+		CostUSD: 0.42, DurationS: 5400.0,
+	}); err != nil {
+		t.Fatalf("RecordSpend: %v", err)
+	}
+	var got string
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT dedup_hash FROM spend WHERE task_id = 'F0.T1'`).Scan(&got); err != nil {
+		t.Fatalf("read hash: %v", err)
+	}
+	const pythonWrote = "623f4c698b191a2ffa77dc11ce55628be8ef46775985bdde51c2b083f628a2c9"
+	if got != pythonWrote {
+		t.Errorf("stored %s\nPython would store %s", got, pythonWrote)
+	}
+}
+
+func TestSpendProjectIDOverride(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	if err := b.RecordSpend(ctx, Spend{
+		ProjectID: "other", TS: fixedNow, TaskID: "T1",
+		Backend: "claude", Model: "m", CostUSD: 1, DurationS: 1,
+	}); err != nil {
+		t.Fatalf("RecordSpend: %v", err)
+	}
+	var pid string
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT project_id FROM spend WHERE task_id = 'T1'`).Scan(&pid); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if pid != "other" {
+		t.Errorf("project_id = %q, want the explicit override", pid)
+	}
+}
+
+// ---- dispatches ------------------------------------------------------------
+
+func TestDispatchLifecycle(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	if err := b.StartRun(ctx, "run-1", "auto"); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	d := Dispatch{
+		RunID: "run-1", TaskID: "T1", Backend: "claude", PID: 4242,
+		SessionID: "sess-1", StartedAt: fixedNow, PromptPath: "p.md",
+		LogPath: "l.log", OutputPath: "o.json",
+	}
+	if err := b.RecordDispatch(ctx, d); err != nil {
+		t.Fatalf("RecordDispatch: %v", err)
+	}
+
+	var attempt, pid int
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT attempt, pid FROM dispatches WHERE run_id='run-1' AND task_id='T1'`,
+	).Scan(&attempt, &pid); err != nil {
+		t.Fatalf("read dispatch: %v", err)
+	}
+	if attempt != 1 {
+		t.Errorf("attempt = %d; an unset attempt should default to 1", attempt)
+	}
+	if pid != 4242 {
+		t.Errorf("pid = %d", pid)
+	}
+
+	// A retry replaces the row rather than adding one — the table holds what
+	// is in flight, not a history.
+	d.Attempt = 2
+	d.PID = 4343
+	if err := b.RecordDispatch(ctx, d); err != nil {
+		t.Fatalf("second RecordDispatch: %v", err)
+	}
+	var n int
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dispatches WHERE run_id='run-1' AND task_id='T1'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("a retry left %d in-flight rows, want 1", n)
+	}
+
+	if err := b.ClearDispatch(ctx, "run-1", "T1"); err != nil {
+		t.Fatalf("ClearDispatch: %v", err)
+	}
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dispatches WHERE run_id='run-1'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("ClearDispatch left %d rows", n)
+	}
+}
+
+// ---- milestones ------------------------------------------------------------
+
+func TestMilestonesCountProgress(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2", "T3")
+
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO milestones (project_id, id, title, description, target_date, created_at)
+		 VALUES ('proj', 'M1', 'Customer API live', 'first slice', '2026-09-20', ?)`,
+		fixedNow); err != nil {
+		t.Fatalf("seed milestone: %v", err)
+	}
+	for _, id := range []string{"T1", "T2"} {
+		if _, err := b.db.write.ExecContext(ctx,
+			`UPDATE tasks_definition SET milestone_id = 'M1'
+			  WHERE project_id = 'proj' AND task_id = ?`, id); err != nil {
+			t.Fatalf("assign %s: %v", id, err)
+		}
+	}
+	if err := b.Transition(ctx, "T1", model.StatusDone, Note{}); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+
+	got, err := b.Milestones(ctx)
+	if err != nil {
+		t.Fatalf("Milestones: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d milestones, want 1", len(got))
+	}
+	m := got[0]
+	if m.Total != 2 || m.Done != 1 {
+		t.Errorf("counts = %d/%d, want 1/2 — T3 is not on this milestone", m.Done, m.Total)
+	}
+	if m.PercentDone != 50 {
+		t.Errorf("percent = %d, want 50", m.PercentDone)
+	}
+	if m.TargetDate != "2026-09-20" || m.Title != "Customer API live" {
+		t.Errorf("fields lost: %+v", m)
+	}
+}
+
+func TestMilestoneWithNoTasksIsZeroNotDivideByZero(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO milestones (project_id, id, title, created_at)
+		 VALUES ('proj', 'M-empty', 'Nothing yet', ?)`, fixedNow); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err := b.Milestones(ctx)
+	if err != nil {
+		t.Fatalf("Milestones: %v", err)
+	}
+	if len(got) != 1 || got[0].Total != 0 || got[0].PercentDone != 0 {
+		t.Errorf("got %+v, want an empty milestone at 0%%", got)
+	}
+}
+
+// ---- doctor ----------------------------------------------------------------
+
+func TestOrphanRowsFindsWhatForeignKeysMissed(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	got, err := b.OrphanRows(ctx)
+	if err != nil {
+		t.Fatalf("OrphanRows: %v", err)
+	}
+	if got.Total() != 0 {
+		t.Fatalf("a healthy database reported %d orphans: %v", got.Total(), got)
+	}
+
+	// Reproduce what a hand-edited database looks like: rows whose project
+	// has no row in `projects`. Foreign keys are enforced, so this has to be
+	// done with them off — which is exactly how it happens in the wild
+	// (sqlite3 CLI, or a bootstrap from before FK enforcement).
+	if _, err := b.db.write.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable FK: %v", err)
+	}
+	if _, err := b.db.write.ExecContext(ctx,
+		`INSERT INTO tasks_runtime (project_id, task_id, status, comments_json, updated_at)
+		 VALUES ('ghost', 'G1', 'todo', '[]', ?), ('ghost', 'G2', 'todo', '[]', ?)`,
+		fixedNow, fixedNow); err != nil {
+		t.Fatalf("seed orphans: %v", err)
+	}
+
+	got, err = b.OrphanRows(ctx)
+	if err != nil {
+		t.Fatalf("OrphanRows: %v", err)
+	}
+	if got["tasks_runtime"]["ghost"] != 2 {
+		t.Errorf("got %v, want two orphan runtime rows for `ghost`", got)
+	}
+	if got.Total() != 2 {
+		t.Errorf("Total() = %d, want 2", got.Total())
+	}
+
+	// Read-only: the operator has to look before anything is deleted.
+	var n int
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tasks_runtime WHERE project_id = 'ghost'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("OrphanRows deleted rows; it must only report (F-9)")
+	}
+}
+
+// ---- the Python database, through the real API -----------------------------
+
+// #103 proved the fixture OPENS. This proves it is usable: the rows Python
+// wrote read back through the Backend interface with the right values, and a
+// task in it can be transitioned.
+func TestPythonWrittenDatabaseIsReadableAndWritable(t *testing.T) {
+	ctx := context.Background()
+	path := copyPythonFixture(t)
+	db, applied, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if applied != 0 {
+		t.Fatalf("applied %d migrations to a Python database", applied)
+	}
+
+	b := NewSQLite(db, "billing-api", "/tmp/billing-api")
+
+	got, err := b.Tasks(ctx, TaskFilter{})
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("read %d tasks from the Python fixture, want 5", len(got))
+	}
+	want := map[string]model.Status{
+		"F0.T1": model.StatusDone, "F0.T2": model.StatusDone,
+		"F1.T1": model.StatusInProgress, "F1.T2": model.StatusBlocked,
+		"F2.T1": model.StatusTodo,
+	}
+	for _, task := range got {
+		if want[task.ID] != task.Status {
+			t.Errorf("%s: read %q, Python wrote %q", task.ID, task.Status, want[task.ID])
+		}
+	}
+
+	// The blocked task's reason was written by Python as a comment.
+	blocked, err := b.Task(ctx, "F1.T2")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if len(blocked.Comments) == 0 {
+		t.Error("the blocked task's comments did not survive the read")
+	}
+
+	// Events Python wrote, read through our API.
+	events, err := b.Events(ctx, "F0.T1", 0)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("read %d events for F0.T1, want the 2 Python wrote", len(events))
+	}
+
+	// Milestones too.
+	milestones, err := b.Milestones(ctx)
+	if err != nil {
+		t.Fatalf("Milestones: %v", err)
+	}
+	if len(milestones) != 1 || milestones[0].Total != 2 {
+		t.Errorf("milestones = %+v, want M1 with 2 tasks", milestones)
+	}
+
+	// And a write: Go must be able to move a task Python created.
+	if err := b.Transition(ctx, "F1.T1", model.StatusDone, Note{
+		Author: "orch-go", Body: "finished by the Go binary",
+	}); err != nil {
+		t.Fatalf("Transition on a Python-written task: %v", err)
+	}
+	after, err := b.Task(ctx, "F1.T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if after.Status != model.StatusDone {
+		t.Errorf("status = %q after the transition", after.Status)
+	}
+	// Python's own comment history is still there, with ours appended.
+	if len(after.Comments) < 2 {
+		t.Errorf("got %d comments; the Go write should have appended to "+
+			"Python's history, not replaced it", len(after.Comments))
+	}
+}
+
+// ---- concurrency -----------------------------------------------------------
+
+// The same 50-goroutine shape as the raw-SQL test, but through the real
+// Transition path — which does a read and a write in one transaction, so it
+// is where a deadlock would actually show up.
+func TestConcurrentTransitionsThroughTheBackend(t *testing.T) {
+	ctx := context.Background()
+	const workers = 50
+
+	ids := make([]string, 0, workers)
+	for i := 0; i < workers; i++ {
+		ids = append(ids, fmt.Sprintf("T-%03d", i))
+	}
+	b := seeded(t, ids...)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			for _, to := range []model.Status{model.StatusInProgress, model.StatusDone} {
+				if err := b.Transition(ctx, id, to, Note{Author: "worker"}); err != nil {
+					errs <- fmt.Errorf("%s -> %s: %w", id, to, err)
+					return
+				}
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent transition failed: %v", err)
+	}
+
+	done, err := b.Tasks(ctx, TaskFilter{Statuses: []model.Status{model.StatusDone}})
+	if err != nil {
+		t.Fatalf("Tasks: %v", err)
+	}
+	if len(done) != workers {
+		t.Errorf("%d tasks reached done, want %d", len(done), workers)
+	}
+}
+
+func TestStartRunIsIdempotentAndValidatesMode(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	if err := b.StartRun(ctx, "run-1", "auto"); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	// Resuming an interrupted run reattaches rather than failing.
+	if err := b.StartRun(ctx, "run-1", "auto"); err != nil {
+		t.Fatalf("second StartRun: %v", err)
+	}
+	var n int
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runs WHERE run_id = 'run-1'`).Scan(&n); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("got %d run rows, want 1", n)
+	}
+
+	// The column has a CHECK constraint; the error should name the legal
+	// values rather than surfacing a raw constraint failure.
+	err := b.StartRun(ctx, "run-2", "turbo")
+	if err == nil {
+		t.Fatal("an invalid run mode was accepted")
+	}
+	if !strings.Contains(err.Error(), "auto, semi") {
+		t.Errorf("the error does not list the legal modes: %v", err)
+	}
+}
+
+// A run can be opened on a database that was never bootstrapped — the engine
+// may start before tasks.json is read. Without the projects fallback, the
+// first dispatch fails on a foreign key with nothing useful in the message.
+func TestStartRunSeedsTheProjectRow(t *testing.T) {
+	ctx := context.Background()
+	b := newBackend(t) // no Bootstrap
+
+	if err := b.StartRun(ctx, "run-1", "semi"); err != nil {
+		t.Fatalf("StartRun on a virgin database: %v", err)
+	}
+	var n int
+	if err := b.db.read.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE project_id = 'proj'`).Scan(&n); err != nil {
+		t.Fatalf("count projects: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("got %d project rows, want 1", n)
+	}
+}
