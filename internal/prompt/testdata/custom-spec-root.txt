@@ -1,0 +1,21 @@
+TASK_ID=B-020
+You are executing task B-020.
+
+Working dir: /tmp/orch-golden-project
+Title: Café ☕
+Description: ñandú
+Files you may write: ['src/a.ts', 'src/b.ts']
+Spec ref (READ FIRST): docs/specs/deep/nested.md#Anchor
+Completed dependencies (context):
+  - T-LONG: ññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññ…
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for B-020.
+2. Do the work. If blocked, run: scripts/task-block.sh B-020 "<reason>" "claude/claude-sonnet-4-6" and STOP.
+3. On success, run: scripts/task-finish.sh B-020 "<what you did>" "claude/claude-sonnet-4-6"
+   Note: the orchestrator will call scripts/task-start.sh B-020 BEFORE launching you.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress via the scripts above only.
