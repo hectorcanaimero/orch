@@ -225,6 +225,54 @@ block) were all of that kind.
   catch them has to be written in a character set the author does not use by
   default**.
 
+- ~~**Bug 14: `orch init --template` produced a project that could not run,
+  and the documented fix broke it further**~~ — **RESOLVED** (this PR). Found
+  sizing up G4.4, by running the scaffolder instead of reading it.
+
+  Two halves. First:
+
+  ```
+  $ orch init --template python-api    →  exit 0
+  $ orch --project-root … --dry-run    →  exit 1
+  model_router.yaml is missing entries for 2 task(s): …
+  ```
+
+  `orch init` writes an empty router stub, which is right for a blank project:
+  no tasks, no routes. A template ships tasks, and every task names a model —
+  so every templated project failed the first command its own banner suggests.
+  Neither `_print_next_steps` nor the wizard's checklist mentioned
+  `orch router add-missing`; the only place the remediation appeared was inside
+  the router file, which nothing tells you to open.
+
+  Second, and worse: the stub ended with an explicit `{}`, which is a complete
+  YAML document. `append_router_entries` appends a block mapping after it, so
+  running `orch router add-missing --yes` — the command both the error message
+  and the stub's own comment recommend — produced a file PyYAML refuses to
+  parse:
+
+  ```
+  router load failed: expected '<document start>', but found '<block mapping start>'
+  ```
+
+  So the escape hatch was broken too, and the second error named no remedy at
+  all. I reported the first half as "first-run friction, the user is not
+  stranded"; that was wrong, and it was wrong because I had checked that the
+  error names a fix without checking that the fix works.
+
+  Fix: the stub is comments only (an empty YAML document parses as None and
+  `load_router` already does `or {}`), and `orch init` runs the same inference
+  `router add-missing` uses over the template's tasks, printing what it added
+  and that `tier` defaults to `standard`. Both banners now name the command as
+  well, for the model a user adds by hand later.
+
+  **The test that was missing is the whole lesson.** Every existing init test
+  asserted on files the scaffolder writes. None of them ran the project it
+  wrote. `test_scaffolded_project_dry_runs_clean` invokes the real binary
+  against a real scaffold for all four templates and the blank case; ten of the
+  eleven new assertions fail against the unfixed code. A scaffolder is only
+  correct if its output runs, and that is not a property of any file it
+  writes — it is a property of all of them together.
+
 ## Notes for the Go rewrite
 
 - **A run's three tallies degrade to zero; Python's `list_runs` raises.**
