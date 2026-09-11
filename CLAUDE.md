@@ -54,6 +54,8 @@ internal/
   cli/               — subcomandos (status, tasks, dispatch, findings…)
   config/            — carga + merge de config.yaml / overrides
   model/             — Task, Finding, DAG y demás tipos de dominio
+  graph/             — validate / cycles / orden / DOT sobre el DAG (#111)
+  pyfmt/             — emulación del formato de Python (repr, separador de miles) (#124)
   atomize/           — tasks.json <-> spec
   router/            — model_router.yaml
   budget/            — guardrails por proveedor

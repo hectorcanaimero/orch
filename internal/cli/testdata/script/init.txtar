@@ -1,0 +1,80 @@
+# orch init — both modes, through the real CLI.
+#
+# The property that matters is not "the files exist" but "the project runs":
+# bug 14 shipped because every init test asserted on files the scaffolder
+# writes and none checked the project it wrote. So the batch case scaffolds a
+# template and then `orch validate` runs against the result — if a task were
+# left unrouted, or the router file were corrupt, that command is what says so.
+
+# ---- batch: a templated project, validated end to end ----------------------
+exec orch init batchproj --template python-api --project-name batchproj
+stdout '✓ orch project initialized at'
+stdout 'added 1 route\(s\) for the template''s tasks'
+stdout 'tier defaults to `standard`'
+stdout 'orch router add-missing --yes'
+
+exists batchproj/tasks.json
+exists batchproj/AGENTS.md
+exists batchproj/specs/README.md
+exists batchproj/scripts/task-start.sh
+exists batchproj/.orchestrator/config.yaml
+exists batchproj/.orchestrator/model_router.yaml
+exists batchproj/.github/workflows/orch-ci.yml
+
+# The scaffolded project passes its own validator. This is the assertion the
+# Python side was missing.
+exec orch validate --project-root batchproj --project-id batchproj
+! stderr .
+
+# The router stub does not close its own YAML document (#141/#144), so the
+# entries below it load.
+! grep '^\{\}$' batchproj/.orchestrator/model_router.yaml
+
+# ---- batch: a blank project --------------------------------------------
+exec orch init blankproj
+exists blankproj/tasks.json
+exec orch validate --project-root blankproj --project-id blankproj
+
+# A blank project has no tasks, so it has no routes either — and must not
+# have been given guesses.
+! stdout 'added .* route'
+
+# ---- the conflict gate -----------------------------------------------------
+! exec orch init batchproj --template python-api
+stderr 'destination has conflicting files'
+stderr '--force'
+
+exec orch init batchproj --template python-api --force
+stdout '✓ orch project initialized at'
+
+# ---- an unknown template names what exists ---------------------------------
+! exec orch init otherproj --template next-js
+stderr 'unknown template'
+stderr 'nextjs-saas'
+! exists otherproj
+
+# ---- the wizard: declining writes nothing ----------------------------------
+#
+# The answers are written out rather than left blank: a txtar file's trailing
+# blank lines are not something to depend on, and a miscounted blank would
+# feed the confirm gate its default — which is `y`, so the test would scaffold
+# a project while claiming to test the refusal.
+stdin decline.txt
+exec orch init
+stdout 'About to scaffold:'
+stdout 'project id       wizardproj'
+stdout 'Aborted. Nothing written.'
+! exists wizardproj
+
+-- decline.txt --
+wizardproj
+wizardproj
+blank
+sqlite
+conservative
+specs
+agy/pro
+claude/claude-sonnet-4-6
+agy/flash
+n
+n
