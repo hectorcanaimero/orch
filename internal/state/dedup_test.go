@@ -1,6 +1,10 @@
 package state
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
+)
 
 // The six vectors below are not invented: they are the exact preimages and
 // hashes the Python backend wrote into testdata/orch-py-0.11.0.db. They are
@@ -104,11 +108,11 @@ func TestSpendDedupHashMatchesPython(t *testing.T) {
 // Go's default shortest form. Both vectors above would break; this states why
 // in one place.
 func TestSpendDedupHashWouldBreakWithGoFloatFormatting(t *testing.T) {
-	if pyFloat(5400.0) == "5400" {
-		t.Fatal("pyFloat regressed to Go formatting — the spend dedup hash is now wrong")
+	if pyfmt.Float(5400.0) == "5400" {
+		t.Fatal("pyfmt.Float regressed to Go formatting — the spend dedup hash is now wrong")
 	}
-	if pyFloat(1.0) == "1" {
-		t.Fatal("pyFloat regressed to Go formatting — the spend dedup hash is now wrong")
+	if pyfmt.Float(1.0) == "1" {
+		t.Fatal("pyfmt.Float regressed to Go formatting — the spend dedup hash is now wrong")
 	}
 }
 

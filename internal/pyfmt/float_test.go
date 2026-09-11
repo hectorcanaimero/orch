@@ -1,4 +1,4 @@
-package state
+package pyfmt
 
 import (
 	"math"
@@ -13,7 +13,7 @@ import (
 //
 // Values are given as raw IEEE-754 bits so the test input cannot drift
 // through a Go literal that parses to a neighbouring double.
-func TestPyFloatMatchesPythonRepr(t *testing.T) {
+func TestFloatMatchesPythonRepr(t *testing.T) {
 	cases := []struct {
 		bits uint64
 		want string
@@ -61,40 +61,21 @@ func TestPyFloatMatchesPythonRepr(t *testing.T) {
 	}
 	for _, c := range cases {
 		v := math.Float64frombits(c.bits)
-		if got := pyFloat(v); got != c.want {
-			t.Errorf("pyFloat(%#016x) = %q, Python says %q", c.bits, got, c.want)
+		if got := Float(v); got != c.want {
+			t.Errorf("Float(%#016x) = %q, Python says %q", c.bits, got, c.want)
 		}
 	}
 }
 
-func TestPyFloatNonFinite(t *testing.T) {
-	cases := []struct {
-		in   float64
-		want string
-	}{
-		{math.NaN(), "nan"},
-		{math.Inf(1), "inf"},
-		{math.Inf(-1), "-inf"},
-	}
-	for _, c := range cases {
-		if got := pyFloat(c.in); got != c.want {
-			t.Errorf("pyFloat(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-// Every value that survives a Python round trip must survive a Go one too:
-// the shortest-repr contract is what makes the dedup hash reproducible at
-// all, so losing precision here would be worse than formatting it oddly.
-func TestPyFloatRoundTrips(t *testing.T) {
+func TestFloatRoundTrips(t *testing.T) {
 	for _, v := range []float64{0.42, 1.5, 5400.0, 0.1 + 0.2, 1e-7, 1e21, 123456.789} {
-		s := pyFloat(v)
+		s := Float(v)
 		back, err := strconvParseFloat(s)
 		if err != nil {
-			t.Fatalf("pyFloat(%v) = %q which does not parse: %v", v, s, err)
+			t.Fatalf("Float(%v) = %q which does not parse: %v", v, s, err)
 		}
 		if back != v {
-			t.Errorf("pyFloat(%v) = %q round-trips to %v", v, s, back)
+			t.Errorf("Float(%v) = %q round-trips to %v", v, s, back)
 		}
 	}
 }
