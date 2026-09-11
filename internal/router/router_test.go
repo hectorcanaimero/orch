@@ -1,0 +1,578 @@
+package router
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/hectorcanaimero/orch/internal/model"
+)
+
+// Cases ported from test_router.py (275 lines) and test_model_router.py (229),
+// grouped by behaviour.
+
+// ---------------------------------------------------------------------------
+// Parity: what Python loads, we load
+// ---------------------------------------------------------------------------
+
+// Every field of every route, against what `router.load_router` produced for
+// the same two files. `is_premium` is the one worth watching: Python
+// RECOMPUTES it from the tier rather than trusting the YAML flag, and a port
+// that copied the flag would agree on every row that happens to be consistent
+// and diverge silently on the one that is not.
+func TestLoadMatchesThePythonGoldens(t *testing.T) {
+	cases := []struct{ name, router, golden string }{
+		{"the packaged router",
+			filepath.Join("..", "..", "orchestrator", "model_router.yaml"),
+			"testdata/packaged.golden.json"},
+		{"the parity project's router",
+			filepath.Join("..", "graph", "testdata", "parity-project", "model_router.yaml"),
+			"testdata/parity.golden.json"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := os.Stat(c.router); os.IsNotExist(err) {
+				t.Skip("the Python tree is gone; the goldens are frozen")
+			}
+			got, err := Load(c.router)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			raw, err := os.ReadFile(c.golden) // #nosec G304 -- fixed testdata path
+			if err != nil {
+				t.Fatalf("read the golden: %v", err)
+			}
+			var want map[string]struct {
+				Backend          string  `json:"backend"`
+				CLIModel         string  `json:"cli_model"`
+				Tier             string  `json:"tier"`
+				IsPremium        bool    `json:"is_premium"`
+				FallbackCLIModel *string `json:"fallback_cli_model"`
+				EscalationModel  *string `json:"escalation_model"`
+				Agent            *string `json:"agent"`
+				Effort           *string `json:"effort"`
+			}
+			if err := json.Unmarshal(raw, &want); err != nil {
+				t.Fatalf("parse the golden: %v", err)
+			}
+
+			if len(got) != len(want) {
+				t.Fatalf("loaded %d routes, Python loaded %d", len(got), len(want))
+			}
+			for key, w := range want {
+				g, ok := got[key]
+				if !ok {
+					t.Errorf("route %q is missing", key)
+					continue
+				}
+				if string(g.Backend) != w.Backend {
+					t.Errorf("%s.backend = %q, Python says %q", key, g.Backend, w.Backend)
+				}
+				if g.CLIModel != w.CLIModel {
+					t.Errorf("%s.cli_model = %q, Python says %q", key, g.CLIModel, w.CLIModel)
+				}
+				if string(g.Tier) != w.Tier {
+					t.Errorf("%s.tier = %q, Python says %q", key, g.Tier, w.Tier)
+				}
+				if g.IsPremium != w.IsPremium {
+					t.Errorf("%s.is_premium = %v, Python says %v", key, g.IsPremium, w.IsPremium)
+				}
+				if ptr(g.FallbackCLIModel) != ptr(w.FallbackCLIModel) {
+					t.Errorf("%s.fallback_cli_model = %q, Python says %q",
+						key, ptr(g.FallbackCLIModel), ptr(w.FallbackCLIModel))
+				}
+				if ptr(g.EscalationModel) != ptr(w.EscalationModel) {
+					t.Errorf("%s.escalation_model = %q, Python says %q",
+						key, ptr(g.EscalationModel), ptr(w.EscalationModel))
+				}
+				if ptr(g.Agent) != ptr(w.Agent) {
+					t.Errorf("%s.agent = %q, Python says %q", key, ptr(g.Agent), ptr(w.Agent))
+				}
+				if ptr(g.Effort) != ptr(w.Effort) {
+					t.Errorf("%s.effort = %q, Python says %q", key, ptr(g.Effort), ptr(w.Effort))
+				}
+			}
+		})
+	}
+}
+
+// The denormalised flag is a cache, and the tier is the truth. A file that
+// says otherwise must not be believed.
+func TestIsPremiumIsRecomputedFromTier(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"premium tier, flag absent", "k:\n  backend: claude\n  cli_model: m\n  tier: premium\n", true},
+		{"premium tier, flag lies false", "k:\n  backend: claude\n  cli_model: m\n  tier: premium\n  is_premium: false\n", true},
+		{"standard tier, flag lies true", "k:\n  backend: claude\n  cli_model: m\n  tier: standard\n  is_premium: true\n", false},
+		{"cheap tier", "k:\n  backend: claude\n  cli_model: m\n  tier: cheap\n", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := loadString(t, c.yaml)
+			if r["k"].IsPremium != c.want {
+				t.Errorf("is_premium = %v, want %v (tier is the truth)", r["k"].IsPremium, c.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Format errors
+// ---------------------------------------------------------------------------
+
+func TestLoadRejectsMalformedFiles(t *testing.T) {
+	cases := []struct {
+		name     string
+		yaml     string
+		wantText string
+	}{
+		{"a top level that is not a mapping", "- a\n- b\n", "expected top-level mapping"},
+		{"an entry that is not a mapping", "k: just-a-string\n", "is not a mapping"},
+		{"an unknown backend", "k:\n  backend: openai\n  cli_model: m\n  tier: standard\n", "invalid backend"},
+		{"a missing backend", "k:\n  cli_model: m\n  tier: standard\n", "invalid backend"},
+		{"an unknown tier", "k:\n  backend: claude\n  cli_model: m\n  tier: deluxe\n", "invalid tier"},
+		{"an empty cli_model", "k:\n  backend: claude\n  cli_model: \"\"\n  tier: standard\n", "missing non-empty cli_model"},
+		{"a missing cli_model", "k:\n  backend: claude\n  tier: standard\n", "missing non-empty cli_model"},
+		{"an invalid effort", "k:\n  backend: agy\n  cli_model: m\n  tier: cheap\n  effort: extreme\n", "effort"},
+		{
+			// FR-D-8. A dangling escalation would be discovered at attempt 3
+			// of a failing task, which is the worst possible moment.
+			name:     "an escalation_model that is not a route",
+			yaml:     "k:\n  backend: claude\n  cli_model: m\n  tier: standard\n  escalation_model: nope\n",
+			wantText: "is not a route in this file",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "model_router.yaml")
+			write(t, path, c.yaml)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("loaded a file that should have been rejected")
+			}
+			var fe *FormatError
+			if !errors.As(err, &fe) {
+				t.Errorf("error is %T, want *FormatError: %v", err, err)
+			}
+			if !strings.Contains(err.Error(), c.wantText) {
+				t.Errorf("error %q does not mention %q", err, c.wantText)
+			}
+			// Every format error names the file, or the operator has to guess
+			// which of several routers is broken.
+			if !strings.Contains(err.Error(), path) {
+				t.Errorf("error does not name the file: %v", err)
+			}
+		})
+	}
+}
+
+// An escalation_model may point at a route declared LATER in the file, so the
+// check has to run after the whole file is read.
+func TestEscalationMayPointForwards(t *testing.T) {
+	r := loadString(t, `
+first:
+  backend: claude
+  cli_model: a
+  tier: standard
+  escalation_model: second
+second:
+  backend: claude
+  cli_model: b
+  tier: premium
+`)
+	if len(r) != 2 {
+		t.Fatalf("loaded %d routes, want 2", len(r))
+	}
+}
+
+func TestEmptyFileIsAnEmptyRouter(t *testing.T) {
+	r := loadString(t, "")
+	if len(r) != 0 {
+		t.Errorf("an empty file produced %d routes", len(r))
+	}
+}
+
+func TestMissingFileIsAnError(t *testing.T) {
+	// Unlike config.yaml: a project with tasks and no router cannot dispatch
+	// anything, so saying so at load time beats failing per-task later.
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
+		t.Fatal("a missing router loaded without complaint")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Validate (AS-06)
+// ---------------------------------------------------------------------------
+
+func TestValidateListsEveryOffender(t *testing.T) {
+	r := loadString(t, "claude/ok:\n  backend: claude\n  cli_model: m\n  tier: standard\n")
+	tasks := []model.Task{
+		{ID: "T3", Model: "missing/one"},
+		{ID: "T1", Model: "claude/ok"},
+		{ID: "T2", Model: "missing/two"},
+	}
+
+	err := r.Validate(tasks)
+	if err == nil {
+		t.Fatal("Validate accepted unrouted tasks")
+	}
+	var ue *UnroutedError
+	if !errors.As(err, &ue) {
+		t.Fatalf("error is %T, want *UnroutedError", err)
+	}
+	// Every offender, not the first: fixing them one error at a time means
+	// running orch once per typo.
+	if len(ue.Offenders) != 2 {
+		t.Fatalf("listed %d offenders, want 2: %+v", len(ue.Offenders), ue.Offenders)
+	}
+	// Sorted by task id, so the message is stable enough to diff.
+	if ue.Offenders[0].TaskID != "T2" || ue.Offenders[1].TaskID != "T3" {
+		t.Errorf("offenders are not sorted by task id: %+v", ue.Offenders)
+	}
+	msg := err.Error()
+	for _, want := range []string{"missing/one", "missing/two", "orch router add-missing"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the error does not mention %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestValidateAcceptsAFullyRoutedGraph(t *testing.T) {
+	r := loadString(t, "claude/ok:\n  backend: claude\n  cli_model: m\n  tier: standard\n")
+	if err := r.Validate([]model.Task{{ID: "T1", Model: "claude/ok"}}); err != nil {
+		t.Errorf("Validate rejected a routed task: %v", err)
+	}
+	if err := r.Validate(nil); err != nil {
+		t.Errorf("Validate rejected an empty task list: %v", err)
+	}
+}
+
+// internal/graph reports the same condition as `route.unresolved`. Both read
+// the router, so a task that graph flags must be one Validate rejects —
+// otherwise `orch validate` and `orch run` disagree about the same project.
+func TestValidateAgreesWithTheGraphPackage(t *testing.T) {
+	r := loadString(t, "claude/ok:\n  backend: claude\n  cli_model: m\n  tier: standard\n")
+	tasks := []model.Task{
+		{ID: "T1", Phase: 0, Model: "claude/ok"},
+		{ID: "T2", Phase: 0, Model: "nope/nope"},
+	}
+	if err := r.Validate(tasks); err == nil {
+		t.Fatal("Validate accepted a task the graph package would flag")
+	}
+	missing := r.MissingModels(tasks)
+	if len(missing) != 1 || missing[0] != "nope/nope" {
+		t.Errorf("MissingModels = %v, want [nope/nope]", missing)
+	}
+}
+
+func TestMissingModelsIsDistinctAndSorted(t *testing.T) {
+	r := loadString(t, "claude/ok:\n  backend: claude\n  cli_model: m\n  tier: standard\n")
+	tasks := []model.Task{
+		{ID: "T1", Model: "zzz/b"},
+		{ID: "T2", Model: "aaa/a"},
+		{ID: "T3", Model: "zzz/b"}, // the same model twice
+		{ID: "T4", Model: "claude/ok"},
+	}
+	got := r.MissingModels(tasks)
+	if strings.Join(got, ",") != "aaa/a,zzz/b" {
+		t.Errorf("MissingModels = %v, want [aaa/a zzz/b] — distinct and sorted", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Inference
+// ---------------------------------------------------------------------------
+
+func TestInferEntry(t *testing.T) {
+	cases := []struct {
+		name     string
+		key      string
+		tier     model.Tier
+		wantErr  bool
+		backend  model.Backend
+		cliModel string
+		wantTier model.Tier
+	}{
+		{name: "a claude key", key: "claude/claude-sonnet-4-6",
+			backend: model.BackendClaude, cliModel: "claude-sonnet-4-6", wantTier: model.TierStandard},
+		{name: "a key with slashes in the model", key: "opencode/vendor/model-v2",
+			backend: model.BackendOpencode, cliModel: "vendor/model-v2", wantTier: model.TierStandard},
+		{name: "an explicit tier", key: "codex/gpt", tier: model.TierPremium,
+			backend: model.BackendCodex, cliModel: "gpt", wantTier: model.TierPremium},
+
+		// A wrong route is worse than no route: it dispatches somewhere.
+		{name: "a bare model name", key: "claude-sonnet-4-6", wantErr: true},
+		{name: "an unknown backend", key: "openai/gpt-4", wantErr: true},
+		{name: "an empty model half", key: "claude/", wantErr: true},
+		{name: "empty", key: "", wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := InferEntry(c.key, c.tier)
+			if c.wantErr {
+				if !errors.Is(err, ErrCannotInfer) {
+					t.Fatalf("got (%+v, %v), want ErrCannotInfer", got, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("InferEntry: %v", err)
+			}
+			if got.Backend != c.backend || got.CLIModel != c.cliModel || got.Tier != c.wantTier {
+				t.Errorf("got %+v, want backend=%s cli_model=%s tier=%s",
+					got, c.backend, c.cliModel, c.wantTier)
+			}
+			if got.IsPremium != (c.wantTier == model.TierPremium) {
+				t.Errorf("is_premium = %v for tier %s", got.IsPremium, got.Tier)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// add-missing
+// ---------------------------------------------------------------------------
+
+func TestAddMissingAppendsAndPreservesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_router.yaml")
+	original := `# A header comment that explains the file.
+# Grouped by hand, on purpose.
+
+claude/existing:
+  backend: claude
+  cli_model: existing-model
+  tier: premium
+`
+	write(t, path, original)
+
+	added, skipped, err := AddMissing(path,
+		[]string{"claude/new-one", "codex/new-two", "claude/existing"}, model.TierStandard)
+	if err != nil {
+		t.Fatalf("AddMissing: %v", err)
+	}
+	if strings.Join(added, ",") != "claude/new-one,codex/new-two" {
+		t.Errorf("added = %v, want the two new keys sorted", added)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none", skipped)
+	}
+
+	body := read(t, path)
+	// The reason this appends raw text instead of re-dumping the mapping.
+	if !strings.HasPrefix(body, original) {
+		t.Error("the original file was rewritten rather than appended to")
+	}
+	for _, want := range []string{
+		"# A header comment that explains the file.",
+		"auto-added by `orch router add-missing` (review tiers)",
+		"claude/new-one:", "  backend: claude", "  cli_model: new-one", "  tier: standard",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the result is missing %q:\n%s", want, body)
+		}
+	}
+
+	// And the result still loads, with the old entry untouched.
+	r, err := Load(path)
+	if err != nil {
+		t.Fatalf("the appended file does not load: %v", err)
+	}
+	if len(r) != 3 {
+		t.Errorf("loaded %d routes, want 3", len(r))
+	}
+	if r["claude/existing"].Tier != model.TierPremium {
+		t.Errorf("the existing entry's tier changed to %q", r["claude/existing"].Tier)
+	}
+}
+
+func TestAddMissingIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_router.yaml")
+	write(t, path, "claude/a:\n  backend: claude\n  cli_model: a\n  tier: standard\n")
+
+	if _, _, err := AddMissing(path, []string{"claude/b"}, model.TierStandard); err != nil {
+		t.Fatalf("first AddMissing: %v", err)
+	}
+	afterFirst := read(t, path)
+
+	added, _, err := AddMissing(path, []string{"claude/b"}, model.TierStandard)
+	if err != nil {
+		t.Fatalf("second AddMissing: %v", err)
+	}
+	if len(added) != 0 {
+		t.Errorf("the second run added %v", added)
+	}
+	if read(t, path) != afterFirst {
+		t.Error("the second run changed the file")
+	}
+}
+
+// A key nothing can be inferred from is reported, not guessed at and not
+// silently dropped — the operator has to know it still needs a route.
+func TestAddMissingReportsWhatItCannotInfer(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_router.yaml")
+	write(t, path, "claude/a:\n  backend: claude\n  cli_model: a\n  tier: standard\n")
+	before := read(t, path)
+
+	added, skipped, err := AddMissing(path,
+		[]string{"openai/gpt-4", "bare-name", "claude/fine"}, model.TierStandard)
+	if err != nil {
+		t.Fatalf("AddMissing: %v", err)
+	}
+	if strings.Join(added, ",") != "claude/fine" {
+		t.Errorf("added = %v, want only the inferable key", added)
+	}
+	if strings.Join(skipped, ",") != "bare-name,openai/gpt-4" {
+		t.Errorf("skipped = %v, want both un-inferable keys, sorted", skipped)
+	}
+	if !strings.HasPrefix(read(t, path), before) {
+		t.Error("the original content was not preserved")
+	}
+}
+
+func TestAddMissingRefusesABrokenFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_router.yaml")
+	write(t, path, "k:\n  backend: openai\n  cli_model: m\n  tier: standard\n")
+	before := read(t, path)
+
+	if _, _, err := AddMissing(path, []string{"claude/x"}, model.TierStandard); err == nil {
+		t.Fatal("AddMissing appended to a file it could not parse")
+	}
+	if read(t, path) != before {
+		t.Error("a failed AddMissing still modified the file")
+	}
+}
+
+func TestAddMissingHandlesAFileWithNoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_router.yaml")
+	write(t, path, "claude/a:\n  backend: claude\n  cli_model: a\n  tier: standard")
+
+	if _, _, err := AddMissing(path, []string{"claude/b"}, model.TierStandard); err != nil {
+		t.Fatalf("AddMissing: %v", err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Errorf("the appended file does not parse: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fallbacks
+// ---------------------------------------------------------------------------
+
+func TestFallbacks(t *testing.T) {
+	r := loadString(t, `
+z/has-one:
+  backend: claude
+  cli_model: primary
+  tier: standard
+  fallback_cli_model: secondary
+a/also-has-one:
+  backend: codex
+  cli_model: p2
+  tier: cheap
+  fallback_cli_model: s2
+m/none:
+  backend: claude
+  cli_model: p3
+  tier: standard
+`)
+	got := r.Fallbacks()
+	if len(got) != 2 {
+		t.Fatalf("got %d fallbacks, want 2: %+v", len(got), got)
+	}
+	if got[0].Key != "a/also-has-one" || got[1].Key != "z/has-one" {
+		t.Errorf("fallbacks are not sorted by key: %+v", got)
+	}
+	if got[0].CLIModel != "p2" || got[0].Fallback != "s2" {
+		t.Errorf("fields lost: %+v", got[0])
+	}
+}
+
+func TestFallbacksIgnoresAnEmptyString(t *testing.T) {
+	r := loadString(t, "k:\n  backend: claude\n  cli_model: m\n  tier: standard\n  fallback_cli_model: \"\"\n")
+	if got := r.Fallbacks(); len(got) != 0 {
+		t.Errorf("an empty fallback was reported as one: %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Message formatting
+// ---------------------------------------------------------------------------
+
+// Same reason as internal/graph: this output is user-facing and the parity
+// harness diffs it against Python's, where `{x!r}` writes single quotes.
+func TestErrorMessagesUsePythonQuoting(t *testing.T) {
+	r := loadString(t, "claude/ok:\n  backend: claude\n  cli_model: m\n  tier: standard\n")
+	err := r.Validate([]model.Task{{ID: "T1", Model: "nope/nope"}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "'nope/nope'") {
+		t.Errorf("message does not use Python's single-quoted form:\n%s", err)
+	}
+}
+
+func TestKeysAreSorted(t *testing.T) {
+	r := loadString(t, `
+zzz:
+  backend: claude
+  cli_model: a
+  tier: standard
+aaa:
+  backend: claude
+  cli_model: b
+  tier: standard
+`)
+	if strings.Join(r.Keys(), ",") != "aaa,zzz" {
+		t.Errorf("Keys() = %v, want sorted", r.Keys())
+	}
+}
+
+// ---------------------------------------------------------------------------
+
+func loadString(t *testing.T, body string) Router {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "model_router.yaml")
+	write(t, path, body)
+	r, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return r
+}
+
+func write(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil { // #nosec G703 -- t.TempDir()
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path) // #nosec G304 -- t.TempDir()
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+func ptr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}

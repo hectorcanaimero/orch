@@ -112,6 +112,17 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   every matching line into a permanent diff. `graph.pyQuote` exists for that
   and nothing else.
 
+- **`fallback_cli_model` is announced, not warned about.** The G2.1 brief
+  asked for "a WARN per substitution", quoting FR-D-7. Sprint C deliberately
+  revised that: `orch.py:_warn_fallback_routes` says the original spec
+  "produces a double-emit that spams the console every startup", because the
+  actual substitution happens later in the reap loop on a version-drift
+  failure, not at startup. What Python does now is one INFO summary line, or
+  one INFO per route under `-v`. `router.Fallbacks()` returns the data and
+  leaves the level to the caller, so the CLI can reproduce the current
+  behaviour rather than the superseded spec. Worth knowing that the FR numbers
+  in the plan can predate the code.
+
 - **`internal/dashboard` — where the auth gate belongs.** Put the token check on
   the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,
   `/logs/stream`), never on the static surface. The embedded SPA's `index.html`
