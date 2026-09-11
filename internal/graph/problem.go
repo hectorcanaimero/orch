@@ -35,15 +35,30 @@ const (
 // string. Both cross the wire in `orch validate --json`, so both are part of
 // the compatibility contract rather than internal detail.
 type Problem struct {
-	// TaskID is empty when the problem is not about a specific task —
-	// Python writes null there.
-	TaskID      string   `json:"task_id"`
+	// TaskID and Remediation are pointers so that "not applicable" crosses the
+	// wire as `null` rather than as `""` or as an absent key.
+	//
+	// Python's `ValidationError.as_json` writes every key every time, with
+	// `None` where there is nothing to say: a task with no id has
+	// `"task_id": null`, and a problem with no fix to suggest has
+	// `"remediation": null`. `orch validate --json` output is diffed between
+	// the two binaries by scripts/parity.sh, so an omitted key and an empty
+	// string are both failures — and they are also different to a consumer,
+	// which can tell "no task" from "a task whose id is the empty string".
+	TaskID      *string  `json:"task_id"`
 	Field       string   `json:"field"`
 	Kind        string   `json:"kind"`
 	Message     string   `json:"message"`
-	Remediation string   `json:"remediation,omitempty"`
+	Remediation *string  `json:"remediation"`
 	Severity    Severity `json:"severity"`
 }
+
+// ref is the address of a string, for the fields Python can write as null.
+//
+// Reads better at the call sites than a local per problem, and keeps the
+// distinction visible: a Problem built without `ref(...)` is one that says
+// null, deliberately.
+func ref(s string) *string { return &s }
 
 // The kinds Validate can emit. Callers filter on these, so they are constants
 // rather than literals scattered through the file.

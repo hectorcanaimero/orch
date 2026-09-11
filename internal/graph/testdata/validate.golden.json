@@ -1,5 +1,13 @@
 [
   {
+    "field": "id",
+    "kind": "schema.tasks",
+    "message": "task is missing a non-empty string id",
+    "remediation": null,
+    "severity": "error",
+    "task_id": null
+  },
+  {
     "field": "dependencies",
     "kind": "dep.missing",
     "message": "depends on unknown task 'NOPE.T9'",

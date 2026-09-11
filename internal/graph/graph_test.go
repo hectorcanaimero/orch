@@ -79,12 +79,17 @@ func TestValidateMatchesThePythonGolden(t *testing.T) {
 		if g.Field != w.Field {
 			t.Errorf("problem %d: field = %q, Python says %q", i, g.Field, w.Field)
 		}
-		if g.TaskID != deref(w.TaskID) {
-			t.Errorf("problem %d: task_id = %q, Python says %q", i, g.TaskID, deref(w.TaskID))
+		// Compared as pointers, not through a deref helper. An earlier
+		// version of this test flattened the golden's nulls to "" before
+		// comparing, which made `"task_id": null` and `"task_id": ""`
+		// indistinguishable — the exact difference this file exists to catch.
+		if !sameOptional(g.TaskID, w.TaskID) {
+			t.Errorf("problem %d: task_id = %s, Python says %s",
+				i, showOptional(g.TaskID), showOptional(w.TaskID))
 		}
-		if g.Remediation != deref(w.Remediation) {
-			t.Errorf("problem %d: remediation = %q, Python says %q",
-				i, g.Remediation, deref(w.Remediation))
+		if !sameOptional(g.Remediation, w.Remediation) {
+			t.Errorf("problem %d: remediation = %s, Python says %s",
+				i, showOptional(g.Remediation), showOptional(w.Remediation))
 		}
 		if string(g.Severity) != w.Severity {
 			t.Errorf("problem %d: severity = %q, Python says %q", i, g.Severity, w.Severity)
@@ -548,11 +553,21 @@ func ids(tasks []model.Task) string {
 	return strings.Join(out, " ")
 }
 
-func deref(s *string) string {
-	if s == nil {
-		return ""
+// sameOptional treats nil and a pointer to "" as different, which is the
+// whole point: Python writes null for "does not apply" and would write "" only
+// for a task whose id really is the empty string.
+func sameOptional(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
 	}
-	return *s
+	return *a == *b
+}
+
+func showOptional(s *string) string {
+	if s == nil {
+		return "null"
+	}
+	return fmt.Sprintf("%q", *s)
 }
 
 // A golden file proves the output has not CHANGED, not that it is valid. This
@@ -635,4 +650,83 @@ func TestDOTIsWellFormed(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The wire shape, key by key.
+//
+// The field-by-field comparison above checks the values; this checks that Go
+// emits the same KEYS. `Remediation` carried `omitempty`, so a problem with no
+// fix to suggest dropped the key entirely while Python wrote
+// `"remediation": null` — a difference no value comparison can see, and one
+// `scripts/parity.sh` diffs directly.
+//
+// Compared as decoded maps rather than as bytes: the golden is written with
+// `sort_keys=True` and Go marshals struct fields in declaration order, so a
+// byte comparison would be a test of field ordering rather than of content.
+func TestValidateJSONShapeMatchesPython(t *testing.T) {
+	tasks, routes := loadParity(t)
+
+	raw, err := os.ReadFile("testdata/validate.golden.json") // #nosec G304 -- fixed testdata path
+	if err != nil {
+		t.Fatalf("read the golden: %v", err)
+	}
+	var want []map[string]any
+	if err := json.Unmarshal(raw, &want); err != nil {
+		t.Fatalf("parse the golden: %v", err)
+	}
+
+	encoded, err := json.Marshal(Validate(tasks, routes))
+	if err != nil {
+		t.Fatalf("marshal the problems: %v", err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("re-parse the problems: %v", err)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d problems, Python wrote %d", len(got), len(want))
+	}
+	for i := range want {
+		for _, key := range []string{"task_id", "field", "kind", "message", "remediation", "severity"} {
+			gv, gok := got[i][key]
+			wv, wok := want[i][key]
+			if gok != wok {
+				t.Errorf("problem %d: Go %s the key %q, Python %s it",
+					i, present(gok), key, present(wok))
+				continue
+			}
+			if gv != wv {
+				t.Errorf("problem %d: %s = %#v, Python wrote %#v", i, key, gv, wv)
+			}
+		}
+		if len(got[i]) != len(want[i]) {
+			t.Errorf("problem %d has %d keys, Python wrote %d", i, len(got[i]), len(want[i]))
+		}
+	}
+
+	// And the null is really in the golden, so this is not passing because
+	// both sides happen to have nothing to compare.
+	var sawNullTaskID, sawNullRemediation bool
+	for _, w := range want {
+		if v, ok := w["task_id"]; ok && v == nil {
+			sawNullTaskID = true
+		}
+		if v, ok := w["remediation"]; ok && v == nil {
+			sawNullRemediation = true
+		}
+	}
+	if !sawNullTaskID {
+		t.Error("the golden has no problem with a null task_id — the id-less task is what pins it")
+	}
+	if !sawNullRemediation {
+		t.Error("the golden has no problem with a null remediation")
+	}
+}
+
+func present(ok bool) string {
+	if ok {
+		return "has"
+	}
+	return "omits"
 }

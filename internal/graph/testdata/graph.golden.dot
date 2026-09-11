@@ -31,6 +31,13 @@ digraph orch {
     "CYC.C" [label="CYC.C\nCycle C"];
   }
 
+  subgraph cluster_phase_3 {
+    label="phase 3";
+    style=dashed;
+    color="#cccccc";
+    "" [label="\nA task whose id never got filled in"];
+  }
+
   "F0.T1" -> "F0.T2";
   "F0.T1" -> "BAD.MISSING";
   "F0.T2" -> "F1.T1";
