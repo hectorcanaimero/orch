@@ -69,15 +69,28 @@ compare() {
   py_out="$(printf '%s' "$py_out" | normalize)"
   go_out="$(printf '%s' "$go_out" | normalize)"
 
-  if [ "$py_rc" -eq "$go_rc" ] && [ "$py_out" = "$go_out" ]; then
+  # Both sides must actually SUCCEED before comparing output — two
+  # commands that fail for unrelated reasons can still exit with the same
+  # code and print nothing to stdout, which would otherwise read as a
+  # match. (This bit a first draft of this script: an incomplete fixture
+  # made Python fail validation while Go rejected an unrecognized flag on
+  # its not-yet-implemented stub — same exit code, same empty stdout,
+  # "ok" for entirely the wrong reason.)
+  if [ "$py_rc" -ne 0 ] || [ "$go_rc" -ne 0 ]; then
+    echo "FAIL $label (python exit=$py_rc, go exit=$go_rc — expected both 0)"
+    [ -n "$py_err" ] && echo "  python stderr: $py_err"
+    [ -n "$go_err" ] && echo "  go stderr: $go_err"
+    fail=1
+    return 1
+  fi
+
+  if [ "$py_out" = "$go_out" ]; then
     echo "ok   $label"
     return 0
   fi
 
-  echo "FAIL $label (python exit=$py_rc, go exit=$go_rc)"
+  echo "FAIL $label (both exited 0, output differs)"
   diff -u <(printf '%s\n' "$py_out") <(printf '%s\n' "$go_out")
-  [ -n "$py_err" ] && echo "  python stderr: $py_err"
-  [ -n "$go_err" ] && echo "  go stderr: $go_err"
   fail=1
 }
 
