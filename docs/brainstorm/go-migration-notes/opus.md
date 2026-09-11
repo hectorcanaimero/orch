@@ -221,3 +221,37 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `test_scaffolded_project_dry_runs_clean` and
   `test_spec_ref_resolves_where_the_prompt_looks`, and Go's
   `init.txtar`, which scaffolds and then runs `orch validate` on the result.
+
+- **A fourth set of columns arrived without the methods that use it.** The PR
+  and CI columns of `tasks_runtime` landed with migration 005 and `scanTask`
+  has read them since the start; nothing could write them or query on them, so
+  the whole CI-polling path was unbuildable. Reported by opus-2 starting
+  `_check_ci_once`.
+
+  | columns / rows | methods missing until | who it blocked |
+  |---|---|---|
+  | `spend` | #116 `SpendSince` | the budget gate (G2.2) |
+  | `runs` tallies | #130 | `latest_run` in `status --json` |
+  | `dispatches` | #148 `InFlightDispatches` | resume + reconcile (G3.3) |
+  | `pr_url` / `ci_status` / `ci_attempts` | this PR | the CI poller |
+
+  The working rule from #148 — *a PR adding a write to `Backend` adds its read
+  in the same PR* — would have caught the first three. It does not catch this
+  one, because these columns arrived in a MIGRATION, with no method at all on
+  either side. Widened version: **a migration that adds columns lands with the
+  methods that read and write them, or with a note saying which PR will.**
+
+- **Endpoints whose only consumer is being deleted (G5.5).** sonnet-2's operator
+  SPA trim removes the pages behind ten of the twenty-two endpoints G5.2 was
+  scoped to. Recorded here so the decision is not re-derived later:
+
+  - **Not ported** (the CLI already does the job): `/api/doctor` — `orch doctor`
+    exists; `/api/config/setup` — `orch init` exists.
+  - **Not ported, tunnel's own phase**: `/api/tunnel/{start,stop,logs}`, and
+    `{capabilities,status}` fold into G5.6.
+  - **Pending, not discarded — stakeholder content, the `publish/` lane
+    decides**: `/api/architecture/{status,history,regenerate,current}` and
+    `/api/docs`, `/api/docs/content`. These are PRD/SPEC markdown and diagrams,
+    and `api_docs_list`/`api_docs_content` are in the stakeholder profile's
+    allow-list by design. The operator SPA losing them says nothing about
+    whether G6.1-G6.3 wants them.

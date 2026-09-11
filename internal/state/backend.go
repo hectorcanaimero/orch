@@ -47,6 +47,18 @@ type Backend interface {
 	// InFlightDispatches returns the dispatches still marked in flight for
 	// this project, across runs — what a resumed run reconciles against.
 	InFlightDispatches(ctx context.Context) ([]Dispatch, error)
+
+	// TasksWithPendingCI returns the tasks whose PR is open and whose CI has
+	// not finished — what the CI poller iterates.
+	TasksWithPendingCI(ctx context.Context) ([]TaskRuntime, error)
+	// SetTaskPR records a task's pull request and marks its CI pending.
+	SetTaskPR(ctx context.Context, taskID, prURL string) error
+	// SetTaskCIStatus records how a task's CI finished: pending, success,
+	// failure or skipped.
+	SetTaskCIStatus(ctx context.Context, taskID, status string) error
+	// IncrementCIAttempts bumps the retry counter and returns its new value —
+	// the number of the attempt that just started.
+	IncrementCIAttempts(ctx context.Context, taskID string) (int, error)
 	// RecordSpend appends a completed dispatch's cost, de-duplicated.
 	RecordSpend(ctx context.Context, s Spend) error
 
