@@ -289,8 +289,12 @@ jobs:
         run: |
           set -euo pipefail
           MARKER='<!-- orch:gemini-review -->'
+          # --paginate applies --jq per page, so a match on page 2 with matches
+          # on page 1 would print two ids. Only ever one comment carries the
+          # marker, but take the first line rather than trust that.
           EXISTING=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-            --jq "[.[] | select(.body | contains(\"$MARKER\"))] | .[0].id // empty")
+            --jq "[.[] | select(.body | contains(\"$MARKER\"))] | .[0].id // empty" \
+            | head -n 1)
           if [ -n "$EXISTING" ]; then
             gh api "repos/$REPO/issues/comments/$EXISTING" -X PATCH -F body=@comment.md >/dev/null
             echo "updated comment $EXISTING"
