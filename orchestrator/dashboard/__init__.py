@@ -1,13 +1,12 @@
-"""Local dashboard for the orchestrator — FastAPI + HTMX + Alpine + Tailwind.
+"""Local dashboard for the orchestrator — FastAPI serving the embedded React SPA.
 
 Read-only surface over `tasks.json`, `events-*.jsonl` and `spend-*.jsonl`
 inside a project's `orchestrator/state/` directory. This module never edits
 tasks.json and never writes state files (hard rule from the MVP contract).
 
-The heavy imports (fastapi / jinja2) live inside `server.create_app()` so
-importing `dashboard.metrics` / `dashboard.pricing` / `dashboard.log_stream`
-for unit tests does NOT force the web stack to be installed. If the tests
-that render templates need jinja2 they use `pytest.importorskip`.
+The heavy import (fastapi) lives inside `server.create_app()` so importing
+`dashboard.metrics` / `dashboard.pricing` / `dashboard.log_stream` for unit
+tests does NOT force the web stack to be installed.
 """
 
 from __future__ import annotations

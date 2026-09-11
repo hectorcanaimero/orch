@@ -4493,7 +4493,7 @@ def _run_dashboard_subcommand(argv: list[str]) -> int:
         from orchestrator.dashboard.server import run as dashboard_run
     except ImportError as exc:
         print(f"dashboard dependencies missing: {exc}", file=sys.stderr)
-        print("Install: fastapi >= 0.115, uvicorn[standard] >= 0.30, jinja2 >= 3.1",
+        print("Install: fastapi >= 0.115, uvicorn[standard] >= 0.30",
               file=sys.stderr)
         return 1
 
