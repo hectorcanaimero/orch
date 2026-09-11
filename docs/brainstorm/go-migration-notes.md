@@ -518,3 +518,48 @@ block) were all of that kind.
      something `internal/worktree` itself can test. It's written down as a
      "Caller contract" section in `worktree.go`'s package doc comment so it
      isn't lost between now and G-whatever-does-the-engine.
+
+- **`internal/vcs` (G4.2) — "skipped" is not a distinct CI state in the
+  Python source, despite the brief.** The G4 coordination brief for this
+  package said to port "the states Python distinguishes (including
+  `skipped`, which is a CI-run state, not a task state)". Read
+  `orchestrator/vcs/github.py`'s and `gitlab.py`'s `_CI_STATE_MAP`: both map
+  a `skipped` conclusion/status to `"success"`, exactly like `completed`/
+  `neutral` (GitHub) or a normal green pipeline (GitLab) — `get_ci_status`
+  only ever returns `success`/`failure`/`pending`, three values, never a
+  fourth `skipped`. `internal/vcs.CIState` ports that three-value reality;
+  `TestGitHubCIStatusSkippedConclusionMapsToSuccess` and its GitLab
+  counterpart pin it. (The "skipped" the brief may have had in mind is
+  likely the CI-run status enum bug 9 declared in the state layer — see
+  PR #121 — a different, unrelated concept from what this package returns.)
+
+- **`internal/vcs` deliberately does not mirror Python's silent
+  degradation on a missing/unauthenticated CLI — this was an explicit ask
+  in the brief, not a unilateral improvement, but the mechanism is worth
+  recording.** Python's `create_pr`/`get_ci_status`/`merge_pr` return a
+  zero value (`None`/`"pending"`/`False`) on ANY subprocess failure,
+  indistinguishable from "CI just hasn't finished yet". Every exported
+  method here checks `exec.LookPath` first (cheap, no subprocess) and
+  returns a typed `*CLIError` if gh/glab isn't installed — always, on every
+  call, since a missing binary is a permanent, structural problem no
+  amount of polling fixes. `CreatePR`/`MergePR` additionally run
+  `<binary> auth status` on failure (one extra subprocess call, acceptable
+  since both are called once per task, never in the poll loop) to tell
+  "not authenticated" apart from an ordinary business failure (PR already
+  exists, not mergeable yet). `CIStatus`/`CILogs` — the methods
+  `internal/engine`'s poll loop will call on a timer — deliberately do NOT
+  make that extra auth-check call on every tick, matching Python's cheap
+  steady-state failure behavior there.
+
+- **`MergePR(prURL string, squash, auto bool) error` parametrizes flags
+  Python hardcodes — also an explicit brief ask, not a spec deviation, but
+  it changes GitLab's actual CLI surface.** Python's `GitHubProvider.merge_pr`
+  always passes `--squash --auto`; `GitLabProvider.merge_pr` always passes
+  `--squash --yes` and has no auto-merge equivalent at all. Making `squash`/
+  `auto` real parameters (so a caller can opt into auto-merge rather than
+  always getting it) means GitLab's `auto=true` needed a real flag to map
+  to: `--when-pipeline-succeeds` is glab's actual "merge once CI passes"
+  flag (there is no `--auto` in glab's `mr merge`). This is new behavior
+  for the GitLab side, not a port of anything Python does today — flagged
+  here per the migration rule so it's a documented decision, not a silent
+  divergence, if a GitLab project ever exercises it.

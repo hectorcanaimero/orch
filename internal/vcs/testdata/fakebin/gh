@@ -1,0 +1,48 @@
+#!/bin/sh
+# Fake `gh` for internal/vcs tests. Behavior is driven entirely by
+# environment variables so each test controls exactly what a given
+# subcommand returns, without needing a real GitHub CLI or network access.
+#
+# FAKE_GH_LOG, if set, gets one line per invocation: the full argv.
+#
+# Subcommand -> variable pair (stdout, exit code):
+#   auth status                          FAKE_GH_AUTH_EXIT
+#   pr create ...                        FAKE_GH_CREATE_STDOUT / _EXIT
+#   pr checks ...                        FAKE_GH_CHECKS_STDOUT / _EXIT
+#   pr view ...                          FAKE_GH_VIEW_STDOUT / _EXIT
+#   run view ...                         FAKE_GH_RUNVIEW_STDOUT / _EXIT
+#   pr merge ...                         FAKE_GH_MERGE_STDOUT / _EXIT
+
+if [ -n "$FAKE_GH_LOG" ]; then
+  printf '%s\n' "gh $*" >>"$FAKE_GH_LOG"
+fi
+
+case "$1 $2" in
+  "auth status")
+    exit "${FAKE_GH_AUTH_EXIT:-0}"
+    ;;
+  "pr create")
+    printf '%s' "${FAKE_GH_CREATE_STDOUT:-}"
+    exit "${FAKE_GH_CREATE_EXIT:-0}"
+    ;;
+  "pr checks")
+    printf '%s' "${FAKE_GH_CHECKS_STDOUT:-}"
+    exit "${FAKE_GH_CHECKS_EXIT:-0}"
+    ;;
+  "pr view")
+    printf '%s' "${FAKE_GH_VIEW_STDOUT:-}"
+    exit "${FAKE_GH_VIEW_EXIT:-0}"
+    ;;
+  "run view")
+    printf '%s' "${FAKE_GH_RUNVIEW_STDOUT:-}"
+    exit "${FAKE_GH_RUNVIEW_EXIT:-0}"
+    ;;
+  "pr merge")
+    printf '%s' "${FAKE_GH_MERGE_STDOUT:-}"
+    exit "${FAKE_GH_MERGE_EXIT:-0}"
+    ;;
+  *)
+    echo "fake gh: unhandled subcommand: $*" >&2
+    exit 127
+    ;;
+esac
