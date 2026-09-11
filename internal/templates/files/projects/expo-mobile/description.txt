@@ -1,0 +1,1 @@
+React Native mobile app — Expo + expo-router + TypeScript. Runs on a phone from task one.
