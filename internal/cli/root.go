@@ -88,6 +88,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newInitCmd(flags))
 	root.AddCommand(newConfigCmd(flags))
 	root.AddCommand(newInstallSkillsCmd(flags))
+	root.AddCommand(newAtomizeCmd(flags))
 	return root
 }
 
