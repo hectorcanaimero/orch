@@ -696,6 +696,222 @@ def check_state_backend(
 
 
 # ---------------------------------------------------------------------------
+# VCS readiness (G0.2) — worktree_mode / auto_pr degrade instead of failing
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class VcsReadiness:
+    """What the environment can actually support for `dispatch`/`vcs`.
+
+    Both flags are on by default since v0.11, so a repo that is not a git
+    checkout — or has no remote, or no `gh`/`glab` — must degrade to a
+    working subset instead of blocking every task. `reasons` holds the
+    operator-facing lines explaining what got turned off and why.
+    """
+
+    requested_worktree: bool
+    requested_auto_pr: bool
+    is_git_repo: bool
+    has_remote: bool
+    cli: str
+    cli_path: str | None
+
+    @property
+    def worktree_ok(self) -> bool:
+        """Worktrees are purely local — a git repo is the only requirement."""
+        return self.requested_worktree and self.is_git_repo
+
+    @property
+    def auto_pr_ok(self) -> bool:
+        """PR creation needs worktrees, a remote to push to, and the CLI."""
+        return (
+            self.requested_auto_pr
+            and self.worktree_ok
+            and self.has_remote
+            and self.cli_path is not None
+        )
+
+    @property
+    def reasons(self) -> list[str]:
+        """One line per capability turned off. Empty when nothing degraded."""
+        out: list[str] = []
+        if not (self.requested_worktree or self.requested_auto_pr):
+            return out
+        if not self.is_git_repo:
+            out.append(
+                "not a git repository — running without worktrees and without "
+                "PRs (tasks run in the project root). Fix: `git init`."
+            )
+            return out
+        if self.requested_auto_pr and not self.has_remote:
+            out.append(
+                "git repo has no remote — running with local worktrees but "
+                "without push or PRs. Fix: `git remote add origin <url>`."
+            )
+        if self.requested_auto_pr and self.has_remote and self.cli_path is None:
+            out.append(
+                f"`{self.cli}` is not on PATH — running with worktrees but "
+                f"without PRs. Fix: install {self.cli} and authenticate it."
+            )
+        return out
+
+
+def _git_ok(args: list[str], cwd: Path) -> tuple[bool, str]:
+    """Run a git command, returning (success, stdout). Never raises."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            timeout=_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    return result.returncode == 0, result.stdout.strip()
+
+
+def probe_vcs_readiness(project_root: Path, cfg: dict[str, Any]) -> VcsReadiness:
+    """Probe git + the VCS CLI for the capabilities `cfg` asks for.
+
+    Pure probe — no logging, no mutation. Both `orch run` (to degrade) and
+    `orch doctor` (to report) call this so they can never disagree.
+    """
+    dispatch_cfg = cfg.get("dispatch") or {}
+    vcs_cfg = cfg.get("vcs") or {}
+    requested_worktree = bool(dispatch_cfg.get("worktree_mode", False))
+    requested_auto_pr = bool(vcs_cfg.get("auto_pr", False))
+    cli = "glab" if vcs_cfg.get("provider") == "gitlab" else "gh"
+
+    is_git_repo, out = _git_ok(["rev-parse", "--is-inside-work-tree"], project_root)
+    is_git_repo = is_git_repo and out == "true"
+    has_remote = False
+    if is_git_repo:
+        ok, remotes = _git_ok(["remote"], project_root)
+        has_remote = ok and bool(remotes)
+
+    return VcsReadiness(
+        requested_worktree=requested_worktree,
+        requested_auto_pr=requested_auto_pr,
+        is_git_repo=is_git_repo,
+        has_remote=has_remote,
+        cli=cli,
+        cli_path=shutil.which(cli),
+    )
+
+
+def check_vcs_readiness(project_root: Path, cfg: dict[str, Any]) -> list[CheckResult]:
+    """Doctor checks for `vcs.git_repo`, `vcs.remote` and `vcs.cli`.
+
+    All three `skip` when neither `dispatch.worktree_mode` nor `vcs.auto_pr`
+    is on. Otherwise a missing prerequisite is a `warn` (never an `error`):
+    orch degrades to the working subset rather than refusing to run.
+    """
+    readiness = probe_vcs_readiness(project_root, cfg)
+    if not (readiness.requested_worktree or readiness.requested_auto_pr):
+        return [
+            CheckResult(
+                name=name,
+                status="skip",
+                detail="dispatch.worktree_mode and vcs.auto_pr are both off",
+            )
+            for name in ("vcs.git_repo", "vcs.remote", "vcs.cli")
+        ]
+
+    results: list[CheckResult] = []
+    if readiness.is_git_repo:
+        results.append(
+            CheckResult(
+                name="vcs.git_repo",
+                status="ok",
+                detail=f"{project_root} is a git work tree",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="vcs.git_repo",
+                status="warn",
+                detail=(
+                    f"{project_root} is not a git repository — orch will run "
+                    "WITHOUT worktrees and WITHOUT PRs"
+                ),
+                remediation="git init",
+            )
+        )
+
+    if not readiness.requested_auto_pr:
+        results.append(
+            CheckResult(
+                name="vcs.remote",
+                status="skip",
+                detail="vcs.auto_pr is off — no remote needed",
+            )
+        )
+    elif not readiness.is_git_repo:
+        results.append(
+            CheckResult(
+                name="vcs.remote",
+                status="skip",
+                detail="not a git repository — cannot have a remote",
+            )
+        )
+    elif readiness.has_remote:
+        results.append(
+            CheckResult(name="vcs.remote", status="ok", detail="git remote configured")
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="vcs.remote",
+                status="warn",
+                detail=(
+                    "git repo has no remote — worktrees stay local, no push "
+                    "and no PRs"
+                ),
+                remediation="git remote add origin <url>",
+            )
+        )
+
+    if not readiness.requested_auto_pr:
+        results.append(
+            CheckResult(
+                name="vcs.cli",
+                status="skip",
+                detail="vcs.auto_pr is off — no VCS CLI needed",
+            )
+        )
+    elif readiness.cli_path:
+        results.append(
+            CheckResult(
+                name="vcs.cli",
+                status="ok",
+                detail=f"{readiness.cli} at {readiness.cli_path}",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                name="vcs.cli",
+                status="warn",
+                detail=(
+                    f"{readiness.cli} is not on PATH — orch will run with "
+                    "worktrees but WITHOUT PRs"
+                ),
+                remediation=_vcs_cli_install_hint(readiness.cli),
+            )
+        )
+    return results
+
+
+def _vcs_cli_install_hint(cli: str) -> str:
+    if cli == "glab":
+        return "brew install glab  # or https://gitlab.com/gitlab-org/cli — then `glab auth login`"
+    return "brew install gh  # or https://cli.github.com — then `gh auth login`"
+
+
+# ---------------------------------------------------------------------------
 # Tunnel checks (Sprint E-5, TUN-11)
 # ---------------------------------------------------------------------------
 

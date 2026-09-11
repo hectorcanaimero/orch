@@ -75,6 +75,15 @@ concurrency:
     claude: 2
     gemini: 2
 
+state:
+  backend: sqlite         # default; `file` is legacy JSONL
+
+dispatch:
+  worktree_mode: true     # default; each task runs in its own git worktree
+
+vcs:
+  auto_pr: true           # default; one PR per finished task
+
 dashboard:
   kanban:
     refresh_interval_s: 10

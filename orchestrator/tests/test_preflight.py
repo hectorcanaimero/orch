@@ -563,3 +563,128 @@ def test_validate_preset_sanity_missing_preset(tmp_path: Path) -> None:
 
 def test_validate_preset_sanity_no_budgets_file(tmp_path: Path) -> None:
     assert validate_preset_sanity(tmp_path / "nope.yaml", "any", 200_000) == []
+
+
+# ---------------------------------------------------------------------------
+# G0.2 — VCS readiness (worktree_mode / auto_pr degrade instead of failing)
+# ---------------------------------------------------------------------------
+
+_BOTH_ON = {"dispatch": {"worktree_mode": True}, "vcs": {"auto_pr": True}}
+
+
+def _git(tmp_path: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=str(tmp_path), check=True, capture_output=True)
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    _git(tmp_path, "init", "-q")
+    return tmp_path
+
+
+def test_probe_vcs_readiness_not_a_git_repo(tmp_path: Path) -> None:
+    from orchestrator.preflight import probe_vcs_readiness
+
+    r = probe_vcs_readiness(tmp_path, _BOTH_ON)
+    assert r.is_git_repo is False
+    assert r.worktree_ok is False
+    assert r.auto_pr_ok is False
+    assert len(r.reasons) == 1
+    assert "not a git repository" in r.reasons[0]
+    assert "git init" in r.reasons[0]
+
+
+def test_probe_vcs_readiness_repo_without_remote(tmp_path: Path) -> None:
+    """Worktrees are local — they survive a missing remote; PRs do not."""
+    from orchestrator.preflight import probe_vcs_readiness
+
+    r = probe_vcs_readiness(_init_repo(tmp_path), _BOTH_ON)
+    assert r.is_git_repo is True
+    assert r.has_remote is False
+    assert r.worktree_ok is True
+    assert r.auto_pr_ok is False
+    assert any("no remote" in reason for reason in r.reasons)
+
+
+def test_probe_vcs_readiness_full_environment(tmp_path: Path) -> None:
+    from orchestrator.preflight import probe_vcs_readiness
+
+    _init_repo(tmp_path)
+    _git(tmp_path, "remote", "add", "origin", "https://example.invalid/x.git")
+    with patch("orchestrator.preflight.shutil.which", return_value="/usr/bin/gh"):
+        r = probe_vcs_readiness(tmp_path, _BOTH_ON)
+    assert r.worktree_ok is True
+    assert r.auto_pr_ok is True
+    assert r.reasons == []
+
+
+def test_probe_vcs_readiness_missing_cli_keeps_worktrees(tmp_path: Path) -> None:
+    from orchestrator.preflight import probe_vcs_readiness
+
+    _init_repo(tmp_path)
+    _git(tmp_path, "remote", "add", "origin", "https://example.invalid/x.git")
+    with patch("orchestrator.preflight.shutil.which", return_value=None):
+        r = probe_vcs_readiness(tmp_path, _BOTH_ON)
+    assert r.worktree_ok is True
+    assert r.auto_pr_ok is False
+    assert any("`gh` is not on PATH" in reason for reason in r.reasons)
+
+
+def test_probe_vcs_readiness_gitlab_probes_glab(tmp_path: Path) -> None:
+    from orchestrator.preflight import probe_vcs_readiness
+
+    cfg = {"dispatch": {"worktree_mode": True}, "vcs": {"auto_pr": True, "provider": "gitlab"}}
+    r = probe_vcs_readiness(tmp_path, cfg)
+    assert r.cli == "glab"
+
+
+def test_probe_vcs_readiness_nothing_requested_has_no_reasons(tmp_path: Path) -> None:
+    from orchestrator.preflight import probe_vcs_readiness
+
+    r = probe_vcs_readiness(tmp_path, {"dispatch": {"worktree_mode": False}, "vcs": {"auto_pr": False}})
+    assert r.reasons == []
+    assert r.worktree_ok is False
+    assert r.auto_pr_ok is False
+
+
+def test_check_vcs_readiness_all_skip_when_features_off(tmp_path: Path) -> None:
+    from orchestrator.preflight import check_vcs_readiness
+
+    results = check_vcs_readiness(tmp_path, {"dispatch": {}, "vcs": {}})
+    assert {c.name for c in results} == {"vcs.git_repo", "vcs.remote", "vcs.cli"}
+    assert {c.status for c in results} == {"skip"}
+
+
+def test_check_vcs_readiness_warns_never_errors(tmp_path: Path) -> None:
+    """A missing prerequisite is a warning (exit 1), never an error (exit 2)."""
+    from orchestrator.preflight import check_vcs_readiness, exit_code_for_checks
+
+    with patch("orchestrator.preflight.shutil.which", return_value=None):
+        results = check_vcs_readiness(tmp_path, _BOTH_ON)
+    by_name = {c.name: c for c in results}
+    assert by_name["vcs.git_repo"].status == "warn"
+    assert by_name["vcs.git_repo"].remediation == "git init"
+    assert "WITHOUT worktrees" in by_name["vcs.git_repo"].detail
+    assert exit_code_for_checks(results) == 1
+    assert not any(c.status == "error" for c in results)
+
+
+def test_check_vcs_readiness_remote_warn_has_remediation(tmp_path: Path) -> None:
+    from orchestrator.preflight import check_vcs_readiness
+
+    results = check_vcs_readiness(_init_repo(tmp_path), _BOTH_ON)
+    by_name = {c.name: c for c in results}
+    assert by_name["vcs.git_repo"].status == "ok"
+    assert by_name["vcs.remote"].status == "warn"
+    assert by_name["vcs.remote"].remediation == "git remote add origin <url>"
+
+
+def test_check_vcs_readiness_remote_and_cli_skip_without_auto_pr(tmp_path: Path) -> None:
+    from orchestrator.preflight import check_vcs_readiness
+
+    cfg = {"dispatch": {"worktree_mode": True}, "vcs": {"auto_pr": False}}
+    by_name = {c.name: c for c in check_vcs_readiness(_init_repo(tmp_path), cfg)}
+    assert by_name["vcs.git_repo"].status == "ok"
+    assert by_name["vcs.remote"].status == "skip"
+    assert by_name["vcs.cli"].status == "skip"

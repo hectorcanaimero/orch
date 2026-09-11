@@ -40,9 +40,13 @@ class WorktreeManager:
     (task_id → path) so ``remove_all`` can clean up on SIGTERM.
     """
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, push_enabled: bool = True) -> None:
         self._root = project_root.resolve()
         self._active: dict[str, Path] = {}
+        # G0.2: worktree mode is on by default, so a repo with no remote is a
+        # normal case. Worktrees still isolate the agents locally; only the
+        # push is skipped, silently, instead of failing once per task.
+        self._push_enabled = push_enabled
 
     # ---- path helpers -------------------------------------------------------
 
@@ -152,9 +156,14 @@ class WorktreeManager:
         ``--force-with-lease`` makes retried tasks overwrite the previous
         attempt's branch without clobbering unrelated remote changes.
 
+        No-op when the manager was constructed with ``push_enabled=False``
+        (the repo has no remote).
+
         Raises:
             WorktreeError: if ``git push`` fails.
         """
+        if not self._push_enabled:
+            return
         self._run(
             ["git", "push", "--force-with-lease", "-u", "origin", self.branch_name(task_id)],
             task_id,

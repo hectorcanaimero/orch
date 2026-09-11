@@ -353,3 +353,65 @@ def test_doctor_warns_when_both_legacy_and_namespaced_state_dbs_exist(
     assert "two SQLite DBs coexist" in div_check["detail"]
     assert "IGNORING" in div_check["detail"]
     assert "rm " in (div_check.get("remediation") or "")
+
+
+# ---------------------------------------------------------------------------
+# G0.2 — vcs.* checks appear in the report and stay non-fatal
+# ---------------------------------------------------------------------------
+
+
+def _enable_vcs(root: Path) -> None:
+    """Append the G0.2 defaults (worktrees + auto PR) to a scaffolded config."""
+    cfg = root / ".orchestrator" / "config.yaml"
+    cfg.write_text(
+        cfg.read_text()
+        + "dispatch:\n  worktree_mode: true\n  base_branch: main\n"
+        + "vcs:\n  provider: github\n  auto_pr: true\n"
+    )
+
+
+def test_doctor_warns_but_does_not_error_outside_a_git_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The shipped defaults in a non-git dir must degrade, not fail."""
+    root = tmp_path / "proj"
+    _scaffold_project(root, backend_kind="sqlite")
+    _enable_vcs(root)
+
+    _run_doctor_subcommand([*_common_args(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    checks = {c["name"]: c for c in payload["checks"]}
+
+    assert checks["vcs.git_repo"]["status"] == "warn"
+    assert "not a git repository" in checks["vcs.git_repo"]["detail"]
+    assert checks["vcs.git_repo"]["remediation"] == "git init"
+    # Degradation is a warning, never an error — exit 2 would block the user.
+    assert payload["exit_code"] != 2
+
+
+def test_doctor_skips_vcs_checks_when_features_are_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    root = tmp_path / "proj"
+    _scaffold_project(root, backend_kind="file")
+
+    _run_doctor_subcommand([*_common_args(root), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    checks = {c["name"]: c for c in payload["checks"]}
+    assert checks["vcs.git_repo"]["status"] == "skip"
+    assert checks["vcs.remote"]["status"] == "skip"
+    assert checks["vcs.cli"]["status"] == "skip"
+
+
+def test_doctor_only_filter_selects_vcs_checks(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    root = tmp_path / "proj"
+    _scaffold_project(root, backend_kind="sqlite")
+    _enable_vcs(root)
+
+    _run_doctor_subcommand([*_common_args(root), "--json", "--only", "vcs."])
+    payload = json.loads(capsys.readouterr().out)
+    assert {c["name"] for c in payload["checks"]} == {
+        "vcs.git_repo", "vcs.remote", "vcs.cli",
+    }

@@ -169,6 +169,24 @@ def test_push_raises_worktree_error_on_failure(tmp_path: Path) -> None:
             wm.push("F2.1.T3")
 
 
+# ---- push gating (G0.2) ----------------------------------------------------
+
+
+def test_push_is_a_noop_when_push_disabled(tmp_path: Path) -> None:
+    """No remote → skip the push silently instead of failing once per task."""
+    wm = WorktreeManager(tmp_path, push_enabled=False)
+    with patch("subprocess.run", return_value=_ok_run()) as mock_run:
+        wm.push("F2.1.T3")
+    mock_run.assert_not_called()
+
+
+def test_push_enabled_defaults_to_true(tmp_path: Path) -> None:
+    wm = WorktreeManager(tmp_path)
+    with patch("subprocess.run", return_value=_ok_run()) as mock_run:
+        wm.push("F2.1.T3")
+    mock_run.assert_called_once()
+
+
 # ---- WorktreeManager.commit_pending (Sprint F-6, fix #60) ------------------
 
 

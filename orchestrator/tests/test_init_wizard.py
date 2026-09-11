@@ -413,3 +413,46 @@ def test_batch_scaffold_force_flag_still_overwrites(tmp_path: Path) -> None:
     assert rc == 0
     payload = json.loads((project_root / "tasks.json").read_text())
     assert payload["meta"]["project"] == "b2"
+
+
+# ---- G0.2: defaults surfaced in the H-7 confirm gate ---------------------
+
+
+def test_wizard_state_backend_defaults_to_sqlite(tmp_path: Path) -> None:
+    """Pressing enter at the backend prompt must pick sqlite, not file."""
+    import argparse
+
+    project_root = tmp_path / "default-backend"
+    answers = _wizard_answers("dbproj", project_root, state_backend="")
+    args = argparse.Namespace()
+    rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
+    assert rc == 0
+    cfg = (project_root / ".orchestrator" / "config.yaml").read_text()
+    assert "backend: sqlite" in cfg
+
+
+def test_wizard_summary_shows_worktrees_and_auto_pr(tmp_path: Path) -> None:
+    """The confirm gate must state that worktrees and auto-PR are on — they
+    create branches and open PRs, so the operator has to see them first."""
+    import argparse
+
+    project_root = tmp_path / "vcs-summary"
+    answers = _wizard_answers("vcsproj", project_root)
+    args = argparse.Namespace()
+    out = io.StringIO()
+    rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=out)
+    assert rc == 0
+    body = out.getvalue()
+    summary = body[body.index("Ready to scaffold with these settings"):]
+    assert "worktrees        on" in summary
+    assert "auto PR          on" in summary
+    assert "auto merge       off" in summary
+
+
+def test_wizard_summary_flags_are_read_from_the_template(tmp_path: Path) -> None:
+    """`_vcs_flags_for` reads the config that will actually be written, so the
+    summary can never drift from disk."""
+    from orchestrator.init_cmd import _vcs_flags_for, list_templates
+
+    for template in [None, *list_templates()]:
+        assert _vcs_flags_for(template) == (True, True, False), template

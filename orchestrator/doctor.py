@@ -308,6 +308,11 @@ def build_doctor_report(
     # Issue #84: warn when both legacy and namespaced SQLite DBs coexist.
     checks.append(_check_state_db_divergence(paths))
 
+    # G0.2: worktree_mode + auto_pr ship on by default, so the environment
+    # they need (git repo, remote, gh/glab) is reported here as warnings —
+    # `orch run` degrades to the working subset instead of blocking tasks.
+    checks.extend(preflight.check_vcs_readiness(paths.project_root, cfg))
+
     # H-6: check whether the packaged /orch Claude Code skill is installed
     # under ~/.claude/skills/orch/. Skipped when Claude Code isn't set up.
     checks.append(_check_orch_skill_installed())

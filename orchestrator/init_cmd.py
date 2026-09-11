@@ -708,13 +708,13 @@ def run_wizard(
 
     state_backend = prompt(
         "state backend",
-        default="file",
-        choices=["file", "sqlite"],
+        default="sqlite",
+        choices=["sqlite", "file"],
         input_fn=input_fn,
     )
     _say(
-        "  → file backend: JSONL + JSON in state/. Simple, easy to eyeball.\n"
-        "  → sqlite backend: single orch.db, better for multi-project setups.\n"
+        "  → file backend: JSONL + JSON in state/. Legacy — kept for\n"
+        "    pre-v0.11 projects and removed in the next major.\n"
         if state_backend == "file"
         else "  → sqlite backend selected — single orch.db file with WAL journaling.\n"
     )
@@ -765,12 +765,16 @@ def run_wizard(
     # Everything above is a prompt with a default; nothing has touched the
     # disk yet. Show the operator the full set of choices in one glance so
     # they can bail out with "n" instead of Ctrl-C-then-clean-up.
+    _wt_mode, _auto_pr, _auto_merge = _vcs_flags_for(template_choice)
     _print_wizard_summary(
         _say,
         project_id=project_id,
         project_root=project_root,
         template=template_choice,
         state_backend=state_backend,
+        worktree_mode=_wt_mode,
+        auto_pr=_auto_pr,
+        auto_merge=_auto_merge,
         budget_preset=budget_preset,
         spec_root=spec_root,
         tier_choices=tier_choices,
@@ -892,6 +896,31 @@ def run_wizard(
     return 0
 
 
+def _vcs_flags_for(template: str | None) -> tuple[bool, bool, bool]:
+    """Return (worktree_mode, auto_pr, auto_merge) for the config `init` will
+    write — the chosen template's `config.yaml.tmpl`, or the packaged
+    `config.yaml` when scaffolding blank.
+
+    Read from disk rather than hardcoded so the H-7 confirm summary can
+    never drift from what actually lands in `.orchestrator/config.yaml`.
+    """
+    import yaml  # noqa: PLC0415
+
+    if template:
+        source = _TEMPLATES_DIR / "projects" / template / "config.yaml.tmpl"
+    else:
+        source = _PKG_DIR / "config.yaml"
+    try:
+        cfg = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return (True, True, False)
+    return (
+        bool((cfg.get("dispatch") or {}).get("worktree_mode", False)),
+        bool((cfg.get("vcs") or {}).get("auto_pr", False)),
+        bool((cfg.get("github") or {}).get("auto_merge", False)),
+    )
+
+
 def _print_wizard_summary(
     say: Callable[[str], None],
     *,
@@ -903,6 +932,9 @@ def _print_wizard_summary(
     spec_root: str,
     tier_choices: dict[str, str | None],
     sdd: bool,
+    worktree_mode: bool = True,
+    auto_pr: bool = True,
+    auto_merge: bool = False,
 ) -> None:
     """Print the pre-write summary block the operator confirms against.
 
@@ -916,6 +948,9 @@ def _print_wizard_summary(
     say(f"  destination      {project_root}")
     say(f"  template         {template or 'blank'}")
     say(f"  state backend    {state_backend}")
+    say(f"  worktrees        {'on' if worktree_mode else 'off'}")
+    say(f"  auto PR          {'on' if auto_pr else 'off'}")
+    say(f"  auto merge       {'on' if auto_merge else 'off'}")
     say(f"  budget preset    {budget_preset}")
     say(f"  spec root        {spec_root}")
     for tier in ("premium", "standard", "cheap"):
