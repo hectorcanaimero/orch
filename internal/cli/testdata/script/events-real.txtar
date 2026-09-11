@@ -6,7 +6,7 @@
 exec orch events F0.T1 --json --project-root billing-api --project-id billing-api
 ! stderr .
 stdout '"event_type":"dispatch"'
-stdout '"event_type":"exit_ok"'
+stdout '"event_type":"success"'
 stdout '"ts":"2026-09-01T09:00:00\+00:00"'
 stdout '"run_id":"fixture-run-0001"'
 stdout '"project_id":"billing-api"'
@@ -14,7 +14,7 @@ stdout '"project_id":"billing-api"'
 exec orch events F0.T1 --project-root billing-api --project-id billing-api
 stdout 'TS\s+EVENT\s+BACKEND\s+RUN'
 stdout 'dispatch'
-stdout 'exit_ok'
+stdout 'success'
 # shortRunID truncates "fixture-run-0001" (16 chars) to its first 8.
 stdout 'fixture-'
 ! stdout 'fixture-run-0001'

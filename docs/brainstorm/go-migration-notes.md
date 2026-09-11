@@ -134,8 +134,55 @@ block) were all of that kind.
 
 - ~~**Bugs 6, 7, 8 — `classify_failure` markers against real claude 2.1.269 output**~~ — **RESOLVED in Python** (fix/classify-failure-markers, 2026-09-11); the Go mirror in `internal/providers` follows in a separate PR with the same fixtures (until then its tests deliberately assert the old answers). Found by opus-2 capturing real CLI bytes for G2.4. (6) None of `_VERSION_DRIFT_MARKERS` matched claude's real rejection text "It may not exist or you may not have access to it" nor its `[claude-code:unrecognized_model]` line, so the `fallback_cli_model` retry never fired for the one case it exists for — markers added. (7) Numeric status codes `401/403/429/500..504` were bare substrings against a haystack that includes 2 KB of stdout; a claude envelope is full of numbers (`"cacheReadInputTokens":40321` contains `403`), so a truncated envelope — PARSER, retryable — classified PERMISSION, terminal. Codes now match only as standalone numbers (`_has_status_code`). (8) Real auth failures spell it `authentication_error` / `auth expired`, neither a substring of the old markers — added. Fixtures: `orchestrator/tests/fixtures/dispatcher/claude-2.1.269/`. Go rule: same three changes in `providers.Classify`, same fixtures.
 - ~~**Bug 9 — `orch.py` emitted seven event types its own validator rejected**~~ — **RESOLVED** (fix/event-types-ci, 2026-09-11). Found by opus-2 while aligning `internal/state` event types for G2.5. `EventLog.emit` raises `ValueError` for any type outside `EVENT_TYPES`, and the Sprint F-4 / G-1 PR+CI path emits `pr_created`, `ci_redispatch`, `ci_success`, `pr_auto_merged`, `pr_auto_merge_failed`, `ci_failure_retry`, `ci_blocked` — none declared. `pr_created` was swallowed by a broad `except` (logged as "set_task_pr failed"); the other six crashed the CI poller. Never caught because `test_orch.py` drives that path with a fake `emit` that does not validate. Fix: the seven are declared; `test_event_types_emitted.py` walks every real emitter with `ast` and fails on an undeclared literal. Go: `internal/state` `eventTypes` is Python's 14 plus these 7 (21 total); `exit_ok`/`exit_err`/`resume_reset`/`dry_run_planned` from the plan sketch are gone and the engine emits `success`/`fail`.
+- **Bug 11 — `burndown_by_day` filters on an event type nothing emits.** Found
+  while aligning Go's `eventTypes` with Python's (the same sweep as bug 9).
+  `dashboard/metrics.py:609` keeps only events whose `event_type == "exit_ok"`.
+  `exit_ok` is not an event type: it comes from the superseded FR-STATE-7 list
+  (`docs/history/spec.md:107`, dated 2026-08-19) and no version of orch has
+  ever emitted it. The function therefore returns `done_count: 0` for every
+  day, on any real database.
+
+  Severity is low and that is the interesting part: `server.py` imports it and
+  never calls it, and it has no test. Nothing is broken today because nothing
+  uses it — but the next person to wire a burndown chart gets a flat line and
+  no error, and goes looking in the data.
+
+  Not fixed (migration rule: annotate, do not add features), unless someone
+  wires that chart before the gate. If Go ports it, the filter is `success` —
+  which is the point of bug 9's alignment: with one vocabulary on both sides,
+  this class of bug has nowhere to live.
 
 ## Notes for the Go rewrite
+
+- **The event-type set comes from Python, not from the plan.** Found when
+  `internal/state` was holding a set of 11 taken from FR-STATE-7 in the
+  artifact: `exit_ok`, `exit_err`, `resume_reset`, `dry_run_planned`. None of
+  those four exist. The repo already said so — `docs/history/spec.md:107`
+  records that the names were harmonised with the implementation on
+  2026-08-19, `success`/`fail` replacing `exit_ok`/`exit_err`, `resume_revert`
+  replacing `resume_reset`, and `dry_run_planned` removed because dry-run
+  writes nothing to disk. `verify-report.md` flagged the same drift as
+  FR-STATE-7 PARTIAL. The stale list was read; the correction next to it was
+  not.
+
+  The real set is 21: the 14 in `EVENT_TYPES`
+  (`orchestrator/state/file_backend.py`) plus 7 that `orch.py` emits and that
+  tuple does not list, so Python raises `ValueError` on each of them today
+  (`pr_created`, `ci_redispatch`, `ci_success`, `pr_auto_merged`,
+  `pr_auto_merge_failed`, `ci_failure_retry`, `ci_blocked` — a separate Python
+  fix is in flight). Go accepts all 21, because a closed set is only worth
+  having if it is the *same* closed set on both sides: a type Go rejects and
+  Python writes leaves a hole in the run history that nothing reports.
+
+  Held by `TestEventTypesMatchPython` against `testdata/event-types.json`,
+  which is exported from the Python tree rather than transcribed.
+
+  **The rule this is an instance of:** where the artifact and the code
+  disagree, the code wins — and `docs/history/` is code for this purpose,
+  because it records the decisions the artifact was never updated with. The
+  four bogus names had been dead for three weeks before anyone wrote them into
+  Go.
+
 
 - **Timestamps in `orch.db` are stored in two forms.** Not a bug to fix, a
   fact to code against, found writing `state.SpendSince`. The same database
