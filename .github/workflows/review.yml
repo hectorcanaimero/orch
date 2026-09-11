@@ -93,13 +93,11 @@ jobs:
             CONCLUSION=neutral
             TITLE="Needs a human"
           fi
-          gh api "repos/$REPO/check-runs" -X POST \
-            -f name='automerge-eligible' \
-            -f head_sha="$HEAD_SHA" \
-            -f status='completed' \
-            -f conclusion="$CONCLUSION" \
-            -f output[title]="$TITLE" \
-            -f output[summary]="${REASON:-policy did not run}" >/dev/null
+          jq -n --arg sha "$HEAD_SHA" --arg c "$CONCLUSION" \
+                --arg t "$TITLE" --arg s "${REASON:-policy did not run}" \
+            '{name: "automerge-eligible", head_sha: $sha, status: "completed",
+              conclusion: $c, output: {title: $t, summary: $s}}' \
+            | gh api "repos/$REPO/check-runs" -X POST --input - >/dev/null
 
       # ---- G4.7 -------------------------------------------------------------
       # The step that will act on the verdict. Left here, disabled, so the
@@ -236,6 +234,13 @@ jobs:
         if: steps.key.outputs.present == 'true'
         continue-on-error: true
         uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+        env:
+          # The CLI refuses to run in an untrusted directory and there is no
+          # way to pass `--skip-trust` through the action. Safe here because
+          # every built-in tool is disabled below: there is nothing in the
+          # workspace it can reach. Deliberately NOT setting GITHUB_TOKEN —
+          # the reviewer gets no credentials for this repo.
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           # Empty means "whatever the Gemini CLI defaults to", which is what
@@ -335,10 +340,8 @@ jobs:
             fi
           fi
           echo "conclusion=$CONCLUSION title=$TITLE"
-          gh api "repos/$REPO/check-runs" -X POST \
-            -f name='gemini-review' \
-            -f head_sha="$HEAD_SHA" \
-            -f status='completed' \
-            -f conclusion="$CONCLUSION" \
-            -f output[title]="$TITLE" \
-            -f output[summary]="$SUMMARY" >/dev/null
+          jq -n --arg sha "$HEAD_SHA" --arg c "$CONCLUSION" \
+                --arg t "$TITLE" --arg s "$SUMMARY" \
+            '{name: "gemini-review", head_sha: $sha, status: "completed",
+              conclusion: $c, output: {title: $t, summary: $s}}' \
+            | gh api "repos/$REPO/check-runs" -X POST --input - >/dev/null
