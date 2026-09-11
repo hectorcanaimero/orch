@@ -1,0 +1,22 @@
+{
+  "claude/claude-opus-4-6": {
+    "agent": null,
+    "backend": "claude",
+    "cli_model": "claude-opus-4-6",
+    "effort": null,
+    "escalation_model": null,
+    "fallback_cli_model": null,
+    "is_premium": true,
+    "tier": "premium"
+  },
+  "claude/claude-sonnet-4-6": {
+    "agent": null,
+    "backend": "claude",
+    "cli_model": "claude-sonnet-4-6",
+    "effort": null,
+    "escalation_model": null,
+    "fallback_cli_model": null,
+    "is_premium": false,
+    "tier": "standard"
+  }
+}

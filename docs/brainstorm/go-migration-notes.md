@@ -2,6 +2,25 @@
 
 Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migración a Go (en curso)") is in progress get logged here instead of fixed with a new feature or a large refactor in Python. Small, targeted fixes are still fine — this file is for anything that would otherwise tempt scope creep in the version being replaced.
 
+## Porting rules
+
+**When the plan cites an FR and the code does something else with a written
+justification, the code wins — and the divergence gets reported.** The plan's
+FR numbers can predate the code by several sprints, so a requirement quoted in
+a task brief is evidence of what was once intended, not of what ships. Port
+the behaviour, keep the reason, and say so in the PR; a spec is not a reason to
+reintroduce something a later sprint removed on purpose.
+
+First hit: `fallback_cli_model` (see below), where FR-D-7 asked for a WARN per
+substitution and Sprint C had already replaced it with an INFO summary,
+because the WARN version spammed the console on every startup.
+
+The inverse also holds. Where the code's behaviour looks like an accident
+rather than a decision — no comment, no test, no sprint note — it is a bug to
+report, not a contract to preserve. The four found so far (template key
+casing, the blank stakeholder URL, `spec_root`, the duplicate `dashboard:`
+block) were all of that kind.
+
 ## Open notes
 
 - ~~Stale `jinja2` mentions~~ — **RESOLVED** (g0/sonnet-cleanup): `orchestrator/orch.py`'s
@@ -111,6 +130,17 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   `{x!r}`, i.e. `'NOPE.T9'`, and Go's `%q` would write `"NOPE.T9"` and turn
   every matching line into a permanent diff. `graph.pyQuote` exists for that
   and nothing else.
+
+- **`fallback_cli_model` is announced, not warned about.** The G2.1 brief
+  asked for "a WARN per substitution", quoting FR-D-7. Sprint C deliberately
+  revised that: `orch.py:_warn_fallback_routes` says the original spec
+  "produces a double-emit that spams the console every startup", because the
+  actual substitution happens later in the reap loop on a version-drift
+  failure, not at startup. What Python does now is one INFO summary line, or
+  one INFO per route under `-v`. `router.Fallbacks()` returns the data and
+  leaves the level to the caller, so the CLI can reproduce the current
+  behaviour rather than the superseded spec. Worth knowing that the FR numbers
+  in the plan can predate the code.
 
 - **`internal/dashboard` — where the auth gate belongs.** Put the token check on
   the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,
