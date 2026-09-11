@@ -1,0 +1,31 @@
+# orch events against a REAL database with real events —
+# internal/state/testdata/orch-py-0.11.0.db, written by Python v0.11.0 (see
+# its README.md). testdata/parity-project has zero events, so this is the
+# only place the non-empty --json/human/--run paths get exercised.
+
+exec orch events F0.T1 --json --project-root billing-api --project-id billing-api
+! stderr .
+stdout '"event_type":"dispatch"'
+stdout '"event_type":"exit_ok"'
+stdout '"ts":"2026-09-01T09:00:00\+00:00"'
+stdout '"run_id":"fixture-run-0001"'
+stdout '"project_id":"billing-api"'
+
+exec orch events F0.T1 --project-root billing-api --project-id billing-api
+stdout 'TS\s+EVENT\s+BACKEND\s+RUN'
+stdout 'dispatch'
+stdout 'exit_ok'
+# shortRunID truncates "fixture-run-0001" (16 chars) to its first 8.
+stdout 'fixture-'
+! stdout 'fixture-run-0001'
+
+exec orch events F1.T1 --run fixture-run-0001 --json --project-root billing-api --project-id billing-api
+stdout '"task_id":"F1.T1"'
+stdout '"event_type":"dispatch"'
+! stdout 'F1\.T2'
+
+exec orch events F1.T1 --run some-other-run --json --project-root billing-api --project-id billing-api
+stdout '^\[\]$'
+
+exec orch events F1.T2 --json --project-root billing-api --project-id billing-api
+stdout '"event_type":"block"'

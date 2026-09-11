@@ -22,6 +22,21 @@ func ids(evs []state.Event) []int64 {
 	return out
 }
 
+func TestShortRunID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"short", "short"},
+		{"exactly8", "exactly8"},
+		{"fixture-run-0001", "fixture-"},
+		{"a-very-long-run-id-indeed", "a-very-l"},
+	}
+	for _, tc := range cases {
+		if got := shortRunID(tc.in); got != tc.want {
+			t.Errorf("shortRunID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestFilterAndTail(t *testing.T) {
 	all := evs("run-a", "run-a", "run-b", "run-a", "run-b")
 	// ids: 0,1,2,3,4 with runs a,a,b,a,b
