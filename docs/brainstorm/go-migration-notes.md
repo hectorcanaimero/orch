@@ -2,6 +2,25 @@
 
 Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migración a Go (en curso)") is in progress get logged here instead of fixed with a new feature or a large refactor in Python. Small, targeted fixes are still fine — this file is for anything that would otherwise tempt scope creep in the version being replaced.
 
+## Porting rules
+
+**When the plan cites an FR and the code does something else with a written
+justification, the code wins — and the divergence gets reported.** The plan's
+FR numbers can predate the code by several sprints, so a requirement quoted in
+a task brief is evidence of what was once intended, not of what ships. Port
+the behaviour, keep the reason, and say so in the PR; a spec is not a reason to
+reintroduce something a later sprint removed on purpose.
+
+First hit: `fallback_cli_model` (see below), where FR-D-7 asked for a WARN per
+substitution and Sprint C had already replaced it with an INFO summary,
+because the WARN version spammed the console on every startup.
+
+The inverse also holds. Where the code's behaviour looks like an accident
+rather than a decision — no comment, no test, no sprint note — it is a bug to
+report, not a contract to preserve. The four found so far (template key
+casing, the blank stakeholder URL, `spec_root`, the duplicate `dashboard:`
+block) were all of that kind.
+
 ## Open notes
 
 - ~~Stale `jinja2` mentions~~ — **RESOLVED** (g0/sonnet-cleanup): `orchestrator/orch.py`'s
