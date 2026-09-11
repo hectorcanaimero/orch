@@ -409,3 +409,107 @@ def test_websocket_stakeholder_guard_passthrough_in_operator_mode() -> None:
     )
     assert result is False
     assert sent == []
+
+
+# ---- Middleware — public SPA shell (G0.3 follow-up) ------------------------
+#
+# The shell exemption is what makes the shared stakeholder URL work in a
+# browser at all. These tests pin the predicate itself; the end-to-end
+# behaviour against the real route table lives in
+# `test_dashboard_security_public_shell.py`.
+
+
+def _app_with_spa_mount(middleware_layers, dist: Path):
+    """Bare app shaped like the real one: named routes + an SPA mount at `/`."""
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+
+    async def _json(request):
+        return PlainTextResponse("data-ok")
+
+    routes = [
+        Route("/api/tasks", _json, name="api_tasks"),
+        Route("/snapshot", _json, name="snapshot"),
+        Route("/stakeholder/summary", _json, name="stakeholder_summary_json"),
+        Mount("/", app=StaticFiles(directory=str(dist), html=True), name="spa"),
+    ]
+    return Starlette(routes=routes, middleware=middleware_layers)
+
+
+def _spa_dist(tmp_path: Path) -> Path:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>shell</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("// bundle\n", encoding="utf-8")
+    return dist
+
+
+def _spa_client(tmp_path: Path):
+    pytest.importorskip("fastapi")
+    from starlette.middleware import Middleware
+    from orchestrator.dashboard.middleware import TokenAuthMiddleware
+
+    cfg = DashboardConfig.load(profile_override="stakeholder", token_override="s3cr3t")
+    app = _app_with_spa_mount(
+        [Middleware(TokenAuthMiddleware, config=cfg)], _spa_dist(tmp_path)
+    )
+    return _client(app)
+
+
+def test_token_auth_serves_spa_shell_without_token(tmp_path: Path) -> None:
+    r = _spa_client(tmp_path).get("/")
+    assert r.status_code == 200
+    assert "shell" in r.text
+
+
+def test_token_auth_serves_spa_bundle_without_token(tmp_path: Path) -> None:
+    r = _spa_client(tmp_path).get("/assets/app.js")
+    assert r.status_code == 200
+
+
+def test_token_auth_still_gates_data_routes_behind_the_spa_mount(
+    tmp_path: Path,
+) -> None:
+    """The mount FULL-matches every path — the data routes must still win."""
+    client = _spa_client(tmp_path)
+    assert client.get("/api/tasks").status_code == 401
+    assert client.get("/snapshot").status_code == 401
+    assert client.get("/stakeholder/summary").status_code == 401
+
+
+def test_token_auth_gates_unknown_api_paths_even_with_a_spa_mount(
+    tmp_path: Path,
+) -> None:
+    """No named route matches `/api/invented`, so route resolution alone would
+    hand it to the mount. The `/api/` never-public prefix is the backstop."""
+    assert _spa_client(tmp_path).get("/api/invented").status_code == 401
+
+
+def test_token_auth_gates_method_fuzz_on_a_data_route(tmp_path: Path) -> None:
+    assert _spa_client(tmp_path).post("/api/tasks").status_code == 401
+
+
+def test_is_public_shell_is_false_without_a_spa_mount() -> None:
+    """No build present → nothing is exempt, so behaviour is unchanged for a
+    bare-source checkout."""
+    pytest.importorskip("fastapi")
+    from starlette.middleware import Middleware
+    from orchestrator.dashboard.middleware import TokenAuthMiddleware
+
+    cfg = DashboardConfig.load(profile_override="stakeholder", token_override="s3cr3t")
+    app = _bare_app_with([Middleware(TokenAuthMiddleware, config=cfg)])
+    assert _client(app).get("/").status_code == 401
+
+
+def test_assets_prefix_is_public_even_without_a_spa_mount() -> None:
+    """A probing client should see a 404 from the router, not a 401 — the
+    bundle path is public regardless of whether a build is installed."""
+    pytest.importorskip("fastapi")
+    from starlette.middleware import Middleware
+    from orchestrator.dashboard.middleware import TokenAuthMiddleware
+
+    cfg = DashboardConfig.load(profile_override="stakeholder", token_override="s3cr3t")
+    app = _bare_app_with([Middleware(TokenAuthMiddleware, config=cfg)])
+    assert _client(app).get("/assets/app.js").status_code == 404

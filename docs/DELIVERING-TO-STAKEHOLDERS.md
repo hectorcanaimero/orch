@@ -142,6 +142,14 @@ Talk soon,
 That's your entire client communication for the duration of the project. They'll check
 the dashboard. You'll get questions only when something is actually blocked.
 
+**What happens when they click it.** The page loads, the SPA picks the token
+out of `?token=` and stores it in the browser, and the token disappears from
+the address bar — so a screenshot of their tab, or a URL pasted onward, does
+not carry it. Every later request sends it as a `Bearer` header. If they
+bookmark the scrubbed URL and come back later, the stored token still works;
+if they clear their browser data, they land on a "paste your token" form and
+you resend the link.
+
 ---
 
 ## Step 6 — Run

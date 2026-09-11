@@ -25,9 +25,32 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   in `orchestrator/tests/test_init.py`) that scaffolds each template and asserts
   every task has `estimate_hours > 0` and a non-empty `spec_ref`.
 
-- **P0 in progress (opus)**: `TokenAuthMiddleware` returns 401 for `index.html`
-  and `/assets/*` when no token is present, so a stakeholder URL with `?token=`
-  loads the SPA shell but the JS/CSS asset requests (which don't carry the query
-  param) 401 and the page stays blank — the token-entry form inside the SPA is
-  unreachable because the SPA itself never renders. Being fixed by opus in
-  parallel; leaving this open for them to mark resolved.
+- ~~**P0: the stakeholder URL was unusable in a browser**~~ — **RESOLVED**
+  (g0/opus-stakeholder-url, 2026-09-11): `TokenAuthMiddleware` returned 401 for
+  `index.html` and `/assets/*` when no token was present, so a stakeholder URL
+  with `?token=` loaded the SPA shell but the JS/CSS asset requests (which don't
+  carry the query param) 401'd and the page stayed blank — the token-entry form
+  inside the SPA was unreachable because the SPA itself never rendered. Fixed in
+  two halves. Server: `_is_public_shell` in `orchestrator/dashboard/middleware.py`
+  exempts requests that resolve to the SPA StaticFiles mount, plus the
+  `/assets/` prefix; `/api/` is a hard never-public prefix on top of route
+  resolution so a method-fuzz or an unknown `/api/*` path can't fall through to
+  the mount. SPA: `adoptTokenFromQuery()` (`frontend/src/hooks/useAuth.ts`, called
+  from `main.tsx` before the first render) moves `?token=` into `localStorage`
+  and scrubs it out of the address bar with `history.replaceState`.
+  `orchestrator/tests/test_dashboard_security_public_shell.py` sweeps the live
+  route table and fails if any data route ever escapes the token gate.
+
+## Notes for the Go rewrite
+
+- **`internal/dashboard` — where the auth gate belongs.** Put the token check on
+  the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,
+  `/logs/stream`), never on the static surface. The embedded SPA's `index.html`
+  and its `/assets/*` bundle must be served **without** a token: a browser
+  cannot attach a token to the `<script src>` requests the shell makes, so
+  gating them means the shared URL renders a blank page and the token form is
+  unreachable. Carry over the two invariants the Python fix pins: an unknown
+  path under `/api/` is never public (don't let a catch-all static handler win
+  it), and a wrong method on a data route resolves to that route, not to the
+  static fallback. The equivalent of the route-table sweep test is cheap in Go
+  and worth keeping.
