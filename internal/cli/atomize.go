@@ -70,7 +70,7 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 			} else {
 				specFiles, err = atomize.WalkSpecFiles(specsRoot)
 				if err != nil {
-					return err
+					return fmt.Errorf("walk specs under %s: %w", specsRoot, err)
 				}
 			}
 
@@ -83,7 +83,7 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 
 			parse, err := atomize.ParseFiles(specFiles, specsRoot, paths.ID)
 			if err != nil {
-				return err
+				return fmt.Errorf("parse specs under %s: %w", specsRoot, err)
 			}
 
 			if listMode {
@@ -92,7 +92,7 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 
 			existing, err := atomize.LoadExisting(tasksPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("load %s: %w", tasksPath, err)
 			}
 
 			merged, diff := atomize.MergeTasks(existing, parse.Tasks)
@@ -110,7 +110,7 @@ func newAtomizeCmd(flags *projectFlags) *cobra.Command {
 
 			backupPath, err := atomize.Apply(tasksPath, merged, !noBackup)
 			if err != nil {
-				return err
+				return fmt.Errorf("write %s: %w", tasksPath, err)
 			}
 			if _, err := fmt.Fprintf(out, "✓ Escrito: %s\n", tasksPath); err != nil {
 				return err
