@@ -27,6 +27,10 @@ const (
 	EventRetry    = "retry"
 	EventEscalate = "escalate"
 	EventBlock    = "block"
+	// EventBudgetPause marks the run parking until a provider window resets.
+	EventBudgetPause = "budget_pause"
+	// EventReconciled marks a dispatch row whose process was gone.
+	EventReconciled = "reconciled"
 )
 
 // RecordStart writes the `dispatch` event and the in-flight row, in that

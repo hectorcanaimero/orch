@@ -1,0 +1,93 @@
+# `orch run` end to end, with no real coding CLI anywhere: ORCH_FAKE_PROVIDER
+# replays canned output while the whole rest of the path — config, backend,
+# queue, scheduler, the loop, the spawn, the process group — is the real one.
+
+# A typo in --mode must not silently become auto and dispatch a premium agent
+# without asking.
+! exec orch run --mode semiauto --project-root proj
+stderr '--mode "semiauto"'
+stderr 'auto'
+stderr 'semi'
+
+# --help lists only the flags the engine honours. A flag that is accepted and
+# ignored is the failure mode this project keeps finding (concurrency.per_file
+# among them), so the ones Python has but Go does not implement are absent
+# rather than inert.
+exec orch run --help
+stdout '--mode'
+stdout '--max-tasks'
+stdout '--only'
+stdout '--task-locks'
+! stdout 'dry-run'
+! stdout 'budgets-preset'
+
+# A project whose tasks are all done is a finished run, not an error.
+exec orch run --project-root done-proj
+! stderr 'error'
+
+# The real thing: one todo task, dispatched through the fake provider and
+# reaped, ending done in the database.
+env ORCH_FAKE_PROVIDER=$WORK/fake
+exec orch run --project-root todo-proj
+exec orch tasks --project-root todo-proj --json
+stdout '"status":"done"'
+
+-- proj/tasks.json --
+{"tasks":[{"id":"C-1","phase":1,"title":"c one","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":""}]}
+-- proj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 2
+  per_provider:
+    claude: 2
+-- proj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+-- done-proj/tasks.json --
+{"tasks":[{"id":"D-1","phase":1,"title":"d one","model":"claude/haiku","status":"done","dependencies":[],"estimateHours":1.0,"files":[],"specRef":""}]}
+-- done-proj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 2
+  per_provider:
+    claude: 2
+-- done-proj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+-- todo-proj/tasks.json --
+{"tasks":[{"id":"T-1","phase":1,"title":"t one","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":""}]}
+-- todo-proj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 2
+  per_provider:
+    claude: 2
+-- todo-proj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+-- fake/claude/_default.out --
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0,"usage":{"input_tokens":1,"output_tokens":1}}
+-- proj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- proj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- done-proj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- done-proj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- todo-proj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- todo-proj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done

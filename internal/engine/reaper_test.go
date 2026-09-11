@@ -146,7 +146,9 @@ func newReapFixture(t *testing.T, tasks []model.Task, responses map[string]fakeR
 
 	opts.StateDir = stateDir
 	opts.Cwd = t.TempDir()
-	opts.Mode = ModeAuto
+	if opts.Mode == "" {
+		opts.Mode = ModeAuto
+	}
 	if opts.GlobalMax == 0 {
 		opts.GlobalMax = 4
 	}

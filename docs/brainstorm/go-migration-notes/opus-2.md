@@ -76,3 +76,60 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   way to express. Not the `per_file` situation (bug 13): there the key
   promises a behaviour and nothing implements it; here the structure is
   implemented and simply has no Python counterpart.
+
+## G3.3 — the run loop
+
+- **Bug 17 — the main loop spins forever on a task it can never dispatch.**
+  `orch.py`'s terminate condition is "nothing in flight, nothing ready, no
+  retries pending". A task whose model has no route keeps the ready set
+  non-empty forever: `_refill` logs `route missing at dispatch time` and
+  `continue`s, the ready set is unchanged, and the loop ticks on at 200 ms a
+  pass. Forever, with one log line per pass and no exit.
+
+  The same happens for any dispatch that can never succeed rather than merely
+  not-yet: in the Go tree, a backend with no adapter or a backend with no
+  configured concurrency cap. Those are mid-migration states, but the route
+  case is reachable in Python today — delete an entry from `model_router.yaml`
+  that a task still references, and `orch run` hangs.
+
+  Found when a `orch run` testscript did not terminate. A hung orchestrator
+  that prints nothing is worse than one that errors, so the Go loop stops and
+  says which tasks and why: `permanentlyStuck` distinguishes "waiting" —
+  capacity, a budget window, a retry backoff, all of which resolve — from
+  "never", and only the second ends the run. `TestLoopStopsWhenNothingCanEverBeDispatched`
+  covers the three permanent cases, and
+  `TestLoopKeepsGoingWhileSomethingCanStillRun` pins the other half: one
+  unroutable task must not stop a run that still has work it can do.
+
+- **A spawn failure reached the queue but not the database.** Not a Python
+  bug — mine, caught by the same testscript. `spawnOne` marked the task
+  blocked in the in-memory queue and returned, so a run that had given up on
+  a task left the database still calling it `todo`. Python calls
+  `call_task_block` as well as `queue.mark_blocked`, for the good reason that
+  the two are read by different people: the queue decides what this run does
+  next, the row is what `orch status` shows afterwards. `blockAtDispatch`
+  now does both, and the prompt-render failure path goes through it too.
+
+- **`orch run` renders its own prompts.** Worth recording because the first
+  version of the CLI test supplied a prompt file by hand and passed for the
+  wrong reason. `_spawn_one` calls `render_prompt` and writes the file just
+  before forking, because the provider pipes it to the child's stdin — a
+  dispatch without one is a CLI with no instructions. The Go scheduler calls
+  `prompt.Write` at the same point, and a render failure blocks the task
+  rather than spawning an agent that would be told nothing.
+
+- **Observation, not a divergence: a task stranded `in-progress` makes
+  `orch run` exit 0 with nothing to say.** Seen running the real loop against
+  `testdata/parity-project`, which ships one `in-progress` task and one
+  `blocked` one. The run exited 0 having dispatched nothing, because
+  `ready()` returns only `todo` tasks and the orphan sweep only reverts rows
+  that have a `dispatches` entry — and a task left `in-progress` by a run
+  whose record is gone has neither. Python behaves identically: same `ready()`
+  filter, same sweep condition, and `orch reset --requeue` is the tool that
+  exists for it.
+
+  So there is nothing to fix for parity, and it is recorded because the
+  surface reads wrong: a run that exits 0 having done nothing looks like "all
+  work finished" when it can also mean "one task is stuck half-done and
+  nobody is going to notice". If `orch run` ever grows a closing summary, the
+  count of tasks left `in-progress` belongs in it.
