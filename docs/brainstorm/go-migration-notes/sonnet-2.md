@@ -133,3 +133,73 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   codex` on an already-installed project always reported `skipped`
   instead of `unchanged` — fixed to compare like for like (both sides
   trimmed, both sides marker-stripped).
+
+- **`web/` (G5.1) — moved `frontend/` → `web/` via `git mv` (history
+  intact) and picked "point vite's `build.outDir` straight into
+  `internal/dashboard/dist/build`" over the alternative the brief
+  explicitly offered (a `go:generate` copy of `web/dist` into
+  `internal/dashboard`), for one reason: a copy step is something to
+  forget. `go:embed` cannot reach outside its own package directory
+  either way; the copy approach adds a manual "did you re-run
+  `go generate`" step between `pnpm build` and a correct binary, whereas
+  pointing outDir there directly means `pnpm build` alone is authoritative
+  — there is no second copy of the built assets to go stale. Trade-off
+  taken deliberately: `web/`'s own `dist/` never exists any more (`pnpm
+  build`'s output lives one level up, at
+  `internal/dashboard/dist/build/`), which is mildly surprising the first
+  time — documented in `web/README.md`, `web/vite.config.ts`'s own
+  comment, `internal/dashboard/spa.go`'s package doc, and a CLAUDE.md
+  gotcha, specifically so it isn't rediscovered the hard way twice.
+
+  **The `go:embed`-needs-≥1-file constraint, solved without fighting
+  `emptyOutDir`.** A `go:embed` pattern matching zero files is a compile
+  error, not a runtime one — so `internal/dashboard/dist/` needs a
+  tracked, always-present file even before the first `pnpm build`.
+  Tracking that file inside the SAME directory vite's `emptyOutDir: true`
+  owns would mean every `pnpm build` deletes it from the working tree
+  (git would show it as locally deleted — noise nobody wants to see after
+  a routine build). Fixed by nesting one level deeper: vite's `outDir` is
+  `dist/build/`, not `dist/`, so `emptyOutDir` only ever touches
+  `dist/build/`'s contents; `dist/README.md`, one level up, is the file
+  `go:embed dist` always finds, untouched by any number of rebuilds.
+  `TestSPARequiresABuild` (`internal/dashboard/spa_test.go`) is the
+  friendly-failure half the brief asked for: it fails with an explicit
+  "run `pnpm build` in web/" message when `dist/build/index.html` isn't
+  there yet, rather than a panic once G5.2 wires an HTTP server around
+  `SPA()`. Deliberately NOT wired into `make test` (only `make build`
+  depends on `make web`) so that message stays reachable for a bare
+  `go test ./...` — `make test` auto-building the SPA every time would
+  make the friendly-failure test pointless for exactly the case it exists
+  for.
+
+  **Discovered along the way, fixed as part of the same rename, not
+  scope creep:** `scripts/build-spa.sh` (called by `build-wheel.sh`,
+  called by `ci-build.yml`/`release.yml` for the Python wheel) copied
+  `frontend/dist` → `orchestrator/spa/` — a path that would have silently
+  stopped existing the moment `web/vite.config.ts`'s `outDir` moved
+  elsewhere, breaking the wheel's SPA on the next release with no error
+  until someone actually opened the shipped dashboard. Fixed to read from
+  `internal/dashboard/dist/build/` instead (with an explicit check that
+  `index.html` is actually there before copying), so one `pnpm build`
+  now feeds both binaries. `.github/workflows/release.yml`'s
+  `cache-dependency-path: frontend/pnpm-lock.yaml` had the same
+  now-broken pointer and wasn't in the brief's explicit file list
+  (`go.yml`/`ci-build.yml` were) — fixed anyway since leaving it wrong
+  would have quietly turned off dependency caching on every tagged
+  release build.
+
+  **Two things checked and deliberately left untouched:**
+  `pyproject.toml`'s `[tool.setuptools.package-data]` never referenced
+  `frontend/` at all — it lists `"orchestrator"` → `"spa/**/*"`, and
+  `orchestrator/spa/` is populated by `build-spa.sh`, not read from
+  directly by setuptools — so the rename needed zero pyproject changes.
+  And `orchestrator/dashboard/server.py`'s `_resolve_spa_dist` still
+  checks `<project_root>/frontend/dist` as its project-specific override
+  tier — that's a generic convention for ANY orch-managed project's own
+  custom frontend, unrelated to this repo's own directory layout;
+  changing what string it looks for would be a Python behavior change,
+  which the migration rule reserves for point fixes with a real bug
+  behind them, not a rename in the Go tree. `test_dashboard_spa_mount.py`
+  exercises that tier against temp-dir fixtures it builds itself, so it
+  was never coupled to this repo's actual `frontend/`/`web/` directory
+  and needed no changes either.

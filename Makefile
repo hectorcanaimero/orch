@@ -1,10 +1,21 @@
 BINARY := bin/orch
 VERSION := $(shell git describe --tags --always)
 
-.PHONY: build test lint parity clean
+.PHONY: build web test lint parity clean
 
-build:
+build: web
 	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/orch
+
+# Builds the SPA into internal/dashboard/dist/build (web/vite.config.ts's
+# build.outDir — see internal/dashboard/spa.go) so `go:embed` has a real
+# SPA, not just the placeholder dist/README.md keeps it compiling with.
+# `build` depends on this so `make build` always ships a real dashboard;
+# `test` deliberately does NOT — TestSPARequiresABuild
+# (internal/dashboard/spa_test.go) gives a clear "run pnpm build in web/"
+# failure for a bare `make test`/`go test ./...` instead of silently
+# building the SPA for you every run.
+web:
+	cd web && pnpm install --frozen-lockfile && pnpm build
 
 test:
 	go test ./... -race -cover

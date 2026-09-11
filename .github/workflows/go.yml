@@ -15,6 +15,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # internal/dashboard embeds web/'s build (G5.1) and its own test
+      # suite checks the real thing, not just that a placeholder compiles
+      # — so this job needs a genuine `pnpm build`, not only Go tooling.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: make web
       - run: make test
 
   go-lint:

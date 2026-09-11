@@ -12,7 +12,12 @@ __pycache__/
 *.pyo
 .venv/
 venv/
-dist/
+# Anchored to the repo root — `python -m build --outdir dist` (see
+# scripts/build-wheel.sh) is the only thing this was ever for. An
+# unanchored `dist/` would also match internal/dashboard/dist/, which
+# needs one tracked file (dist/README.md) alongside its own gitignored
+# dist/build/ — see the Node / frontend section below.
+/dist/
 build/
 *.egg-info/
 .pytest_cache/
@@ -38,13 +43,18 @@ docs/design/
 /*.png
 /tasks.json
 
-# Node / frontend
+# Node / web (frontend/ moved to web/ in G5.1)
 node_modules/
 .vite/
-frontend/.env
-frontend/.env.local
-frontend/*.log
+web/.env
+web/.env.local
+web/*.log
 coverage/
+
+# internal/dashboard/dist/build/ (web/'s vite build.outDir — see
+# web/vite.config.ts) is already caught by the unanchored `build/` rule
+# above; dist/README.md, one level up, stays tracked since `dist/` itself
+# isn't ignored.
 
 # Compiled SPA is built by CI (.github/workflows/release.yml) on tag
 # push and shipped inside the release wheel. Regen locally with

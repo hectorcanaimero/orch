@@ -8,7 +8,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 - **Backend / CLI**: Python `>=3.11`, distributed as `orch` script (see `pyproject.toml`).
 - **Deps runtime**: `pyyaml`, `rich`, `fastapi>=0.115,<0.116` (pinned — 0.116+ regresses closure-scoped `Request` annotation resolution), `uvicorn[standard]`. See `pyproject.toml [project.dependencies]` for the authoritative list.
 - **Dev**: `pytest>=8.0`, `httpx>=0.27` (FastAPI TestClient uses it).
-- **Frontend** (`frontend/`, Sprint E-3 SPA spike): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm` package manager, oxlint.
+- **Frontend** (`web/`, Sprint E-3 SPA spike; moved from `frontend/` in G5.1): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm` package manager, oxlint. `pnpm build`'s output goes straight to `internal/dashboard/dist/build/` (vite's `build.outDir`), not `web/dist/` — see the Go migration section below.
 - **State backend**: SQLite by default since v0.11 (PR #91); `file` is legacy JSONL kept for `orch migrate`. See `orchestrator/state/`.
 - **Persistence**: `state/` at runtime, never committed (`state/.gitkeep` only).
 
@@ -26,7 +26,7 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 ## Layout (top-level)
 
 - `orchestrator/` — Python package. Subpackages: `dashboard/` (FastAPI app + tunnel manager), `state/` (file/SQLite backends, see `interface.py` + `adapters.py`), `vcs/` (GitHub/GitLab), `templates/`, `skills/`. Per-CLI dispatch adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`) live in `orchestrator/dispatcher.py`, not a separate `providers/` package.
-- `frontend/` — Vite SPA (E-3 spike). Builds to `frontend/dist/`, served by dashboard when present.
+- `web/` — Vite SPA (E-3 spike; moved from `frontend/` in G5.1). `pnpm build` here writes straight to `internal/dashboard/dist/build/` (see the Go migration section), so `orch dashboard` (Python) now always serves it via `orchestrator/spa/` (the wheel-shipped copy `scripts/build-spa.sh` refreshes from that same build) rather than its `<project_root>/frontend/dist` project-specific-override tier — that tier is a generic per-managed-project convention, unrelated to this repo's own layout, and was deliberately left untouched.
 - `docs/` — manuals + design docs.
 - `scripts/` — repo helpers (not the per-project `task-*.sh` contract).
 - `state/` — gitignored runtime state; only `.gitkeep` tracked.
@@ -65,7 +65,9 @@ internal/
   prompt/            — prompt_builder.py equivalente
   worktree/          — aislamiento git por task
   vcs/               — github/gitlab
-  dashboard/         — servidor HTTP (reemplaza FastAPI)
+  dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: solo
+                       spa.go, embebe web/ — G5.1. El servidor en sí es
+                       G5.2, otro carril.)
   publish/           — snapshot del stakeholder: export estático, watch, destino git/cloud
   mcp/               — servidor MCP stdio (tools orch_*) para agentes
   skills/            — instalación de skills (`orch install-skills`)
@@ -74,7 +76,9 @@ internal/
   doctor/            — `orch doctor` / `orch validate`
   notify/            — Slack/Discord webhooks
   tunnel/            — supervisor de túneles del dashboard
-web/                 — SPA (movida desde frontend/), servida embebida en el binario
+web/                 — SPA (existe; movida desde frontend/ en G5.1),
+                       embebida por internal/dashboard vía el
+                       `build.outDir` de vite (no `web/dist/`)
 ```
 
 **Go tree**: `make build` (bin/orch, versión desde `git describe`), `make test`
@@ -105,7 +109,7 @@ To keep context small, do not proactively call these MCP servers or skills on or
 - `sdd-*` (explore/propose/spec/design/tasks/apply/verify/archive) — spec-driven development suite orch consumes.
 - `superpowers:*` — TDD, debugging, plan-writing, code review, git-worktrees, brainstorming.
 - `agent-skills:*` — build/plan/test/review/ship/webperf, plus TDD and doubt-driven-development.
-- `shadcn`, `frontend-design`, `frontend-design-system`, `tailwind-design-system`, `typescript-best-practices` — only when touching `frontend/`.
+- `shadcn`, `frontend-design`, `frontend-design-system`, `tailwind-design-system`, `typescript-best-practices` — only when touching `web/`.
 
 ## Current context
 
@@ -121,3 +125,4 @@ To keep context small, do not proactively call these MCP servers or skills on or
 - Project templates (`orchestrator/templates/projects/*/tasks.json.tmpl`) must use `Task.from_json`'s camelCase keys (`estimateHours`, `specRef`) — snake_case silently defaults to `0.0`/`""` instead of erroring (see `docs/brainstorm/go-migration-notes.md`).
 - `orch dashboard` ships templates + `pricing.yaml` + `dashboard.yaml` + `static/` inside the wheel (see `pyproject.toml [tool.setuptools.package-data]`).
 - Runtime YAML defaults (`config.yaml`, `model_router.yaml`, `budgets.yaml`) also ship in the wheel so `pipx`-installed `orch` works without a manual copy.
+- `web/`'s `pnpm build` does NOT emit `web/dist/` — its vite config points `build.outDir` straight at `internal/dashboard/dist/build/` so the Go binary's `//go:embed` (which can't reach outside its own package directory) has something to embed with no separate copy step. `internal/dashboard/dist/README.md` is the one file tracked directly under `dist/`; everything under `dist/build/` is gitignored and rebuilt from scratch every `pnpm build`. `scripts/build-spa.sh` (the Python wheel's SPA) reads from that same `dist/build/`, not `web/dist/` — one `pnpm build` feeds both binaries.

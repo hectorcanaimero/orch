@@ -4,22 +4,22 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FRONTEND_DIR="$REPO_ROOT/frontend"
+WEB_DIR="$REPO_ROOT/web"
 DEST="$REPO_ROOT/orchestrator/spa"
 
-if [ ! -d "$FRONTEND_DIR" ]; then
-  echo "error: $FRONTEND_DIR not found" >&2
+if [ ! -d "$WEB_DIR" ]; then
+  echo "error: $WEB_DIR not found" >&2
   exit 1
 fi
 
-cd "$FRONTEND_DIR"
+cd "$WEB_DIR"
 
 # Guard: VITE_API_BASE_URL must NOT be set at wheel-build time.
 # If it is, Vite bakes it as a string literal and dead-code-eliminates the
 # window.location.origin fallback — breaking multi-port and cross-origin use.
-# Use frontend/.env.local.example as a reference for dev-only overrides.
-if grep -q 'VITE_API_BASE_URL' "$FRONTEND_DIR/.env" 2>/dev/null; then
-  echo "error: frontend/.env contains VITE_API_BASE_URL — clear it before building the wheel." >&2
+# Use web/.env.local.example as a reference for dev-only overrides.
+if grep -q 'VITE_API_BASE_URL' "$WEB_DIR/.env" 2>/dev/null; then
+  echo "error: web/.env contains VITE_API_BASE_URL — clear it before building the wheel." >&2
   echo "       Dev overrides belong in .env.local (gitignored), NOT .env." >&2
   exit 1
 fi
@@ -38,11 +38,23 @@ else
   npm run build
 fi
 
+# `pnpm build`'s real output lands in internal/dashboard/dist/build/ (see
+# web/vite.config.ts's build.outDir — G5.1, so the Go binary's
+# `//go:embed` can reach it), not web/dist/. This script ships that same
+# build inside the Python wheel too, so both binaries embed byte-identical
+# SPA output from one build.
+SPA_BUILD="$REPO_ROOT/internal/dashboard/dist/build"
+if [ ! -d "$SPA_BUILD" ] || [ ! -f "$SPA_BUILD/index.html" ]; then
+  echo "error: $SPA_BUILD (or its index.html) is missing after the build — check web/vite.config.ts's outDir." >&2
+  exit 1
+fi
+
 rm -rf "$DEST"
-cp -R "$FRONTEND_DIR/dist" "$DEST"
+cp -R "$SPA_BUILD" "$DEST"
 
 # Marker file so operators (and orch itself) can tell "this SPA was
-# shipped in the wheel" from a plain frontend/dist/ build.
+# shipped in the wheel" from a plain project-specific frontend/dist/ build
+# (see orchestrator/dashboard/server.py's _resolve_spa_dist).
 echo "{\"built_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"source\":\"scripts/build-spa.sh\"}" > "$DEST/.orch-spa.json"
 
 echo "SPA built and copied to $DEST"
