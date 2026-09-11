@@ -13,6 +13,9 @@
 //     empty database and report a project with no history. That is an error
 //     with the migration command in it.
 //
+// Every key, its default and the ignored-key list are documented in
+// docs/CONFIG.md — keep the two in step.
+//
 // Defaults come from three places that must agree, and did not:
 // `orchestrator/config.yaml`, `config_loader._apply_defaults`, and the four
 // templates. Where they disagreed the packaged file won, and the disagreement
