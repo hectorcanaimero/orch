@@ -37,7 +37,7 @@ retry:
   backoff_seconds: 5.0
   max_attempts: 2
   rate_limit_backoff_seconds: 60.0
-spec_root: docs/rewrite-plan
+spec_root: specs
 state:
   backend: sqlite
   sqlite_path: null
