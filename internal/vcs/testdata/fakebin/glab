@@ -1,0 +1,47 @@
+#!/bin/sh
+# Fake `glab` for internal/vcs tests — see fakebin/gh's header comment for
+# the general shape.
+#
+# FAKE_GLAB_LOG, if set, gets one line per invocation: the full argv.
+#
+# Subcommand -> variable pair (stdout, exit code):
+#   auth status                          FAKE_GLAB_AUTH_EXIT
+#   mr create ...                        FAKE_GLAB_CREATE_STDOUT / _EXIT
+#   mr view ...                          FAKE_GLAB_VIEW_STDOUT / _EXIT
+#   pipeline jobs ...                    FAKE_GLAB_JOBS_STDOUT / _EXIT
+#   pipeline trace ...                   FAKE_GLAB_TRACE_STDOUT / _EXIT
+#   mr merge ...                         FAKE_GLAB_MERGE_STDOUT / _EXIT
+
+if [ -n "$FAKE_GLAB_LOG" ]; then
+  printf '%s\n' "glab $*" >>"$FAKE_GLAB_LOG"
+fi
+
+case "$1 $2" in
+  "auth status")
+    exit "${FAKE_GLAB_AUTH_EXIT:-0}"
+    ;;
+  "mr create")
+    printf '%s' "${FAKE_GLAB_CREATE_STDOUT:-}"
+    exit "${FAKE_GLAB_CREATE_EXIT:-0}"
+    ;;
+  "mr view")
+    printf '%s' "${FAKE_GLAB_VIEW_STDOUT:-}"
+    exit "${FAKE_GLAB_VIEW_EXIT:-0}"
+    ;;
+  "pipeline jobs")
+    printf '%s' "${FAKE_GLAB_JOBS_STDOUT:-}"
+    exit "${FAKE_GLAB_JOBS_EXIT:-0}"
+    ;;
+  "pipeline trace")
+    printf '%s' "${FAKE_GLAB_TRACE_STDOUT:-}"
+    exit "${FAKE_GLAB_TRACE_EXIT:-0}"
+    ;;
+  "mr merge")
+    printf '%s' "${FAKE_GLAB_MERGE_STDOUT:-}"
+    exit "${FAKE_GLAB_MERGE_EXIT:-0}"
+    ;;
+  *)
+    echo "fake glab: unhandled subcommand: $*" >&2
+    exit 127
+    ;;
+esac
