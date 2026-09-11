@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fake `gh` for internal/doctor's VCS readiness tests — only needs `auth
+# status`, controlled by FAKE_GH_AUTH_EXIT.
+case "$1 $2" in
+  "auth status")
+    exit "${FAKE_GH_AUTH_EXIT:-0}"
+    ;;
+  *)
+    echo "fake gh: unhandled args: $*" >&2
+    exit 127
+    ;;
+esac
