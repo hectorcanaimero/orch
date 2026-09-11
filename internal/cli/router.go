@@ -222,7 +222,10 @@ func newRouterAddMissingCmd(flags *projectFlags) *cobra.Command {
 					len(inferable), paths.RouterYAML(), tier); err != nil {
 					return err
 				}
-				reply := readLine(cmd.InOrStdin())
+				reply, err := readLine(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
 				reply = strings.ToLower(strings.TrimSpace(reply))
 				if reply != "y" && reply != "yes" {
 					_, err := fmt.Fprintln(out, "Aborted. No changes written.")
@@ -262,10 +265,18 @@ func newRouterAddMissingCmd(flags *projectFlags) *cobra.Command {
 	return cmd
 }
 
-// readLine reads one line, EOF-safe: an unattended stdin (Python's `input()`
-// catching EOFError) reads as an empty reply, which the caller treats as
-// "not yes" — the same fail-closed behavior Python has.
-func readLine(r io.Reader) string {
-	line, _ := bufio.NewReader(r).ReadString('\n')
-	return line
+// readLine reads one line. An unattended stdin hitting EOF immediately
+// (Python's `input()` catching EOFError) returns an empty string with no
+// error — the caller treats that as "not yes", the same fail-closed
+// behavior Python has. EOF after some text (no trailing newline on the
+// last line) still returns that text, for the same reason: the reply was
+// typed, it just wasn't followed by a newline before the pipe closed. Any
+// other read error is real and gets reported rather than silently treated
+// as an empty reply.
+func readLine(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read confirmation: %w", err)
+	}
+	return line, nil
 }
