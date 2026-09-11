@@ -56,15 +56,42 @@ func TestCLICommands(t *testing.T) {
 	})
 }
 
-// setUpEventsFixture scaffolds just enough of a project for `orch events`
-// to work against a real database: `events` never reads tasks.json, so its
-// content doesn't matter beyond existing (ensureValidProject's check).
+// billingAPITasksJSON mirrors the TASKS list make-fixture.py used to write
+// internal/state/testdata/orch-py-0.11.0.db (see that file) — id/phase/
+// title/model/dependencies only, since that's all buildStatusRows needs;
+// runtime status/cost/events come from the database, not this file.
+const billingAPITasksJSON = `{"meta":{},"phases":[],"tasks":[
+  {"id":"F0.T1","phase":0,"title":"Scaffold FastAPI project layout","model":"claude/claude-sonnet-4-6","dependencies":[]},
+  {"id":"F0.T2","phase":0,"title":"Postgres connection pool + settings","model":"claude/claude-sonnet-4-6","dependencies":["F0.T1"]},
+  {"id":"F1.T1","phase":1,"title":"Health endpoint + integration test","model":"claude/claude-sonnet-4-6","dependencies":["F0.T2"]},
+  {"id":"F1.T2","phase":1,"title":"POST /customers with validation","model":"claude/claude-opus-4-6","dependencies":["F1.T1"]},
+  {"id":"F2.T1","phase":2,"title":"Invoice state machine","model":"claude/claude-opus-4-6","dependencies":["F1.T2"]}
+]}`
+
+// billingAPIRouterYAML routes both models the fixture DB's spend/tasks use,
+// so buildStatusRows resolves real backend/cli_model/tier instead of falling
+// back to "route not found" for every row.
+const billingAPIRouterYAML = `claude/claude-sonnet-4-6:
+  backend: claude
+  cli_model: claude-sonnet-4-6
+  tier: standard
+claude/claude-opus-4-6:
+  backend: claude
+  cli_model: claude-opus-4-6
+  tier: premium
+`
+
+// setUpEventsFixture scaffolds a project for `orch events`/`orch status`
+// backed by a real database (internal/state/testdata/orch-py-0.11.0.db):
+// tasks.json/model_router.yaml mirror what make-fixture.py wrote into it, so
+// status/tasks --json exercise real cost/latest_run/route resolution, not
+// just the empty defaults testdata/parity-project has.
 func setUpEventsFixture(root string) error {
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o750); err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(root, "tasks.json"),
-		[]byte(`{"meta":{},"phases":[],"tasks":[]}`), 0o600); err != nil {
+		[]byte(billingAPITasksJSON), 0o600); err != nil {
 		return err
 	}
 	// #nosec G306 -- a shell script needs the executable bit; this is a
@@ -79,6 +106,10 @@ func setUpEventsFixture(root string) error {
 	}
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"),
 		[]byte("state:\n  backend: sqlite\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "model_router.yaml"),
+		[]byte(billingAPIRouterYAML), 0o600); err != nil {
 		return err
 	}
 	// project-root is passed explicitly in the scripts below, which

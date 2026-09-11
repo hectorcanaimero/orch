@@ -34,21 +34,27 @@ func TestCostForMatchesPythonsSumTypeQuirk(t *testing.T) {
 	// zero — but over an EMPTY filtered list, sum() of an empty generator
 	// is int 0 again. See the costJSON doc comment in status.go.
 	cases := []struct {
+		name          string
+		costByTask    map[string]float64
+		filteredSum   float64
 		filteredCount int
+		wantProject   string
 		wantFiltered  string
 	}{
-		{0, "0"},
-		{1, "0.0"},
-		{5, "0.0"},
+		{"no spend at all", nil, 0, 0, "0", "0"},
+		{"spend exists but filtered set is empty", map[string]float64{"F0.T1": 0.42}, 0, 0, "0.42", "0"},
+		{"single zero-cost task still filtered in", map[string]float64{"F0.T1": 0}, 0, 1, "0.0", "0.0"},
+		{"real spend, all filtered in", map[string]float64{"F0.T1": 0.42, "F1.T1": 1.0}, 1.42, 5, "1.42", "1.42"},
 	}
 	for _, tc := range cases {
-		got := costFor(tc.filteredCount)
-		if string(got.ProjectTotalUSD) != "0" {
-			t.Errorf("costFor(%d).ProjectTotalUSD = %s, want 0", tc.filteredCount, got.ProjectTotalUSD)
-		}
-		if string(got.FilteredTotalUSD) != tc.wantFiltered {
-			t.Errorf("costFor(%d).FilteredTotalUSD = %s, want %s",
-				tc.filteredCount, got.FilteredTotalUSD, tc.wantFiltered)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := costFor(tc.costByTask, tc.filteredSum, tc.filteredCount)
+			if string(got.ProjectTotalUSD) != tc.wantProject {
+				t.Errorf("ProjectTotalUSD = %s, want %s", got.ProjectTotalUSD, tc.wantProject)
+			}
+			if string(got.FilteredTotalUSD) != tc.wantFiltered {
+				t.Errorf("FilteredTotalUSD = %s, want %s", got.FilteredTotalUSD, tc.wantFiltered)
+			}
+		})
 	}
 }

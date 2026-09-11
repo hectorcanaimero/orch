@@ -1,0 +1,52 @@
+# orch status against a REAL database with real spend and a real run —
+# internal/state/testdata/orch-py-0.11.0.db, written by Python v0.11.0 (see
+# its README.md). testdata/parity-project has neither spend nor runs
+# recorded, so this is the only place cost_usd/project_total_usd/
+# filtered_total_usd/latest_run and route resolution (backend/cli_model/
+# tier) get exercised against non-placeholder data.
+#
+# Fixture facts (see internal/state/testdata/README.md and make-fixture.py):
+#   spend: F0.T1 cost_usd=0.42, F0.T2 cost_usd=1.0 -> project total 1.42
+#   runs: one run, "fixture-run-0001", mode=auto, parent_pid=4200, one
+#   in-flight dispatch (F1.T1, pid 4242) -> in_flight_count=1
+#   model_router.yaml (scaffolded by setUpEventsFixture) routes both models
+#   the fixture's tasks use, so backend/cli_model/tier resolve for real.
+
+exec orch status --json --project-root billing-api --project-id billing-api
+! stderr .
+stdout '"project_id":"billing-api"'
+stdout '"_total":5'
+stdout '"done":2'
+stdout '"in-progress":1'
+stdout '"blocked":1'
+stdout '"todo":1'
+
+# Project-wide cost total sums cost_by_task's own values (0.42 + 1.0), never
+# a second, independently-computed number.
+stdout '"project_total_usd":1\.42'
+stdout '"filtered_total_usd":1\.42'
+
+# Per-task cost_usd: real spend keeps its exact float, no spend is "0.0"
+# (never bare "0" — that shape is reserved for an empty project/filtered set).
+stdout '"id":"F0\.T1".*"cost_usd":0\.42'
+stdout '"id":"F0\.T2".*"cost_usd":1\.0'
+stdout '"id":"F1\.T1".*"cost_usd":0\.0'
+
+# Route resolution via model_router.yaml: claude/claude-sonnet-4-6 and
+# claude/claude-opus-4-6 both have entries, so no row falls back to "?".
+stdout '"id":"F0\.T1".*"backend":"claude","cli_model":"claude-sonnet-4-6".*"tier":"standard"'
+stdout '"id":"F1\.T2".*"backend":"claude","cli_model":"claude-opus-4-6".*"tier":"premium"'
+! stdout '"backend":"\?"'
+
+# latest_run: real fields from the one run row. started_at/updated_at are
+# stamped from create_run's clock at fixture-generation time, not fixed —
+# only run_id/mode/status/parent_pid/in_flight_count are asserted.
+stdout '"latest_run":\{"run_id":"fixture-run-0001"'
+stdout '"mode":"auto","status":"live"'
+stdout '"parent_pid":4200'
+stdout '"in_flight_count":1'
+
+exec orch status --project-root billing-api --project-id billing-api
+stdout 'Project billing-api'
+stdout 'F0\.T1'
+stdout '\$0\.42'

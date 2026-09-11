@@ -267,35 +267,48 @@ block) were all of that kind.
   static fallback. The equivalent of the route-table sweep test is cheap in Go
   and worth keeping.
 
-- ~~**`state.Backend` has no way to read spend or runs back**~~ — **the read
-  side landed in #116**; the CLI wiring is still open. `orch status
-  --json` needs `cost_usd` per task and `latest_run` project-wide — Python's
-  `build_status_snapshot` gets them from `iter_all_spend()` and `list_runs()`.
-  The Backend interface from #107 has `RecordSpend`/`StartRun` (write) but
-  nothing symmetric to read them back. `internal/cli/status.go` currently
-  hardcodes `cost_usd`/`project_total_usd`/`filtered_total_usd` to zero and
-  `latest_run` to `null` — which happens to be the CORRECT output for
-  testdata/parity-project (no spend ever recorded, no run ever started), so
-  `scripts/parity.sh` passes, but this is a known gap, not a finished
-  feature.
+- ~~**`state.Backend` has no way to read spend or runs back**~~ — **RESOLVED**:
+  the read side landed in #116 (`SpendSince`/`TotalSpendUSD`/`LatestRun`/
+  `Runs`), and the CLI wiring (`cost_usd`/`project_total_usd`/
+  `filtered_total_usd`/`latest_run` in `orch status`/`tasks --json`) landed in
+  the PR that added this line. Verified two ways: `internal/cli/testdata/
+  script/status-real.txtar` against `internal/state/testdata/
+  orch-py-0.11.0.db` (1.42 USD spend, one real run), and a direct call to
+  Python's `build_status_snapshot` against the same fixture db, whose output
+  matches Go's byte-for-byte on every field Go produces (see the "latest_run
+  is a partial shape" note below for the one exception). `testdata/
+  parity-project` has no spend and no runs, so it was never going to catch a
+  regression here either way — confirmed by running Python's own
+  `build_status_snapshot` against it: it genuinely produces `"project_total_
+  usd": 0` (bare int, Python's `sum()`-of-nothing quirk), `"filtered_total_
+  usd": 0.0`, and `"latest_run": null`, which is exactly what Go already
+  emitted before this fix. No new golden was needed for that fixture.
 
-  `SpendSince`, `TotalSpendUSD`, `LatestRun` and `Runs` now exist on the
-  Backend (#116). What remains is `buildStatusRows`/`buildSnapshot` in
-  `internal/cli/project.go` and `status.go` calling them instead of writing
-  zeroes. Note for whoever does: the parity fixture has no spend and no runs,
-  so `scripts/parity.sh` will keep passing either way — a project with real
-  history is the only thing that tells you it worked.
+- ~~**`internal/router` doesn't exist yet, so `status`/`tasks` never resolve a
+  route.**~~ — **RESOLVED**: `internal/router` landed in #113, and
+  `buildStatusRows` (`internal/cli/project.go`) now resolves real `backend`/
+  `cli_model`/`tier` through it, loaded tolerantly (`loadRouterTolerant`) so a
+  missing/broken `model_router.yaml` degrades those three columns instead of
+  failing the whole command, matching Python's own `try/except` around
+  `load_router` in `build_status_snapshot`. Verified against the same
+  `status-real.txtar` fixture, which ships a `model_router.yaml` routing both
+  models the fixture db's tasks use.
 
-- **`internal/router` doesn't exist yet, so `status`/`tasks` never resolve a
-  route.** `backend`/`cli_model`/`tier` in `orch status`/`tasks --json`
-  always report the "no route found" fallback (`"?"`, the task's own model
-  string, `null`) rather than actually reading `model_router.yaml`. Same
-  situation as spend/runs above: this happens to match Python's real output
-  on testdata/parity-project (its `model_router.yaml` has no entry for
-  `claude/claude-sonnet-4-6` either), so parity holds, but it's a stand-in
-  for real router resolution, not a design choice. Revisit
-  `buildStatusRows` in `internal/cli/project.go` once `internal/router`
-  exists.
+- **`latest_run` is a partial shape: Go's `state.Run` doesn't carry
+  everything Python's `list_runs()` dict does.** Confirmed by diffing real
+  output side by side (`orch-py-0.11.0.db`, see above): Python's row has
+  `completed_count`/`blocked_count`/`deferred_count` (from `completed_json`/
+  `blocked_json`/`deferred_json` columns on `runs` — run-state bookkeeping
+  `state.Backend` doesn't expose) and `run_file`/`events_file` (literal
+  `f"run-{run_id}.json"` / `f"events-{run_id}.jsonl"` paths — a file-backend
+  naming convention that's meaningless now that ADR-G4 dropped that backend
+  entirely, but Python still emits it unconditionally for a sqlite project).
+  `internal/cli/status.go`'s `runJSON` carries every field `state.Run` has
+  (`run_id`/`started_at`/`updated_at`/`mode`/`status`/`parent_pid`/
+  `in_flight_count`, same order Python uses for the fields it shares) and
+  stops there. Revisit if a caller ever needs the run/block/defer counts —
+  it would mean adding those columns to `state.Backend`'s read side, not
+  something `internal/cli` can fake from what it already has.
 
 - **`internal/atomize` (G4.3) — project templates have no markdown specs to
   atomize.** The G4 brief said to generate goldens by atomizing the specs
