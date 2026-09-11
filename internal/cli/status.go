@@ -84,7 +84,11 @@ func buildSnapshot(ctx context.Context, paths config.Paths, backend state.Backen
 	filtered := make([]statusRow, 0, len(all))
 	for _, r := range all {
 		if only != "" {
-			if ok, _ := path.Match(only, r.ID); !ok {
+			ok, err := path.Match(only, r.ID)
+			if err != nil {
+				return statusSnapshot{}, fmt.Errorf("--only %q: %w", only, err)
+			}
+			if !ok {
 				continue
 			}
 		}

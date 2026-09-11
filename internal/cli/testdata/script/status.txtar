@@ -29,3 +29,8 @@ stdout '"id":"F0\.T1"'
 
 ! exec orch status --project-root nonexistent-dir
 stderr 'missing tasks\.json'
+
+# A malformed --only glob (unterminated character class) is a user-input
+# error, not something to swallow and treat as "matches nothing".
+! exec orch status --json --only 'F0[' --project-root proj --project-id parity-project
+stderr 'syntax error in pattern'
