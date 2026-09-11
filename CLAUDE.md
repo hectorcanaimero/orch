@@ -9,12 +9,12 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 - **Deps runtime**: `pyyaml`, `rich`, `fastapi>=0.115,<0.116` (pinned — 0.116+ regresses closure-scoped `Request` annotation resolution), `uvicorn[standard]`. See `pyproject.toml [project.dependencies]` for the authoritative list.
 - **Dev**: `pytest>=8.0`, `httpx>=0.27` (FastAPI TestClient uses it).
 - **Frontend** (`frontend/`, Sprint E-3 SPA spike): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm` package manager, oxlint.
-- **State backend**: dual mode — file (default) or SQLite (`orch migrate`). See `orchestrator/state/`.
+- **State backend**: SQLite by default since v0.11 (PR #91); `file` is legacy JSONL kept for `orch migrate`. See `orchestrator/state/`.
 - **Persistence**: `state/` at runtime, never committed (`state/.gitkeep` only).
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1381 passed + 3 skipped. Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
+- **Tests**: `pytest` from repo root. Full suite is 1404 passed + 3 skipped. Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
 - **Never build after changes.** Type-check / test only.
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
@@ -52,8 +52,8 @@ internal/
   worktree/          — aislamiento git por task
   vcs/               — github/gitlab
   dashboard/         — servidor HTTP (reemplaza FastAPI)
-  publish/           — findings publish (gh CLI shell-out)
-  mcp/               — servidor MCP de orch, si aplica
+  publish/           — snapshot del stakeholder: export estático, watch, destino git/cloud
+  mcp/               — servidor MCP stdio (tools orch_*) para agentes
   skills/            — instalación de skills (`orch install-skills`)
   templates/         — plantillas de proyecto
   doctor/            — `orch doctor` / `orch validate`
@@ -87,7 +87,7 @@ To keep context small, do not proactively call these MCP servers or skills on or
 ## Current context
 
 - **Branch**: `main` (per `git status`; check for drift — sprint branches like `sprint-e3/*` are historical).
-- **Version**: v0.9.1 on `main` (after PR #83).
+- **Version**: v0.10.1 on `main` (after PR #90). G0 hygiene: #91 (defaults sqlite/worktrees/PR), #92 (repo defaults, README rivals, CLAUDE.md).
 - **Latest sprints**: H-7 wizard confirm gate (#80), H-6 `/orch` skill (#78), H-1a/b/c/d templates (#66/#67/#68/#77), H-3 brand (#65), H-4 README+HN (#66). Fixes fuera de serie: F-11 upgrade (#79), F-12 SQLite SoT (#75), F-13 bootstrap hygiene (#74/#76/#83), F-14 `agy` backend (#82).
 - **Pending explicit**: H-1e `expo-mobile` template (last of the 5 canonical).
 - **Prior sprints** (auto-memory has details): 7 budget guardrails · 8 packaging (v0.2.0, MIT, pipx) · 9 `orch init` · A runtime robustness · B SQLite backend · C observability subcommands · D `doctor`/`validate`/interactive `init` · E-1..E-8 dashboard iterations · F-1..F-6 clean foundation + PR automation · G-0..G-6 stakeholder UX · H-2 config consolidation · H-3..H-7 templates + brand + wizard.

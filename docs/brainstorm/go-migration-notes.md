@@ -12,3 +12,5 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   ship in the wheel. Low priority; drop both mentions whenever that file is
   touched for something else, or wait for the Go rewrite (`internal/dashboard/`)
   to make it moot.
+
+- **Frontend leftovers of `board_url`** (2026-09-11): `frontend/src/lib/types.ts:202` still declares `board_url?` and `frontend/env.example:18` mentions `dashboard.board_url`. The backend no longer reads or writes it (PR #92). Remove both when `frontend/` moves to `web/` in the Go migration (G5.1); harmless until then.
