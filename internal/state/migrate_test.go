@@ -1,0 +1,237 @@
+package state
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+const pythonFixture = "testdata/orch-py-0.11.0.db"
+
+func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	if len(ms) == 0 {
+		t.Fatal("no migrations embedded — check the //go:embed directive")
+	}
+	for i, m := range ms {
+		if m.version != i+1 {
+			t.Errorf("migration %d is %s (version %d)", i, m.name, m.version)
+		}
+		if m.sql == "" {
+			t.Errorf("migration %s is empty", m.name)
+		}
+	}
+	if got, want := ms[len(ms)-1].version, 5; got != want {
+		t.Errorf("highest migration is %d, want %d — bump this when 006 ships", got, want)
+	}
+}
+
+// The migrations are copied byte for byte from the Python tree (ADR-G3). If
+// somebody edits one here instead of adding a new file, a database that
+// round-trips between the two implementations diverges.
+func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
+	ms, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	pythonDir := filepath.Join("..", "..", "orchestrator", "state", "sqlite_migrations")
+	if _, err := os.Stat(pythonDir); os.IsNotExist(err) {
+		t.Skip("the Python tree is gone; the embedded copies are now the only source")
+	}
+	for _, m := range ms {
+		want, err := os.ReadFile(filepath.Join(pythonDir, m.name))
+		if err != nil {
+			t.Errorf("read %s from the Python tree: %v", m.name, err)
+			continue
+		}
+		if m.sql != string(want) {
+			t.Errorf("%s differs from orchestrator/state/sqlite_migrations/%s", m.name, m.name)
+		}
+	}
+}
+
+func TestOpenFreshAppliesEveryMigration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nested", "orch.db")
+
+	db, applied, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if applied != 5 {
+		t.Errorf("applied %d migrations on a fresh DB, want 5", applied)
+	}
+	v, err := db.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if v != 5 {
+		t.Errorf("user_version = %d, want 5", v)
+	}
+}
+
+func TestOpenIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "orch.db")
+
+	db, applied, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("first Open applied nothing")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	db2, applied2, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+	if applied2 != 0 {
+		t.Errorf("second Open applied %d migrations, want 0", applied2)
+	}
+}
+
+// The claim ADR-G3 makes to users: swap the binary, keep your database.
+func TestOpenPythonWrittenDatabaseAppliesNothing(t *testing.T) {
+	ctx := context.Background()
+
+	// Copy it — opening in WAL mode writes sidecar files, and the fixture is
+	// checked in. A test must not dirty its own evidence.
+	src, err := os.ReadFile(pythonFixture)
+	if err != nil {
+		t.Fatalf("read the Python fixture: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "orch.db")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatalf("copy the fixture: %v", err)
+	}
+
+	db, applied, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open a Python-written database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if applied != 0 {
+		t.Errorf("applied %d migrations to a v0.11.0 database, want 0 — "+
+			"the schemas have diverged", applied)
+	}
+	v, err := db.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if v != 5 {
+		t.Errorf("user_version = %d, want 5", v)
+	}
+}
+
+// Every table the Python backend writes must be readable here. This is a
+// shape check, not a data check — the data assertions live in the Backend
+// tests once the model types land.
+func TestPythonFixtureHasTheExpectedRows(t *testing.T) {
+	ctx := context.Background()
+	src, err := os.ReadFile(pythonFixture)
+	if err != nil {
+		t.Fatalf("read the Python fixture: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "orch.db")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatalf("copy the fixture: %v", err)
+	}
+	db, _, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	cases := []struct {
+		table string
+		want  int
+	}{
+		{"projects", 1},
+		{"tasks_definition", 5},
+		{"tasks_runtime", 5},
+		// Five events were appended; one was a byte-identical duplicate and
+		// the dedup hash dropped it. If this reads 5, INSERT OR IGNORE is
+		// not doing its job.
+		{"events", 4},
+		{"spend", 2},
+		{"dispatches", 1},
+		{"runs", 1},
+		{"milestones", 1},
+		{"findings", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.table, func(t *testing.T) {
+			var n int
+			err := db.read.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+c.table).Scan(&n)
+			if err != nil {
+				t.Fatalf("count %s: %v", c.table, err)
+			}
+			if n != c.want {
+				t.Errorf("%s has %d rows, want %d", c.table, n, c.want)
+			}
+		})
+	}
+}
+
+// The dedup hashes Python stored must be exactly the ones Go computes. This
+// reads them out of the fixture rather than restating the constants, so the
+// test cannot drift from the file it is defending.
+func TestDedupHashesInThePythonFixtureMatchGo(t *testing.T) {
+	ctx := context.Background()
+	src, err := os.ReadFile(pythonFixture)
+	if err != nil {
+		t.Fatalf("read the Python fixture: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "orch.db")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatalf("copy the fixture: %v", err)
+	}
+	db, _, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	t.Run("spend", func(t *testing.T) {
+		rows, err := db.read.QueryContext(ctx,
+			`SELECT project_id, ts, task_id, backend, model, cost_usd, duration_s, dedup_hash
+			 FROM spend ORDER BY id`)
+		if err != nil {
+			t.Fatalf("query spend: %v", err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		n := 0
+		for rows.Next() {
+			var pid, ts, taskID, backend, model, stored string
+			var cost, dur float64
+			if err := rows.Scan(&pid, &ts, &taskID, &backend, &model, &cost, &dur, &stored); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			got := spendDedupHash(pid, ts, taskID, backend, model, cost, dur)
+			if got != stored {
+				t.Errorf("spend %s: Go computes %s, Python stored %s (cost=%v duration=%v)",
+					taskID, got, stored, cost, dur)
+			}
+			n++
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterate spend: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("checked %d spend rows, want 2", n)
+		}
+	})
+}
