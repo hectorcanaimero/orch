@@ -6,10 +6,10 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 ## Stack
 
 - **Backend / CLI**: Python `>=3.11`, distributed as `orch` script (see `pyproject.toml`).
-- **Deps runtime**: `pyyaml`, `rich`, `fastapi>=0.115,<0.116` (pinned — 0.116+ regresses closure-scoped `Request` annotation resolution), `uvicorn[standard]`, `jinja2`.
+- **Deps runtime**: `pyyaml`, `rich`, `fastapi>=0.115,<0.116` (pinned — 0.116+ regresses closure-scoped `Request` annotation resolution), `uvicorn[standard]`. See `pyproject.toml [project.dependencies]` for the authoritative list.
 - **Dev**: `pytest>=8.0`, `httpx>=0.27` (FastAPI TestClient uses it).
 - **Frontend** (`frontend/`, Sprint E-3 SPA spike): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm` package manager, oxlint.
-- **State backend**: dual mode — file (default) or SQLite (`orch migrate`). See `orchestrator/state_backend/`.
+- **State backend**: dual mode — file (default) or SQLite (`orch migrate`). See `orchestrator/state/`.
 - **Persistence**: `state/` at runtime, never committed (`state/.gitkeep` only).
 
 ## Conventions
@@ -24,11 +24,48 @@ local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
 
 ## Layout (top-level)
 
-- `orchestrator/` — Python package. Subpackages: `dashboard/`, `state_backend/`, `templates/`, `providers/`.
+- `orchestrator/` — Python package. Subpackages: `dashboard/` (FastAPI app + tunnel manager), `state/` (file/SQLite backends, see `interface.py` + `adapters.py`), `vcs/` (GitHub/GitLab), `templates/`, `skills/`. Per-CLI dispatch adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`) live in `orchestrator/dispatcher.py`, not a separate `providers/` package.
 - `frontend/` — Vite SPA (E-3 spike). Builds to `frontend/dist/`, served by dashboard when present.
 - `docs/` — manuals + design docs.
 - `scripts/` — repo helpers (not the per-project `task-*.sh` contract).
 - `state/` — gitignored runtime state; only `.gitkeep` tracked.
+
+## Migración a Go (en curso)
+
+orch se está reescribiendo en Go (ver checklist en el artefacto "Orch en Go";
+fases G0–G8). Layout objetivo — planificado (Go), ninguna de estas rutas
+existe todavía en este repo:
+
+```
+cmd/orch/            — main package, arg parsing, entrypoint
+internal/
+  cli/               — subcomandos (status, tasks, dispatch, findings…)
+  config/            — carga + merge de config.yaml / overrides
+  model/             — Task, Finding, DAG y demás tipos de dominio
+  atomize/           — tasks.json <-> spec
+  router/            — model_router.yaml
+  budget/            — guardrails por proveedor
+  state/             — backend (SQLite única fuente de verdad, ver F-12)
+  engine/            — el loop de dispatch (equivalente a dispatcher.py)
+  providers/         — adapters por CLI (claude/codex/opencode/agy…)
+  prompt/            — prompt_builder.py equivalente
+  worktree/          — aislamiento git por task
+  vcs/               — github/gitlab
+  dashboard/         — servidor HTTP (reemplaza FastAPI)
+  publish/           — findings publish (gh CLI shell-out)
+  mcp/               — servidor MCP de orch, si aplica
+  skills/            — instalación de skills (`orch install-skills`)
+  templates/         — plantillas de proyecto
+  doctor/            — `orch doctor` / `orch validate`
+  notify/            — Slack/Discord webhooks
+  tunnel/            — supervisor de túneles del dashboard
+web/                 — SPA (movida desde frontend/), servida embebida en el binario
+```
+
+Regla de la migración: **no se añaden features nuevas en la versión Python.**
+Los bugs que aparezcan mientras dure la migración se anotan en
+`docs/brainstorm/go-migration-notes.md` en lugar de arreglarse con una
+feature nueva o un refactor grande — fixes puntuales sí, features no.
 
 ## Things NOT to invoke unless the user asks
 
@@ -57,6 +94,6 @@ To keep context small, do not proactively call these MCP servers or skills on or
 
 ## Gotchas already learned
 
-- `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. Also, `jinja2` is required in the core dep set (not an extra) so `orch dashboard` boots without a second install step.
+- `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. The dashboard itself is the React SPA now (server-rendered Jinja templates are gone) — `jinja2` is no longer a runtime dependency, though a couple of stale mentions of it linger in `orch.py`'s install hint and `orchestrator/dashboard/__init__.py`'s docstring (see `docs/brainstorm/go-migration-notes.md`).
 - `orch dashboard` ships templates + `pricing.yaml` + `dashboard.yaml` + `static/` inside the wheel (see `pyproject.toml [tool.setuptools.package-data]`).
 - Runtime YAML defaults (`config.yaml`, `model_router.yaml`, `budgets.yaml`) also ship in the wheel so `pipx`-installed `orch` works without a manual copy.
