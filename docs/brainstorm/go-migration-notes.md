@@ -97,6 +97,8 @@ block) were all of that kind.
   duplicate can't hide behind last-wins), and the warning loader fires (or
   stays silent) exactly when expected.
 
+- ~~**Bug 5 — the budget guardrail never fired on a sqlite project**~~ — **RESOLVED** (fix/budget-reads-sqlite-spend, 2026-09-11). `SqliteSpendLog.record()` wrote only the `spend` table and returned a synthetic JSONL path that was never written; `BudgetGate._entries_since()` read only `state/spend-*.jsonl`. With `state.backend: sqlite` (the default since PR #91) the gate saw zero spend and never blocked a dispatch, while the dashboard (`metrics.read_all_spends`) showed the real number. Reproduced with 5 rows / 750K tokens against a 600-token cap → `can_dispatch` said ok. Found by opus reading `budget.py` for G2.2. Fix: `_entries_since` now reads both sources and de-duplicates rows present in both (a migrated project keeps its JSONL). Regression tests in `test_budget.py`. Go: `internal/budget` reads spend through `state.Backend` (SpendSince), never through files.
+
 ## Notes for the Go rewrite
 
 - **The graph package: three gaps between the plan and the Python tree.**

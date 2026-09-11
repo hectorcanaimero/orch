@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -183,6 +184,18 @@ def warn_undersized_presets(
 # ---- Gate ---------------------------------------------------------------
 
 
+def _spend_dedup_key(obj: dict[str, Any]) -> tuple[Any, ...]:
+    """Identity of a spend row across the JSONL and SQLite sources."""
+    return (
+        obj.get("ts"),
+        obj.get("task_id"),
+        obj.get("backend"),
+        obj.get("model"),
+        int(obj.get("tokens_in", 0) or 0),
+        int(obj.get("tokens_out", 0) or 0),
+    )
+
+
 class BudgetGate:
     """Rolling-window budget check per provider.
 
@@ -321,10 +334,38 @@ class BudgetGate:
     def _entries_since(self, provider: str, cutoff: datetime):
         """Yield spend rows for a provider newer than `cutoff`.
 
-        Reads today's file + yesterday's (if the window crosses midnight).
-        Two-file bound is enough for the largest sensible window we support
-        (~24h — anything bigger belongs in a different tool).
+        Reads BOTH sources a project can have:
+
+        - `state/spend-<day>.jsonl` (file backend, and pre-migration history);
+        - the `spend` table in `state/orch.db` (sqlite backend, the default
+          since v0.11 / PR #91).
+
+        Bug 5 of the Go port (see docs/brainstorm/go-migration-notes.md):
+        before this, only the JSONL files were read, so under
+        `state.backend: sqlite` the gate saw zero spend and never fired while
+        the dashboard (`metrics.read_all_spends`) showed the real number.
+        Rows present in both sources — a project migrated with `orch migrate`
+        keeps its JSONL files — are de-duplicated by (ts, task_id, backend,
+        model, tokens_in, tokens_out).
         """
+        seen: set[tuple[Any, ...]] = set()
+        for obj in self._jsonl_entries_since(provider, cutoff):
+            key = _spend_dedup_key(obj)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield obj
+        for obj in self._sqlite_entries_since(provider, cutoff):
+            key = _spend_dedup_key(obj)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield obj
+
+    def _jsonl_entries_since(self, provider: str, cutoff: datetime):
+        """JSONL source: today's file + yesterday's (if the window crosses
+        midnight). Two-file bound is enough for the largest sensible window
+        we support (~24h — anything bigger belongs in a different tool)."""
         today = datetime.now(timezone.utc).date()
         days_to_check = [today]
         if cutoff.date() < today:
@@ -355,6 +396,44 @@ class BudgetGate:
                         continue
                     if ts >= cutoff:
                         yield obj
+
+    def _sqlite_entries_since(self, provider: str, cutoff: datetime):
+        """SQLite source: the `spend` table of `state/orch.db`, if present.
+
+        Same columns the dashboard reads (`metrics._read_spends_from_sqlite`),
+        filtered by provider in SQL and by the window in Python so the
+        timestamp parsing is shared with the JSONL path. Any sqlite error
+        degrades to "no rows" — the gate must never crash a run because the
+        database is briefly locked.
+        """
+        db_path = self.state_dir / "orch.db"
+        if not db_path.exists():
+            return
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                cur = conn.execute(
+                    "SELECT ts, task_id, backend, model, tokens_in, tokens_out, "
+                    "cost_usd, duration_s, estimated FROM spend "
+                    "WHERE backend = ? ORDER BY ts ASC",
+                    (provider,),
+                )
+                rows = [dict(row) for row in cur.fetchall()]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return
+        for obj in rows:
+            ts_str = obj.get("ts")
+            if not ts_str:
+                continue
+            try:
+                ts = self._parse_ts(ts_str)
+            except ValueError:
+                continue
+            if ts >= cutoff:
+                yield obj
 
     @staticmethod
     def _parse_ts(ts: str) -> datetime:
