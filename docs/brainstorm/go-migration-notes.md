@@ -4,13 +4,11 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
 
 ## Open notes
 
-- Stale `jinja2` mentions: `orchestrator/orch.py`'s dashboard-missing-deps hint
-  still tells the user to install `jinja2 >= 3.1`, and
-  `orchestrator/dashboard/__init__.py`'s module docstring still calls out
-  `jinja2` as a "heavy import". Neither is true anymore — the dashboard is
-  the React SPA, `jinja2` isn't in `pyproject.toml` deps, and no templates
-  ship in the wheel. Low priority; drop both mentions whenever that file is
-  touched for something else, or wait for the Go rewrite (`internal/dashboard/`)
-  to make it moot.
+- ~~Stale `jinja2` mentions~~ — **RESOLVED** (g0/sonnet-cleanup): `orchestrator/orch.py`'s
+  dashboard-missing-deps hint no longer tells the user to install `jinja2 >= 3.1`, and
+  `orchestrator/dashboard/__init__.py`'s module docstring now describes FastAPI serving
+  the embedded React SPA instead of calling out `jinja2` as a "heavy import".
 
-- **Frontend leftovers of `board_url`** (2026-09-11): `frontend/src/lib/types.ts:202` still declares `board_url?` and `frontend/env.example:18` mentions `dashboard.board_url`. The backend no longer reads or writes it (PR #92). Remove both when `frontend/` moves to `web/` in the Go migration (G5.1); harmless until then.
+- ~~**Frontend leftovers of `board_url`**~~ — **RESOLVED** (g0/sonnet-cleanup, 2026-09-11):
+  `frontend/src/lib/types.ts:202`'s `board_url?` field and `frontend/env.example`'s
+  `dashboard.board_url` comment are both removed.

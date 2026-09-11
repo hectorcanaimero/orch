@@ -199,7 +199,6 @@ export interface ProjectConfigFindings {
  * grows.
  */
 export interface ProjectConfigDashboard {
-  board_url?: string | null
   show_spend_to_stakeholder?: boolean
 }
 
