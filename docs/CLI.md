@@ -9,6 +9,7 @@ flags Python does unless a difference is called out.
 **Status by phase** (see the "Orch en Go" migration plan):
 
 - **G1.5 — landed**: `status`, `tasks`, `events`, `logs`.
+- **G4.4 — landed**: `init` (batch + wizard).
 - **G3.6 — landed**: `task set`, `task-status`, `reset`. `stop` was split out
   to **G3.3** (it needs the engine's run tracking, not `Backend.Transition`
   — see `docs/brainstorm/go-migration-notes.md`).
@@ -59,3 +60,4 @@ flags Python does unless a difference is called out.
   off) — same byte shape category as Python's
   `json.dumps(..., separators=(",", ":"))`, verified command-by-command in
   `scripts/parity.sh` rather than assumed.
+| `init` | `PATH` (positional, optional), `--template NAME`, `--project-name`, `--force`, `--sdd` | no — scaffolds files and prints a banner | Ports `init_cmd.py`'s `run_init_cli`, batch and interactive. Mode is chosen Python's way: a path or any of the four flags means batch, none means the wizard. **Two fixes are baked in rather than ported.** (1) A templated project's own task models are routed during init, so the first command the banner suggests works — Python's stub was empty and every templated project failed `--dry-run` until #141 (bug 14). (2) The router stub is comments only, never `{}`, so `router add-missing` can append to it (#141 Python side, #144 Go side). **Divergences, all approved:** the wizard's choice hint is inlined only when every choice is slash-free and there are at most six — Python's unconditional `'/'.join` made the model tier picker unreadable, since the router keys *are* slash-separated (`orch init` is interactive and not diffed by `scripts/parity.sh`); running out of input is an error rather than an implicit yes, because the confirm gate's default is `y` and a closed pipe must not scaffold a project nobody approved; and a config key the template omits is appended rather than silently dropped — no shipped template contains `budgets_preset`, so Python asks for one, shows it in the confirm summary, and discards it (bug 17). The fifth template, `expo-mobile`, exists only in Go (H-1e). See `docs/brainstorm/go-migration-notes/opus.md`. |

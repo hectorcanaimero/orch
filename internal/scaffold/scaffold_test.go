@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/templates"
+	"gopkg.in/yaml.v3"
 )
 
 var fixedNow = time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
@@ -373,27 +375,31 @@ func TestSDDAddsTheOpenspecLayout(t *testing.T) {
 	}
 }
 
-// The packaged config default is a copy of `orchestrator/config.yaml`, so it
-// gets the same guard `internal/templates` has: drift fails here.
+// The three packaged defaults are copies of Python's, so they get the same
+// guard `internal/templates` has: drift fails here.
 //
-// Same rule as that one — it reads the Python file by relative path, so it
+// Same rule as that one — it reads the Python files by relative path, so it
 // stops working the day the Python tree is deleted. Delete the test then; do
 // not weaken it now.
-func TestDefaultConfigMatchesPython(t *testing.T) {
-	pythonPath := filepath.Join("..", "..", "orchestrator", "config.yaml")
-	want, err := os.ReadFile(pythonPath) // #nosec G304 -- a fixed path in the repo
-	if errors.Is(err, os.ErrNotExist) {
-		t.Skip("the Python tree is gone; this test goes with it")
-	}
-	if err != nil {
-		t.Fatalf("read %s: %v", pythonPath, err)
-	}
-	got, err := defaultConfig.ReadFile("defaults/config.yaml")
-	if err != nil {
-		t.Fatalf("read the embedded default: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Error("the embedded config.yaml has drifted from orchestrator/config.yaml")
+func TestPackagedDefaultsMatchPython(t *testing.T) {
+	for _, name := range []string{"config.yaml", "budgets.yaml", "model_router.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			pythonPath := filepath.Join("..", "..", "orchestrator", name)
+			want, err := os.ReadFile(pythonPath) // #nosec G304 -- a fixed path in the repo
+			if errors.Is(err, os.ErrNotExist) {
+				t.Skip("the Python tree is gone; this test goes with it")
+			}
+			if err != nil {
+				t.Fatalf("read %s: %v", pythonPath, err)
+			}
+			got, err := packagedDefault(name)
+			if err != nil {
+				t.Fatalf("read the embedded %s: %v", name, err)
+			}
+			if string(got) != string(want) {
+				t.Errorf("the embedded %s has drifted from orchestrator/%s", name, name)
+			}
+		})
 	}
 }
 
@@ -463,5 +469,158 @@ func TestGeneratedAtIsTheClockItWasGiven(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, res, "tasks.json"), "2026-12-25") {
 		t.Error("tasks.json does not carry the date it was given")
+	}
+}
+
+// ---- the wizard's answers have to land somewhere ------------------------------
+
+// Three of the wizard's questions are not decided by the template, and their
+// answers are written into config.yaml after scaffolding.
+//
+// This is the assertion the wizard tests did not make. They checked the
+// summary displayed each answer; nothing checked the answer took effect, and
+// for a while it did not — Wizard collected `state backend`, `budget preset`
+// and `spec root` into locals, showed them, and returned Options that had
+// never heard of them.
+func TestWizardChoicesAreWrittenIntoTheConfig(t *testing.T) {
+	res, err := Run(Options{
+		Root:         filepath.Join(t.TempDir(), "p"),
+		Template:     "python-api",
+		StateBackend: "file",
+		BudgetPreset: "aggressive",
+		SpecRoot:     "docs/specs",
+		Now:          fixedNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readFile(t, res, ".orchestrator/config.yaml")
+
+	for _, want := range []string{"backend: file", "budgets_preset: aggressive", "spec_root: docs/specs"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the config does not contain %q:\n%s", want, body)
+		}
+	}
+	// The template's own values are gone, not merely accompanied.
+	for _, gone := range []string{"backend: sqlite", "spec_root: specs\n"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the config still contains %q", gone)
+		}
+	}
+	// And the comments survived — a YAML round-trip would have eaten them,
+	// and they are the guidance an operator reads when they open the file.
+	if !strings.Contains(body, "#") {
+		t.Error("the comments were lost")
+	}
+	// `backend:` is nested under `state:`; the replacement must keep its
+	// indent or the key moves to the top level and means something else.
+	if !strings.Contains(body, "\n  backend: file") {
+		t.Error("backend lost its indentation and is no longer under state:")
+	}
+}
+
+// No answers, no edits. Batch mode passes none of the three, and a flag
+// nobody set must not overwrite what the template chose.
+func TestNoChoicesLeavesTheConfigAlone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "p")
+	withChoices, err := Run(Options{Root: root, Template: "python-api", Now: fixedNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readFile(t, withChoices, ".orchestrator/config.yaml")
+	if !strings.Contains(body, "spec_root: specs") {
+		t.Error("the template's spec_root was not preserved")
+	}
+	if !strings.Contains(body, "backend: sqlite") {
+		t.Error("the template's state backend was not preserved")
+	}
+}
+
+// The tier picks are stamped into tasks.json's meta block.
+//
+// Informational — nothing dispatches on them — but they are the only record
+// of which models the project was set up around.
+func TestTierDefaultsAreStampedIntoTaskMeta(t *testing.T) {
+	res, err := Run(Options{
+		Root: filepath.Join(t.TempDir(), "p"), Template: "python-api", Now: fixedNow,
+		TierDefaults: map[string]string{
+			"premium":  "claude/claude-opus-4-7",
+			"standard": "claude/claude-sonnet-4-6",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		Meta map[string]any `json:"meta"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, res, "tasks.json")), &doc); err != nil {
+		t.Fatalf("the stamped tasks.json does not parse: %v", err)
+	}
+	if doc.Meta["default_premium_model"] != "claude/claude-opus-4-7" {
+		t.Errorf("default_premium_model = %v", doc.Meta["default_premium_model"])
+	}
+	if doc.Meta["default_standard_model"] != "claude/claude-sonnet-4-6" {
+		t.Errorf("default_standard_model = %v", doc.Meta["default_standard_model"])
+	}
+	// A tier nobody picked gets no key, rather than an empty one.
+	if _, ok := doc.Meta["default_cheap_model"]; ok {
+		t.Error("a tier with no pick was stamped anyway")
+	}
+	// The template's own meta survives the rewrite.
+	if doc.Meta["template"] != "python-api" {
+		t.Errorf("meta.template = %v, want python-api", doc.Meta["template"])
+	}
+	// And the file still loads — a stamp that broke the schema would be
+	// worse than no stamp.
+	if _, err := model.LoadTasksFile(filepath.Join(res.Root, "tasks.json")); err != nil {
+		t.Errorf("the stamped tasks.json no longer loads: %v", err)
+	}
+}
+
+// Bug 17: a key the template omits is appended, not dropped.
+//
+// None of the four shipped templates contains `budgets_preset`. Python's
+// regex has no fallback, so the wizard asks for a budget preset, shows it in
+// the confirm summary, takes the operator's "yes", and discards it — the
+// project loads with the packaged default instead. A confirm gate that
+// displays a choice with no effect is worse than not asking, because the
+// operator has been told it took.
+func TestAMissingKeyIsAppendedNotDropped(t *testing.T) {
+	res, err := Run(Options{
+		Root: filepath.Join(t.TempDir(), "p"), Template: "python-api",
+		BudgetPreset: "aggressive", Now: fixedNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readFile(t, res, ".orchestrator/config.yaml")
+	if !strings.Contains(body, "budgets_preset: aggressive") {
+		t.Errorf("the chosen preset was dropped:\n%s", body)
+	}
+	if !strings.Contains(body, "Added by `orch init`") {
+		t.Error("the appended key does not say where it came from")
+	}
+	// And the file is still the YAML it was.
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("appending broke the config: %v", err)
+	}
+	if doc["budgets_preset"] != "aggressive" {
+		t.Errorf("budgets_preset parses as %v", doc["budgets_preset"])
+	}
+	if doc["spec_root"] != "specs" {
+		t.Errorf("the template's spec_root was disturbed: %v", doc["spec_root"])
+	}
+}
+
+// A nested key is never appended. A bare `backend:` at the end of the file
+// would be a top-level setting with a different meaning, so a config with no
+// `state:` block keeps the default rather than gaining a wrong key.
+func TestANestedKeyIsNotAppended(t *testing.T) {
+	body := replaceOrAppend("concurrency:\n  global_max: 4\n", reStateBackend, "", "file", false)
+	if strings.Contains(body, "backend") {
+		t.Errorf("a nested key was appended:\n%s", body)
 	}
 }

@@ -86,3 +86,77 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `Backend` adds its read in the same PR.** Not for symmetry — because the
   cost of the gap is paid by whoever needs the read next, and they pay it as a
   blocked task rather than as a missing method.
+
+- **Divergence: the wizard inlines its choice hint only when the hint helps.**
+  Python's `prompt` writes `[{'/'.join(choices)}]` unconditionally. For `[y/n]`
+  and `[sqlite/file]` that reads well. For the model tier picker it does not —
+  the router keys *are* slash-separated paths, so fifteen of them joined by a
+  slash produce
+
+  ```
+  default premium model [agy/pro/claude/claude-opus-4-7/codex/gpt-5.6/gemini/…]
+  ```
+
+  where no reader can tell which slashes separate choices and which are inside
+  one. The options are already printed above it, one per line, so the bracket
+  adds only the confusion. Go inlines it when every choice is slash-free and
+  there are at most six. `orch init` is interactive and its output is not
+  compared by `scripts/parity.sh`, so nothing depends on the difference but a
+  reader.
+
+  **The eight wizard tests passed with the unreadable version.** None of them
+  asserted on the prompt line; they checked the returned options and the
+  summary. That is checklist rule 23 from the other side — not a normalisation
+  that hid the difference, but a part of the output nobody ever looked at. It
+  only surfaced because I printed a full transcript and read it. Two tests now
+  cover it: one on the decision directly, one that the tier options appear one
+  per line and are *not* joined into the prompt.
+
+  The general form, worth more than the fix: **a green test suite says nothing
+  about output no test reads.** Print it and look at it once.
+
+- **The wizard treats exhausted input as an error, not as a yes.** If the line
+  reader returned an empty string at EOF, every remaining question would take
+  its default — including the H-7 confirm gate, whose default is `y`. Closing
+  a pipe would scaffold a project nobody approved, which is the single outcome
+  that gate exists to prevent. `io.EOF` comes back wrapped, and a test asserts
+  that running out of answers confirms nothing.
+
+- **Bug 17: the wizard asks for a budget preset, shows it in the confirm
+  summary, and throws the answer away.** Found wiring the Go wizard's answers
+  through to the files they are supposed to change.
+
+  `_post_process_config` rewrites `state.backend`, `budgets_preset` and
+  `spec_root` in the scaffolded config with three `re.sub(..., count=1)` calls.
+  A regex that matches nothing changes nothing — and **none of the four shipped
+  templates contains `budgets_preset`**. So for every templated project the
+  wizard asks the question, prints the answer in the H-7 summary, takes the
+  operator's "yes", and the project then loads with the packaged default.
+
+  The severity is in the confirm gate, not the setting. A gate that displays a
+  choice which then has no effect is worse than never asking: the operator has
+  been shown their answer and told it took. The same code path works for a
+  blank project, whose packaged config.yaml does have the key, which is why it
+  has never been noticed.
+
+  Go appends the key with a comment when the file lacks it. A nested key —
+  `backend:` under `state:` — is still never appended, because a bare
+  `backend:` at the end of the file would be a different, top-level setting.
+
+  Not fixed in Python: it is a one-line `re.sub` fallback, but the tree is
+  frozen and the Go side no longer has the bug.
+
+- **The wizard collected three answers and returned none of them.** My own,
+  caught before the PR merged and worth recording because of how it hid.
+
+  `Wizard` read `state backend`, `budget preset` and `spec root` into locals,
+  printed them in the summary, and returned an `Options` that had no fields
+  for any of them. Eight tests passed: they asserted the summary *displayed*
+  each answer, which it did. Nothing asserted the answer *took effect*, and
+  for that to be checked at all the test has to look at the file the scaffold
+  writes, not at the wizard's output.
+
+  It only surfaced because I went to port `_post_process_config` and found
+  there was nothing to pass it. The shape to remember: **a test that an
+  interactive tool displayed a choice is not a test that the choice was
+  applied**, and the two live in different files.

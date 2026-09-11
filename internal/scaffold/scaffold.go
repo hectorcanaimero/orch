@@ -21,11 +21,13 @@ package scaffold
 
 import (
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +54,18 @@ type Options struct {
 	// Now stamps GENERATED_AT. Zero means time.Now — a parameter so a test
 	// can have a fixed expectation.
 	Now time.Time
+
+	// The three answers the wizard collects that are not decided by the
+	// template. Empty means "leave the config as the template or the
+	// packaged default wrote it", which is what batch mode wants: a flag
+	// nobody passed must not overwrite a value the template chose.
+	StateBackend string
+	BudgetPreset string
+	SpecRoot     string
+	// TierDefaults is the wizard's per-tier model pick, stamped into
+	// tasks.json's meta block for downstream tools. Keys: premium, standard,
+	// cheap.
+	TierDefaults map[string]string
 }
 
 // Result is what a scaffold produced, for the caller's banner and for tests
@@ -161,6 +175,8 @@ func Run(opts Options) (Result, error) {
 		w.mkdir(filepath.Join("openspec", "specs"))
 		w.copyShared(filepath.Join("openspec", "README.md"), "openspec/README.md")
 	}
+	w.applyChoices(opts)
+	w.stampTaskMeta(opts)
 	if w.err != nil {
 		return res, w.err
 	}
@@ -230,9 +246,14 @@ type writer struct {
 	err     error
 }
 
+// fail records the first error and ignores the rest.
+//
+// Every caller passes a format ending in `: %w` with the underlying error, so
+// the wrapping rule is satisfied at the call sites rather than here — this
+// function cannot add a verb it does not know the shape of.
 func (w *writer) fail(format string, args ...any) {
 	if w.err == nil {
-		w.err = fmt.Errorf(format, args...)
+		w.err = fmt.Errorf(format, args...) //nolint:govet // callers own the verbs
 	}
 }
 
@@ -267,6 +288,8 @@ func (w *writer) write(rel string, body []byte, mode os.FileMode) {
 		w.fail("create the directory for %s: %w", rel, err)
 		return
 	}
+	// #nosec G703 -- rel is a constant in this file, never operator input;
+	// the root it joins onto is the project the operator asked to scaffold.
 	if err := os.WriteFile(w.path(rel), body, mode); err != nil {
 		w.fail("write %s: %w", rel, err)
 	}
@@ -348,22 +371,30 @@ func (w *writer) scripts() {
 	}
 }
 
-// defaultConfig is the annotated config.yaml a project gets when its template
-// ships none.
+// defaults holds the three YAML files the Python package ships beside its
+// templates directory: `config.yaml`, `budgets.yaml` and `model_router.yaml`.
 //
-// A copy of `orchestrator/config.yaml`, and deliberately NOT part of
-// `internal/templates`: that package mirrors one directory
-// (`orchestrator/templates/`) and its sync test says so. This file lives
-// beside it in the Python package rather than inside it, and the same
-// distinction is kept here so neither test has to carry an exception.
-// `TestDefaultConfigMatchesPython` holds this copy to the original.
+// Deliberately NOT part of `internal/templates`. That package mirrors one
+// directory — `orchestrator/templates/` — and its sync test says exactly
+// that. These three live beside that directory in the Python package, not
+// inside it, and keeping the same distinction means neither test needs an
+// exception. `TestPackagedDefaultsMatchPython` holds all three to their
+// originals.
 //
-// It is the file and not `config.Defaults()` because the comments are most of
-// the value — a marshalled struct would write the same keys and none of the
-// explanations, and this is the file an operator edits first.
+// config.yaml is the file and not `config.Defaults()` because the comments are
+// most of its value: it is the first file an operator edits, and a marshalled
+// struct would write the same keys with none of the explanations. The other
+// two are read for their contents — the preset names and the tier groupings
+// the wizard offers — so they have to be the shipped files rather than a
+// restatement of what is in them.
 //
-//go:embed defaults/config.yaml
-var defaultConfig embed.FS
+//go:embed defaults
+var defaults embed.FS
+
+// packagedDefault reads one of the three by name.
+func packagedDefault(name string) ([]byte, error) {
+	return defaults.ReadFile("defaults/" + name)
+}
 
 // config writes `.orchestrator/config.yaml` from the template, or the
 // packaged default.
@@ -375,7 +406,7 @@ func (w *writer) config() {
 			return
 		}
 	}
-	body, err := defaultConfig.ReadFile("defaults/config.yaml")
+	body, err := packagedDefault("config.yaml")
 	if err != nil {
 		w.fail("the packaged default config is missing: %w", err)
 		return
@@ -460,3 +491,134 @@ func (w *writer) workflow() {
 // ErrTemplateNotFound is re-exported so a caller can tell a bad --template
 // from a filesystem problem without importing templates as well.
 var ErrTemplateNotFound = errors.New("unknown template")
+
+// applyChoices rewrites the three config keys the wizard asks about.
+//
+// A regex edit rather than a YAML round-trip, which is Python's choice and is
+// kept for its reason: the shipped config.yaml is mostly comments, and they
+// are the guidance an operator reads when they open the file later. Marshalling
+// the parsed document back out would produce the same keys and delete every
+// line explaining them.
+//
+// An empty answer leaves the key alone. That matters for batch mode: a flag
+// nobody passed must not overwrite what the template chose, and `orch init
+// --template python-api` should get python-api's `spec_root`, not a blank.
+//
+// # Divergence: a missing key is appended, not dropped
+//
+// Python's regexes have `count=1` and no fallback, so a key the file does not
+// contain is silently left out — and NONE of the four shipped templates
+// contains `budgets_preset`. The wizard therefore asks for a budget preset,
+// shows the answer in the confirm summary, takes the operator's "yes", and
+// discards it: the project loads with the packaged default instead. A confirm
+// gate that displays a choice which then has no effect is worse than not
+// asking, because the operator has been told it took.
+//
+// Here a key that is not in the file is appended at the top level with a
+// comment saying where it came from. Reported as bug 17.
+func (w *writer) applyChoices(opts Options) {
+	if w.err != nil {
+		return
+	}
+	if opts.StateBackend == "" && opts.BudgetPreset == "" && opts.SpecRoot == "" {
+		return
+	}
+
+	rel := filepath.Join(".orchestrator", "config.yaml")
+	raw, err := os.ReadFile(w.path(rel)) // #nosec G304 -- the file this scaffold just wrote
+	if err != nil {
+		w.fail("read %s to apply the chosen settings: %w", rel, err)
+		return
+	}
+
+	body := string(raw)
+	// `backend:` is nested under `state:`, so it is matched with its leading
+	// whitespace and the whitespace is preserved — a replacement that
+	// unindented it would move the key to the top level and change what it
+	// means. It is also the one of the three that cannot be appended: a bare
+	// `backend:` at the end of the file would be a different setting, so a
+	// config with no `state:` block keeps the default.
+	body = replaceOrAppend(body, reStateBackend, "", opts.StateBackend, false)
+	body = replaceOrAppend(body, reBudgetsPreset, "budgets_preset", opts.BudgetPreset, true)
+	body = replaceOrAppend(body, reSpecRoot, "spec_root", opts.SpecRoot, true)
+
+	w.write(rel, []byte(body), 0o600)
+}
+
+var (
+	reStateBackend  = regexp.MustCompile(`(?m)^(\s*backend:\s*)\S+`)
+	reBudgetsPreset = regexp.MustCompile(`(?m)^(budgets_preset:\s*)\S+`)
+	reSpecRoot      = regexp.MustCompile(`(?m)^(spec_root:\s*)\S+`)
+)
+
+// replaceOrAppend swaps the value of the first line the pattern matches,
+// keeping whatever prefix (indent, key, spacing) the file already had — or
+// appends `key: value` when the file has no such line and appending is safe.
+//
+// `canAppend` is false for a nested key: writing a bare `backend:` at the end
+// of the file would be a top-level setting with a different meaning, so a
+// config without a `state:` block is left as it is.
+func replaceOrAppend(body string, re *regexp.Regexp, key, value string, canAppend bool) string {
+	if value == "" {
+		return body
+	}
+	if loc := re.FindStringSubmatchIndex(body); loc != nil {
+		prefix := body[loc[2]:loc[3]]
+		return body[:loc[0]] + prefix + value + body[loc[1]:]
+	}
+	if !canAppend || key == "" {
+		return body
+	}
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return body + "\n# Added by `orch init`.\n" + key + ": " + value + "\n"
+}
+
+// stampTaskMeta records the wizard's per-tier model picks in tasks.json.
+//
+// Informational: nothing dispatches on them. They are there so a later tool —
+// or a person reading the file — can see which models the project was set up
+// around, which is otherwise recorded nowhere.
+//
+// Failing to stamp them does not fail the scaffold. The project is complete
+// without the meta keys, and losing a whole init over three informational
+// fields would be the wrong trade.
+func (w *writer) stampTaskMeta(opts Options) {
+	if w.err != nil || len(opts.TierDefaults) == 0 {
+		return
+	}
+	rel := "tasks.json"
+	raw, err := os.ReadFile(w.path(rel)) // #nosec G304 -- the file this scaffold just wrote
+	if err != nil {
+		return
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return
+	}
+	meta := map[string]any{}
+	if rawMeta, ok := doc["meta"]; ok {
+		if err := json.Unmarshal(rawMeta, &meta); err != nil {
+			return
+		}
+	}
+	for _, tier := range []string{"premium", "standard", "cheap"} {
+		if m := opts.TierDefaults[tier]; m != "" {
+			meta["default_"+tier+"_model"] = m
+		}
+	}
+	encoded, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	doc["meta"] = encoded
+
+	// Re-encoded with the same two-space indent the templates use, so a
+	// scaffolded tasks.json still reads as something a person wrote.
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return
+	}
+	w.write(rel, append(out, '\n'), 0o600)
+}
