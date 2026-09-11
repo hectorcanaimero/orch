@@ -55,6 +55,29 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   `test_init.py` asserts that a prompt rendered from a templated task points at
   the project's own `specs/`.
 
+- ~~**Bug 4: `dashboard:` defined twice in config.yaml, second block silently
+  won**~~ — **RESOLVED** (g0/sonnet-config-dup, 2026-09-11): found by opus while
+  porting config for G1.2 (PR #105). `orchestrator/config.yaml` had two
+  top-level `dashboard:` keys — Sprint E-2/E-3's (`show_spend_to_stakeholder`,
+  `summary_language`) and Sprint H-2's (`kanban`, `tunnel`), added further
+  down without noticing the first. PyYAML's default behavior on a duplicate
+  mapping key is to silently keep only the LAST one, so
+  `show_spend_to_stakeholder`/`summary_language` had had zero effect since H-2
+  shipped — editing them in the packaged config, or in a project's own
+  `config.yaml`, did nothing, silently. Merged into one `dashboard:` block
+  carrying all four keys and every original comment. Checked the four
+  `orchestrator/templates/projects/*/config.yaml.tmpl` and `init_cmd.py` for
+  the same pattern — none repeat it. Added `_DuplicateKeyWarningLoader` in
+  `orchestrator/config_loader.py` (a `yaml.SafeLoader` subclass overriding
+  `construct_mapping`) so a duplicate key at ANY nesting level now prints a
+  warning naming the key and line — behavior unchanged (still last-wins, so
+  an already-written project config doesn't suddenly break), just no longer
+  silent. Tests in `test_config_loader.py`: the packaged config has all four
+  `dashboard` keys, has no duplicate top-level key at all (parses the raw
+  node tree via `yaml.compose`, not the constructed dict, so a future
+  duplicate can't hide behind last-wins), and the warning loader fires (or
+  stays silent) exactly when expected.
+
 ## Notes for the Go rewrite
 
 - **`orch graph` changes its output format.** Python emits a self-contained

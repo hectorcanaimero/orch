@@ -5,8 +5,11 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 from orchestrator.config_loader import deep_merge, load_config
+
+_PACKAGED_CONFIG = Path(__file__).resolve().parent.parent / "config.yaml"
 
 
 # ---- deep_merge -------------------------------------------------------------
@@ -169,3 +172,74 @@ def test_load_config_notifications_overridable(tmp_path: Path):
     assert cfg["notifications"]["timeout_s"] == 10
     # discord default preserved when only slack overridden
     assert cfg["notifications"]["discord_webhook"] == ""
+
+
+# ---- dashboard: block — regression for bug 4 (duplicate top-level key) -----
+
+
+def test_packaged_config_dashboard_has_all_four_keys():
+    """orchestrator/config.yaml must define `dashboard:` exactly ONCE.
+
+    A second top-level `dashboard:` block used to follow further down the
+    file (Sprint H-2's kanban/tunnel defaults) — PyYAML silently keeps
+    only the LAST block on a duplicate top-level key, so
+    show_spend_to_stakeholder/summary_language (defined in the first,
+    now-clobbered block) never had any effect. Regression guard: every
+    key from both former blocks must be reachable in one merged block.
+    """
+    with open(_PACKAGED_CONFIG, encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    dashboard = cfg["dashboard"]
+    assert set(dashboard.keys()) >= {
+        "show_spend_to_stakeholder",
+        "summary_language",
+        "kanban",
+        "tunnel",
+    }
+
+
+def test_packaged_config_has_no_duplicate_top_level_keys():
+    """Belt-and-suspenders: no top-level key in config.yaml repeats.
+
+    yaml.safe_load can't see this itself (it just returns the last-wins
+    dict) — parse the raw node tree instead.
+    """
+    with open(_PACKAGED_CONFIG, encoding="utf-8") as fh:
+        root = yaml.compose(fh)  # composes the node tree, no construction
+    keys = [k.value for k, _v in root.value]
+    duplicates = {k for k in keys if keys.count(k) > 1}
+    assert not duplicates, f"duplicate top-level key(s) in config.yaml: {duplicates}"
+
+
+def test_load_config_warns_on_duplicate_key_but_still_loads(
+    tmp_path: Path, capsys: pytest.CaptureFixture,
+):
+    """A duplicate key doesn't crash `load_config` — it's a warning to
+    stderr, and the value follows PyYAML's real (last-wins) behavior, so
+    an already-written project config with this mistake keeps working."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "dashboard:\n"
+        "  summary_language: es\n"
+        "dispatch:\n"
+        "  worktree_mode: true\n"
+        "dashboard:\n"
+        "  kanban:\n"
+        "    wip_default: 5\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    err = capsys.readouterr().err
+    assert "duplicate key 'dashboard'" in err
+    # Last-wins: the second `dashboard:` block is what survives.
+    assert cfg["dashboard"] == {"kanban": {"wip_default": 5}}
+    assert cfg["dispatch"]["worktree_mode"] is True
+
+
+def test_load_config_no_warning_without_duplicates(
+    tmp_path: Path, capsys: pytest.CaptureFixture,
+):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("dashboard:\n  summary_language: es\n", encoding="utf-8")
+    load_config(cfg_file)
+    assert capsys.readouterr().err == ""

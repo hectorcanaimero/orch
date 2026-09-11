@@ -9,10 +9,51 @@ Resolution order (last wins):
 from __future__ import annotations
 
 import copy
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+class _DuplicateKeyWarningLoader(yaml.SafeLoader):
+    """`SafeLoader` that warns — but still loads — when a YAML mapping
+    repeats a key.
+
+    PyYAML's default behavior on a duplicate key (at any nesting level,
+    not just the top) is to silently keep only the LAST occurrence. That
+    exact footgun clobbered `dashboard.show_spend_to_stakeholder` /
+    `summary_language` in the packaged config.yaml for months once Sprint
+    H-2 added a second top-level `dashboard:` block further down the file
+    (see docs/brainstorm/go-migration-notes.md, bug 4) — editing the
+    "first" block did nothing, silently.
+
+    This loader keeps that last-wins behavior (changing it could break an
+    already-written project config we've never seen) and just makes the
+    silence loud: one line to stderr per duplicate, naming the key and
+    the line it's repeated at.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen: set[str] = set()
+        for key_node, _value_node in node.value:
+            key = key_node.value
+            if not isinstance(key, str):
+                continue
+            if key in seen:
+                print(
+                    f"warning: config.yaml has a duplicate key {key!r} at "
+                    f"line {key_node.start_mark.line + 1} — only the LAST "
+                    "occurrence is used; merge them into one block.",
+                    file=sys.stderr,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _safe_load(fh: Any) -> Any:
+    """`yaml.safe_load` with the duplicate-key warning wired in."""
+    return yaml.load(fh, Loader=_DuplicateKeyWarningLoader)
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -31,7 +72,7 @@ def _try_load_override(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     with open(path, encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+        return _safe_load(fh) or {}
 
 
 def _apply_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -107,7 +148,7 @@ def load_config(
     root = Path(project_root) if project_root else p.parent
 
     with open(p, encoding="utf-8") as fh:
-        cfg: dict[str, Any] = yaml.safe_load(fh) or {}
+        cfg: dict[str, Any] = _safe_load(fh) or {}
 
     cfg = _apply_defaults(cfg)
 
