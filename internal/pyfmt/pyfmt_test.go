@@ -51,3 +51,39 @@ func TestQuoteEscapesBackslashInsideDoubleQuotes(t *testing.T) {
 		t.Errorf("Quote() = %q, want %q", got, want)
 	}
 }
+
+// Same provenance as the Quote table: `python3 -c "print(f'{1234:,}')"`.
+func TestCommasMatchesPythonThousandsSeparator(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{1, "1"},
+		{12, "12"},
+		{123, "123"},
+		// The group boundary from every side: three digits take no comma,
+		// four take one, and an exact multiple of 1000 must not lose zeros.
+		{999, "999"},
+		{1000, "1,000"},
+		{1234, "1,234"},
+		{12345, "12,345"},
+		{123456, "123,456"},
+		{1234567, "1,234,567"},
+		{1000000, "1,000,000"},
+		{73300, "73,300"},
+		// Negatives keep the sign outside the grouping.
+		{-1, "-1"},
+		{-1234, "-1,234"},
+		{-1234567, "-1,234,567"},
+		// The extremes, because the leading-group arithmetic is the part most
+		// likely to slice out of range.
+		{9223372036854775807, "9,223,372,036,854,775,807"},
+		{-9223372036854775808, "-9,223,372,036,854,775,808"},
+	}
+	for _, c := range cases {
+		if got := Commas(c.in); got != c.want {
+			t.Errorf("Commas(%d) = %q, python prints %q", c.in, got, c.want)
+		}
+	}
+}

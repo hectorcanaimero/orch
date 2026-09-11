@@ -53,7 +53,7 @@ type Run struct {
 // Go has one source of spend, so the class of bug cannot recur here: there is
 // nowhere else for a spend row to hide.
 //
-// The window is applied in Go, not with `ts >= ?` in SQL. See parseTS for
+// The window is applied in Go, not with `ts >= ?` in SQL. See ParseTS for
 // why: the stored timestamps are not in one canonical form, and a lexical
 // comparison silently drops rows.
 //
@@ -84,7 +84,7 @@ func (b *SQLite) SpendSince(ctx context.Context, backend string, since time.Time
 			return nil, fmt.Errorf("scan spend row: %w", err)
 		}
 		s.Estimated = estimated != 0
-		ts, ok := parseTS(s.TS)
+		ts, ok := ParseTS(s.TS)
 		if !ok {
 			continue // undated: see the doc comment
 		}
@@ -115,7 +115,7 @@ type spendAt struct {
 	at time.Time
 }
 
-// parseTS reads the two timestamp forms that coexist in a real orch.db.
+// ParseTS reads the two timestamp forms that coexist in a real orch.db.
 //
 // This is not defensive coding, it is a fact about the file: the same
 // database written by one Python version holds `2026-09-01T10:30:00+00:00`
@@ -130,7 +130,13 @@ type spendAt struct {
 // which is precisely how a budget guardrail stops guarding without any error.
 // The spend table is tens of rows, so parsing them is not a cost worth a
 // correctness risk.
-func parseTS(s string) (time.Time, bool) {
+//
+// Exported so `internal/budget` can date the rows it gets back without
+// writing a second parser. A second parser is how the two forms would start
+// disagreeing again: this is the only place that knows what an orch.db
+// actually contains, so it is the only place that should be reading a
+// timestamp out of one.
+func ParseTS(s string) (time.Time, bool) {
 	if s == "" {
 		return time.Time{}, false
 	}
@@ -149,7 +155,7 @@ func parseTS(s string) (time.Time, bool) {
 func (b *SQLite) TotalSpendUSD(ctx context.Context, since time.Time) (float64, error) {
 	// Summed in Go rather than with SQL's SUM for the same reason SpendSince
 	// filters in Go: the cutoff cannot be compared as a string against
-	// timestamps stored in two forms. See parseTS.
+	// timestamps stored in two forms. See ParseTS.
 	rows, err := b.db.read.QueryContext(ctx,
 		`SELECT ts, cost_usd FROM spend WHERE project_id = ?`, b.projectID)
 	if err != nil {
@@ -165,7 +171,7 @@ func (b *SQLite) TotalSpendUSD(ctx context.Context, since time.Time) (float64, e
 		if err := rows.Scan(&ts, &cost); err != nil {
 			return 0, fmt.Errorf("scan spend row: %w", err)
 		}
-		at, ok := parseTS(ts)
+		at, ok := ParseTS(ts)
 		if !ok || at.Before(cutoff) {
 			continue
 		}
@@ -231,7 +237,7 @@ func (b *SQLite) Runs(ctx context.Context) ([]Run, error) {
 		// An undated run is kept, unlike an undated spend row: dropping a run
 		// would hide a project's history, whereas counting it costs nothing.
 		// It sorts last, where an unknown date belongs.
-		at, _ := parseTS(r.StartedAt)
+		at, _ := ParseTS(r.StartedAt)
 		all = append(all, runAt{Run: r, at: at})
 	}
 	if err := rows.Err(); err != nil {

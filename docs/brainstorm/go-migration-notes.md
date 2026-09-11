@@ -154,6 +154,32 @@ block) were all of that kind.
 
 ## Notes for the Go rewrite
 
+- **The budget gate returns its read errors; Python swallows them.** A
+  deliberate divergence, agreed with the coordinator, recorded so neither side
+  looks like a bug to the other.
+
+  `BudgetGate._sqlite_entries_since` catches `sqlite3.Error` and yields
+  nothing, on the reasoning that "the gate must never crash a run because the
+  database is briefly locked". The effect is that a failed read is
+  indistinguishable from zero spend, and zero spend always means "go ahead" —
+  the same shape as bug 5, where the gate read the wrong source, saw nothing,
+  and never fired. The symptom was visible (the dashboard showed the budget
+  filling) but the cause was not.
+
+  `budget.Gate` returns the error from `CanDispatch`, `AllCapped`,
+  `EarliestReset` and `Snapshot`. The run loop still continues — fail-open is
+  right for a guardrail that cannot read its own data — but it does so at the
+  call site, with a log line next to the decision it is affecting, instead of
+  inside the gate where nothing can see it. Python keeps #115's behaviour: it
+  is the existing pattern there, and changing it would be a feature.
+
+  Two `test_budget.py` cases therefore have no Go counterpart, and their
+  absence is the point rather than a gap:
+  `test_sqlite_source_degrades_to_nothing_on_unreadable_db` asserts the
+  swallowing, and `test_can_dispatch_dedups_rows_present_in_jsonl_and_sqlite`
+  de-duplicates between two spend sources. Go has one source, so there is
+  nothing to de-duplicate and nowhere for a row to hide.
+
 - **The event-type set comes from Python, not from the plan.** Found when
   `internal/state` was holding a set of 11 taken from FR-STATE-7 in the
   artifact: `exit_ok`, `exit_err`, `resume_reset`, `dry_run_planned`. None of
