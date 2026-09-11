@@ -891,11 +891,16 @@ def _mk_retry_refill_env(
     return retry_queue, spawn_calls, cfg
 
 
-def _call_refill(retry_queue, cfg):
-    """Invoke _refill with harmless empties for everything except retry_queue."""
+def _call_refill(retry_queue, cfg, queue=None):
+    """Invoke _refill with harmless empties for everything except retry_queue.
+
+    `queue` lets a test hand in a ready set; the default one is empty.
+    """
     class _StubQueue:
         def ready(self, in_flight_ids=None, only=None):  # noqa: ARG002
             return []
+    if queue is None:
+        queue = _StubQueue()
 
     class _StubRunFile:
         pass
@@ -905,7 +910,7 @@ def _call_refill(retry_queue, cfg):
 
     gsem, psem = orch_mod._build_semaphores(cfg)
     return orch_mod._refill(
-        queue=_StubQueue(),
+        queue=queue,
         router={},
         cfg=cfg,
         mode="auto",
@@ -1911,3 +1916,60 @@ def test_run_file_load_tolerates_missing_parent_pid(tmp_path: Path) -> None:
     )
     rf = RunFile.load(path)
     assert rf.state.parent_pid == 0
+
+
+def test_ready_set_does_not_relaunch_a_task_the_retry_queue_still_owns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 15 of the Go port. After a retryable failure `_reap_once` resets the
+    task to `todo` and queues it with `retry_earliest_at = now + backoff`. The
+    ready-set pass of `_refill` used to ignore the retry queue, see the task in
+    `todo` with its deps done, and launch it in the same tick — so the backoff
+    never delayed anything, and the queued item launched it AGAIN when it
+    drained. The queue must own the task until the backoff expires, then
+    release it exactly once."""
+    fake_now = [1000.0]
+    retry_queue, spawn_calls, cfg = _mk_retry_refill_env(5.0, monkeypatch, fake_now)
+    owned_task = retry_queue[0].task
+
+    class _QueueThatOffersTheTaskAgain:
+        """What the real TaskQueue does once the retry branch set it to todo."""
+        def ready(self, in_flight_ids=None, only=None):  # noqa: ARG002
+            return [owned_task]
+
+    q = _QueueThatOffersTheTaskAgain()
+
+    # Inside the backoff window: nothing may launch, from either pass.
+    _call_refill(retry_queue, cfg, queue=q)
+    assert spawn_calls == [], "launched during the backoff window"
+    assert len(retry_queue) == 1
+
+    # Backoff expired: exactly one launch, and the queue lets go of the task.
+    fake_now[0] += 5.0
+    _call_refill(retry_queue, cfg, queue=q)
+    assert spawn_calls == [("T-BACKOFF", 2)]
+    assert retry_queue == []
+
+
+def test_terminal_guard_reads_the_state_backend_before_tasks_json(tmp_path: Path) -> None:
+    """Bug 16 of the Go port. `scripts/task-finish.sh` -> `orch task-status`
+    writes the sqlite backend and leaves tasks.json untouched, so the
+    "sub-agent already finished" guard that read tasks.json saw `todo` on
+    every sqlite project and never fired."""
+    from orchestrator.state.sqlite_backend import SqliteBackend
+
+    tasks_json = tmp_path / "tasks.json"
+    tasks_json.write_text(
+        '{"tasks": [{"id": "T-1", "phase": 0, "title": "t", "model": "m", "status": "todo"}]}',
+        encoding="utf-8",
+    )
+    task = Task.from_json({"id": "T-1", "phase": 0, "title": "t", "model": "m"})
+    be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
+    be.bootstrap([task])
+    be.set_task_status("T-1", "in-progress", author="test", note="start", ts="2026-09-12T00:00:00Z")
+    be.set_task_status("T-1", "done", author="test", note="finish", ts="2026-09-12T00:01:00Z")
+
+    assert orch_mod._task_status_in_file("T-1", tasks_json) == "todo"
+    assert orch_mod._task_status_current("T-1", tasks_json, be) == "done"
+    # No backend (file-backed project): the file still decides.
+    assert orch_mod._task_status_current("T-1", tasks_json, None) == "todo"
