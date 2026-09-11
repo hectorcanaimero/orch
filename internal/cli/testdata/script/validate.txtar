@@ -1,11 +1,11 @@
 # orch validate against the committed parity fixture (clean: exit 0, no
-# errors) and two broken projects built inline below (missing router: exit
-# 2 with a router.missing error; a cycle + missing dep + unresolved route:
-# exit 2 with all three). Verified byte-for-byte against a real Python
-# `orch validate --json` run for the clean and cycle cases (see
-# docs/brainstorm/go-migration-notes.md for the two known shape gaps this
-# deliberately does not assert on: task_id/remediation null-vs-omitted,
-# tracked as a fix to internal/graph owned separately).
+# errors) and three broken projects built inline below: missing router
+# (exit 2, router.missing), a cycle + missing dep + unresolved route (exit
+# 2, all three), and a task with no id (exit 2, task_id/remediation both
+# null — internal/graph.Problem's shape fix, #133). Every case here is
+# verified byte-for-byte against a real Python `orch validate --json` run,
+# and `validate --json` is in scripts/parity.sh's own diff now that #133
+# closed the last shape gap.
 
 exec orch validate --json --project-root proj --project-id parity-project
 ! stderr .
@@ -43,6 +43,12 @@ stdout '"exit_code":2'
 stdout '3 error\(s\) · 0 warning\(s\) · 3 total'
 stdout 'dep\.cycle'
 
+# A task with no id: task_id AND remediation both cross the wire as null,
+# not "" / an omitted key — internal/graph.Problem's #133 fix, pinned here
+# so a regression on either field is caught at the CLI level too.
+! exec orch validate --json --project-root noid --project-id noid
+stdout '^\{"project":\{"id":"noid".*"errors":\[\{"task_id":null,"field":"id","kind":"schema\.tasks","message":"task is missing a non-empty string id","remediation":null,"severity":"error"\}\].*"exit_code":2\}$'
+
 -- broken/tasks.json --
 {"meta":{},"phases":[],"tasks":[
   {"id":"A","phase":0,"title":"A","model":"claude/claude-sonnet-4-6","dependencies":[]}
@@ -63,6 +69,21 @@ exit 0
 state:
   backend: sqlite
 -- cyc/.orchestrator/model_router.yaml --
+claude/claude-sonnet-4-6:
+  backend: claude
+  cli_model: claude-sonnet-4-6
+  tier: standard
+-- noid/tasks.json --
+{"meta":{},"phases":[],"tasks":[
+  {"id":"","phase":0,"title":"no id","model":"claude/claude-sonnet-4-6","dependencies":[]}
+]}
+-- noid/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- noid/.orchestrator/config.yaml --
+state:
+  backend: sqlite
+-- noid/.orchestrator/model_router.yaml --
 claude/claude-sonnet-4-6:
   backend: claude
   cli_model: claude-sonnet-4-6
