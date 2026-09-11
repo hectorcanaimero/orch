@@ -174,8 +174,21 @@ func hasNamespacedState(root, id string) bool {
 	if _, err := os.Stat(filepath.Join(dir, "orch.db")); err == nil {
 		return true
 	}
-	for _, pattern := range []string{"spend-*.jsonl", "events-*.jsonl"} {
-		if m, _ := filepath.Glob(filepath.Join(dir, pattern)); len(m) > 0 {
+	// A pre-SQLite project leaves JSONL behind instead of a database.
+	// ReadDir rather than Glob: Glob's only error is a malformed pattern,
+	// which a constant cannot produce, so handling it would be theatre —
+	// whereas ReadDir's error is real (no directory, no permission) and has
+	// an honest answer. If we cannot read it, we cannot claim it holds state.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		if strings.HasPrefix(name, "spend-") || strings.HasPrefix(name, "events-") {
 			return true
 		}
 	}

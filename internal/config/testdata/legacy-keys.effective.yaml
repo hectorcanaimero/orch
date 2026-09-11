@@ -11,7 +11,7 @@ concurrency:
 dashboard:
   board_url: https://draw.example.invalid/editor/abc
   profile: stakeholder
-  token: s3cr3t
+  token: example-token-not-real
 default_timeout_multiplier: 1.5
 dispatch:
   base_branch: main

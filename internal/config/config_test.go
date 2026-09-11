@@ -557,11 +557,11 @@ func TestPackagedConfigLoadsDespiteItsDuplicate(t *testing.T) {
 
 func TestDefaultProjectIDSkipsGenericBasenames(t *testing.T) {
 	cases := []struct{ root, want string }{
-		{"/home/me/projects/orch", "orch"},
-		{"/home/me/projects/orch/v2", "orch"},
-		{"/home/me/projects/orch/src", "orch"},
-		{"/home/me/projects/orch/apps", "orch"},
-		{"/home/me/billing-api", "billing-api"},
+		{"/srv/example-project/orch", "orch"},
+		{"/srv/example-project/orch/v2", "orch"},
+		{"/srv/example-project/orch/src", "orch"},
+		{"/srv/example-project/orch/apps", "orch"},
+		{"/srv/billing-api", "billing-api"},
 		{"/", "unknown"},
 	}
 	for _, c := range cases {
@@ -668,5 +668,96 @@ func TestDivergentDatabasesDetected(t *testing.T) {
 	l, n := p.DivergentDatabases()
 	if l == "" || n == "" {
 		t.Errorf("two coexisting databases were not reported: %q %q", l, n)
+	}
+}
+
+// The project-relative paths every command resolves through. Trivial to
+// write and trivial to get wrong — `.orchestrator/model_router.yaml` sits one
+// level deeper than `tasks.json`, and a slip there is a file-not-found at
+// dispatch time rather than at startup.
+func TestProjectRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	p := Paths{Root: root, ID: "proj", Layout: LayoutLegacy}
+
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"tasks.json sits at the project root", p.TasksJSON(),
+			filepath.Join(root, "tasks.json")},
+		{"model_router.yaml sits under .orchestrator", p.RouterYAML(),
+			filepath.Join(root, ".orchestrator", "model_router.yaml")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.got != c.want {
+				t.Errorf("got %q, want %q", c.got, c.want)
+			}
+		})
+	}
+}
+
+// The layout decides where state goes, but never where tasks.json or the
+// router live: those are per-project, not per-run.
+func TestProjectRelativePathsIgnoreTheLayout(t *testing.T) {
+	root := t.TempDir()
+	legacy := Paths{Root: root, ID: "proj", Layout: LayoutLegacy}
+	namespaced := Paths{Root: root, ID: "proj", Layout: LayoutNamespaced}
+
+	if legacy.TasksJSON() != namespaced.TasksJSON() {
+		t.Errorf("TasksJSON moved with the layout: %q vs %q",
+			legacy.TasksJSON(), namespaced.TasksJSON())
+	}
+	if legacy.RouterYAML() != namespaced.RouterYAML() {
+		t.Errorf("RouterYAML moved with the layout: %q vs %q",
+			legacy.RouterYAML(), namespaced.RouterYAML())
+	}
+	if legacy.StateDir() == namespaced.StateDir() {
+		t.Error("StateDir did NOT move with the layout, which is its whole job")
+	}
+}
+
+// A project that kept its JSONL files but has no orch.db is still a project
+// that was run with an explicit root — the layout has to follow.
+func TestLegacyJSONLAlsoSelectsTheNamespacedLayout(t *testing.T) {
+	dir := t.TempDir()
+	id := DefaultProjectID(dir)
+	nsDir := filepath.Join(dir, ".orchestrator", "state", id)
+	if err := os.MkdirAll(nsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(nsDir, "events-run-1.jsonl"), "{}\n")
+
+	t.Setenv("ORCH_PROJECT_ROOT", "")
+	t.Chdir(dir)
+	p, err := ResolvePaths("", "", "")
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	if p.Layout != LayoutNamespaced {
+		t.Errorf("layout = %q; a namespaced dir holding JSONL should count", p.Layout)
+	}
+}
+
+// An unrelated file in the namespaced directory is not state.
+func TestUnrelatedFilesDoNotSelectTheNamespacedLayout(t *testing.T) {
+	dir := t.TempDir()
+	id := DefaultProjectID(dir)
+	nsDir := filepath.Join(dir, ".orchestrator", "state", id)
+	if err := os.MkdirAll(nsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(nsDir, "README.md"), "notes\n")
+	write(t, filepath.Join(nsDir, "prompts.jsonl"), "{}\n")
+
+	t.Setenv("ORCH_PROJECT_ROOT", "")
+	t.Chdir(dir)
+	p, err := ResolvePaths("", "", "")
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	if p.Layout != LayoutLegacy {
+		t.Errorf("layout = %q; neither file is orch state", p.Layout)
 	}
 }

@@ -32,7 +32,7 @@ findings:
 dashboard:
   board_url: "https://draw.example.invalid/editor/abc"
   profile: stakeholder
-  token: s3cr3t
+  token: example-token-not-real
 spec_root: docs/specs
 """))
 CASES.append(("backend-file", "state:\n  backend: file\n  sqlite_path: null\n"))
