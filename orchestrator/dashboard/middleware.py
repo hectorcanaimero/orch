@@ -5,7 +5,9 @@ Two independent middlewares:
     - `TokenAuthMiddleware` — validates `Authorization: Bearer <token>` OR
       `?token=<token>` query param on requests that fall inside the
       stakeholder-visible surface. Runs FIRST so an unauthenticated caller
-      never sees route-existence hints (401 comes before 403).
+      never sees route-existence hints (401 comes before 403). The SPA's
+      static shell and `/assets/*` are exempt (see `_is_public_shell`) —
+      without that a browser could never reach the token form.
 
     - `ProfileGuardMiddleware` — enforces the stakeholder allow-list. Any
       route not on the allow-list returns 403 with a bland message when
@@ -168,6 +170,45 @@ def _route_name(request: Request) -> str | None:
     return partial_name or spa_mount_name
 
 
+# Paths that must NEVER be served without a token, whatever the router says.
+# Every data endpoint the dashboard exposes lives under one of these; they are
+# a structural backstop so a routing quirk can never turn a data route into a
+# "public asset". `test_dashboard_security_public_shell.py` walks the live
+# route table and fails if any data route escapes the token gate.
+_NEVER_PUBLIC_PREFIXES: tuple[str, ...] = ("/api/",)
+
+# The bundled JS/CSS chunks. Listed explicitly so they stay public even when
+# the SPA mount is absent (bare-source checkout, no `pnpm build`) — a probing
+# client then sees a 404 rather than a confusing 401.
+_SPA_ASSET_PREFIX = "/assets/"
+
+
+def _is_public_shell(request: Request) -> bool:
+    """True when the request is for the SPA's static shell, not for data.
+
+    G0.3 follow-up: the stakeholder URL was unusable in a browser. The token
+    gate covered `index.html` and `/assets/*` too, so the bare URL returned a
+    plain-text 401 and `?token=X` returned the shell (query param accepted)
+    whose asset requests then 401'd — the browser does not carry a query
+    param over to `<script src>`. The page rendered blank and the SPA's own
+    token form could never paint.
+
+    The shell and its bundle are static files with no project data in them;
+    the gate that matters is on the data routes, and that one is unchanged.
+    So: a request that would be served by the SPA StaticFiles mount is public.
+    Resolution goes through `_route_name`, which prefers a named route (FULL
+    or PARTIAL) over the catch-all mount — so `GET /api/tasks` and even a
+    method-fuzzed `POST /api/tasks` still resolve to their own route name and
+    stay gated.
+    """
+    path = request.url.path
+    if any(path.startswith(prefix) for prefix in _NEVER_PUBLIC_PREFIXES):
+        return False
+    if path.startswith(_SPA_ASSET_PREFIX):
+        return True
+    return _route_name(request) == "spa"
+
+
 # ---- Middlewares -----------------------------------------------------------
 
 
@@ -203,6 +244,11 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # Sprint E-5: capabilities is intentionally auth-free so the SPA can
         # decide whether to render the tunnel panel BEFORE requesting a token.
         if path == "/api/tunnel/capabilities":
+            return await call_next(request)
+
+        # G0.3 follow-up: the SPA shell + its bundle are public so a browser
+        # can actually reach the token form. See `_is_public_shell`.
+        if _is_public_shell(request):
             return await call_next(request)
 
         expected = cfg.token

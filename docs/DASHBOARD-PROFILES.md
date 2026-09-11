@@ -41,8 +41,22 @@ orch dashboard --profile stakeholder
 
 # 4. The stakeholder opens:
 #    http://127.0.0.1:7420/stakeholder?token=<TOKEN>
-# or sets Authorization: Bearer <TOKEN>.
 ```
+
+Send that one URL and nothing else. The SPA reads `?token=` on boot, stores
+it in `localStorage`, and strips it back out of the address bar with
+`history.replaceState` — so the token does not linger in the client's URL
+bar, in `document.referrer`, or in a screenshot of their tab. Every later
+request carries it as `Authorization: Bearer <TOKEN>`.
+
+Open the URL **without** a token and you get the SPA's token form instead of
+a rejection: the static shell (`index.html` and `/assets/*`) is served
+without auth on purpose, because a browser cannot attach a token to the
+`<script src>` requests the shell makes. Nothing but static files is public
+— every data route (`/api/*`, `/stakeholder/summary`, `/snapshot`,
+`/logs/stream`) still answers `401 unauthorized` without a valid token, and
+`orchestrator/tests/test_dashboard_security_public_shell.py` sweeps the live
+route table on every run to keep it that way.
 
 ## Quick start — mixed (operator + stakeholder)
 
