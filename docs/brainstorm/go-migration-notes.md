@@ -132,7 +132,7 @@ block) were all of that kind.
   duplicate can't hide behind last-wins), and the warning loader fires (or
   stays silent) exactly when expected.
 
-- ~~**Bugs 6, 7, 8 — `classify_failure` markers against real claude 2.1.269 output**~~ — **RESOLVED in Python** (fix/classify-failure-markers, 2026-09-11); the Go mirror in `internal/providers` follows in a separate PR with the same fixtures (until then its tests deliberately assert the old answers). Found by opus-2 capturing real CLI bytes for G2.4. (6) None of `_VERSION_DRIFT_MARKERS` matched claude's real rejection text "It may not exist or you may not have access to it" nor its `[claude-code:unrecognized_model]` line, so the `fallback_cli_model` retry never fired for the one case it exists for — markers added. (7) Numeric status codes `401/403/429/500..504` were bare substrings against a haystack that includes 2 KB of stdout; a claude envelope is full of numbers (`"cacheReadInputTokens":40321` contains `403`), so a truncated envelope — PARSER, retryable — classified PERMISSION, terminal. Codes now match only as standalone numbers (`_has_status_code`). (8) Real auth failures spell it `authentication_error` / `auth expired`, neither a substring of the old markers — added. Fixtures: `orchestrator/tests/fixtures/dispatcher/claude-2.1.269/`. Go rule: same three changes in `providers.Classify`, same fixtures.
+- ~~**Bugs 6, 7, 8 — `classify_failure` markers against real claude 2.1.269 output**~~ — **RESOLVED in Python** (fix/classify-failure-markers, 2026-09-11); the Go mirror in `internal/providers` follows in a separate PR with the same fixtures (until then its tests deliberately assert the old answers). Found by opus-2 capturing real CLI bytes for G2.4. (6) None of `_VERSION_DRIFT_MARKERS` matched claude's real rejection text "It may not exist or you may not have access to it" nor its `[claude-code:unrecognized_model]` line, so the `fallback_cli_model` retry never fired for the one case it exists for — markers added. (7) Numeric status codes `401/403/429/500..504` were bare substrings against a haystack that includes 2 KB of stdout; a claude envelope is full of numbers (`"cacheReadInputTokens":40321` contains `403`), so a truncated envelope — PARSER, retryable — classified PERMISSION, terminal. Codes now match only as standalone numbers (`_has_status_code`). (8) Real auth failures spell it `authentication_error` / `auth expired`, neither a substring of the old markers — added. Fixtures: `orchestrator/tests/fixtures/dispatcher/claude-2.1.269/`. Go rule: same three changes in `providers.Classify`, same fixtures. **Go mirror done in the same PR as the port (#117)**, so neither binary ever carried a different answer: `providers.Classify` gained the same two drift markers and three auth spellings, and the status codes moved behind `hasStatusCode`. Go's RE2 has no lookbehind, so Python's `(?<![0-9.])<code>(?![0-9.])` is hand-rolled there — `TestHasStatusCode`'s table was checked case-by-case against Python's own `_has_status_code`, and the obvious regexp rewrite `(^|[^0-9.])code([^0-9.]|$)` is wrong because it consumes the separator and would miss the second code in "429 429".
 - ~~**Bug 9 — `orch.py` emitted seven event types its own validator rejected**~~ — **RESOLVED** (fix/event-types-ci, 2026-09-11). Found by opus-2 while aligning `internal/state` event types for G2.5. `EventLog.emit` raises `ValueError` for any type outside `EVENT_TYPES`, and the Sprint F-4 / G-1 PR+CI path emits `pr_created`, `ci_redispatch`, `ci_success`, `pr_auto_merged`, `pr_auto_merge_failed`, `ci_failure_retry`, `ci_blocked` — none declared. `pr_created` was swallowed by a broad `except` (logged as "set_task_pr failed"); the other six crashed the CI poller. Never caught because `test_orch.py` drives that path with a fake `emit` that does not validate. Fix: the seven are declared; `test_event_types_emitted.py` walks every real emitter with `ast` and fails on an undeclared literal. Go: `internal/state` `eventTypes` is Python's 14 plus these 7 (21 total); `exit_ok`/`exit_err`/`resume_reset`/`dry_run_planned` from the plan sketch are gone and the engine emits `success`/`fail`.
 - **Bug 11 — `burndown_by_day` filters on an event type nothing emits.** Found
   while aligning Go's `eventTypes` with Python's (the same sweep as bug 9).
@@ -336,3 +336,46 @@ block) were all of that kind.
   changes. The only place this could theoretically diverge is a hand-edited
   `tasks.json` missing an optional key entirely on a row that then goes
   through a no-op merge; no shipped project's `tasks.json` looks like that.
+
+- **`internal/providers` — where the ported interface departs from the plan,
+  and why.** The G2.4 brief sketched `Argv(prompt, route, budgetUSD) []string`,
+  `Parse(stdout []byte) (Result, error)` and a per-provider
+  `Classify(exit int, stderr []byte)`. `orchestrator/dispatcher.py` does none
+  of those three things, and the code won:
+
+  - **`Argv(Request)`.** The inputs are not just a prompt, a route and a
+    budget. codex needs the resolved `-o` artefact path (Python writes a
+    `__OUTPUT__<task id>` placeholder into the argv and has `spawn` rewrite it
+    in place); opencode needs an absolute `--dir`; gemini and agy need the
+    prompt text itself, while claude and codex take it on stdin. A struct of
+    plain values carries all of that and keeps `Argv` pure — which also moves
+    claude's `--session-id` uuid out of `build_cmd`, so nothing has to dig it
+    back out of the argv afterwards the way `_extract_session_id` does.
+  - **`Parse(exitCode, output) Result`, no error.** The exit code is a third
+    of claude's success predicate (`exit == 0 && !is_error && subtype ==
+    "success"`), so a parser that never sees it cannot decide success. And a
+    parse failure is not an error return: Python builds a `DispatchResult`
+    whose `error_message` is what `classify_failure` maps to `PARSER`, and
+    still extracts cost from output that failed, because a failed dispatch has
+    usually already been paid for.
+  - **`Classify` is package-level, over a `Result`.** In Python it is one
+    module-level pure function every backend shares. Per-provider copies would
+    drift; and it reads `error_message` plus the stdout tail, not stderr — the
+    two highest-priority classes, `ID_SPOOF` and `TIMEOUT`, are set by orch and
+    never printed by any CLI.
+
+- **`pyFloat` now exists twice.** `internal/state/pyfloat.go` needs CPython's
+  `repr(float)` for the spend dedup preimage; `internal/providers/pyjson.go`
+  needs it because claude's `--max-budget-usd` value is built as
+  `str(budget)`. Checklist rule 14 keeps `providers` off everything but
+  `internal/model`, so the shared home would have to be `internal/model`
+  itself — a move across another lane's package mid-migration. Worth doing
+  once the lanes converge; both copies carry the same golden table so a drift
+  between them fails a test.
+
+- **Python's `extract_cost` can crash the reap loop on malformed output.**
+  `float(...)` / `int(...)` raise `ValueError` on an uncoercible value, and
+  `ClaudeBackend.extract_cost` catches nothing, so a CLI that writes
+  `"input_tokens": "n/a"` takes down `wait_result` rather than costing a wrong
+  number. (codex's and opencode's summers do catch it.) Go's `toFloat`/`toInt`
+  return 0 instead — a deliberate divergence, identical on well-formed output.
