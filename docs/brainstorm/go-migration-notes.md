@@ -678,3 +678,45 @@ block) were all of that kind.
     ("gh/glab autenticado"), not an unrequested improvement, but worth
     naming since it means this one check can `warn` in a case Python's
     never would.
+
+- **Bug 13 — `concurrency.per_file` announces a cap nothing enforces.** Found
+  while porting the dispatch loop for G3.1. The packaged `config.yaml` ships
+  `per_file: 1` under a comment reading "Per-file cap for the 33 tasks with
+  declared `files[]` (opportunistic)", `docs/CONFIG.md` documents it, and the
+  dashboard's `/api/config` reports it back to the operator. Nothing reads it.
+  The only uses of `task.files` in the dispatch path are the post-run
+  strict-files check (`orch.py:791`) and `orch doctor --files`; neither
+  `_refill` nor `_spawn_one` looks at declared files at all, so two tasks
+  writing the same file are dispatched concurrently regardless of the setting.
+
+  Same family as bug 4 (the duplicate `dashboard:` key) and bug 11
+  (`burndown_by_day` filtering on an event type nothing emits): a key that
+  promises a behaviour, does nothing, and is shown as active. This one is the
+  loudest of the three, because the dashboard displays the number.
+
+  **Not implemented in Go either** (decided with the coordinator): the
+  migration ports what the loop does, and building the cap would be a new
+  feature in the middle of a rewrite whose rule is the opposite. It stays
+  inert in both binaries, equally inert, until someone decides the feature
+  should exist — at which point it lands on both sides with its own PR.
+
+- **Python has two cycle checks, and a port needs to know which one it is
+  reading.** Nearly filed as a bug in `internal/graph`: `FindCycles` returns
+  nothing for a self-dependency while `TaskQueue` raises on one, which looked
+  like a hole. It is not. `preflight.find_cycles` — what `graph.FindCycles`
+  ports — ignores length-1 loops on purpose, because `validateDependencies`
+  reports them as `dep.cycle` ("task 'A' depends on itself"), and `orch
+  validate` therefore catches them on both sides, byte for byte.
+  `task_queue.py`'s own `_detect_cycles` is a separate check that does catch
+  them, and `internal/engine`'s queue ports that one.
+
+  The lesson is the comparison, not the outcome: two functions in different
+  Python modules answering the same-sounding question can legitimately
+  disagree, and checking a Go port against the wrong one produces a very
+  convincing false positive. Running both — `preflight.find_cycles([A->A])`
+  is `[]`, `TaskQueue([A->A])` raises — is what settled it in minutes.
+
+  What is real, and is why the queue keeps its own check: a self-dependent
+  task that reaches the dispatch loop can never become ready, so it stays
+  todo, `Pending()` stays true, and the loop spins forever on a task it will
+  never dispatch. A silent hang, not an error.

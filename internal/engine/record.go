@@ -168,3 +168,19 @@ func utcSecond(t time.Time) string {
 // compile-time reminder that the engine only ever names backends through
 // model.Backend, never with a bare string literal.
 var _ model.Backend = model.BackendClaude
+
+// StateRecorder adapts a state.Backend to the scheduler's RecordBackend.
+//
+// The scheduler takes the narrow interface rather than state.Backend so the
+// concurrency tests can run without a database — they are about semaphores,
+// not about SQL — and so the one place that writes a dispatch row stays
+// obvious.
+type StateRecorder struct{ Backend state.Backend }
+
+// NewStateRecorder wires a backend into the scheduler.
+func NewStateRecorder(b state.Backend) StateRecorder { return StateRecorder{Backend: b} }
+
+// RecordDispatchAndEvent writes the in-flight row and the `dispatch` event.
+func (r StateRecorder) RecordDispatchAndEvent(ctx context.Context, runID string, d Dispatch, sp *Spawned, attempt int) error {
+	return RecordStart(ctx, r.Backend, runID, d, sp, attempt)
+}
