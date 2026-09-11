@@ -1,0 +1,6 @@
+# Synthetic fixture project — a file-mode project as it looked before ever
+# running `orch migrate`, in Python OR Go. state.backend below documents
+# that intent; migrate itself never reads it — it decides purely from what
+# files exist under the state directory.
+state:
+  backend: file
