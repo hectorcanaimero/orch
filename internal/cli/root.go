@@ -17,6 +17,23 @@ import (
 // usage error (cobra's own exit 2 on unknown flags/args).
 var errNotImplemented = errors.New("not implemented yet")
 
+// exitError carries a specific process exit code, for the handful of
+// commands (like `orch logs`, per orch.py's _run_logs_subcommand) whose
+// Python original distinguishes more than "worked" vs "errored" — e.g. exit
+// 2 for "the file doesn't exist" vs exit 1 for a config/layout error.
+// Everything else just returns a plain error and gets the generic exit 1.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+func (e *exitError) Unwrap() error { return e.err }
+
+func withExitCode(code int, err error) error {
+	return &exitError{code: code, err: err}
+}
+
 // projectFlags are the three flags every project-scoped command accepts,
 // ported from Python's `_add_common_project_flags` (orchestrator/orch.py).
 // Registered once as persistent flags on the root command rather than
@@ -49,7 +66,8 @@ func newRootCmd(version string) *cobra.Command {
 	flags := registerProjectFlags(root)
 	root.AddCommand(newStatusCmd(flags))
 	root.AddCommand(newTasksCmd(flags))
-	// events and logs land in the next PR — see CLAUDE.md's Go tree note.
+	root.AddCommand(newEventsCmd(flags))
+	root.AddCommand(newLogsCmd(flags))
 	return root
 }
 
@@ -61,6 +79,10 @@ func Run(version string, args []string) int {
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var ee *exitError
+		if errors.As(err, &ee) {
+			return ee.code
+		}
 		if errors.Is(err, errNotImplemented) {
 			return 2
 		}

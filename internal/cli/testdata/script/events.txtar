@@ -1,0 +1,13 @@
+# orch events against the committed parity fixture. No dispatch ever ran
+# against it, so every task's event list is legitimately empty — see
+# testdata/parity-project/README.md.
+
+exec orch events F2.T3 --json --project-root proj --project-id parity-project
+! stderr .
+stdout '^\[\]$'
+
+exec orch events F2.T3 --project-root proj --project-id parity-project
+stdout 'no events for task "F2\.T3"'
+
+exec orch events F2.T3 --tail 5 --run some-run-id --json --project-root proj --project-id parity-project
+stdout '^\[\]$'
