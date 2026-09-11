@@ -160,6 +160,21 @@ These apply to files under `cmd/` and `internal/`.
     wrote. A hand-written sample tests the parser; the shipped file also tests
     that what we ship still parses.
 
+29. **Run what you built and read its output once, before opening the
+    PR.** A green suite says nothing about output no test reads. Not a
+    normalisation that hid a difference — rule 23's case — but a line nobody
+    ever looked at.
+
+    The wizard's model-tier prompt rendered as
+    `[agy/pro/claude/claude-opus-4-7/codex/gpt-5.6/…]`, unreadable because the
+    router keys are themselves slash-separated. Eight tests passed: they
+    checked the returned value and the summary block, and none of them read
+    the prompt line. It took printing a transcript to see it.
+
+    Reviewer-facing form: if a PR changes what a user sees — a prompt, a
+    banner, an error, a report — the body should show it, pasted. Minor when
+    the PR only changes internals.
+
 ---
 
 ## How to review

@@ -204,6 +204,86 @@ def test_wizard_writes_selected_budget_preset(tmp_path: Path) -> None:
     assert "budgets_preset: aggressive" in cfg
 
 
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_wizard_budget_preset_survives_a_template(tmp_path: Path, template: str) -> None:
+    """Bug 17: the answer used to be shown in the confirm summary and dropped.
+
+    `_post_process_config` rewrites the key with `re.sub`, and a regex that
+    matches nothing changes nothing — none of the four shipped templates
+    carries `budgets_preset`. So every templated project asked for a preset,
+    printed it in the H-7 summary, took the operator's "yes", and then loaded
+    with the packaged default.
+
+    The bug is in the gate, not the setting. A confirmation screen that shows
+    a choice which then has no effect is worse than never asking, because the
+    operator has been told it took.
+
+    `test_wizard_writes_selected_budget_preset` above passes on main because
+    it scaffolds a BLANK project, whose packaged config.yaml does have the
+    key — which is why this went unnoticed.
+    """
+    import argparse
+
+    import yaml
+
+    project_root = tmp_path / template
+    answers = _wizard_answers(
+        "tproj", project_root, template=template, budget_preset="aggressive"
+    )
+    args = argparse.Namespace()
+    rc = run_wizard(args, input_fn=_queue_input(answers), output_stream=io.StringIO())
+    assert rc == 0
+
+    cfg_path = project_root / ".orchestrator" / "config.yaml"
+    raw = cfg_path.read_text(encoding="utf-8")
+    assert "budgets_preset: aggressive" in raw, raw
+
+    # Still the YAML it was, and the template's own keys are undisturbed.
+    parsed = yaml.safe_load(raw)
+    assert parsed["budgets_preset"] == "aggressive"
+    assert parsed["spec_root"] == "specs"
+    # And the comments survived — they are the guidance an operator reads
+    # when they open the file, and a YAML round-trip would have eaten them.
+    assert "#" in raw
+
+
+def test_wizard_state_backend_is_never_appended(tmp_path: Path) -> None:
+    """`state.backend` is nested, so a missing key is left alone.
+
+    A bare `backend:` appended at the end of the file would be a top-level
+    key with a different meaning. A config with no `state:` block keeps its
+    default rather than gaining a wrong one.
+    """
+    from orchestrator.init_cmd import _post_process_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("concurrency:\n  global_max: 4\n", encoding="utf-8")
+    _post_process_config(
+        cfg, state_backend="file", budget_preset="", spec_root=""
+    )
+    text = cfg.read_text(encoding="utf-8")
+    assert "backend" not in text, text
+
+
+def test_post_process_config_appends_with_a_comment(tmp_path: Path) -> None:
+    """An appended key says where it came from, so the next reader of the
+    file knows it was not hand-written."""
+    from orchestrator.init_cmd import _post_process_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("# my config\nconcurrency:\n  global_max: 4\n", encoding="utf-8")
+    _post_process_config(
+        cfg, state_backend="", budget_preset="shared", spec_root="sdd"
+    )
+    text = cfg.read_text(encoding="utf-8")
+    assert "budgets_preset: shared" in text
+    assert "spec_root: sdd" in text
+    assert "Added by `orch init`" in text
+    assert text.startswith("# my config")
+
+
 def test_wizard_writes_selected_spec_root(tmp_path: Path) -> None:
     import argparse
 

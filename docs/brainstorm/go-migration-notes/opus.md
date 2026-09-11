@@ -160,3 +160,64 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   there was nothing to pass it. The shape to remember: **a test that an
   interactive tool displayed a choice is not a test that the choice was
   applied**, and the two live in different files.
+
+- **Bug 18: `atomize` computed the spec ref against a root nothing else
+  agrees with.** `specs_root` defaulted to `<project-root>/docs`;
+  `prompt_builder` resolves a task's `specRef` against `spec_root` from
+  config.yaml, default `specs`; and `orch init` creates `specs/` and tells
+  the operator to write their first spec there. The `docs/` default has no
+  written justification anywhere — not the manual, not the init banner — so
+  it is the default that contradicts the product.
+
+  With the two roots disagreeing, `_relpath_for_spec_ref` fell to its
+  "outside the root" branch on *every* run and returned the bare filename.
+  That is right by accident for a spec directly under the spec root, which is
+  why it was never noticed — and wrong for one in a subdirectory:
+
+  ```
+  file on disk : <project>/specs/api/auth.md
+  specRef      : auth.md#F0.1.T1          ← the "api/" is gone
+  prompt says  : specs/auth.md#F0.1.T1    ← does not exist
+  ```
+
+  Organising specs by area is the first thing anyone does past three of them.
+
+  Fixed by making `specs_root` default to `project_root / cfg["spec_root"]`.
+  `--specs-dir` still wins. The `.name` fallback stays for a genuine
+  `--file /elsewhere.md`, but now warns on stderr that the ref lost its
+  directory — until this, that branch ran silently on every invocation, which
+  is what made a wrong ref look like a working one.
+
+  **Migration**, for a project that really does keep its specs in `docs/`:
+  pass `--specs-dir docs`, or set `spec_root: docs` in config.yaml.
+
+- **Bug 19: the spec parser read fenced code blocks as spec content.**
+  **A fenced block is documentation *about* the format, never content.**
+
+  `specs/README.md`, which `orch init` writes, documents the minimum format
+  inside a ```` ```markdown ```` fence. The parser matches headers line by
+  line and knows nothing about fences, so `orch atomize --apply` with no
+  `--file` on a project straight out of `init` imported the example as two
+  real tasks — "Setup monorepo" and "Root README".
+
+  Found while fixing bug 18, and hidden behind it: `specs_root` pointed at
+  `docs/`, which does not exist, so the scan found nothing at all. Fixing one
+  root made the other visible — the ordinary way a second bug in the same path
+  shows up, the first was stopping the code from running.
+
+  The fix is in the parser, not in the README: any spec that documents its own
+  format inline has the same problem, and orch's README is just the one that
+  ships. **The Go port inherits it** — `internal/atomize`'s parser is faithful
+  to the original, so it needs the same skip and the same test.
+
+- **The gap these five bugs came through was coverage by ROUTE, not by line.**
+  12, 14, 17, 18 and 19 all live on the path a new user walks in their first
+  five minutes — `init` → write a spec → `atomize` → `dry-run` — and until
+  now not one test walked it end to end. `init_cmd.py` and `atomize.py` were
+  both well covered by line; every test asserted on a file one of them wrote,
+  and the bugs were all in how the files agreed with each other.
+
+  There are three such tests now, in three different files: Python's
+  `test_scaffolded_project_dry_runs_clean` and
+  `test_spec_ref_resolves_where_the_prompt_looks`, and Go's
+  `init.txtar`, which scaffolds and then runs `orch validate` on the result.
