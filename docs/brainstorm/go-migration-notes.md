@@ -23,6 +23,53 @@ block) were all of that kind.
 
 ## Open notes
 
+- **P0: the budget guardrail does nothing on a sqlite project.** Found while
+  reading `budget.py` for G2.2 (opus), reproduced before reporting.
+
+  `SqliteSpendLog.record()` (`state/adapters.py:151`) writes only to the
+  `spend` table and returns a **synthetic** path — its own comment says
+  "not written to". `BudgetGate._entries_since()` (`budget.py:322`) reads
+  `state/spend-<date>.jsonl` from disk and never looks at SQLite. With
+  `state.backend: sqlite` no such file exists, so the gate reads zero spend
+  and never trips.
+
+  ```
+  spend log type: SqliteSpendLog
+  rows in the sqlite spend table: 5, tokens: 750,000
+  spend-*.jsonl files on disk:    NONE
+  can_dispatch('claude') -> ok=True     (token_budget 1000, threshold 60% = 600)
+  ```
+
+  Worse: `metrics.read_all_spends` DOES read both sources, so the dashboard
+  shows the budget filling while the gate keeps dispatching.
+
+  Scope: sqlite was opt-in until PR #91 made it the default, so every project
+  scaffolded since has a guardrail that announces itself and does nothing.
+  The bug predates that (sprint B, when `SqliteSpendLog` landed); #91 turned
+  it from a rare case into the common one.
+
+  Fix taken by orch-98: `_entries_since` also reads SQLite.
+
+  **This cannot recur in Go**: `internal/budget` reads spend through
+  `state.Backend.SpendSince`, and SQLite is the only place a spend row lives.
+
+- **Timestamps in `orch.db` are stored in two forms.** Not a bug to fix, a
+  fact to code against, found writing `state.SpendSince`. The same database
+  written by one Python version holds `2026-09-01T10:30:00+00:00` in
+  `spend.ts` and `2026-09-11T18:32:54Z` in `runs.started_at`, because
+  different call sites use `datetime.isoformat()` and `strftime("...Z")`.
+  Python's `budget._parse_ts` already accepts both "for robustness with older
+  rows".
+
+  The consequence for anyone writing a query: **a rolling window cannot be
+  `WHERE ts >= ?` in SQL.** Lexically `+` (0x2B) sorts before `Z` (0x5A), so a
+  cutoff formatted one way silently drops rows stored the other way — which
+  under-reports spend, which is how a guardrail stops guarding with no error
+  anywhere. `state.parseTS` handles both and the filtering happens in Go. The
+  same applies to `ORDER BY started_at`: Python sorts runs lexically in SQL
+  and would mis-order such a database; Go sorts by parsed time.
+
+
 - ~~Stale `jinja2` mentions~~ — **RESOLVED** (g0/sonnet-cleanup): `orchestrator/orch.py`'s
   dashboard-missing-deps hint no longer tells the user to install `jinja2 >= 3.1`, and
   `orchestrator/dashboard/__init__.py`'s module docstring now describes FastAPI serving
