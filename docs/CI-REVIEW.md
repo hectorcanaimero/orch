@@ -35,6 +35,15 @@ Both jobs also skip PRs from forks outright.
 
 ---
 
+## Before you open the PR
+
+Run what you built and read its output once (checklist rule 29). The reviewer
+reads a diff; it cannot see that a prompt renders as an unreadable run-on or
+that a banner names a file that is not there. If the PR changes anything a
+user sees — a prompt, a banner, an error, a report — paste it in the body.
+
+A green suite is not evidence about output no test reads.
+
 ## Reading the comment
 
 One comment per PR, edited in place on every push — so the newest review is
