@@ -625,6 +625,44 @@ func (b *SQLite) Milestones(ctx context.Context) ([]Milestone, error) {
 	return out, nil
 }
 
+// ---- migrate ---------------------------------------------------------------
+
+// MigratedAt returns the project's `projects.migrated_at` timestamp, or ""
+// if it has never been set. Used by `orch migrate`'s already-migrated
+// guard — not part of the Backend interface because no other caller needs
+// it; a plain read, so it goes through the read pool like every other
+// query in this file (rule 17 only constrains writes).
+func (b *SQLite) MigratedAt(ctx context.Context) (string, error) {
+	var v sql.NullString
+	err := b.db.read.QueryRowContext(ctx,
+		`SELECT migrated_at FROM projects WHERE project_id = ?`, b.projectID).Scan(&v)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("read migrated_at for %q: %w", b.projectID, err)
+	case !v.Valid:
+		return "", nil
+	default:
+		return v.String, nil
+	}
+}
+
+// MarkMigrated timestamps a one-shot file-to-sqlite import as done. Not
+// part of the Backend interface for the same reason as MigratedAt, but a
+// genuine method (not a raw connection `orch migrate` opens itself): rule
+// 17 requires every write to go through the single writer pool, and this
+// is the one write `orch migrate` needs beyond Bootstrap/AppendEvent/
+// RecordSpend.
+func (b *SQLite) MarkMigrated(ctx context.Context, ts string) error {
+	_, err := b.db.write.ExecContext(ctx,
+		`UPDATE projects SET migrated_at = ? WHERE project_id = ?`, ts, b.projectID)
+	if err != nil {
+		return fmt.Errorf("mark %q migrated: %w", b.projectID, err)
+	}
+	return nil
+}
+
 // ---- doctor ----------------------------------------------------------------
 
 // OrphanRows finds rows whose project_id has no row in `projects`.

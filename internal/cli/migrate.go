@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -284,8 +283,16 @@ func runMigration(ctx context.Context, paths config.Paths, cfg config.Config, fo
 		}
 	}()
 
+	// A concrete *state.SQLite, not just the state.Backend interface: it
+	// also satisfies Backend for Bootstrap/AppendEvent/RecordSpend below,
+	// but MigratedAt/MarkMigrated are deliberately NOT on that interface
+	// (see their doc comments), so this needs the concrete type to reach
+	// them — both go through the same reader/writer pools state.Open
+	// created, never a second *sql.DB (rule 17).
+	backend := state.NewSQLite(db, paths.ID, paths.Root)
+
 	if !force {
-		at, err := migratedAt(sqlitePath, paths.ID)
+		at, err := backend.MigratedAt(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("check migrated_at: %w", err)
 		}
@@ -300,7 +307,6 @@ func runMigration(ctx context.Context, paths config.Paths, cfg config.Config, fo
 		return nil, withExitCode(1, fmt.Errorf("migrate: backup failed: %w", err))
 	}
 
-	backend := state.NewSQLite(db, paths.ID, paths.Root)
 	tasks := loadDAG(paths)
 	if err := backend.Bootstrap(ctx, tasks); err != nil {
 		return nil, fmt.Errorf("migrate: bootstrap: %w", err)
@@ -315,7 +321,7 @@ func runMigration(ctx context.Context, paths config.Paths, cfg config.Config, fo
 		return nil, fmt.Errorf("migrate: import spend: %w", err)
 	}
 
-	if err := markMigrated(ctx, sqlitePath, paths.ID, utcNowISO()); err != nil {
+	if err := backend.MarkMigrated(ctx, utcNowISO()); err != nil {
 		return nil, fmt.Errorf("migrate: mark migrated: %w", err)
 	}
 
@@ -458,53 +464,6 @@ func intOr(v any, def int) int {
 
 func utcNowISO() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
-}
-
-// ---- migrated_at guard --------------------------------------------------
-//
-// A raw connection, deliberately outside the Backend abstraction — Python's
-// own migrate.py does the same (a bare sqlite3.connect() just for this
-// check), because "has this project been migrated" isn't a query any other
-// caller needs and doesn't belong on the Backend interface.
-
-func migratedAt(dbPath, projectID string) (at string, err error) {
-	db, oerr := sql.Open("sqlite", dbPath)
-	if oerr != nil {
-		return "", oerr
-	}
-	defer func() {
-		if cerr := db.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("close %s: %w", dbPath, cerr))
-		}
-	}()
-
-	var v sql.NullString
-	qerr := db.QueryRow("SELECT migrated_at FROM projects WHERE project_id = ?", projectID).Scan(&v)
-	switch {
-	case errors.Is(qerr, sql.ErrNoRows):
-		return "", nil
-	case qerr != nil:
-		return "", qerr
-	case !v.Valid:
-		return "", nil
-	default:
-		return v.String, nil
-	}
-}
-
-func markMigrated(ctx context.Context, dbPath, projectID, ts string) (err error) {
-	db, oerr := sql.Open("sqlite", dbPath)
-	if oerr != nil {
-		return oerr
-	}
-	defer func() {
-		if cerr := db.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("close %s: %w", dbPath, cerr))
-		}
-	}()
-
-	_, err = db.ExecContext(ctx, "UPDATE projects SET migrated_at = ? WHERE project_id = ?", ts, projectID)
-	return err
 }
 
 // ---- backup ---------------------------------------------------------------
