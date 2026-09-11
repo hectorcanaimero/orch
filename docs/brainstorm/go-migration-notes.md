@@ -296,19 +296,25 @@ block) were all of that kind.
 
 - **`latest_run` is a partial shape: Go's `state.Run` doesn't carry
   everything Python's `list_runs()` dict does.** Confirmed by diffing real
-  output side by side (`orch-py-0.11.0.db`, see above): Python's row has
-  `completed_count`/`blocked_count`/`deferred_count` (from `completed_json`/
-  `blocked_json`/`deferred_json` columns on `runs` — run-state bookkeeping
-  `state.Backend` doesn't expose) and `run_file`/`events_file` (literal
-  `f"run-{run_id}.json"` / `f"events-{run_id}.jsonl"` paths — a file-backend
-  naming convention that's meaningless now that ADR-G4 dropped that backend
-  entirely, but Python still emits it unconditionally for a sqlite project).
+  output side by side (`orch-py-0.11.0.db`, see above). Two different kinds
+  of gap, not one:
+  - `run_file`/`events_file` (literal `f"run-{run_id}.json"` /
+    `f"events-{run_id}.jsonl"` paths) are a file-backend naming convention
+    that's meaningless now that ADR-G4 dropped that backend entirely, even
+    though Python still emits it unconditionally for a sqlite project. This
+    one really is discarded by design — nothing to port.
+  - `completed_count`/`blocked_count`/`deferred_count` are **not** discarded
+    by design, just not wired yet: they come from the `completed_json`/
+    `blocked_json`/`deferred_json` columns already sitting on SQLite's
+    `runs` table (`state.Backend` just doesn't read them back). This is
+    reachable — `internal/state` (opus's package) needs to add these three
+    counts to `Run`/`LatestRun`, then `internal/cli/status.go`'s `runJSON`
+    picks them up. Tracked as a small follow-up PR, not closed here.
+
   `internal/cli/status.go`'s `runJSON` carries every field `state.Run` has
-  (`run_id`/`started_at`/`updated_at`/`mode`/`status`/`parent_pid`/
+  today (`run_id`/`started_at`/`updated_at`/`mode`/`status`/`parent_pid`/
   `in_flight_count`, same order Python uses for the fields it shares) and
-  stops there. Revisit if a caller ever needs the run/block/defer counts —
-  it would mean adding those columns to `state.Backend`'s read side, not
-  something `internal/cli` can fake from what it already has.
+  stops there — it cannot fake the three counts from what it already has.
 
 - **`internal/atomize` (G4.3) — project templates have no markdown specs to
   atomize.** The G4 brief said to generate goldens by atomizing the specs
