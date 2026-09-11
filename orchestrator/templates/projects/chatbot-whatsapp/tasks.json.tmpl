@@ -22,7 +22,7 @@
       "dependencies": [],
       "estimateHours": 0.4,
       "files": ["docker-compose.yml", ".env.example", "Makefile"],
-      "specRef": "specs/f0-foundation.md#T1"
+      "specRef": "f0-foundation.md#T1"
     },
     {
       "id": "F0.T2",
@@ -35,7 +35,7 @@
       "dependencies": [],
       "estimateHours": 0.3,
       "files": ["pyproject.toml", "app/__init__.py", "app/main.py", "tests/__init__.py"],
-      "specRef": "specs/f0-foundation.md#T2"
+      "specRef": "f0-foundation.md#T2"
     },
     {
       "id": "F1.T1",
@@ -48,7 +48,7 @@
       "dependencies": ["F0.T2"],
       "estimateHours": 0.5,
       "files": ["app/main.py", "app/store/__init__.py", "tests/test_webhook.py"],
-      "specRef": "specs/f1-ingress.md#T1"
+      "specRef": "f1-ingress.md#T1"
     },
     {
       "id": "F2.T1",
@@ -61,7 +61,7 @@
       "dependencies": ["F1.T1", "F0.T1"],
       "estimateHours": 0.8,
       "files": ["app/agent.py", "app/prompts/system.md", "app/main.py", "tests/test_agent.py"],
-      "specRef": "specs/f2-agent-loop.md#T1"
+      "specRef": "f2-agent-loop.md#T1"
     }
   ]
 }

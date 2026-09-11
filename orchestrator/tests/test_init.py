@@ -653,34 +653,81 @@ def test_template_config_pins_spec_root_to_specs(tmp_path: Path, template: str) 
     assert effective["spec_root"] == "specs"
 
 
+def _spec_ref_line(text: str) -> str:
+    """The one line of a prompt this section is about."""
+    for line in text.splitlines():
+        if line.startswith("Spec ref (READ FIRST): "):
+            return line[len("Spec ref (READ FIRST): "):]
+    raise AssertionError("the prompt has no spec-ref line")
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
 def test_templated_task_prompt_points_at_the_projects_own_specs(
-    tmp_path: Path,
+    tmp_path: Path, template: str
 ) -> None:
-    """The symptom the default caused: every agent dispatched from a templated
-    project was told to read a file under `docs/rewrite-plan/`, which exists in
-    neither the project nor anywhere else."""
+    """Every task of every template, resolved the way a real dispatch does.
+
+    Two bugs have lived on this line. `docs/rewrite-plan/...` (fixed in #102)
+    was orch's own repo layout leaking into scaffolded projects. `specs/specs/
+    ...` came next, because the templates' `specRef` values carried the
+    `specs/` prefix that `spec_root` already supplies — so the prompt told the
+    agent to READ FIRST a file one directory deeper than the one `orch init`
+    creates.
+
+    The assertion is the whole resolved path, not a substring of it. The
+    previous version of this test checked `"Spec ref (READ FIRST): specs/" in
+    text`, which `specs/specs/f0-foundation.md#T1` satisfies — a test shaped to
+    pass rather than to check.
+    """
     from orchestrator.config_loader import load_config
     from orchestrator.prompt_builder import render_prompt
     from orchestrator.state import load_tasks
 
-    dest = tmp_path / "proj"
-    assert orch_init(dest, template="python-api") == 0
+    dest = tmp_path / template
+    assert orch_init(dest, template=template) == 0
 
     cfg = load_config(dest / ".orchestrator" / "config.yaml", project_root=dest)
     tasks = load_tasks(dest / "tasks.json")
-    task = tasks[0]
-    assert task.spec_ref, "the template seeds a specRef — see PR #96"
+    assert tasks, "the template seeds tasks"
 
-    out = render_prompt(
-        task=task,
-        completed_deps=[],
-        spec_ref=task.spec_ref,
-        run_id="r-spec-root",
-        state_dir=tmp_path / "state",
-        project_root=dest,
-        spec_root=cfg["spec_root"],
+    for task in tasks:
+        assert task.spec_ref, f"{task.id} has no specRef — see PR #96"
+        out = render_prompt(
+            task=task,
+            completed_deps=[],
+            spec_ref=task.spec_ref,
+            run_id="r-spec-root",
+            state_dir=tmp_path / "state" / template,
+            project_root=dest,
+            spec_root=cfg["spec_root"],
+        )
+        rendered = _spec_ref_line(out.read_text(encoding="utf-8"))
+
+        assert rendered == f"specs/{task.spec_ref}", (
+            f"{template}/{task.id}: the prompt resolves to {rendered!r}"
+        )
+        assert "docs/rewrite-plan" not in rendered
+        assert "specs/specs" not in rendered
+
+        # The path has to land in the directory `orch init` actually creates.
+        # The spec file itself is the user's to write — `_print_next_steps`
+        # tells them to — so what is checked is the directory, and that the
+        # prompt and the wizard name the same file.
+        path_part = rendered.split("#", 1)[0]
+        assert (dest / path_part).parent == dest / "specs", (
+            f"{template}/{task.id}: {path_part!r} is not inside the specs/ "
+            f"directory orch init creates"
+        )
+
+    # And the file the wizard tells the user to write is the one the first
+    # task's prompt asks the agent to read. These two drifted apart silently
+    # once already.
+    first = tasks[0]
+    wizard_path = dest / "specs" / "f0-foundation.md"
+    prompt_path = dest / f"specs/{first.spec_ref}".split("#", 1)[0]
+    assert prompt_path == wizard_path, (
+        f"{template}: the wizard says to write {wizard_path}, the prompt asks "
+        f"the agent to read {prompt_path}"
     )
-    text = out.read_text(encoding="utf-8")
-    assert f"Spec ref (READ FIRST): specs/{task.spec_ref.split('specs/')[-1]}" in text \
-        or "Spec ref (READ FIRST): specs/" in text
-    assert "docs/rewrite-plan" not in text
