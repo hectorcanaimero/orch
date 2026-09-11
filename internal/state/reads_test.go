@@ -623,3 +623,168 @@ func TestRunTalliesOnThePythonFixture(t *testing.T) {
 			got.CompletedCount, got.BlockedCount, got.DeferredCount)
 	}
 }
+
+// ---- in-flight dispatches ---------------------------------------------------
+
+// The read half of RecordDispatch/ClearDispatch, and the third time the port
+// landed a writer without its reader (spend and runs were the first two).
+//
+// The fixture has exactly one in-flight dispatch — F1.T1, pid 4242 — so the
+// simple case is covered by a row Python wrote. Everything else is seeded
+// here, because the fixture cannot express two runs or a cleared dispatch.
+func TestInFlightDispatchesOnThePythonFixture(t *testing.T) {
+	got, err := pythonBackend(t).InFlightDispatches(context.Background())
+	if err != nil {
+		t.Fatalf("InFlightDispatches: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d dispatches, want the fixture's one: %+v", len(got), got)
+	}
+	d := got[0]
+	if d.RunID != "fixture-run-0001" || d.TaskID != "F1.T1" {
+		t.Errorf("got %s/%s, want fixture-run-0001/F1.T1", d.RunID, d.TaskID)
+	}
+	if d.PID != 4242 {
+		t.Errorf("pid = %d, want 4242", d.PID)
+	}
+	if d.Backend != "claude" {
+		t.Errorf("backend = %q, want claude", d.Backend)
+	}
+	// The whole row, not just what a reconciler happens to need. Python's
+	// reconcile query reads four columns; the type has ten, and a caller that
+	// wants the log path should not have to add a second query.
+	if d.SessionID != "sess-abc123" {
+		t.Errorf("session_id = %q, want sess-abc123", d.SessionID)
+	}
+	if d.PromptPath == "" || d.LogPath == "" || d.OutputPath == "" {
+		t.Errorf("paths are empty: %+v", d)
+	}
+	if d.Attempt != 1 {
+		t.Errorf("attempt = %d, want 1", d.Attempt)
+	}
+}
+
+func TestInFlightDispatchesSpansRunsAndIsOrdered(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2", "T3")
+
+	const ts = "2026-09-11T12:00:00Z"
+	for _, runID := range []string{"run-b", "run-a"} {
+		if err := b.StartRun(ctx, runID, "auto"); err != nil {
+			t.Fatalf("StartRun %s: %v", runID, err)
+		}
+	}
+	for _, d := range []Dispatch{
+		{RunID: "run-b", TaskID: "T2", Backend: "claude", PID: 20, StartedAt: ts},
+		{RunID: "run-a", TaskID: "T3", Backend: "codex", PID: 30, StartedAt: ts},
+		{RunID: "run-a", TaskID: "T1", Backend: "claude", PID: 10, StartedAt: ts},
+	} {
+		if err := b.RecordDispatch(ctx, d); err != nil {
+			t.Fatalf("RecordDispatch %s/%s: %v", d.RunID, d.TaskID, err)
+		}
+	}
+
+	got, err := b.InFlightDispatches(ctx)
+	if err != nil {
+		t.Fatalf("InFlightDispatches: %v", err)
+	}
+	want := []string{"run-a/T1", "run-a/T3", "run-b/T2"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d dispatches, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if key := got[i].RunID + "/" + got[i].TaskID; key != w {
+			t.Errorf("dispatch %d = %s, want %s (sorted by run then task)", i, key, w)
+		}
+	}
+
+	// Go randomises nothing here, but SQLite promises no order without an
+	// ORDER BY, so a single agreeing run is not evidence.
+	for i := 0; i < 10; i++ {
+		again, err := b.InFlightDispatches(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := range got {
+			if again[j] != got[j] {
+				t.Fatalf("run %d differs at %d: %+v vs %+v", i, j, again[j], got[j])
+			}
+		}
+	}
+}
+
+// A cleared dispatch is not in flight. Obvious, and the reason it is asserted
+// is that the query filters on a status column the writer sets implicitly —
+// nothing in RecordDispatch's signature says `in_flight`, so nothing but a
+// test connects the two.
+func TestClearedDispatchesAreNotInFlight(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2")
+
+	if err := b.StartRun(ctx, "run-1", "auto"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"T1", "T2"} {
+		if err := b.RecordDispatch(ctx, Dispatch{
+			RunID: "run-1", TaskID: id, Backend: "claude", PID: 7,
+			StartedAt: "2026-09-11T12:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.ClearDispatch(ctx, "run-1", "T1"); err != nil {
+		t.Fatalf("ClearDispatch: %v", err)
+	}
+
+	got, err := b.InFlightDispatches(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TaskID != "T2" {
+		t.Errorf("got %+v, want only T2 still in flight", got)
+	}
+}
+
+// A row with no usable PID is still returned.
+//
+// The engine decides what to do about it — that is where the aliveness probe
+// and the orphan policy live. Dropping it here would hide the row from the
+// only code that can act on it, and a dispatch recorded without a PID is
+// exactly the kind of thing someone needs to see.
+func TestInFlightDispatchesReturnsRowsWithNoPID(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	if err := b.StartRun(ctx, "run-1", "auto"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RecordDispatch(ctx, Dispatch{
+		RunID: "run-1", TaskID: "T1", Backend: "claude", PID: 0,
+		StartedAt: "2026-09-11T12:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := b.InFlightDispatches(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want the pid-less one: %+v", len(got), got)
+	}
+	if got[0].PID != 0 {
+		t.Errorf("pid = %d, want 0 reported as it is", got[0].PID)
+	}
+}
+
+// Nothing in flight is an empty slice and no error — a project between runs
+// is the normal case, not a missing one.
+func TestInFlightDispatchesEmpty(t *testing.T) {
+	got, err := seeded(t, "T1").InFlightDispatches(context.Background())
+	if err != nil {
+		t.Fatalf("InFlightDispatches: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %+v, want nothing", got)
+	}
+}

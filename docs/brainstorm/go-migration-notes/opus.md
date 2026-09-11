@@ -66,3 +66,23 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   other line in the same block uses an unmistakable fake (`pk_test_...`,
   `sk_test_...`, `whsec_...`). Now `example-anon-key-not-real`, in both copies
   of the file at once, which is what the sync test is for.
+
+- **Every writer ported without its reader surfaces weeks later, blocking
+  another lane.** Three times now, same shape:
+
+  | writer landed | reader missing until | who it blocked |
+  |---|---|---|
+  | `RecordSpend` | #116 `SpendSince` | the budget gate (G2.2) |
+  | run rows | #130 the three tallies | `latest_run` in `status --json` |
+  | `RecordDispatch` | this PR `InFlightDispatches` | resume + reconcile (G3.3) |
+
+  Each one looked complete at the time, because the thing being ported was a
+  write path and the tests exercised the write. The parity fixture hid two of
+  them further: it has no spend rows and empty run tallies, so an
+  implementation that always answered zero passed both the fixture and
+  `scripts/parity.sh`.
+
+  Working rule from here (orch-98): **a PR that adds a write method to
+  `Backend` adds its read in the same PR.** Not for symmetry — because the
+  cost of the gap is paid by whoever needs the read next, and they pay it as a
+  blocked task rather than as a missing method.

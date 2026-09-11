@@ -296,3 +296,69 @@ func (b *SQLite) Runs(ctx context.Context) ([]Run, error) {
 	}
 	return out, nil
 }
+
+// InFlightDispatches returns every dispatch this project still has marked in
+// flight, across all runs, ordered by run then task.
+//
+// The read half of RecordDispatch/ClearDispatch. `state.Backend` could write a
+// dispatch and clear one but not see one, which is the third time the port has
+// landed a writer without its reader — spend and runs were the first two, and
+// each hole surfaced weeks later blocking a different lane.
+//
+// # What this deliberately does not do
+//
+// It does not probe whether the PIDs are alive, and it does not act on the
+// answer. `reconcile_in_flight` in Python does all three inside one method;
+// here the aliveness check and the orphan policy live in `internal/engine`,
+// which is where the rest of the run loop's policy lives and where the queue
+// that reverts a task's status already is. State says which rows exist; the
+// engine decides what they mean.
+//
+// A caller writing that check should know the probe has THREE outcomes, not
+// two: ESRCH means the process is gone, EPERM means it is alive and owned by
+// another user, and any other error means neither — skip the row rather than
+// guess. Reading EPERM as "dead" would revert tasks whose processes are
+// running perfectly well.
+//
+// Rows are returned whatever their PID, including zero. A dispatch recorded
+// without a usable PID is a real row that something has to decide about, and
+// dropping it here would hide it from the only code that can.
+func (b *SQLite) InFlightDispatches(ctx context.Context) ([]Dispatch, error) {
+	rows, err := b.db.read.QueryContext(ctx,
+		`SELECT run_id, task_id, backend, COALESCE(pid, 0),
+		        COALESCE(session_id, ''), COALESCE(started_at, ''),
+		        COALESCE(prompt_path, ''), COALESCE(log_path, ''),
+		        COALESCE(output_path, ''), COALESCE(attempt, 1)
+		   FROM dispatches
+		  WHERE project_id = ? AND status = 'in_flight'`, b.projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query in-flight dispatches: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Dispatch
+	for rows.Next() {
+		var d Dispatch
+		if err := rows.Scan(&d.RunID, &d.TaskID, &d.Backend, &d.PID,
+			&d.SessionID, &d.StartedAt, &d.PromptPath, &d.LogPath,
+			&d.OutputPath, &d.Attempt); err != nil {
+			return nil, fmt.Errorf("scan dispatch row: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate in-flight dispatches: %w", err)
+	}
+
+	// Sorted in Go, not with ORDER BY. Not the timestamp hazard this time —
+	// these are ids — but the same principle: a caller that logs or reports
+	// this list wants the same order every run, and SQLite promises none
+	// without an ORDER BY.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RunID != out[j].RunID {
+			return out[i].RunID < out[j].RunID
+		}
+		return out[i].TaskID < out[j].TaskID
+	})
+	return out, nil
+}

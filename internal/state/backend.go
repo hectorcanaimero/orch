@@ -44,6 +44,9 @@ type Backend interface {
 	RecordDispatch(ctx context.Context, d Dispatch) error
 	// ClearDispatch removes an in-flight record once the process is reaped.
 	ClearDispatch(ctx context.Context, runID, taskID string) error
+	// InFlightDispatches returns the dispatches still marked in flight for
+	// this project, across runs — what a resumed run reconciles against.
+	InFlightDispatches(ctx context.Context) ([]Dispatch, error)
 	// RecordSpend appends a completed dispatch's cost, de-duplicated.
 	RecordSpend(ctx context.Context, s Spend) error
 
