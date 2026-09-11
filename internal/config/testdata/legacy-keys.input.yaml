@@ -1,0 +1,9 @@
+
+findings:
+  publish_repo: "someone/somewhere"
+  label: "auto-reported"
+dashboard:
+  board_url: "https://draw.example.invalid/editor/abc"
+  profile: stakeholder
+  token: example-token-not-real
+spec_root: docs/specs

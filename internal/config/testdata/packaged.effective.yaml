@@ -1,0 +1,82 @@
+budget:
+  per_dispatch_usd: 5.0
+budgets_config: budgets.yaml
+budgets_preset: conservative
+concurrency:
+  global_max: 8
+  per_file: 1
+  per_provider:
+    agy: 2
+    claude: 3
+    codex: 2
+    gemini: 2
+    opencode: 3
+dashboard:
+  kanban:
+    group_default: null
+    refresh_interval_s: 10
+    sort_default: null
+    wip_default: null
+  tunnel:
+    args:
+    - -M
+    - '0'
+    - -o
+    - StrictHostKeyChecking=no
+    - -o
+    - ServerAliveInterval=30
+    - -o
+    - ExitOnForwardFailure=yes
+    - -p
+    - '443'
+    - -R
+    - 0:localhost:7420
+    - a.pinggy.io
+    auto_start: false
+    command: autossh
+    enabled: false
+    provider: autossh
+    startup_probe_timeout_s: 3
+    url_parse_timeout_s: 30
+default_timeout_multiplier: 1.5
+dispatch:
+  base_branch: main
+  worktree_mode: true
+findings:
+  label: auto-reported
+  min_publish_confidence: medium
+  publish_rate_limit_per_hour: 3
+  publish_repo: ''
+github:
+  auto_merge: false
+  test_command: pytest
+notifications:
+  discord_webhook: ''
+  slack_webhook: ''
+  timeout_s: 5
+presentation:
+  status_labels:
+    backlog: Planificado
+    blocked: Bloqueado
+    done: Entregado
+    in-progress: En progreso
+    in_progress: En progreso
+    skipped: Omitido
+    todo: Por hacer
+retry:
+  backoff_seconds: 5
+  max_attempts: 2
+  rate_limit_backoff_seconds: 60
+spec_root: specs
+state:
+  backend: sqlite
+  sqlite_path: null
+strict_files_phases:
+- 10
+typical_dispatch_tokens: 200000
+vcs:
+  auto_pr: true
+  ci_max_retries: 1
+  ci_poll_interval_s: 30
+  host: github.com
+  provider: github

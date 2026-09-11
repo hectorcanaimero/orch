@@ -1,0 +1,48 @@
+budget:
+  per_dispatch_usd: 5.0
+budgets_config: budgets.yaml
+budgets_preset: conservative
+concurrency:
+  global_max: 6
+  per_provider:
+    claude: 3
+    codex: 2
+    opencode: 3
+default_timeout_multiplier: 1.5
+dispatch:
+  base_branch: main
+  worktree_mode: false
+findings:
+  label: auto-reported
+  min_publish_confidence: medium
+  publish_rate_limit_per_hour: 3
+  publish_repo: ''
+github:
+  auto_merge: false
+  test_command: pytest
+notifications:
+  discord_webhook: ''
+  slack_webhook: ''
+  timeout_s: 5
+presentation:
+  status_labels:
+    backlog: Planificado
+    blocked: Bloqueado
+    done: Entregado
+    in-progress: En progreso
+    in_progress: En progreso
+    skipped: Omitido
+    todo: Por hacer
+retry:
+  backoff_seconds: 5.0
+  max_attempts: 2
+  rate_limit_backoff_seconds: 60.0
+spec_root: specs
+strict_files_phases: []
+typical_dispatch_tokens: 200000
+vcs:
+  auto_pr: false
+  ci_max_retries: 1
+  ci_poll_interval_s: 30
+  host: github.com
+  provider: github
