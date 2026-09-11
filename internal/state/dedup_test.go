@@ -34,8 +34,8 @@ func TestEventDedupHashMatchesPython(t *testing.T) {
 			// in "|". Dropping the empty field changes every hash.
 			name: "without a pid",
 			ts:   "2026-09-01T10:30:00+00:00", taskID: "F0.T1",
-			eventType: "exit_ok", pidHint: "",
-			want: "612ec96fbe1d0f491099195346068ac6d29e1a4e12c8e5d364861c3f483b44f0",
+			eventType: "success", pidHint: "",
+			want: "5e6aafc4f8a20f0ad6c781cae04c3c36dcea9e95f30339857de0bac8207f03c3",
 		},
 		{
 			name: "second task, second pid",

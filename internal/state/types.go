@@ -105,7 +105,7 @@ type Spend struct {
 
 // Event is one line of a run's history.
 //
-// EventType is constrained by FR-STATE-7 — see eventTypes. Extra is free-form
+// EventType is constrained to a closed set — see eventTypes. Extra is free-form
 // per type; the `pid` key in a dispatch event feeds the dedup hash.
 type Event struct {
 	ID        int64
@@ -117,15 +117,37 @@ type Event struct {
 	Extra     map[string]any
 }
 
-// eventTypes is the closed set from FR-STATE-7. Appending an unknown type is
-// an error rather than a silent write: the dashboard and `orch events` switch
-// on these, and a typo would produce a row nothing ever renders.
+// eventTypes is the closed set an event must belong to. Appending an unknown
+// type is an error rather than a silent write: the dashboard and `orch events`
+// switch on these, and a typo would produce a row nothing ever renders.
+//
+// The set is Python's, not the plan's. FR-STATE-7 in `docs/history/spec.md`
+// lists `exit_ok`, `exit_err`, `resume_reset` and `dry_run_planned`; the note
+// at spec.md:107 records that those names were superseded on 2026-08-19 —
+// `success`/`fail` replaced the first two, `resume_revert` the third, and
+// `dry_run_planned` went away because dry-run writes nothing to disk. An
+// earlier version of this file took the stale list, which would have made a
+// Go binary reject four types Python emits and accept four nothing produces.
+//
+// The 21 are `EVENT_TYPES` in `orchestrator/state/file_backend.py`, which is
+// what both EventLog.emit and SqliteEventLog.emit validate against. The last
+// seven arrived with bug 9 (#121): `orch.py` had been emitting them against
+// its own validator, so every PR/CI event raised ValueError at the emit site
+// and the run history lost them with no error anywhere.
+//
+// `testdata/event-types.json` is exported from the Python tree — not
+// transcribed — and TestEventTypesMatchPython holds this map to it in both
+// directions.
 var eventTypes = map[string]bool{
-	"dispatch": true, "exit_ok": true, "exit_err": true,
-	"timeout": true, "retry": true, "block": true,
-	"resume_adopt": true, "resume_reset": true, "dry_run_planned": true,
-	// Sprint F-4 added these two alongside PR tracking.
-	"pr_created": true, "id_spoof_detected": true,
+	"dispatch": true, "success": true, "fail": true, "block": true,
+	"timeout": true, "retry": true, "escalate": true,
+	"resume_adopt": true, "resume_revert": true,
+	"id_spoof_detected": true, "flock_contention": true,
+	"reconciled": true, "budget_pause": true, "budget_skip": true,
+	// Bug 9 (#121): the PR/CI path in orch.py.
+	"pr_created": true, "ci_redispatch": true, "ci_success": true,
+	"pr_auto_merged": true, "pr_auto_merge_failed": true,
+	"ci_failure_retry": true, "ci_blocked": true,
 }
 
 // Milestone groups tasks for the stakeholder view, with the progress counts

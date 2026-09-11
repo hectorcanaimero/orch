@@ -16,7 +16,7 @@ swapping the binary; this file is what holds us to it.
 | `projects` | 1 | `billing-api`, root `/tmp/billing-api` |
 | `tasks_definition` | 5 | phases 0–2, deps, estimates, spec refs |
 | `tasks_runtime` | 5 | 2 `done`, 1 `in-progress`, 1 `blocked` (with a note), 1 `todo` |
-| `events` | **4** | 5 were appended — one was a byte-identical duplicate, dropped by the dedup hash |
+| `events` | **4** | 5 were appended — one was a byte-identical duplicate, dropped by the dedup hash. Types: `dispatch`, `success`, `block` |
 | `spend` | 2 | `cost_usd` 0.42 and 1.0, `duration_s` 5400.0 and 1.5 |
 | `dispatches` | 1 | in-flight, `F1.T1`, pid 4242 |
 | `runs` | 1 | `fixture-run-0001` |
@@ -44,6 +44,15 @@ underwrites changes with it — and a Go-side bug can be "fixed" by quietly
 rewriting the fixture, which is exactly the failure this file exists to catch.
 Regenerate only when Python's schema genuinely changes, and say so in the PR.
 
+It has been regenerated once, and the rule above is why this paragraph exists.
+The first version carried an `exit_ok` event. That is not an event type: it
+comes from the superseded FR-STATE-7 list (`docs/history/spec.md:107`) and no
+version of orch has ever emitted it, so the fixture was asserting Go could read
+a row Python cannot write. It now carries `success`, the name that replaced it,
+and `make-fixture.py` checks every event against `EVENT_TYPES` before writing,
+so the same mistake cannot be made again by hand. One hash changed with it (the
+`success` row below); nothing else in the file moved.
+
 ---
 
 ## Dedup hash golden vectors
@@ -69,7 +78,7 @@ the test vectors for the Go implementation:
 | Kind | Preimage | SHA-256 |
 |---|---|---|
 | event | `billing-api\|2026-09-01T09:00:00+00:00\|F0.T1\|dispatch\|fixture-run-0001\|4240` | `772af28dead398ce110c22a5fe8ec1c0dca102bc2a2b9b6aab385e29c350e09b` |
-| event | `billing-api\|2026-09-01T10:30:00+00:00\|F0.T1\|exit_ok\|fixture-run-0001\|` | `612ec96fbe1d0f491099195346068ac6d29e1a4e12c8e5d364861c3f483b44f0` |
+| event | `billing-api\|2026-09-01T10:30:00+00:00\|F0.T1\|success\|fixture-run-0001\|` | `5e6aafc4f8a20f0ad6c781cae04c3c36dcea9e95f30339857de0bac8207f03c3` |
 | event | `billing-api\|2026-09-02T11:15:00+00:00\|F1.T1\|dispatch\|fixture-run-0001\|4242` | `6afe96a086be445cbcbc98740c6bbe055ac89a124daa5962da1ef9037ba57497` |
 | event | `billing-api\|2026-09-03T14:45:00+00:00\|F1.T2\|block\|fixture-run-0001\|` | `fe6ec73c044b44dc591f33729d2782a5ec3eb7cdbb0620056d249ab251f384cd` |
 | spend | `billing-api\|2026-09-01T10:30:00+00:00\|F0.T1\|claude\|claude/claude-sonnet-4-6\|0.42\|5400.0` | `623f4c698b191a2ffa77dc11ce55628be8ef46775985bdde51c2b083f628a2c9` |
@@ -96,6 +105,30 @@ range, written as `1e+21` / `1e-07`.
 The fixture deliberately contains `cost_usd = 1.0` and `duration_s = 5400.0`
 so a naive Go implementation fails the very first comparison rather than
 silently diverging in production.
+
+---
+
+## `event-types.json`
+
+The closed set of event types, exported from the Python tree so Go's
+`eventTypes` cannot drift from it. `TestEventTypesMatchPython` compares them.
+
+All 21 come from `EVENT_TYPES` (`orchestrator/state/file_backend.py`), which
+both `EventLog.emit` and `SqliteEventLog.emit` check before writing. `all` is
+sorted for comparison; `declaration_order` preserves the order of the tuple,
+which is the order a reader of the Python file sees.
+
+Regenerate after any Python change:
+
+```bash
+python3 internal/state/testdata/make-event-types.py \
+    > internal/state/testdata/event-types.json
+```
+
+The script refuses to emit a set that has lost one of the seven types bug 9
+(#121) declared, or that has grown one of the four superseded FR-STATE-7 names
+back. Both are silent failures otherwise: the first shrinks what Go accepts,
+the second widens it to rows nothing writes.
 
 ---
 

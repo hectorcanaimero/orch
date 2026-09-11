@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from orchestrator.models import Dispatch, EventEntry, SpendEntry, Task
+from orchestrator.state.file_backend import EVENT_TYPES
 from orchestrator.state.sqlite_backend import SqliteBackend
 
 OUT = Path(sys.argv[1]).resolve()
@@ -83,10 +84,20 @@ backend.add_dispatch(RUN_ID, Dispatch(
 ))
 
 # Events — including one exact duplicate so the fixture proves dedup by hash.
+#
+# The fixture used to carry an `exit_ok` event, which is not an event type:
+# it comes from the superseded FR-STATE-7 list (see spec.md:107) and nothing
+# in orch emits it. `success` is the name that replaced it.
+#
+# These do NOT go through `SqliteEventLog.emit`, even though that is the call
+# site that validates, because `emit` stamps `ts` from the clock and every
+# timestamp in this fixture has to be fixed. Validating against the same
+# `EVENT_TYPES` tuple `emit` checks gets the guarantee without the clock: an
+# invalid type cannot be written here either way.
 for ev in (
     EventEntry(event_type="dispatch", task_id="F0.T1", backend="claude", ts=T0,
                extra={"pid": 4240}, project_id=PROJECT_ID),
-    EventEntry(event_type="exit_ok", task_id="F0.T1", backend="claude", ts=T1,
+    EventEntry(event_type="success", task_id="F0.T1", backend="claude", ts=T1,
                extra={"duration_s": 5400.0}, project_id=PROJECT_ID),
     EventEntry(event_type="dispatch", task_id="F1.T1", backend="claude", ts=T2,
                extra={"pid": 4242}, project_id=PROJECT_ID),
@@ -96,6 +107,11 @@ for ev in (
     EventEntry(event_type="dispatch", task_id="F0.T1", backend="claude", ts=T0,
                extra={"pid": 4240}, project_id=PROJECT_ID),
 ):
+    if ev.event_type not in EVENT_TYPES:
+        raise SystemExit(
+            f"refusing to write event_type {ev.event_type!r}: not in EVENT_TYPES. "
+            f"A fixture that encodes a type orch cannot emit proves nothing."
+        )
     backend.append_event(RUN_ID, ev)
 
 # Two spend rows. cost_usd/duration_s are chosen so the dedup hash exercises
