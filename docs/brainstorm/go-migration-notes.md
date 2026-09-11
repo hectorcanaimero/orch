@@ -563,3 +563,40 @@ block) were all of that kind.
   for the GitLab side, not a port of anything Python does today — flagged
   here per the migration rule so it's a documented decision, not a silent
   divergence, if a GitLab project ever exercises it.
+
+- **`cmd.StdoutPipe` plus a copy goroutine loses the tail of a child's
+  output.** Found in `internal/engine` (G2.5), as a test that failed about one
+  full `-race` run in three and passed every time in isolation.
+
+  `exec.Cmd.Wait` closes a pipe created by `StdoutPipe` as soon as the child
+  exits — its own doc says it is "incorrect to call Wait before all reads from
+  the pipe have completed". Supervising a child means calling `Wait`
+  concurrently with reading, so a child that exits while its last writes are
+  still in flight simply loses them. The symptom was a claude envelope that
+  arrived truncated and classified as `PARSER`: a real dispatch would have
+  been marked failed, retried, and paid for twice.
+
+  The fix is what `dispatcher.py` was doing all along: pass the log file
+  itself as `stdout` and `stderr` (`Popen(stdout=log_fh, stderr=STDOUT)`), so
+  the child writes into the fd directly and the parent never copies anything.
+  There is then no pipe to truncate, no pipe buffer to fill, and no buffer
+  size to tune — which also answers the G2.5 brief's "stream stdout to the
+  parser with a 1 MiB bufio buffer": there is no parent-side stream to buffer,
+  and `Parse` is a pure function over the finished log, exactly as Python
+  parses `_read_log`'s result once at the end.
+
+  Worth recording as a porting lesson rather than a Python bug: the Go-native
+  design looked more sophisticated and was simply wrong, and the Python it was
+  replacing had the right shape already.
+
+- **`internal/engine` — the dispatch timeout's multiplier, and the one place
+  it diverges.** `orch.py::_timeout_for` computes
+  `estimate_hours * multiplier * 3600` and floors a non-positive result at
+  60s. It reads the multiplier as
+  `float(cfg.get("default_timeout_multiplier", 1.5) or 1.5)`, so a missing key
+  and an explicit `0` both become 1.5 — `0 or 1.5` is 1.5. A **negative**
+  value is the one that survives: `-2 or 1.5` is -2, `seconds` goes negative,
+  and an 8-hour task lands on the 60-second floor. `engine.TimeoutFor` treats
+  any non-positive multiplier as "not configured" and uses 1.5, so that task
+  keeps its real timeout. Reachable only by writing a negative number into
+  `config.yaml` on purpose; pinned by a test that says so.
