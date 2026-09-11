@@ -255,6 +255,12 @@ jobs:
               "tools": { "core": [] }
             }
 
+      # Exit 2 means the reviewer ran and said nothing — observed on run
+      # 34638647467, where the model returned `"response": ""` and the action
+      # fell back to emitting its own JSON envelope. That is
+      # non-deterministic (the same commit passed on the next attempt), so it
+      # earns exactly one retry. Exit 1 means the answer was off-schema, which
+      # a retry would reproduce, so it does not.
       - name: Parse the verdict
         id: parse
         if: steps.key.outputs.present == 'true'
@@ -270,6 +276,47 @@ jobs:
           if [ -n "${ERR:-}" ]; then
             echo "reviewer stderr: $ERR"
           fi
+          set +e
+          python3 .github/review/parse-review.py \
+            --raw raw.txt \
+            --out review.json \
+            --comment comment.md \
+            --eligible "${ELIGIBLE:-false}" \
+            --eligible-reason "${REASON:-policy did not run}" \
+            --run-url "$RUN_URL"
+          rc=$?
+          set -e
+          echo "retryable=$([ "$rc" = 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      - name: Run the reviewer again
+        id: gemini_retry
+        if: steps.parse.outputs.retryable == 'true'
+        continue-on-error: true
+        uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_model: ${{ vars.GEMINI_REVIEW_MODEL }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          settings: |-
+            {
+              "model": { "maxSessionTurns": 3 },
+              "tools": { "core": [] }
+            }
+
+      - name: Parse the retry
+        id: parse_retry
+        if: steps.parse.outputs.retryable == 'true' && steps.gemini_retry.outcome == 'success'
+        continue-on-error: true
+        env:
+          RAW: ${{ steps.gemini_retry.outputs.summary }}
+          ELIGIBLE: ${{ needs.policy.outputs.eligible }}
+          REASON: ${{ needs.policy.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '%s' "${RAW:-}" > raw.txt
           python3 .github/review/parse-review.py \
             --raw raw.txt \
             --out review.json \
@@ -281,7 +328,7 @@ jobs:
       # One comment per PR, edited in place. A review that reappears at the
       # bottom of the thread on every push buries the human conversation.
       - name: Post or update the review comment
-        if: steps.parse.outcome == 'success'
+        if: steps.parse.outcome == 'success' || steps.parse_retry.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -316,6 +363,8 @@ jobs:
           KEY_PRESENT: ${{ steps.key.outputs.present }}
           GEMINI_OUTCOME: ${{ steps.gemini.outcome }}
           PARSE_OUTCOME: ${{ steps.parse.outcome }}
+          RETRY_PARSE_OUTCOME: ${{ steps.parse_retry.outcome }}
+          RETRYABLE: ${{ steps.parse.outputs.retryable }}
           GEMINI_ERROR: ${{ steps.gemini.outputs.error }}
         run: |
           set -euo pipefail
@@ -327,10 +376,15 @@ jobs:
             CONCLUSION=neutral
             TITLE="Reviewer failed"
             SUMMARY="The Gemini CLI step did not complete. ${GEMINI_ERROR:-See the run log.} The review did not run; this is not a pass."
-          elif [ "$PARSE_OUTCOME" != "success" ]; then
+          elif [ "$PARSE_OUTCOME" != "success" ] && [ "$RETRY_PARSE_OUTCOME" != "success" ]; then
             CONCLUSION=neutral
-            TITLE="Unreadable verdict"
-            SUMMARY="The reviewer answered, but not with the required JSON schema. See the run log for what it returned. This is not a pass."
+            if [ "${RETRYABLE:-false}" = "true" ]; then
+              TITLE="Reviewer returned nothing"
+              SUMMARY="The reviewer ran twice and produced an empty response both times — it did not answer, rather than answering badly. See the run log. This is not a pass."
+            else
+              TITLE="Unreadable verdict"
+              SUMMARY="The reviewer answered, but not with the required JSON schema. See the run log for what it returned. This is not a pass."
+            fi
           else
             VERDICT=$(jq -r .verdict review.json)
             SUMMARY=$(jq -r .summary review.json)

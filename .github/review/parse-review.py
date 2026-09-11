@@ -14,7 +14,11 @@ Usage:
 
 Exit status:
     0  valid verdict written to --out
-    1  could not parse (stderr says why) — the caller marks the check neutral
+    1  unreadable: the reviewer answered, but not to the schema. Retrying
+       would just produce the same shape, so the caller marks the check
+       neutral.
+    2  empty: the reviewer ran and said nothing. Non-deterministic and worth
+       ONE retry before giving up.
 """
 
 from __future__ import annotations
@@ -30,11 +34,66 @@ VERDICTS = ("approve", "request_changes", "comment")
 MARKER = "<!-- orch:gemini-review -->"
 
 
+class EmptyReview(ValueError):
+    """The reviewer ran but produced no text. Distinct from a malformed
+    verdict, because the fix is different: an empty response is worth
+    retrying, a schema violation is not."""
+
+
+def unwrap_cli_envelope(text: str) -> str:
+    """Return the model's own text when `text` is the Gemini CLI's envelope.
+
+    `run-gemini-cli` runs `gemini --output-format json`, whose stdout is
+    `{"session_id": ..., "response": "...", "stats": {...}}`, and sets its
+    `summary` output to `.response`. When `.response` is EMPTY it falls back
+    to emitting that whole envelope instead.
+
+    Observed on run 34638647467 attempt 1: the model returned
+    `"response": ""`, the action emitted the envelope, and this parser
+    dutifully parsed it as JSON, found no `verdict`, and reported
+    "`verdict` must be one of (...), got None" — which reads like the model
+    answered badly when in fact it did not answer at all. That message sent
+    the next reader looking for a prompt problem.
+
+    So: recognise the envelope, and say what actually happened.
+    """
+    try:
+        outer = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    if not isinstance(outer, dict):
+        return text
+    if "verdict" in outer:
+        return text  # already the review; not an envelope
+    if "response" not in outer:
+        return text
+    inner = outer.get("response")
+    if isinstance(inner, str) and inner.strip():
+        return inner
+    raise EmptyReview(
+        "the reviewer ran but returned an empty response "
+        f"(model: {_envelope_model(outer)}). Nothing was reviewed."
+    )
+
+
+def _envelope_model(outer: dict) -> str:
+    """Best-effort model name out of the CLI's stats block, for the error."""
+    try:
+        models = outer["stats"]["models"]
+        if isinstance(models, dict) and models:
+            return ", ".join(sorted(models))
+    except (KeyError, TypeError):
+        pass
+    return "unknown"
+
+
 def extract_json(raw: str) -> dict:
     """Pull the JSON object out of whatever the model actually printed."""
     text = raw.strip()
     if not text:
-        raise ValueError("the reviewer produced no output at all")
+        raise EmptyReview("the reviewer produced no output at all")
+
+    text = unwrap_cli_envelope(text)
 
     # ```json ... ``` or ``` ... ```
     fenced = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)
@@ -188,6 +247,10 @@ def main() -> int:
 
     try:
         review = validate(extract_json(raw))
+    except EmptyReview as exc:
+        # Exit 2, not 1: the caller can retry this one.
+        print(f"parse-review: {exc}", file=sys.stderr)
+        return 2
     except (ValueError, json.JSONDecodeError) as exc:
         print(f"parse-review: {exc}", file=sys.stderr)
         return 1
