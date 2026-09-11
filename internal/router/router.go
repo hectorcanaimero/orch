@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,7 +62,7 @@ func (e *UnroutedError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "model_router.yaml is missing entries for %d task(s):\n", len(e.Offenders))
 	for _, o := range e.Offenders {
-		fmt.Fprintf(&b, "  - %s: %s\n", o.TaskID, pyQuote(o.Model))
+		fmt.Fprintf(&b, "  - %s: %s\n", o.TaskID, pyfmt.Quote(o.Model))
 	}
 	b.WriteString("Run `orch router add-missing` to auto-add them " +
 		"(backend/cli_model inferred, tier defaults to standard), " +
@@ -115,12 +116,12 @@ func Load(path string) (Router, error) {
 		row := top.Content[i+1]
 		if row.Kind != yaml.MappingNode {
 			return nil, &FormatError{Path: path,
-				Msg: fmt.Sprintf("entry %s is not a mapping", pyQuote(key))}
+				Msg: fmt.Sprintf("entry %s is not a mapping", pyfmt.Quote(key))}
 		}
 		var entry model.RouteEntry
 		if err := row.Decode(&entry); err != nil {
 			return nil, &FormatError{Path: path,
-				Msg: fmt.Sprintf("entry %s: %v", pyQuote(key), err)}
+				Msg: fmt.Sprintf("entry %s: %v", pyfmt.Quote(key), err)}
 		}
 		if err := validateEntry(path, key, entry); err != nil {
 			return nil, err
@@ -142,7 +143,7 @@ func Load(path string) (Router, error) {
 			return nil, &FormatError{Path: path, Msg: fmt.Sprintf(
 				"entry %s has escalation_model %s that is not a route in this "+
 					"file (add it, or remove the escalation_model field)",
-				pyQuote(key), pyQuote(*entry.EscalationModel))}
+				pyfmt.Quote(key), pyfmt.Quote(*entry.EscalationModel))}
 		}
 	}
 	return out, nil
@@ -152,21 +153,21 @@ func validateEntry(path, key string, e model.RouteEntry) error {
 	if !validBackends[e.Backend] {
 		return &FormatError{Path: path, Msg: fmt.Sprintf(
 			"entry %s has invalid backend %s (expected one of %s)",
-			pyQuote(key), pyQuote(string(e.Backend)), sortedQuoted(backendNames()))}
+			pyfmt.Quote(key), pyfmt.Quote(string(e.Backend)), sortedQuoted(backendNames()))}
 	}
 	if !validTiers[e.Tier] {
 		return &FormatError{Path: path, Msg: fmt.Sprintf(
 			"entry %s has invalid tier %s (expected one of %s)",
-			pyQuote(key), pyQuote(string(e.Tier)), sortedQuoted(tierNames()))}
+			pyfmt.Quote(key), pyfmt.Quote(string(e.Tier)), sortedQuoted(tierNames()))}
 	}
 	if e.CLIModel == "" {
 		return &FormatError{Path: path,
-			Msg: fmt.Sprintf("entry %s missing non-empty cli_model", pyQuote(key))}
+			Msg: fmt.Sprintf("entry %s missing non-empty cli_model", pyfmt.Quote(key))}
 	}
 	if e.Effort != nil && !validEfforts[*e.Effort] {
 		return &FormatError{Path: path, Msg: fmt.Sprintf(
 			"entry %s field `effort` must be one of 'low' | 'medium' | 'high', got %s",
-			pyQuote(key), pyQuote(*e.Effort))}
+			pyfmt.Quote(key), pyfmt.Quote(*e.Effort))}
 	}
 	return nil
 }
@@ -240,7 +241,7 @@ func InferEntry(key string, defaultTier model.Tier) (model.RouteEntry, error) {
 	}
 	backend, cliModel, found := strings.Cut(key, "/")
 	if !found || cliModel == "" || !validBackends[model.Backend(backend)] {
-		return model.RouteEntry{}, fmt.Errorf("%s: %w", pyQuote(key), ErrCannotInfer)
+		return model.RouteEntry{}, fmt.Errorf("%s: %w", pyfmt.Quote(key), ErrCannotInfer)
 	}
 	return model.RouteEntry{
 		Backend:   model.Backend(backend),
@@ -370,7 +371,7 @@ func sortedQuoted(vs []string) string {
 	sort.Strings(vs)
 	quoted := make([]string, len(vs))
 	for i, v := range vs {
-		quoted[i] = pyQuote(v)
+		quoted[i] = pyfmt.Quote(v)
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
@@ -386,15 +387,4 @@ func nodeKindName(k yaml.Kind) string {
 	default:
 		return "unknown"
 	}
-}
-
-// pyQuote matches Python's `{x!r}` for the values that reach these messages.
-// Same reason as internal/graph: `orch router` output is user-facing and gets
-// diffed against Python's in the parity harness, and Go's %q would write
-// double quotes on every line.
-func pyQuote(s string) string {
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		return `"` + s + `"`
-	}
-	return "'" + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "'", `\'`) + "'"
 }

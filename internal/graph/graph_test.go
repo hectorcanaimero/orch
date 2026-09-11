@@ -42,8 +42,8 @@ func loadParity(t *testing.T) ([]model.Task, []string) {
 // The expectations are the output of `preflight.validate_graph` on this exact
 // fixture, captured by testdata/make-goldens.py. `orch validate` prints these
 // messages and `scripts/parity.sh` diffs them between the two binaries, so the
-// text is a contract — including the quoting style, which is why `pyQuote`
-// exists.
+// text is a contract — including the quoting style, which is why
+// `pyfmt.Quote` exists and why this package does not use Go's %q.
 func TestValidateMatchesThePythonGolden(t *testing.T) {
 	tasks, routes := loadParity(t)
 
@@ -280,26 +280,6 @@ func TestMessagesUsePythonQuoting(t *testing.T) {
 	}
 	if got[0].Message != "depends on unknown task 'ghost'" {
 		t.Errorf("message = %q, want Python's single-quoted form", got[0].Message)
-	}
-}
-
-func TestPyQuote(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"F0.T1", "'F0.T1'"},
-		{"claude/claude-sonnet-4-6", "'claude/claude-sonnet-4-6'"},
-		{"", "''"},
-		// Python's repr switches to double quotes only when the value has a
-		// single quote and no double quote.
-		{"it's", `"it's"`},
-		{`say "hi"`, `'say "hi"'`},
-		{`both ' and "`, `'both \' and "'`},
-		{`back\slash`, `'back\\slash'`},
-		{"line\nbreak", `'line\nbreak'`},
-	}
-	for _, c := range cases {
-		if got := pyQuote(c.in); got != c.want {
-			t.Errorf("pyQuote(%q) = %s, want %s", c.in, got, c.want)
-		}
 	}
 }
 
