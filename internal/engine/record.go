@@ -24,6 +24,9 @@ const (
 	EventFail     = "fail"
 	EventTimeout  = "timeout"
 	EventIDSpoof  = "id_spoof_detected"
+	EventRetry    = "retry"
+	EventEscalate = "escalate"
+	EventBlock    = "block"
 )
 
 // RecordStart writes the `dispatch` event and the in-flight row, in that
@@ -183,4 +186,36 @@ func NewStateRecorder(b state.Backend) StateRecorder { return StateRecorder{Back
 // RecordDispatchAndEvent writes the in-flight row and the `dispatch` event.
 func (r StateRecorder) RecordDispatchAndEvent(ctx context.Context, runID string, d Dispatch, sp *Spawned, attempt int) error {
 	return RecordStart(ctx, r.Backend, runID, d, sp, attempt)
+}
+
+// RecordFinish on the adapter writes the spend row, the outcome event and
+// clears the in-flight row.
+func (r StateRecorder) RecordFinish(ctx context.Context, runID string, d Dispatch, o Outcome, attempt int) error {
+	return RecordFinish(ctx, r.Backend, runID, d, o, attempt)
+}
+
+// AppendEngineEvent writes one of the engine's own events.
+func (r StateRecorder) AppendEngineEvent(ctx context.Context, runID, eventType, taskID, backend string, extra map[string]any) error {
+	return r.Backend.AppendEvent(ctx, runID, state.Event{
+		RunID:     runID,
+		EventType: eventType,
+		TaskID:    taskID,
+		Backend:   backend,
+		TS:        utcSecond(time.Now()),
+		Extra:     extra,
+	})
+}
+
+// TaskStatus reads a task's current status back.
+func (r StateRecorder) TaskStatus(ctx context.Context, taskID string) (model.Status, error) {
+	t, err := r.Backend.Task(ctx, taskID)
+	if err != nil {
+		return "", err
+	}
+	return t.Status, nil
+}
+
+// Transition moves a task, recording who moved it and why.
+func (r StateRecorder) Transition(ctx context.Context, taskID string, to model.Status, note string) error {
+	return r.Backend.Transition(ctx, taskID, to, state.Note{Author: "orch", Body: note})
 }

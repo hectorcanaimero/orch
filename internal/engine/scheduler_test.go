@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,6 +39,7 @@ func route(backend model.Backend, cliModel string, premium bool) model.RouteEntr
 // provider, so the tests exercise real forks and real semaphores without any
 // coding CLI.
 type schedulerFixture struct {
+	t        *testing.T
 	s        *Scheduler
 	stateDir string
 }
@@ -91,18 +93,25 @@ func newSchedulerFixture(t *testing.T, tasks []model.Task, routes map[string]mod
 	}
 	s := NewScheduler(q, routes, opts)
 
-	f := &schedulerFixture{s: s, stateDir: stateDir}
+	f := &schedulerFixture{t: t, s: s, stateDir: stateDir}
 	t.Cleanup(f.killAll)
 	return f
 }
 
 // killAll reaps whatever the test left running. Without it a test that
 // asserts a cap leaves sleeping children behind for the next one.
+//
+// It kills the groups and then drains through the scheduler rather than
+// calling Spawned.Wait itself: every dispatch has a supervising goroutine
+// already waiting on it, and racing that was what made this fixture panic in
+// CI with "Wait was already called". Wait is idempotent now, but going
+// through DrainWait is also what a real shutdown does.
 func (f *schedulerFixture) killAll() {
 	for _, e := range f.s.InFlight() {
-		e.Spawned.signalGroup(9) // SIGKILL
-		e.Spawned.Wait(5 * time.Second)
-		e.Lock.Release()
+		e.Spawned.signalGroup(syscall.SIGKILL)
+	}
+	if _, err := f.s.DrainWait(context.Background(), 30*time.Second); err != nil {
+		f.t.Errorf("draining the fixture: %v", err)
 	}
 }
 
