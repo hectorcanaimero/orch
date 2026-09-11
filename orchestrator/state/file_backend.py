@@ -67,6 +67,19 @@ EVENT_TYPES: tuple[str, ...] = (
     "reconciled",
     "budget_pause",
     "budget_skip",
+    # Sprint F-4 / G-1 (PR + CI automation) emitted these from orch.py without
+    # adding them here, so `EventLog.emit` raised ValueError on every one:
+    # `pr_created` was swallowed by a broad except (logged as "set_task_pr
+    # failed"), the CI ones crashed the poller. Never caught because the tests
+    # of that path use a fake emit that does not validate. Bug 9 of the Go
+    # port; `test_event_types_emitted.py` now scans the emitters.
+    "pr_created",
+    "ci_redispatch",
+    "ci_success",
+    "pr_auto_merged",
+    "pr_auto_merge_failed",
+    "ci_failure_retry",
+    "ci_blocked",
 )
 
 
