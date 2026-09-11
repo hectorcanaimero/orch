@@ -1,0 +1,345 @@
+package worktree
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// ---- Create -----------------------------------------------------------
+
+func TestCreateReturnsWorktreePathAndRegistersBranch(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+
+	path, err := m.Create("F2.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != m.WorktreePath("F2.1.T1") {
+		t.Errorf("path = %q, want %q", path, m.WorktreePath("F2.1.T1"))
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("worktree dir not created: %v", err)
+	}
+	if !branchExists(t, root, "orch/F2.1.T1") {
+		t.Errorf("branch orch/F2.1.T1 was not created")
+	}
+	if got := m.active["F2.1.T1"]; got != path {
+		t.Errorf("active[%q] = %q, want %q", "F2.1.T1", got, path)
+	}
+}
+
+func TestCreateRecreatesOverAPriorRealWorktree(t *testing.T) {
+	// Mirrors Python's test_create_cleans_stale_path_first, but against a
+	// real prior worktree (a plain leftover directory isn't something git
+	// worktree remove can clean up, so a genuine stale worktree is the only
+	// faithful way to exercise this without mocking subprocess).
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+
+	first, err := m.Create("F2.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first, "scratch.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := m.Create("F2.1.T1", "main")
+	if err != nil {
+		t.Fatalf("second Create failed: %v", err)
+	}
+	if second != first {
+		t.Errorf("path changed across recreation: %q vs %q", first, second)
+	}
+	if _, err := os.Stat(filepath.Join(second, "scratch.txt")); err == nil {
+		t.Errorf("stale file survived recreation — old worktree wasn't actually replaced")
+	}
+	if !branchExists(t, root, "orch/F2.1.T1") {
+		t.Errorf("branch missing after recreation")
+	}
+}
+
+func TestCreatePurgesOrphanBranchLeftByAPartialFailure(t *testing.T) {
+	// The exact scenario G4.1's brief calls out: a prior `git worktree add
+	// -b` created the branch ref and then failed before registering the
+	// worktree directory (rate limit, disk full, ...). Simulated here by
+	// creating the branch by hand with no worktree directory present.
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	runGit(t, root, "branch", m.BranchName("F7.T1"), "main")
+
+	path, err := m.Create("F7.T1", "main")
+	if err != nil {
+		t.Fatalf("Create should purge the orphan branch and succeed, got: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("worktree not created: %v", err)
+	}
+}
+
+func TestCreateFailsOnUnknownBaseBranch(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+
+	_, err := m.Create("F2.1.T1", "does-not-exist")
+	if err == nil {
+		t.Fatal("expected an error for an unknown base branch")
+	}
+	var wtErr *Error
+	if !errors.As(err, &wtErr) {
+		t.Fatalf("error = %v (%T), want *worktree.Error", err, err)
+	}
+	if wtErr.TaskID != "F2.1.T1" {
+		t.Errorf("TaskID = %q", wtErr.TaskID)
+	}
+}
+
+// ---- CommitPending (Sprint F-6, fix #60) -------------------------------
+
+func TestCommitPendingReturnsFalseOnCleanTree(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	if _, err := m.Create("F6.1.T1", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.CommitPending("F6.1.T1", "auto-commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed {
+		t.Errorf("committed = true on a clean tree, want false")
+	}
+}
+
+func TestCommitPendingCommitsAndReturnsTrueOnDirtyTree(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	wt, err := m.Create("F6.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "agent-output.txt"), []byte("hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.CommitPending("F6.1.T1", "F6.1.T1: orch auto-commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed {
+		t.Fatalf("committed = false on a dirty tree, want true")
+	}
+
+	log := runGit(t, wt, "log", "-1", "--pretty=%s")
+	if log != "F6.1.T1: orch auto-commit\n" {
+		t.Errorf("log = %q", log)
+	}
+
+	// A second call must now see a clean tree again.
+	committed, err = m.CommitPending("F6.1.T1", "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed {
+		t.Errorf("committed = true on an already-committed tree")
+	}
+}
+
+func TestCommitPendingWorksWithoutAnyGlobalGitIdentity(t *testing.T) {
+	// The whole point of the inline -c user.email/-c user.name is that
+	// commit_pending must work even when the ambient git config has no
+	// identity configured. newTestRepo sets a repo-local identity for the
+	// *outer* repo's own commits; verify the worktree commit doesn't
+	// depend on it by unsetting it before calling CommitPending.
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	wt, err := m.Create("F6.1.T2", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "config", "--unset", "user.email")
+	runGit(t, root, "config", "--unset", "user.name")
+	if err := os.WriteFile(filepath.Join(wt, "x.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.CommitPending("F6.1.T2", "no ambient identity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !committed {
+		t.Fatalf("commit_pending failed without an ambient git identity")
+	}
+}
+
+// ---- Push ----------------------------------------------------------------
+
+func TestPushIsNoopWhenDisabled(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, false)
+	if _, err := m.Create("F2.1.T3", "main"); err != nil {
+		t.Fatal(err)
+	}
+	// No `origin` remote exists at all — if Push tried to run git push
+	// anyway, it would fail. Getting nil back proves it short-circuited.
+	if err := m.Push("F2.1.T3"); err != nil {
+		t.Errorf("Push with pushEnabled=false returned an error: %v", err)
+	}
+}
+
+func TestPushSendsBranchToOrigin(t *testing.T) {
+	root := newTestRepo(t)
+	remote := newBareRemote(t, root)
+	m := NewManager(root, true)
+	wt, err := m.Create("F2.1.T3", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "x.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F2.1.T3", "work"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Push("F2.1.T3"); err != nil {
+		t.Fatal(err)
+	}
+	if !remoteHasBranch(t, remote, m.BranchName("F2.1.T3")) {
+		t.Errorf("origin does not have %s after Push", m.BranchName("F2.1.T3"))
+	}
+}
+
+func TestPushFailsWithoutARemote(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	if _, err := m.Create("F2.1.T3", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Push("F2.1.T3"); err == nil {
+		t.Fatal("expected an error pushing with no origin remote configured")
+	}
+}
+
+// ---- Remove / RemoveAll ---------------------------------------------------
+
+func TestRemoveIsNoopWhenDirectoryAbsent(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	m.Remove("nonexistent-task") // must not panic or error
+}
+
+func TestRemoveDeletesWorktreeAndClearsActive(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	path, err := m.Create("F2.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m.Remove("F2.1.T1")
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("worktree dir still present after Remove: err=%v", err)
+	}
+	if _, ok := m.active["F2.1.T1"]; ok {
+		t.Errorf("active still tracks F2.1.T1 after Remove")
+	}
+}
+
+func TestRemoveAllRemovesEveryActiveWorktree(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	ids := []string{"F2.1.T1", "F2.1.T2", "F2.1.T3"}
+	for _, id := range ids {
+		if _, err := m.Create(id, "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m.RemoveAll()
+
+	for _, id := range ids {
+		if m.Exists(id) {
+			t.Errorf("%s still exists after RemoveAll", id)
+		}
+	}
+	if len(m.active) != 0 {
+		t.Errorf("active = %v, want empty", m.active)
+	}
+}
+
+func TestRemoveAllIsNoopWithNoActiveWorktrees(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	m.RemoveAll() // must not panic
+}
+
+// ---- Recreate --------------------------------------------------------------
+
+func TestRecreateChecksOutThePushedBranch(t *testing.T) {
+	root := newTestRepo(t)
+	newBareRemote(t, root)
+	m := NewManager(root, true)
+
+	wt, err := m.Create("F9.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "output.txt"), []byte("agent output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F9.T1", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Push("F9.T1"); err != nil {
+		t.Fatal(err)
+	}
+	m.Remove("F9.T1") // simulate the worktree being cleaned up between runs
+
+	recreated, err := m.Recreate("F9.T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recreated != m.WorktreePath("F9.T1") {
+		t.Errorf("path = %q, want %q", recreated, m.WorktreePath("F9.T1"))
+	}
+	// #nosec G304 -- recreated is a path this test just computed under t.TempDir().
+	data, err := os.ReadFile(filepath.Join(recreated, "output.txt"))
+	if err != nil {
+		t.Fatalf("recreated worktree missing the pushed commit's file: %v", err)
+	}
+	if string(data) != "agent output\n" {
+		t.Errorf("output.txt = %q", data)
+	}
+}
+
+// ---- Exists / BranchName / WorktreePath ------------------------------------
+
+func TestExistsReflectsDirectoryPresence(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	if m.Exists("F1") {
+		t.Errorf("Exists true before Create")
+	}
+	if _, err := m.Create("F1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Exists("F1") {
+		t.Errorf("Exists false after Create")
+	}
+}
+
+func TestBranchNameAndWorktreePathFormat(t *testing.T) {
+	m := NewManager("/repo", true)
+	if got, want := m.BranchName("F2.1.T3"), "orch/F2.1.T3"; got != want {
+		t.Errorf("BranchName = %q, want %q", got, want)
+	}
+	if got, want := m.WorktreePath("F2.1.T3"), filepath.Join("/repo", ".worktrees", "F2.1.T3"); got != want {
+		t.Errorf("WorktreePath = %q, want %q", got, want)
+	}
+}

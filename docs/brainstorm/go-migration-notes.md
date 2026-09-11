@@ -424,3 +424,31 @@ block) were all of that kind.
   `"input_tokens": "n/a"` takes down `wait_result` rather than costing a wrong
   number. (codex's and opencode's summers do catch it.) Go's `toFloat`/`toInt`
   return 0 instead — a deliberate divergence, identical on well-formed output.
+
+- **`internal/worktree` (G4.1) — real git repos instead of mocked
+  subprocess, and a documented-not-enforced caller contract.** Two notes:
+
+  1. `orchestrator/tests/test_worktree.py` mocks every `subprocess.run` call
+     and asserts on the exact argv Python built. Go has no equivalent of
+     `unittest.mock.patch("subprocess.run")` that's worth reaching for here,
+     and asserting on argv shape is a weaker test than asserting on outcome
+     anyway — so `internal/worktree`'s tests run every case (including the
+     G4.1 brief's named scenario, a `git worktree add -b` that leaves an
+     orphan branch behind after a partial failure) against real temporary
+     git repositories instead. `TestCreatePurgesOrphanBranchLeftByAPartialFailure`
+     is the one that matters: it hand-creates the orphan branch ref with no
+     worktree directory (the exact state a partial `add -b` leaves) and
+     asserts the next `Create` succeeds.
+  2. `orchestrator/tests/test_orch_worktree.py` is NOT a `WorktreeManager`
+     test at all — every `WorktreeManager` call in it is a `MagicMock`, and
+     what it actually tests is `orchestrator/orch.py`'s `_reap_once`/
+     `_install_sigint` wiring: call `commit_pending` → `push` → `remove` in
+     that order, skip `push` on failure, never let a `push` failure skip
+     `remove` or downgrade a successful task, and call `remove_all` after
+     the drain wait rather than from the SIGTERM handler. `internal/engine`
+     (the `_reap_once` equivalent) doesn't exist yet, so there is nothing to
+     port this test file's cases *into* — the ordering is a contract for
+     whoever writes `internal/engine` against `internal/worktree`, not
+     something `internal/worktree` itself can test. It's written down as a
+     "Caller contract" section in `worktree.go`'s package doc comment so it
+     isn't lost between now and G-whatever-does-the-engine.
