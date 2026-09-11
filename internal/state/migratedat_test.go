@@ -36,6 +36,24 @@ func TestMarkMigratedThenMigratedAtReturnsIt(t *testing.T) {
 	}
 }
 
+// TestMarkMigratedErrorsWhenProjectRowIsMissing pins the rowcount check:
+// an UPDATE matching zero rows must not read as success (same shape of bug
+// Transition, #107/issue #81, fixed for tasks_runtime).
+func TestMarkMigratedErrorsWhenProjectRowIsMissing(t *testing.T) {
+	db, _, err := Open(context.Background(), t.TempDir()+"/orch.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	// A backend whose project_id was never Bootstrap-ped — no `projects`
+	// row exists for it yet.
+	b := NewSQLite(db, "never-bootstrapped", "/tmp/proj")
+
+	if err := b.MarkMigrated(context.Background(), "2026-01-01T00:00:00Z"); err == nil {
+		t.Fatal("expected an error when no project row exists to update")
+	}
+}
+
 func TestMarkMigratedCanBeCalledAgain(t *testing.T) {
 	b := seeded(t, "T1")
 	ctx := context.Background()

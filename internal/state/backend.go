@@ -626,12 +626,21 @@ func (b *SQLite) Milestones(ctx context.Context) ([]Milestone, error) {
 }
 
 // ---- migrate ---------------------------------------------------------------
+//
+// MigratedAt/MarkMigrated are deliberately NOT on the Backend interface,
+// unlike Bootstrap/RecordSpend/AppendEvent (which are). The interface
+// exists so a caller can test against a double standing in for ANY
+// backend; `migrated_at` only means something for a one-shot file→sqlite
+// import, which is sqlite-specific by definition — there is no other
+// backend a stub implementation of these two would ever stand in for.
+// What belongs on Backend is what every backend would have to know how to
+// answer; this is what only one of them could.
 
-// MigratedAt returns the project's `projects.migrated_at` timestamp, or ""
-// if it has never been set. Used by `orch migrate`'s already-migrated
-// guard — not part of the Backend interface because no other caller needs
-// it; a plain read, so it goes through the read pool like every other
-// query in this file (rule 17 only constrains writes).
+// MigratedAt returns the project's `projects.migrated_at` timestamp, or
+// ("", nil) if the project has no row yet OR has one but was never
+// migrated — both are the ordinary "not migrated" case, not an error a
+// caller failed to check. A plain read, so it goes through the read pool
+// like every other query in this file (rule 17 only constrains writes).
 func (b *SQLite) MigratedAt(ctx context.Context) (string, error) {
 	var v sql.NullString
 	err := b.db.read.QueryRowContext(ctx,
@@ -655,10 +664,24 @@ func (b *SQLite) MigratedAt(ctx context.Context) (string, error) {
 // is the one write `orch migrate` needs beyond Bootstrap/AppendEvent/
 // RecordSpend.
 func (b *SQLite) MarkMigrated(ctx context.Context, ts string) error {
-	_, err := b.db.write.ExecContext(ctx,
+	res, err := b.db.write.ExecContext(ctx,
 		`UPDATE projects SET migrated_at = ? WHERE project_id = ?`, ts, b.projectID)
 	if err != nil {
 		return fmt.Errorf("mark %q migrated: %w", b.projectID, err)
+	}
+	// An UPDATE matching zero rows does not fail on its own — same shape
+	// of bug Transition (#107, issue #81) fixed: a missing project_id
+	// silently "succeeds" at marking nothing, and the caller believes the
+	// import happened. Bootstrap runs before this in every real call path
+	// and always seeds the project row, so this should be unreachable in
+	// practice; checking it anyway costs one RowsAffected call and turns a
+	// silent no-op into a loud one if that invariant is ever broken.
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check the migrated_at update for %q: %w", b.projectID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("mark %q migrated: no project row to update — Bootstrap must run first", b.projectID)
 	}
 	return nil
 }
