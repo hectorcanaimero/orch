@@ -73,7 +73,19 @@ checklist, not an argument in the thread. That is why it is versioned.
 |---|---|
 | ✅ success | Verdict was `approve` or `comment` |
 | ❌ failure | Verdict was `request_changes` |
-| ⚪ neutral | The review **did not run** — no API key, the CLI failed, or the model returned something that was not the required JSON |
+| ⚪ neutral | The review **did not run** — no API key, the CLI failed, the reviewer returned nothing twice, or the model answered off-schema |
+
+Two neutrals read differently, and the title says which:
+
+- **"Unreadable verdict"** — the reviewer answered, but not to the schema. A
+  retry would reproduce the same shape, so there isn't one. Read the run log
+  to see what it said.
+- **"Reviewer returned nothing"** — the reviewer ran and produced an empty
+  response, twice. This one is non-deterministic (the Gemini CLI does it
+  occasionally on a long prompt), so the workflow retries once before giving
+  up. If it starts happening often, pin a stronger model with
+  `GEMINI_REVIEW_MODEL` — the empty responses observed so far came from
+  `gemini-3.1-flash-lite`, the CLI's default.
 
 Neutral is never a pass. It is the state that says "nobody reviewed this".
 
