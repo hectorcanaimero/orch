@@ -41,7 +41,33 @@ Bugs found in the Python `orch` while the Go rewrite (see CLAUDE.md → "Migraci
   `orchestrator/tests/test_dashboard_security_public_shell.py` sweeps the live
   route table and fails if any data route ever escapes the token gate.
 
+- ~~**`spec_root` defaulted to a path from orch's own repo**~~ — **RESOLVED**
+  (g0/opus-spec-root, 2026-09-11): found while generating the config goldens
+  for G1.2. `prompt_builder.DEFAULT_SPEC_ROOT` was `docs/rewrite-plan` — a
+  leftover from orch's early layout — while the packaged `config.yaml` and the
+  `orch init` wizard both said `specs`. None of the four templates set the key,
+  so every templated project resolved it through `_apply_defaults` to
+  `docs/rewrite-plan`. `_render_spec_ref` composes `{spec_root}/{spec_ref}`, so
+  each dispatched agent was told to read
+  `docs/rewrite-plan/specs/f0-foundation.md#T1` — a path in neither the user's
+  project nor anywhere else. The default is now `specs`, the four templates pin
+  `spec_root: specs` explicitly so the written config says it out loud, and
+  `test_init.py` asserts that a prompt rendered from a templated task points at
+  the project's own `specs/`.
+
 ## Notes for the Go rewrite
+
+- **`orch graph` changes its output format.** Python emits a self-contained
+  HTML page with inline SVG (`graph.py`: `build_html`, `_svg_nodes`,
+  `_svg_edges`); there is no DOT anywhere in the Python tree. Go emits **DOT**
+  instead — stdout by default, `--out file.dot`, `--only` kept. The visual DAG
+  lives in the dashboard (GraphPage + `/api/graph`), so the HTML generator is
+  not ported. This is a visible contract change for anyone scripting
+  `orch graph --out plan.html`; it belongs in the artifact's "Cambia o
+  desaparece" column. Parity for the graph package is therefore measured on
+  topological order, cycle sets and `validate` messages — the things both
+  implementations have — not on DOT, which has no Python counterpart to
+  diff against.
 
 - **`internal/dashboard` — where the auth gate belongs.** Put the token check on
   the **data** routes (`/api/*`, `/stakeholder/summary`, `/snapshot`,

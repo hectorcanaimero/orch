@@ -4,7 +4,7 @@ Contract (FR-P-1..5):
     - Body follows `sdd/orchestrator/explore.md §3` VERBATIM. Do NOT paraphrase
       — the shell-out protocol lines are load-bearing and any rewording risks
       confusing the agents at dispatch time.
-    - Specs are referenced BY PATH (`docs/rewrite-plan/<specRef>`), NEVER
+    - Specs are referenced BY PATH (`<spec_root>/<specRef>`), NEVER
       inlined (they average 100-150 KB and would blow the token budget on
       every dispatch — see explore.md §Red flags).
     - Dep comments are the most recent entry from `Task.comments` (populated
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # Default location for `spec_ref` values, relative to the project root
 # (FR-P-2). Retrocompat con rupies. Fase 3: pisable por `config.yaml`
 # (`spec_root: <path>`) y propagado como argumento a `render_prompt`.
-DEFAULT_SPEC_ROOT = "docs/rewrite-plan"
+DEFAULT_SPEC_ROOT = "specs"
 
 # Truncation cap for dep comments (FR-P-3).
 _DEP_COMMENT_MAX_CHARS = 500
@@ -127,7 +127,7 @@ def render_prompt(
     invocación clásica desde `v2/`.
 
     Fase 3: `spec_root` se recibe como parámetro (default = rupies histórico
-    `docs/rewrite-plan`). El orquestador lo resuelve desde `config.yaml`
+    `specs`). El orquestador lo resuelve desde `config.yaml`
     (`spec_root: <path>`) al arrancar y lo pasa acá — cada proyecto puede
     apuntar a su propio layout de specs sin tocar el código.
     """

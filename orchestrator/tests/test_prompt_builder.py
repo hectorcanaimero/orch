@@ -68,7 +68,7 @@ def test_render_prompt_matches_golden(tmp_path: Path) -> None:
     path = render_prompt(
         task=t,
         completed_deps=[dep],
-        spec_ref="specs/foo.md",
+        spec_ref="foo.md",
         run_id="r1",
         state_dir=tmp_path,
         project_root=Path("/tmp/orch-golden-project"),
@@ -110,7 +110,7 @@ def test_missing_spec_ref_renders_placeholder(tmp_path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert "no spec ref provided" in text
     # No path fragment leaked when there's no ref.
-    assert "docs/rewrite-plan/" not in text
+    assert "specs/" not in text
 
 
 def test_empty_string_spec_ref_treated_as_missing(tmp_path: Path) -> None:
