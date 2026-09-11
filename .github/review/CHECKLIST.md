@@ -114,6 +114,51 @@ These apply to files under `cmd/` and `internal/`.
     that is exactly the test that passes while the real CLI breaks.
 22. **No `time.Sleep` in tests** to wait for a goroutine. Blocking — use a
     channel, a `sync.WaitGroup`, or an injected clock.
+23. **A test that normalises before comparing must justify each
+    normalisation.** Lower-casing, trimming, sorting, dereferencing a pointer
+    to a zero value, `or`-ing two acceptable spellings — each one is a
+    difference the test has decided not to see, and the bug hides in exactly
+    that gap. Blocking when the normalisation covers the property under test.
+
+    Three real ones, all of which kept passing over the bug they existed to
+    catch:
+
+    - `test_templated_task_prompt_points_at_the_projects_own_specs` asserted
+      `"Spec ref (READ FIRST): specs/" in text`, which `specs/specs/...`
+      satisfies — and its other clause split the `specs/` prefix back out of
+      the value before comparing (bug 12, #132).
+    - `graph_test.go` had a `deref(*string) string` helper flattening the
+      Python golden's `null` to `""`, in the file whose job is catching
+      `null` vs `""` (#133).
+    - a spend-window test that compared timestamps as strings, where `+00:00`
+      and `Z` spell the same instant two ways (#116).
+
+    The fix is the same each time: compare the whole value, in the shape it
+    crosses the wire.
+24. **A new test must be seen to fail.** For a fix, run it against the
+    unfixed code; for a golden or a vector, against the old value. Say so in
+    the PR body. A test written after the fix, never seen red, is a test of
+    the author's model of the bug rather than of the bug. Minor on its own,
+    blocking when the PR claims to fix something and the test could not have
+    caught it.
+25. **A short-circuit is asserted by what it did not do.** "Returns the right
+    answer" does not distinguish a gate that skipped the database from one
+    that queried it and then ignored the result. Count the calls, or hand the
+    code a dependency that fails if touched.
+26. **A golden or a vector carries a test of its own coverage.** Regenerating
+    can silently drop the boundary case — the row exactly on the cutoff, the
+    field that is null, the multi-byte truncation — and the comparison keeps
+    passing while testing less. Assert the properties the fixture is *for*,
+    not only that it matches.
+27. **Parity expectations come from running Python, not from reading it.**
+    Message text, number formatting, JSON key presence and null-ness: paste
+    what CPython printed. `999_999` formats as `"1000.0k"` and not `"1m"`;
+    `repr(1.0)` is `"1.0"` and not `"1"`. No reimplementation from a prose
+    description survives those, and neither does a careful reading.
+28. **A fixture the project ships is better than one a test invents.** Load
+    the real `budgets.yaml`, the real templates, the real `orch.db` Python
+    wrote. A hand-written sample tests the parser; the shipped file also tests
+    that what we ship still parses.
 
 ---
 
