@@ -128,6 +128,15 @@ def test_event_types_constant_locked() -> None:
         "reconciled",
         "budget_pause",
         "budget_skip",
+        # Sprint F-4 / G-1 PR+CI path (bug 9 of the Go port): emitted by
+        # orch.py since those sprints, declared only now.
+        "pr_created",
+        "ci_redispatch",
+        "ci_success",
+        "pr_auto_merged",
+        "pr_auto_merge_failed",
+        "ci_failure_retry",
+        "ci_blocked",
     )
     assert EVENT_TYPES == expected
 
