@@ -152,6 +152,53 @@ block) were all of that kind.
   which is the point of bug 9's alignment: with one vocabulary on both sides,
   this class of bug has nowhere to live.
 
+- ~~**Bug 12: every templated project sent its agents to `specs/specs/...`**~~ —
+  **RESOLVED** (this PR). Found rendering the Python goldens for G2.3 (prompt).
+
+  The four `tasks.json.tmpl` files carried `"specRef": "specs/f0-foundation.md#T1"`,
+  and `spec_root` defaults to `specs`, and `prompt_builder` composes
+  `f"{spec_root}/{spec_ref}"`. So every task of every template rendered:
+
+  ```
+  Spec ref (READ FIRST): specs/specs/f0-foundation.md#T1
+  ```
+
+  `orch init` creates `<project>/specs/` and tells the user to write
+  `<project>/specs/f0-foundation.md` (`init_cmd.py:318, 429`). The prompt sent
+  the agent one directory deeper, on the line that says READ FIRST.
+
+  The `#T1` anchor is a red herring — it is concatenated with no special
+  handling. What it does is disguise the line: `specs/specs/f0-foundation.md#T1`
+  reads like a well-formed path with a section anchor and the eye slides past
+  the doubled segment.
+
+  It is a consequence of PR #102, which changed `DEFAULT_SPEC_ROOT` from
+  `docs/rewrite-plan` to `specs`. Before that the same templates rendered
+  `docs/rewrite-plan/specs/f0-foundation.md#T1` — equally broken, differently
+  shaped — so the redundant prefix had been in the templates since they were
+  written. #102 changed the default without checking the other side of the
+  concatenation.
+
+  **The test was complicit**, and that is the part worth keeping. #102 added
+  `test_templated_task_prompt_points_at_the_projects_own_specs`, whose
+  assertion was:
+
+  ```python
+  assert f"Spec ref (READ FIRST): specs/{task.spec_ref.split('specs/')[-1]}" in text \
+      or "Spec ref (READ FIRST): specs/" in text
+  ```
+
+  The second clause is satisfied by `specs/specs/...`, and the first splits the
+  `specs/` prefix back out of `spec_ref` — accommodating the duplication rather
+  than catching it. A test written to pass. It now asserts the whole resolved
+  path, runs over all four templates and every task in them, and checks that
+  the file the prompt names is the file the wizard tells the user to write.
+  Verified failing against the unfixed templates before the fix landed.
+
+  This is the fourth template bug found during the migration (snake_case keys,
+  the `spec_root` default, `dashboard:` twice, this) and all four came out of
+  building something against the code rather than reading it.
+
 ## Notes for the Go rewrite
 
 - **A run's three tallies degrade to zero; Python's `list_runs` raises.**

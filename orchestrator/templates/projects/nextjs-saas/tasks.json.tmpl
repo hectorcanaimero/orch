@@ -23,7 +23,7 @@
       "dependencies": [],
       "estimateHours": 0.5,
       "files": ["package.json", "tsconfig.json", "next.config.mjs", "src/app/layout.tsx", "src/app/page.tsx", "tailwind.config.ts"],
-      "specRef": "specs/f0-foundation.md#T1"
+      "specRef": "f0-foundation.md#T1"
     },
     {
       "id": "F1.T1",
@@ -36,7 +36,7 @@
       "dependencies": ["F0.T1"],
       "estimateHours": 0.6,
       "files": ["src/app/layout.tsx", "src/middleware.ts", "src/app/sign-in/[[...sign-in]]/page.tsx", "src/app/sign-up/[[...sign-up]]/page.tsx", ".env.local.example"],
-      "specRef": "specs/f1-clerk.md#T1"
+      "specRef": "f1-clerk.md#T1"
     },
     {
       "id": "F1.T2",
@@ -49,7 +49,7 @@
       "dependencies": ["F1.T1"],
       "estimateHours": 0.5,
       "files": ["src/app/dashboard/page.tsx", "e2e/dashboard.spec.ts", "playwright.config.ts"],
-      "specRef": "specs/f1-clerk.md#T2"
+      "specRef": "f1-clerk.md#T2"
     },
     {
       "id": "F2.T1",
@@ -62,7 +62,7 @@
       "dependencies": ["F0.T1"],
       "estimateHours": 0.8,
       "files": ["src/db/schema.ts", "src/db/index.ts", "drizzle.config.ts", ".env.local.example", "package.json"],
-      "specRef": "specs/f2-supabase.md#T1"
+      "specRef": "f2-supabase.md#T1"
     },
     {
       "id": "F2.T2",
@@ -75,7 +75,7 @@
       "dependencies": ["F1.T1", "F2.T1"],
       "estimateHours": 1.0,
       "files": ["src/app/api/webhooks/clerk/route.ts", "e2e/webhook.spec.ts", "package.json"],
-      "specRef": "specs/f2-supabase.md#T2"
+      "specRef": "f2-supabase.md#T2"
     },
     {
       "id": "F3.T1",
@@ -88,7 +88,7 @@
       "dependencies": ["F0.T1", "F2.T1"],
       "estimateHours": 0.6,
       "files": ["vercel.json", ".github/workflows/deploy-preview.yml", "README.md"],
-      "specRef": "specs/f3-vercel.md#T1"
+      "specRef": "f3-vercel.md#T1"
     }
   ]
 }

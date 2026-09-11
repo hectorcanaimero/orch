@@ -23,7 +23,7 @@
       "dependencies": [],
       "estimateHours": 0.4,
       "files": ["pyproject.toml", "pipeline/__init__.py", "pipeline/extract.py", "pipeline/transform.py", "pipeline/load.py", "pipeline/jobs.py", "tests/__init__.py", "warehouse/bootstrap.sql"],
-      "specRef": "specs/f0-foundation.md#T1"
+      "specRef": "f0-foundation.md#T1"
     },
     {
       "id": "F1.T1",
@@ -36,7 +36,7 @@
       "dependencies": ["F0.T1"],
       "estimateHours": 0.6,
       "files": ["pipeline/extract.py", "sources.yaml", "tests/test_extract.py"],
-      "specRef": "specs/f1-extract.md#T1"
+      "specRef": "f1-extract.md#T1"
     },
     {
       "id": "F2.T1",
@@ -49,7 +49,7 @@
       "dependencies": ["F1.T1"],
       "estimateHours": 0.8,
       "files": ["pipeline/load.py", "pipeline/transform.py", "transforms/.gitkeep", "tests/test_load.py", "tests/test_transform.py"],
-      "specRef": "specs/f2-load-transform.md#T1"
+      "specRef": "f2-load-transform.md#T1"
     },
     {
       "id": "F3.T1",
@@ -62,7 +62,7 @@
       "dependencies": ["F2.T1"],
       "estimateHours": 0.5,
       "files": ["pipeline/jobs.py", "tests/test_jobs.py"],
-      "specRef": "specs/f3-schedule.md#T1"
+      "specRef": "f3-schedule.md#T1"
     }
   ]
 }
