@@ -1898,8 +1898,23 @@ def _refill(
 
         route = router.get(task.model)
         if route is None:
-            # Validated at startup; this branch is a defensive safety net.
+            # Bug 20 of the Go port: `validate` catches this at startup, but a
+            # router edited mid-run (delete an entry a task still references)
+            # reaches here, and a bare `continue` left the task `todo` — so
+            # `queue.ready()` returned it again next tick, the run never met
+            # its termination condition (nothing ready, nothing in flight, no
+            # retries) and `orch run` spun forever, logging this line every
+            # 200 ms. A task that can never be dispatched is blocked, not
+            # waited on; the row says why so `orch status` shows it.
+            reason = f"route missing for model {task.model}"
             log.error("route missing at dispatch time for %s (%s)", task.id, task.model)
+            try:
+                call_task_block(task.id, reason, task.model, project_root=cwd)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("route-missing block failed for %s: %s", task.id, exc)
+            event_log.emit("block", task.id, backend=None, reason=reason)
+            queue.mark_blocked(task.id)
+            run_file.mark_blocked(task.id)
             continue
 
         # ---- semi-mode gate ------------------------------------------------
