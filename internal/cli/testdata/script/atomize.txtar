@@ -3,6 +3,13 @@
 # and what they say, not byte-identical formatting — Python's own tests
 # only assert on substrings too), cross-checked against a real
 # `python -m orchestrator.atomize` run for the same fixture shape.
+#
+# Default --specs-dir is <project-root>/<cfg.spec_root> (bug 18 — cfg.
+# spec_root defaults to "specs", not the "docs" this command used to
+# hardcode, and is the same key prompt_builder composes a dispatched
+# task's read-first path from). atomizeproj's specs live under specs/ for
+# exactly that reason — putting them under docs/ would silently find
+# nothing once this landed.
 
 exec orch atomize --project-root atomizeproj --project-id atomizeproj
 ! stderr .
@@ -44,12 +51,43 @@ stderr 'spec file not found'
 exec orch atomize --specs-dir atomizeproj/no-such-dir --project-root atomizeproj --project-id atomizeproj
 stdout 'Nada que hacer\.'
 
+# Bug 18: a spec nested under specs/ gets a specRef relative to spec_root,
+# not to the project root or to some other hardcoded prefix — nestedproj's
+# tasks.json ends up with "api/auth.md#F0.1.T1", the exact shape
+# prompt_builder composes {spec_root}/{spec_ref} against.
+exec orch atomize --apply --project-root nestedproj --project-id nestedproj
+exec cat nestedproj/tasks.json
+stdout '"specRef": "api/auth\.md#F0\.1\.T1"'
+! stdout 'specs/api/auth\.md'
+! stdout '"specRef": "auth\.md#F0\.1\.T1"'
+
+# --file naming a spec outside the specs root still parses it (the same
+# bare-filename specRef fallback as before), but now warns on stderr that
+# the resulting specRef won't resolve against spec_root. Not an error —
+# exit 0, same as any other dry-run diff.
+exec orch atomize --file nestedproj/outside.md --project-root nestedproj --project-id nestedproj
+stderr 'is outside .*nestedproj[/\\]specs, so its specRef is just .outside\.md.'
+stderr 'any subdirectory is lost'
+stdout '=== Atomizer diff ==='
+
+# Bug 19, end to end: a project scaffolded blank by `orch init` ships its
+# own specs/README.md, whose ```markdown fence contains a real-looking
+# example (F0.1.T1 "Setup monorepo", F0.1.T2 "Root README"). Before the
+# fence fix, `orch atomize --apply` with no --file over a fresh project
+# imported that example as two real tasks — invisible until bug 18 made
+# specs/ (rather than a nonexistent docs/) the root actually scanned.
+exec orch init blankproj
+exec orch atomize --apply --project-root blankproj --project-id blankproj
+stdout 'Specs escaneados: 1 archivos, 0 tasks encontradas'
+exec cat blankproj/tasks.json
+stdout '"tasks": \[\]'
+
 -- atomizeproj/tasks.json --
 {"meta":{},"phases":[],"tasks":[]}
 -- atomizeproj/scripts/task-start.sh --
 #!/usr/bin/env bash
 exit 0
--- atomizeproj/docs/spec.md --
+-- atomizeproj/specs/spec.md --
 # F0 — Foundation
 
 ## F0.1 — Package: core
@@ -66,3 +104,26 @@ Body text for the first task.
 - **Modelo**: claude-opus-4-7
 - **Estimación**: 1h
 - **Dependencies**: F0.1.T1
+-- nestedproj/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- nestedproj/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- nestedproj/specs/api/auth.md --
+# F0 — Auth
+
+## F0.1 — Package: auth
+
+### F0.1.T1 — Login endpoint
+
+- **Modelo**: claude-sonnet-4-6
+- **Estimación**: 3h
+-- nestedproj/outside.md --
+# F9 — Outside
+
+## F9.1 — Package: outside
+
+### F9.1.T1 — Outside task
+
+- **Modelo**: claude-sonnet-4-6
+- **Estimación**: 1h

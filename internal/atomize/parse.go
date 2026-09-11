@@ -199,8 +199,26 @@ func ParseText(text, sourcePath, docsRoot, expectedProjectID string) ParseResult
 		taskState = "desc"
 	}
 
+	// A fenced code block is documentation ABOUT the format, never spec
+	// content — orch init's own specs/README.md shows the minimum shape
+	// inside a ```markdown fence, and without this check `orch atomize
+	// --apply` with no --file on a fresh project imports that example as
+	// two real tasks (bug 19; the header/task regexes below match line by
+	// line and have no idea a fence exists). Ports the fix in Python's
+	// _flush_task loop: `startswith("```")` after stripping leading
+	// whitespace toggles fence state; a line inside one is dropped
+	// entirely, never reaching the header/task/field matchers below.
+	inFence := false
 	for i, line := range splitLines(body) {
 		lineno := i + 1
+
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 
 		if m := rePhase.FindStringSubmatch(line); m != nil {
 			flush()

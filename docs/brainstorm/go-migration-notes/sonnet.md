@@ -62,3 +62,44 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   the sync step is skipped rather than faked. tasks.json itself is
   authoritative either way; the sync is `orch status`/`tasks`'s route
   resolution catching up faster, not a second source of truth.
+
+- **Bugs 18 and 19 (#156, opus, Python side) — `orch atomize`'s default
+  specs root disagreed with `spec_root`, and the parser had no idea what a
+  fence was.** Ported both fixes here as a follow-up to the PR above.
+
+  **Bug 18:** the default specs root was `<project-root>/docs` — a value
+  with no written justification anywhere, while `prompt_builder` resolves
+  a task's `specRef` against `spec_root` from config.yaml (default
+  `specs`), and `orch init` scaffolds `specs/` and tells the operator to
+  write there. With the two roots disagreeing, `relpathForSpecRef` fell to
+  its "outside the root" branch on **every** run and returned the bare
+  filename — right by accident for a spec sitting directly under
+  `spec_root` (why nobody noticed), wrong one level down:
+  `specs/api/auth.md` became `specRef: "auth.md#..."`, and the composed
+  prompt path `specs/auth.md` does not exist. Fixed: the default is now
+  `<project-root>/<cfg.SpecRoot>` (`--specs-dir` still overrides), and the
+  bare-filename fallback for a `--file` genuinely outside the root now
+  warns on stderr — message text ported from Python's, since until this
+  fix that branch ran silently on every single invocation, which is what
+  let a wrong ref look like a working one.
+
+  **Bug 19, found by fixing bug 18:** `internal/atomize`'s parser (like
+  Python's) matches headers line by line with no concept of a fenced code
+  block. `specs/README.md` — written by `orch init` — documents the
+  minimum spec format inside a ```` ```markdown ```` fence containing a
+  realistic-looking example (`F0.1.T1` "Setup monorepo", `F0.1.T2` "Root
+  README"). Once bug 18 made `specs/` the root actually scanned (it used
+  to fall on a nonexistent `docs/` and find nothing), `orch atomize
+  --apply` with no `--file` on a project fresh out of `orch init` imported
+  that example as two real tasks. A fenced block is documentation *about*
+  the format, never content — the parser now tracks fence state
+  (` ```starts-with ``` toggles it, same as Python) and drops every line
+  inside one before the header/task/field regexes ever see it.
+
+  Verified both ways bug 18/19 would have shown red: a temporary revert of
+  the fence-skip loop reproduces the exact two fake tasks
+  `TestParseSkipsTheShippedSpecsReadmeExample` catches, reading the real
+  embedded `internal/templates` copy of `specs/README.md` rather than a
+  hand-copied string, so the test tracks the shipped file. End-to-end
+  regression: `orch init` (blank) → `orch atomize --apply` with no `--file`
+  now finds zero tasks, in `internal/cli/testdata/script/atomize.txtar`.
