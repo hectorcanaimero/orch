@@ -1,0 +1,27 @@
+# orch graph against the committed parity fixture. DOT output has no
+# Python counterpart to diff against — Python's `orch graph` writes a
+# self-contained HTML+SVG page (orchestrator/graph.py's build_html); Go
+# replaces it with Graphviz DOT on stdout / --out, a deliberate documented
+# contract change (see docs/brainstorm/go-migration-notes.md). So this
+# checks the Go command's own contract (stdout vs --out, --only, exit
+# codes), not parity with a Python byte stream.
+
+exec orch graph --project-root proj --project-id parity-project
+stdout '^digraph orch \{'
+stdout '"F0\.T1" \[label="F0\.T1\\nScaffold FastAPI project layout"\]'
+stdout '"F2\.T3" \[label="F2\.T3\\nAdd DELETE /items/\{id\} \+ 404 handling"\]'
+
+exec orch graph --only 'F0*' --project-root proj --project-id parity-project
+stdout '"F0\.T1"'
+! stdout '"F1\.T1"'
+
+exec orch graph --out plan.dot --project-root proj --project-id parity-project
+stdout 'wrote plan\.dot \(5 nodes\)'
+exec cat plan.dot
+stdout '^digraph orch \{'
+
+! exec orch graph --only 'F0[' --project-root proj --project-id parity-project
+stderr 'syntax error in pattern'
+
+! exec orch graph --project-root nonexistent-dir
+stderr 'missing tasks\.json'

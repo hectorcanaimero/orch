@@ -1,0 +1,69 @@
+# orch validate against the committed parity fixture (clean: exit 0, no
+# errors) and two broken projects built inline below (missing router: exit
+# 2 with a router.missing error; a cycle + missing dep + unresolved route:
+# exit 2 with all three). Verified byte-for-byte against a real Python
+# `orch validate --json` run for the clean and cycle cases (see
+# docs/brainstorm/go-migration-notes.md for the two known shape gaps this
+# deliberately does not assert on: task_id/remediation null-vs-omitted,
+# tracked as a fix to internal/graph owned separately).
+
+exec orch validate --json --project-root proj --project-id parity-project
+! stderr .
+stdout '^\{"project":\{"id":"parity-project".*"errors":\[\].*"exit_code":0\}$'
+
+exec orch validate --project-root proj --project-id parity-project
+stdout '0 error\(s\) · 0 warning\(s\) · 0 total'
+
+# --files is registered (so it isn't cobra's opaque "unknown flag") but has
+# no Go port yet — preflight.validate_files_writable has no internal/graph
+# equivalent.
+! exec orch validate --files --project-root proj --project-id parity-project
+stderr '\-\-files is not implemented yet'
+
+# A project missing model_router.yaml entirely: exit 2, one router.missing
+# error. Go tolerates a missing config.yaml (matches every other command in
+# this CLI); Python's `_load_config` raises FileNotFoundError there and adds
+# two schema.config errors on top — a known, deliberate divergence (Go has
+# no `preflight.validate_config_shape` port and treats config.yaml as
+# optional everywhere), see go-migration-notes.md.
+! exec orch validate --json --project-root broken --project-id broken
+stdout '"kind":"router.missing"'
+stdout '"exit_code":2'
+
+# A cycle, a missing dependency, and an unresolved route together — the
+# three checks graph.Validate runs beyond schema. Exact kind/message text
+# verified against real Python output.
+! exec orch validate --json --project-root cyc --project-id cyc
+stdout '"kind":"dep.missing".*"message":"depends on unknown task .NOPE."'
+stdout '"kind":"dep.cycle".*"message":"dependency cycle: A -> B -> A"'
+stdout '"kind":"route.unresolved".*"message":"model .unknown/nope. has no entry in model_router.yaml"'
+stdout '"exit_code":2'
+
+! exec orch validate --project-root cyc --project-id cyc
+stdout '3 error\(s\) · 0 warning\(s\) · 3 total'
+stdout 'dep\.cycle'
+
+-- broken/tasks.json --
+{"meta":{},"phases":[],"tasks":[
+  {"id":"A","phase":0,"title":"A","model":"claude/claude-sonnet-4-6","dependencies":[]}
+]}
+-- broken/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- cyc/tasks.json --
+{"meta":{},"phases":[],"tasks":[
+  {"id":"A","phase":0,"title":"A","model":"claude/claude-sonnet-4-6","dependencies":["B"]},
+  {"id":"B","phase":0,"title":"B","model":"claude/claude-sonnet-4-6","dependencies":["A"]},
+  {"id":"C","phase":0,"title":"C","model":"unknown/nope","dependencies":["NOPE"]}
+]}
+-- cyc/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- cyc/.orchestrator/config.yaml --
+state:
+  backend: sqlite
+-- cyc/.orchestrator/model_router.yaml --
+claude/claude-sonnet-4-6:
+  backend: claude
+  cli_model: claude-sonnet-4-6
+  tier: standard

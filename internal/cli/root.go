@@ -34,6 +34,16 @@ func withExitCode(code int, err error) error {
 	return &exitError{code: code, err: err}
 }
 
+// withSilentExitCode signals a specific exit code without printing anything
+// to stderr. `orch validate` needs this: a non-zero exit there means
+// "the report already written to stdout found problems", not "something
+// else went wrong" — Python doesn't print a second message for that case
+// either, so echoing exitError's own text as an ad-hoc stderr line would be
+// noise `_run_validate_subcommand` never produces.
+func withSilentExitCode(code int) error {
+	return &exitError{code: code, err: errors.New("")}
+}
+
 // projectFlags are the three flags every project-scoped command accepts,
 // ported from Python's `_add_common_project_flags` (orchestrator/orch.py).
 // Registered once as persistent flags on the root command rather than
@@ -71,6 +81,8 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newTaskCmd(flags))
 	root.AddCommand(newTaskStatusCmd(flags))
 	root.AddCommand(newResetCmd(flags))
+	root.AddCommand(newValidateCmd(flags))
+	root.AddCommand(newGraphCmd(flags))
 	return root
 }
 
@@ -81,11 +93,14 @@ func Run(version string, args []string) int {
 	root := newRootCmd(version)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
 		var ee *exitError
 		if errors.As(err, &ee) {
+			if ee.err != nil && ee.err.Error() != "" {
+				fmt.Fprintln(os.Stderr, err)
+			}
 			return ee.code
 		}
+		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, errNotImplemented) {
 			return 2
 		}

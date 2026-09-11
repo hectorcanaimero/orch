@@ -41,10 +41,15 @@ stdout '"id":"F1\.T2".*"backend":"claude","cli_model":"claude-opus-4-6".*"tier":
 # latest_run: real fields from the one run row. started_at/updated_at are
 # stamped from create_run's clock at fixture-generation time, not fixed —
 # only run_id/mode/status/parent_pid/in_flight_count are asserted.
+# completed_count/blocked_count/deferred_count are 0 in this fixture (its
+# completed_json/blocked_json/deferred_json are all empty arrays — see
+# internal/state's own tests for a fixture that seeds non-empty ones), so
+# this alone cannot prove the three columns are read at all, only that the
+# wiring doesn't crash on them; internal/state carries that proof instead.
 stdout '"latest_run":\{"run_id":"fixture-run-0001"'
 stdout '"mode":"auto","status":"live"'
 stdout '"parent_pid":4200'
-stdout '"in_flight_count":1'
+stdout '"in_flight_count":1,"completed_count":0,"blocked_count":0,"deferred_count":0\}'
 
 exec orch status --project-root billing-api --project-id billing-api
 stdout 'Project billing-api'
