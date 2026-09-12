@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -105,11 +104,7 @@ func (b *SQLite) LastEventByTask(ctx context.Context, taskIDs []string) (map[str
 			&e.Backend, &e.TS, &extra); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
 		}
-		if extra != "" {
-			if err := json.Unmarshal([]byte(extra), &e.Extra); err != nil {
-				e.Extra = nil
-			}
-		}
+		e.Extra = decodeExtra(extra)
 		out[e.TaskID] = e
 	}
 	if err := rows.Err(); err != nil {

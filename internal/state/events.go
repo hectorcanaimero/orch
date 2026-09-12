@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -52,14 +51,7 @@ func (b *SQLite) AllEvents(ctx context.Context, n int) ([]Event, error) {
 			&e.Backend, &e.TS, &extra); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
 		}
-		if extra != "" {
-			// A row whose extra_json does not parse loses its extra, not its
-			// event. `Events` does the same: the row is still evidence that
-			// something happened, and dropping it would hide that.
-			if err := json.Unmarshal([]byte(extra), &e.Extra); err != nil {
-				e.Extra = nil
-			}
-		}
+		e.Extra = decodeExtra(extra)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
