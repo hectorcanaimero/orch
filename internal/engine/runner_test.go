@@ -791,3 +791,116 @@ func TestLoopKeepsGoingWhileSomethingCanStillRun(t *testing.T) {
 		t.Fatal("the loop did not finish")
 	}
 }
+
+// ---- sprint_done (F4.7) ---------------------------------------------------
+
+// sprintDoneEvents returns the run-level events the backend recorded.
+func sprintDoneEvents(b *fakeBackend) []recordedEvent {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []recordedEvent
+	for _, e := range b.events {
+		if e.eventType == EventSprintDone {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestSprintDoneIsEmittedOnceWhenTheQueueEmpties is F4.7's whole contract:
+// one event, at the end, carrying what the run finished with.
+func TestSprintDoneIsEmittedOnceWhenTheQueueEmpties(t *testing.T) {
+	f := newRunnerFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus"), task("C-2", 1, "claude/opus", "C-1")},
+		map[string]fakeResponse{"C-1": okResponse(), "C-2": okResponse()},
+		SchedulerOptions{RunID: "run-1"})
+
+	if code := f.runWithin(t, 30*time.Second); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	events := sprintDoneEvents(f.backend)
+	if len(events) != 1 {
+		t.Fatalf("sprint_done emitted %d times, want exactly 1", len(events))
+	}
+	ev := events[0]
+	// Run-level: no task owns it. A task id here would put the row in one
+	// task's `orch events` history, which is not where a reader looks for
+	// "the run finished".
+	if ev.taskID != "" {
+		t.Errorf("task_id = %q, want empty — sprint_done belongs to the run", ev.taskID)
+	}
+	for key, want := range map[string]int{"total": 2, "done": 2, "blocked": 0, "dispatched": 2} {
+		if got, ok := ev.extra[key].(int); !ok || got != want {
+			t.Errorf("extra[%q] = %v, want %d", key, ev.extra[key], want)
+		}
+	}
+	if ev.extra["mode"] != string(ModeAuto) && ev.extra["mode"] != "" {
+		t.Errorf("extra[mode] = %v", ev.extra["mode"])
+	}
+}
+
+// A run whose remaining work is all blocked still emptied its queue, and the
+// counts are what say so. Emitting nothing here would leave a cron job unable
+// to tell "finished" from "still going"; emitting a bare "done" would claim
+// the work succeeded. `blocked > 0` is the difference, in the row itself.
+func TestSprintDoneCountsBlockedWork(t *testing.T) {
+	f := newRunnerFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": failResponse("authentication_error: bad key")},
+		SchedulerOptions{RunID: "run-1"})
+
+	if code := f.runWithin(t, 30*time.Second); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	events := sprintDoneEvents(f.backend)
+	if len(events) != 1 {
+		t.Fatalf("sprint_done emitted %d times, want 1", len(events))
+	}
+	if got := events[0].extra["blocked"]; got != 1 {
+		t.Errorf("extra[blocked] = %v, want 1", got)
+	}
+	if got := events[0].extra["done"]; got != 0 {
+		t.Errorf("extra[done] = %v, want 0", got)
+	}
+}
+
+// An interrupted run did not finish, and must not say it did. Rule 25: the
+// assertion is what the loop did NOT write — a cron job that treated a
+// Ctrl-C'd run as a completed sprint would report a sprint nobody finished.
+func TestSprintDoneIsNotEmittedAfterASignal(t *testing.T) {
+	f := newRunnerFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": okResponse()},
+		SchedulerOptions{RunID: "run-1"})
+
+	f.signals <- syscall.SIGINT
+	if code := f.runWithin(t, 30*time.Second); code != ExitInterrupted {
+		t.Fatalf("exit code = %d, want %d", code, ExitInterrupted)
+	}
+	if events := sprintDoneEvents(f.backend); len(events) != 0 {
+		t.Errorf("sprint_done was emitted after a signal: %+v", events)
+	}
+}
+
+// The guard, exercised where it lives.
+//
+// Through the loop it is unreachable — the single call site is followed by
+// `break` — so a test that drove the loop would pass with the guard deleted
+// and prove nothing. Calling the method twice is the only way to see it work,
+// and this is the shape the next exit path added to Run will lean on.
+func TestSprintDoneIsWrittenOnlyOnce(t *testing.T) {
+	f := newRunnerFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": okResponse()},
+		SchedulerOptions{RunID: "run-1"})
+
+	ctx := context.Background()
+	f.r.recordSprintDone(ctx)
+	f.r.recordSprintDone(ctx)
+
+	if events := sprintDoneEvents(f.backend); len(events) != 1 {
+		t.Errorf("two calls wrote %d events, want 1", len(events))
+	}
+}

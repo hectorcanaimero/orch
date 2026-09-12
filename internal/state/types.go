@@ -148,6 +148,10 @@ var eventTypes = map[string]bool{
 	"pr_created": true, "ci_redispatch": true, "ci_success": true,
 	"pr_auto_merged": true, "pr_auto_merge_failed": true,
 	"ci_failure_retry": true, "ci_blocked": true,
+	// Go only. Python declares no such type and never emits one — see
+	// goOnlyEventTypes in eventtypes_test.go for why that is safe in a
+	// database both binaries write to.
+	"sprint_done": true,
 }
 
 // Milestone groups tasks for the stakeholder view, with the progress counts

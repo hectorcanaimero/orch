@@ -205,6 +205,20 @@ Failures are silent by design — a 500, a 404, a refused connection or a hang
 is logged once and the dispatch loop carries on. A broken webhook never
 reaches it.
 
+Two commands use these channels directly rather than through a run:
+`orch notify test` proves a webhook before a run depends on it (exit 0 when a
+channel accepted, 1 when none did), and `orch notify digest --send` posts the
+stakeholder digest. `digest` is worth cron-ing and orch will not do it for
+you — it has no daemon:
+
+```
+0 9 * * MON  orch notify digest --send --project-root /path/to/project
+```
+
+The digest's wording, its `--language` override of
+`dashboard.summary_language`, and the one figure it rounds are in
+[`CLI.md`](CLI.md)'s `notify digest` row.
+
 ### `presentation`
 
 ```yaml

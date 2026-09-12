@@ -69,6 +69,9 @@ type Runner struct {
 	// the tests drive it directly rather than signalling the test binary.
 	Signals <-chan os.Signal
 
+	// sprintDone guards the one-per-run rule for the sprint_done event.
+	sprintDone bool
+
 	// tick, sleep and now are the loop's clock, injectable so the tests do
 	// not spend a real minute proving a sixty-second sweep.
 	sleep func(time.Duration)
@@ -192,6 +195,7 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 				reoffered = true
 				continue
 			}
+			r.recordSprintDone(ctx)
 			break
 		}
 
@@ -232,6 +236,63 @@ func (r *Runner) drain(ctx context.Context, interrupted bool) (int, error) {
 		return ExitInterrupted, nil
 	}
 	return 0, nil
+}
+
+// recordSprintDone writes the one run-level event this loop emits (F4.7).
+//
+// It marks the queue emptying — nothing running, nothing ready, no retry
+// waiting — which is the only exit from this loop that means the run finished
+// rather than stopped. A signal drains out through `case <-signals`, a
+// permanently-stuck task returns an error, and neither is a sprint that
+// ended; emitting there would tell a cron job the work was finished when a
+// human had just pressed Ctrl-C.
+//
+// "The queue emptied" is not the same as "everything is done": a run whose
+// remaining tasks are all blocked ends here too. Rather than pick one meaning
+// and be wrong half the time, the counts ride along in `extra` and the reader
+// decides. `blocked > 0` is what "finished with work left" looks like.
+//
+// Once per run, and the guard is belt to the loop's braces: the one call site
+// is followed immediately by `break`, so today it cannot run twice. It is kept
+// because the next person to add an exit path — and there have already been
+// four — would otherwise have to notice that this is the kind of event that
+// must not repeat. The dedup hash does not cover it either: two rows a second
+// apart hash differently and would both land. Exercised directly by
+// TestSprintDoneIsWrittenOnlyOnce rather than through the loop, because a
+// guard no test can reach is not a guard.
+//
+// Best effort. A run that finished must not fail on the way out because a
+// side-channel row could not be written, so a failure is logged and the exit
+// code is unchanged — the same contract the notifier has.
+func (r *Runner) recordSprintDone(ctx context.Context) {
+	s := r.Scheduler
+	if r.sprintDone || s.Backend == nil {
+		return
+	}
+	r.sprintDone = true
+
+	counts := map[string]int{}
+	for _, t := range s.Queue.AllTasks() {
+		st, ok := s.Queue.Status(t.ID)
+		if !ok {
+			st = t.Status
+		}
+		counts[string(st)]++
+	}
+	total := len(s.Queue.AllTasks())
+	extra := map[string]any{
+		"total":       total,
+		"done":        counts[string(model.StatusDone)],
+		"blocked":     counts[string(model.StatusBlocked)],
+		"todo":        counts[string(model.StatusTodo)],
+		"backlog":     counts[string(model.StatusBacklog)],
+		"in_progress": counts[string(model.StatusInProgress)],
+		"dispatched":  s.dispatched,
+		"mode":        string(s.Opts.Mode),
+	}
+	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventSprintDone, "", "", extra); err != nil {
+		s.logger().Warn("could not record the sprint_done event", "err", err)
+	}
 }
 
 // workIsDone reports the termination condition: nothing running, nothing
