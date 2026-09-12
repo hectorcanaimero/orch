@@ -155,6 +155,11 @@ router_content() {
 #     tasks.json is authoritative on both sides either way; excluded here,
 #     not silently made to match, because there is nothing to normalize —
 #     Go genuinely does not write this directory during atomize;
+#   - .mcp.json, which only Go writes (G6.4). Python's `run_init_cli` has
+#     no MCP server to point at, so there is no Python side to diff — this
+#     is an intended divergence, documented in docs/CLI.md's `init` row,
+#     not a normalization hiding a difference. Its content is pinned by
+#     internal/scaffold's own tests;
 #   - tasks.json.bak-<timestamp>, whose name is never going to match
 #     between two runs a second or more apart. Its CONTENT isn't checked
 #     either: it is a copy of the pre-apply tasks.json, already covered by
@@ -163,7 +168,7 @@ compare_tree() {
   local label="$1" py_dir="$2" go_dir="$3"
   local mismatch=0
 
-  if ! diff -rq -x model_router.yaml -x state -x 'tasks.json.bak-*' \
+  if ! diff -rq -x model_router.yaml -x state -x .mcp.json -x 'tasks.json.bak-*' \
       "$py_dir" "$go_dir" > "$work/tree.diff" 2>&1; then
     echo "FAIL $label (file tree differs)"
     cat "$work/tree.diff"
