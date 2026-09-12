@@ -23,8 +23,15 @@ func MilestoneETADate(remaining int, velocityPerDay float64, today, targetDate s
 	return eta.ETADate
 }
 
-// VelocityWindowDays is the window `velocity_per_day` averages over, exposed
-// so a caller computing the same figure from its own `CountDoneLastNDays`
-// divides by the same number the dashboard does rather than by a 7 it typed
-// itself.
+// VelocityWindowDays is the window `velocity_per_day` averages over.
+//
+// Exported because velocity is a quotient and both halves have to come from
+// one place: the numerator is `state.CountDoneLastNDays(ctx, N)` and the
+// denominator is that same N. A caller that asks for 7 days and divides by a
+// typed 7 works right up until someone widens the window in one of the two
+// spots — and then the figure is wrong with nothing failing. Sharing the
+// constant makes the two halves move together.
+//
+// The concrete cost of them drifting: `orch notify digest` and `/api/sprint`
+// would project different dates from the same rows.
 const VelocityWindowDays = velocityWindowDays

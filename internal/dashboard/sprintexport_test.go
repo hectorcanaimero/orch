@@ -37,10 +37,11 @@ func TestMilestoneETADate(t *testing.T) {
 	}
 }
 
-// VelocityWindowDays is exported so a caller computing velocity from its own
-// CountDoneLastNDays divides by the same number the dashboard does. If the two
-// ever differ, `orch notify digest` and /api/sprint project different dates
-// from the same rows.
+// Velocity is a quotient whose numerator comes from
+// `CountDoneLastNDays(ctx, N)` and whose denominator is that same N. This is
+// what keeps the exported half from drifting away from the one sprintHealth
+// divides by — if they ever differ, `orch notify digest` and /api/sprint
+// project different dates from the same rows, and nothing fails.
 func TestVelocityWindowDaysIsTheOneTheDashboardUses(t *testing.T) {
 	if VelocityWindowDays != velocityWindowDays {
 		t.Errorf("VelocityWindowDays = %d, velocityWindowDays = %d",
