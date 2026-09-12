@@ -1,0 +1,46 @@
+# orch dashboard — the flag surface and the refusals, through the real CLI.
+#
+# $WORK/proj is the shipped parity fixture, copied in by the harness.
+#
+# What is NOT here: starting the server. A testscript that binds a port and
+# then blocks until something kills it is a test about process management, and
+# the server has its own tests plus a manual check that starts it for real
+# against a real database (internal/dashboard/manualcheck_test.go). What this
+# file covers is everything that happens BEFORE the listener opens, which is
+# where an operator's mistakes land.
+
+# ---- the command exists and describes itself -------------------------------
+exec orch dashboard --help
+stdout 'Serve the operator dashboard'
+stdout '--host'
+stdout '--port'
+stdout '--profile'
+stdout '--token'
+# The three profiles are named in the help rather than left to the manual.
+stdout 'operator, stakeholder or both'
+
+# ---- it takes no positional arguments --------------------------------------
+! exec orch dashboard --project-root proj --project-id proj extra-arg
+stderr 'accepts 0 arg|unknown command'
+
+# ---- an unknown profile is refused, not silently downgraded ----------------
+# Falling back to `operator` here would turn a typo in a flag meant to
+# RESTRICT access into a dashboard with no auth at all, and the symptom is a
+# page that works.
+! exec orch dashboard --project-root proj --project-id proj --profile stakholder
+stderr 'not one of'
+
+# ---- stakeholder with no token is refused at startup -----------------------
+# It parses fine and then 401s every request, including its own token form —
+# a server nobody can use. The operator finds out here rather than from a
+# blank page.
+! exec orch dashboard --project-root proj --project-id proj --profile stakeholder
+stderr 'token'
+
+# ---- a port that is not a port ---------------------------------------------
+! exec orch dashboard --project-root proj --project-id proj --port 70000
+stderr 'not a port'
+
+# ---- a project that is not a project ---------------------------------------
+! exec orch dashboard --project-root nowhere --project-id nowhere
+stderr 'missing tasks.json'

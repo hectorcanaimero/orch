@@ -92,6 +92,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newRunCmd(flags))
 	root.AddCommand(newMCPCmd(flags))
 	root.AddCommand(newDoctorCmd(flags))
+	root.AddCommand(newDashboardCmd(flags))
 	return root
 }
 
