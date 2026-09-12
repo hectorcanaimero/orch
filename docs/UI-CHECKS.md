@@ -129,12 +129,14 @@ A stakeholder project is two lines on top of any project's config:
 ```yaml
 dashboard:
   profile: stakeholder
-  token: test-token-stakeholder
+  token: <token>
 ```
 
-and the token reaches the browser through the documented flow —
-`http://127.0.0.1:7420/?token=test-token-stakeholder`, which
-`adoptTokenFromQuery()` moves into `localStorage` and scrubs from the URL.
+`<token>` is whatever you started the dashboard with — the value of
+`dashboard.token`, or `orch dashboard --token`. It reaches the browser through
+the documented flow: open `http://127.0.0.1:7420/?token=<token>`, and
+`adoptTokenFromQuery()` moves it into `localStorage` and scrubs it from the
+URL.
 
 Then compare **bytes and the mount point**, not only the status code. A page
 that throws during render still returns 200 and still serves the shell:
