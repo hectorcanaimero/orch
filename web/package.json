@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:stakeholder": "vite --config vite.stakeholder.config.ts",
+    "build:stakeholder": "tsc -b && vite build --config vite.stakeholder.config.ts",
+    "preview:stakeholder": "vite preview --config vite.stakeholder.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",
