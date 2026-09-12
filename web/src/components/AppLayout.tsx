@@ -7,6 +7,7 @@ import {
   GitFork,
   KanbanSquare,
   LayoutDashboard,
+  LayoutGrid,
   ListIcon,
   LogOut,
   Milestone,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/hooks/useAuth"
+import { isPortfolioNavVisible, usePortfolio } from "@/hooks/usePortfolio"
 import { useProjectConfig } from "@/hooks/useProjectConfig"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
 import { useWhoami } from "@/hooks/useWhoami"
@@ -38,6 +40,13 @@ interface NavItem {
   // G-5: spend is sensitive. Operators always see it; stakeholders only when
   // the project opts in via dashboard.show_spend_to_stakeholder.
   stakeholderSpendGated?: boolean
+  // G8.5: only meaningful for one item (Portfolio), gated a second way on
+  // top of operatorOnly — hidden whenever the dashboard wasn't started
+  // with --portfolio, not just for stakeholder sessions. A plain field
+  // rather than folding this into operatorOnly since the two reasons a
+  // nav item disappears (wrong profile vs. a feature flag) read
+  // differently to whoever edits this list next.
+  portfolioGated?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -51,6 +60,13 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/tunnel", label: "Tunnel", icon: Radio, operatorOnly: true },
   { to: "/metrics", label: "Metrics", icon: BarChart3, operatorOnly: true },
   { to: "/logs", label: "Logs", icon: ScrollText, operatorOnly: true },
+  {
+    to: "/portfolio",
+    label: "Portfolio",
+    icon: LayoutGrid,
+    operatorOnly: true,
+    portfolioGated: true,
+  },
 ]
 
 export function AppLayout({ children }: AppLayoutProps) {
@@ -72,13 +88,29 @@ export function AppLayout({ children }: AppLayoutProps) {
   const isStakeholder = whoami?.profile === "stakeholder"
   const showSpendToStakeholder =
     projectConfig?.dashboard?.show_spend_to_stakeholder ?? false
+
+  // G8.5: never even requested for a stakeholder session — portfolio data
+  // (other projects' names, paths, spend) is operator-only, so this stays
+  // off at the query level too, not just hidden in the nav. The actual
+  // show/hide decision is isPortfolioNavVisible (usePortfolio.ts), a pure
+  // function covered by its own table test — see that doc comment for
+  // the "why" behind each case.
+  const { data: portfolioData, error: portfolioError } = usePortfolio({
+    enabled: !isStakeholder,
+  })
+  const portfolioAvailable = isPortfolioNavVisible({
+    isStakeholder,
+    data: portfolioData,
+    error: portfolioError,
+  })
+
   const visibleNav = isStakeholder
     ? NAV_ITEMS.filter(
         (item) =>
           !item.operatorOnly &&
           (!item.stakeholderSpendGated || showSpendToStakeholder),
       )
-    : NAV_ITEMS
+    : NAV_ITEMS.filter((item) => !item.portfolioGated || portfolioAvailable)
 
   return (
     <div className="flex min-h-screen bg-background">

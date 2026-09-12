@@ -10,6 +10,7 @@ import { LoginPage } from "@/pages/LoginPage"
 import { LogsPage } from "@/pages/LogsPage"
 import { MetricsPage } from "@/pages/MetricsPage"
 import { MilestonesPage } from "@/pages/MilestonesPage"
+import { PortfolioPage } from "@/pages/PortfolioPage"
 import { BudgetPage } from "@/pages/BudgetPage"
 import { SprintPage } from "@/pages/SprintPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
@@ -130,6 +131,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <GraphPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/portfolio"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <PortfolioPage />
                 </AppLayout>
               </ProtectedRoute>
             }
