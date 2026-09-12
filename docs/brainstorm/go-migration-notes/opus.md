@@ -376,3 +376,38 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `now - 1h` falls outside the second one for the whole first hour of every UTC
   day. A test that only fails between 00:00 and 01:00 UTC is the kind that gets
   re-run until it passes. Rows in these tests are dated `now`.
+
+- **Bug 21 — velocity counts row touches, not completions.**
+  `count_done_last_n_days` filters on `updated_at >= datetime('now', -N days)`,
+  which is the row's mtime. A task that finished three weeks ago and was edited
+  yesterday counts as finished yesterday, so a burst of edits on old rows reads
+  as a productive week. Every ETA the dashboard shows — `/api/sprint`'s and
+  every milestone's — is projected from that figure, and velocity is the one
+  number on the page that claims to be a measurement rather than a reading of
+  state.
+
+  **Fixed in Go, annotated in Python.** `CountDoneLastNDays` counts
+  `COALESCE(NULLIF(finished_at, ''), updated_at)`: rows written before the
+  column was populated keep the old answer because there is nothing better to
+  ask them, and every row since is counted by when the work actually finished.
+  Not fixed in Python — it would move the figures of every project on the
+  legacy branch and the migration is where the corrected version belongs.
+
+  One detail I had backwards until I read `Transition`: **`finished_at` holds
+  the MOST RECENT entry into done, not the first.** The order of the COALESCE
+  arguments there is deliberate and pinned by a fixture generated from the
+  Python backend, with a comment explaining that a reopened-and-refinished task
+  must report the second finish or the same project reports different velocity
+  depending on which binary closed it. So a reopened task counts once, on the
+  day of the second finish. I wrote the doc comment and the test claiming
+  "first" before checking; the test failed for an unrelated reason — the
+  transition table has no `done → in-progress` edge — and reading the code to
+  fix that is what turned up the real semantics.
+
+- **`/api/sprint` and `/api/milestones` project from two different ETAs with
+  similar names.** `sprint_eta` divides REMAINING TASKS by tasks-per-day;
+  `eta_hours_remaining` (not on any endpoint in this lane — it belongs to the
+  stakeholder snapshot) sums remaining ESTIMATE HOURS and scales them by how
+  far past estimate the finished work ran. They answer different questions and
+  can disagree by a lot on the same project. Worth knowing before someone
+  "unifies" them.

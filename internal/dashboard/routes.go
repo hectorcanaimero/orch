@@ -23,7 +23,8 @@ func (s *Server) routes() []route {
 		{pattern: "GET /api/config/status", name: "api_config_status", handler: s.handleConfigStatus},
 	}
 	out = append(out, s.readRoutes()...)
-	return append(out, s.metricRoutes()...)
+	out = append(out, s.metricRoutes()...)
+	return append(out, s.sprintRoutes()...)
 }
 
 // whoamiPayload is `/api/whoami`'s body.

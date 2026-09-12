@@ -1,0 +1,220 @@
+{
+  "milestone_eta": [
+    {
+      "eta": null,
+      "remaining": 0,
+      "target_date": null,
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": null,
+      "remaining": 5,
+      "target_date": null,
+      "today": "2026-09-01",
+      "velocity_per_day": 0.0
+    },
+    {
+      "eta": {
+        "confidence": "high",
+        "eta_date": "2026-09-06",
+        "eta_days": 5
+      },
+      "remaining": 5,
+      "target_date": null,
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": {
+        "confidence": "high",
+        "eta_date": "2026-09-03",
+        "eta_days": 2
+      },
+      "remaining": 6,
+      "target_date": null,
+      "today": "2026-09-01",
+      "velocity_per_day": 5.0
+    },
+    {
+      "eta": {
+        "confidence": "high",
+        "eta_date": "2026-09-06",
+        "eta_days": 5
+      },
+      "remaining": 5,
+      "target_date": "2026-09-10",
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": {
+        "confidence": "low",
+        "eta_date": "2026-09-06",
+        "eta_days": 5
+      },
+      "remaining": 5,
+      "target_date": "2026-09-02",
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": {
+        "confidence": "low",
+        "eta_date": "2026-12-10",
+        "eta_days": 100
+      },
+      "remaining": 100,
+      "target_date": null,
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": {
+        "confidence": "high",
+        "eta_date": "2026-12-10",
+        "eta_days": 100
+      },
+      "remaining": 100,
+      "target_date": "2027-01-01",
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    },
+    {
+      "eta": {
+        "confidence": "high",
+        "eta_date": "2026-09-06",
+        "eta_days": 5
+      },
+      "remaining": 5,
+      "target_date": "not-a-date",
+      "today": "2026-09-01",
+      "velocity_per_day": 1.0
+    }
+  ],
+  "sprint": {
+    "blocker-with-no-event": {
+      "blocked_count": 1,
+      "blockers": [
+        {
+          "blocked_at": null,
+          "estimate_hours": 1.0,
+          "phase": 0,
+          "reason": "unknown",
+          "task_id": "A",
+          "title": "A"
+        }
+      ],
+      "confidence": "none",
+      "done_count": 0,
+      "eta_date": null,
+      "eta_days": null,
+      "remaining_hours": 0,
+      "remaining_tasks": 0,
+      "velocity_per_day": 0.0
+    },
+    "blockers": {
+      "blocked_count": 2,
+      "blockers": [
+        {
+          "blocked_at": "2026-08-31T09:00:00Z",
+          "estimate_hours": 1.0,
+          "phase": 1,
+          "reason": "fail",
+          "task_id": "C",
+          "title": "C"
+        },
+        {
+          "blocked_at": "2026-08-30T09:00:00Z",
+          "estimate_hours": 5.0,
+          "phase": 2,
+          "reason": "waiting on the bank",
+          "task_id": "B",
+          "title": "Payments"
+        }
+      ],
+      "confidence": "high",
+      "done_count": 1,
+      "eta_date": "2026-09-02",
+      "eta_days": 1.0,
+      "remaining_hours": 2.0,
+      "remaining_tasks": 1,
+      "velocity_per_day": 1.0
+    },
+    "empty": {
+      "blocked_count": 0,
+      "blockers": [],
+      "confidence": "none",
+      "done_count": 0,
+      "eta_date": null,
+      "eta_days": null,
+      "remaining_hours": 0,
+      "remaining_tasks": 0,
+      "velocity_per_day": 0.0
+    },
+    "long-reason": {
+      "blocked_count": 1,
+      "blockers": [
+        {
+          "blocked_at": "2026-08-30T09:00:00Z",
+          "estimate_hours": 0.0,
+          "phase": 0,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "task_id": "A",
+          "title": "A"
+        }
+      ],
+      "confidence": "none",
+      "done_count": 0,
+      "eta_date": null,
+      "eta_days": null,
+      "remaining_hours": 0,
+      "remaining_tasks": 0,
+      "velocity_per_day": 0.0
+    },
+    "no-velocity": {
+      "blocked_count": 0,
+      "blockers": [],
+      "confidence": "none",
+      "done_count": 0,
+      "eta_date": null,
+      "eta_days": null,
+      "remaining_hours": 5.0,
+      "remaining_tasks": 2,
+      "velocity_per_day": 0.0
+    },
+    "nothing-remaining": {
+      "blocked_count": 0,
+      "blockers": [],
+      "confidence": "none",
+      "done_count": 2,
+      "eta_date": null,
+      "eta_days": null,
+      "remaining_hours": 0,
+      "remaining_tasks": 0,
+      "velocity_per_day": 0.29
+    },
+    "slow-pace-low-confidence": {
+      "blocked_count": 0,
+      "blockers": [],
+      "confidence": "low",
+      "done_count": 1,
+      "eta_date": "2027-06-08",
+      "eta_days": 280.0,
+      "remaining_hours": 40.0,
+      "remaining_tasks": 40,
+      "velocity_per_day": 0.14
+    },
+    "steady-pace": {
+      "blocked_count": 0,
+      "blockers": [],
+      "confidence": "high",
+      "done_count": 2,
+      "eta_date": "2026-09-05",
+      "eta_days": 4.0,
+      "remaining_hours": 10.0,
+      "remaining_tasks": 4,
+      "velocity_per_day": 1.0
+    }
+  }
+}

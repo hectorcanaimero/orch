@@ -89,6 +89,13 @@ type Backend interface {
 	// Milestones returns every milestone with its progress counts.
 	Milestones(ctx context.Context) ([]Milestone, error)
 
+	// CountDoneLastNDays counts tasks at `done` whose row was touched in the
+	// last n days — the numerator of the sprint velocity figure.
+	CountDoneLastNDays(ctx context.Context, days int) (int, error)
+	// LastEventByTask returns the newest event per task id. A nil list means
+	// every task; an empty one means none, and asks nothing of the database.
+	LastEventByTask(ctx context.Context, taskIDs []string) (map[string]Event, error)
+
 	// OrphanRows reports runtime and definition rows with no project row.
 	OrphanRows(ctx context.Context) (OrphanRows, error)
 }

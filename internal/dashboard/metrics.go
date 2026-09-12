@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"sort"
-	"strconv"
 
 	"github.com/hectorcanaimero/orch/internal/pricing"
 	"github.com/hectorcanaimero/orch/internal/state"
@@ -159,12 +158,5 @@ func totalCost(spends []state.Spend, table pricing.Table) float64 {
 	return round4(total)
 }
 
-// round4 is Python's `round(x, 4)`: correctly rounded, half to even. See
-// project.round3 for why the multiply-and-divide form is wrong twice over.
-func round4(v float64) float64 {
-	f, err := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 4, 64), 64)
-	if err != nil {
-		return v
-	}
-	return f
-}
+// round4 is Python's `round(x, 4)`.
+func round4(v float64) float64 { return roundDecimals(v, 4) }

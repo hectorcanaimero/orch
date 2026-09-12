@@ -143,10 +143,17 @@ func toSummaryPayload(s graph.Summary) summaryPayload {
 	}
 }
 
-// round1 is Python's `round(x, 1)` — correctly rounded, half to even. See
-// project.round3 for why the arithmetic form is wrong.
-func round1(v float64) float64 {
-	f, err := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 1, 64), 64)
+// round1 is Python's `round(x, 1)`.
+func round1(v float64) float64 { return roundDecimals(v, 1) }
+
+// roundDecimals is Python's `round(x, n)` — correctly rounded, half to even,
+// on the exact binary value.
+//
+// Not `math.Round(x*10^n)/10^n`: that rounds half AWAY from zero, and rounds
+// an already-scaled value, so it disagrees with CPython twice over. Formatting
+// to n decimals and reading back is what CPython's round actually does.
+func roundDecimals(v float64, n int) float64 {
+	f, err := strconv.ParseFloat(strconv.FormatFloat(v, 'f', n, 64), 64)
 	if err != nil {
 		return v
 	}
