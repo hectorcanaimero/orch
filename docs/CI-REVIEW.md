@@ -1,7 +1,10 @@
 # CI review
 
 Every pull request gets an automated review from Gemini. It leaves one comment
-and two status checks. It has never merged anything and, as shipped, it cannot.
+and two status checks. The reviewer itself has never merged anything and cannot
+— it is handed no credentials. What can merge is the `policy` job beside it,
+for PRs that touch no protected zone, and only while the `ORCH_AUTOMERGE`
+repository variable says `on`.
 
 ---
 
@@ -13,7 +16,7 @@ and two status checks. It has never merged anything and, as shipped, it cannot.
 | Job | Check it publishes | What it does |
 |---|---|---|
 | `gemini-review` | `gemini-review` | Sends the diff + `.github/review/CHECKLIST.md` to Gemini, gets JSON back, posts the comment |
-| `policy` | `automerge-eligible` | Decides whether the PR *would* qualify for auto-merge. Informational — nothing acts on it yet |
+| `policy` | `automerge-eligible` | Decides whether the PR qualifies for auto-merge, and arms or disarms GitHub's auto-merge accordingly |
 
 A new push cancels the review of the commit it replaced.
 
@@ -146,11 +149,13 @@ is a reason to merge anyway and open a PR against the checklist.
 
 The reasoning behind each protected path is in `policy.json` itself.
 
-Today this only publishes the `automerge-eligible` check (`success` when
-eligible, `neutral` with the reason when not) and a line in the comment.
-**Nothing merges automatically.** The step that would act on it is written and
-commented out at the bottom of the `policy` job, so what gets enabled in G4.7
-is reviewable now.
+This publishes the `automerge-eligible` check (`success` when eligible,
+`neutral` with the reason when not) and a line in the comment — and, when
+`ORCH_AUTOMERGE` is `on`, arms GitHub's auto-merge on the eligible ones.
+Arming is not merging: GitHub holds the PR until every required check passes,
+so the reviewer's verdict is what releases it. An ineligible PR is never
+armed, and one that *was* armed and has stopped qualifying is disarmed. See
+[Branch protection and auto-merge](#branch-protection-and-auto-merge-g47).
 
 To force a human review regardless of size: `gh pr edit <N> --add-label needs-human`.
 
@@ -216,10 +221,13 @@ the thing turns out not to earn its keep.
 
 ---
 
-## Branch protection — G4.7, not yet applied
+## Branch protection and auto-merge (G4.7)
 
-These are the commands that will make the review binding. **Do not run them
-now**; they are here so the change is reviewable before it happens.
+The code side ships enabled. What makes it act is two repository settings and
+one variable, none of which live in the repo — apply them by hand, in this
+order.
+
+### 1. Protect `main`
 
 ```bash
 gh api -X PUT repos/hectorcanaimero/orch/branches/main/protection \
@@ -227,7 +235,7 @@ gh api -X PUT repos/hectorcanaimero/orch/branches/main/protection \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["smoke", "gemini-review"]
+    "contexts": ["go-test", "go-lint", "parity", "gemini-review"]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": null,
@@ -238,26 +246,81 @@ gh api -X PUT repos/hectorcanaimero/orch/branches/main/protection \
 JSON
 ```
 
-Then, to let eligible PRs merge themselves:
+Required checks match on **name**, and a name that matches nothing never
+arrives — the PR waits on it forever. So the list above is the job names as
+they are actually written today:
+
+| Context | Where it comes from |
+| --- | --- |
+| `go-test` | the `go-test` job in `.github/workflows/go.yml` |
+| `go-lint` | the `go-lint` job in the same file — it is `go-lint`, not `lint` |
+| `parity` | the `parity` job in the same file |
+| `gemini-review` | a check run this workflow publishes through the API; there is no job by that name |
+
+Two jobs are deliberately **not** required. `smoke` (`ci-build.yml`) builds the
+Python wheel, and the Python line is frozen for the Go migration — add it back
+if you want the wheel gated again. `automerge-eligible` publishes `neutral`
+when a PR needs a human, and `neutral` does not satisfy a required check, so
+requiring it would block exactly the PRs it is meant to route to a person.
+
+Neither `go.yml` nor `ci-build.yml` filters on `paths`, so a docs-only PR does
+run `go-test` and `parity` and can genuinely go green. Nothing to special-case.
+
+### 2. Let PRs merge themselves
 
 ```bash
 gh api -X PATCH repos/hectorcanaimero/orch --field allow_auto_merge=true
 gh variable set ORCH_AUTOMERGE --body 'on' --repo hectorcanaimero/orch
 ```
 
-and uncomment the `Enable auto-merge` step in the `policy` job, which also
-needs `pull-requests: write` on that job.
+Both are needed. Without `allow_auto_merge` the `Arm auto-merge` step fails
+with a GraphQL error that names no cause — the step turns it into an
+annotation pointing back here, but the fix is the flag.
 
-Three things worth knowing before that day:
+### The switch
 
-- `smoke` is the job name in `ci-build.yml`; `gemini-review` is the check name
-  this workflow publishes. Required checks match on name, so renaming either
-  silently stops enforcing it.
-- A `neutral` conclusion does **not** satisfy a required check. So a missing
-  API key blocks merges rather than waving them through — which is the right
-  way round, but it does mean the key becomes load-bearing.
+`ORCH_AUTOMERGE` is global and reversible:
+
+```bash
+gh variable set ORCH_AUTOMERGE --body 'off' --repo hectorcanaimero/orch
+```
+
+Anything other than `on` — including the variable not existing — means off.
+The `policy` job then not only stops arming but **disarms** what is already
+armed, on the next event each open PR receives. That matters: auto-merge is a
+standing instruction stored on the PR, so a switch that only stopped arming
+would leave yesterday's eligible PRs merging themselves today. The same step
+covers a PR that was eligible and stopped being one, when a later push added
+a protected path or someone applied `needs-human`.
+
+To take one PR out without touching the switch:
+
+```bash
+gh pr edit <N> --add-label needs-human   # ineligible; disarmed on the next push
+gh pr merge <N> --disable-auto           # right now, this PR only
+```
+
+### Worth knowing
+
+- A `neutral` conclusion does **not** satisfy a required check. A missing
+  `GEMINI_API_KEY` therefore blocks merges rather than waving them through —
+  the right way round, but it does make the key load-bearing.
 - `enforce_admins: false` leaves you a way out when the reviewer is wrong and
-  the fix is urgent.
+  the fix is urgent. It also means "no direct pushes to `main`" holds for
+  everyone *except* admins; set it to `true` if you want that literally, and
+  accept that the escape hatch closes with it.
+- `strict: true` requires a PR to carry the tip of `main`. Every merge
+  therefore re-runs the checks of the PRs still open, and they land one at a
+  time. That is fine at this volume; if it stops being fine, `strict: false`
+  or a merge queue is the trade.
+- Protected zones are enforced by *not arming* the PR, not by GitHub. A human
+  still has to press merge, and branch protection still holds the required
+  checks — but nothing stops an admin merging a protected-zone PR without a
+  second pair of eyes. Add `required_pull_request_reviews` or a CODEOWNERS
+  file the day this repo has more than one maintainer.
+- Both jobs skip fork PRs, so `gemini-review` never appears on one and it can
+  never satisfy its required check. Fork contributions need an admin merge
+  until that is addressed.
 
 ---
 

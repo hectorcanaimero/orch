@@ -1,6 +1,10 @@
 name: PR review
 
-# Comment-only reviewer. It never merges, never pushes, never edits code.
+# Two jobs. `gemini-review` is comment-only: it never merges, never pushes,
+# never edits code, and is handed no GitHub token at all. `policy` is the one
+# with teeth — since G4.7 it can arm GitHub's auto-merge on a PR that no
+# protected zone covers, but only while the ORCH_AUTOMERGE repo variable is
+# `on`, and GitHub still holds the merge until the required checks pass.
 # See docs/CI-REVIEW.md for the whole design and how to turn it off.
 #
 # `pull_request`, NOT `pull_request_target`: this workflow reads the PR diff,
@@ -29,9 +33,16 @@ defaults:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Is this PR the kind of change that could merge itself once G4.7 turns
-  # auto-merge on? Informational today: it publishes a check and a line in the
-  # review comment, and nothing acts on it.
+  # Is this PR the kind of change that can merge itself? The rules live in
+  # .github/review/policy.json; this job evaluates them, publishes the
+  # `automerge-eligible` check, and — since G4.7 — arms GitHub's auto-merge
+  # for the PRs that pass.
+  #
+  # Arming is not merging. GitHub holds the PR until every required check on
+  # `main` is green, so `gemini-review`'s verdict is what actually gates the
+  # merge; this job only decides whether the PR is allowed to wait in that
+  # queue at all. A PR that touches a protected zone is never armed, so it
+  # sits there until a human presses the button, however green it is.
   # --------------------------------------------------------------------------
   policy:
     name: Auto-merge policy
@@ -40,7 +51,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
+      # write, not read: the arm/disarm steps below call `gh pr merge`.
+      pull-requests: write
       checks: write
     outputs:
       eligible: ${{ steps.evaluate.outputs.eligible }}
@@ -100,22 +112,74 @@ jobs:
             | gh api "repos/$REPO/check-runs" -X POST --input - >/dev/null
 
       # ---- G4.7 -------------------------------------------------------------
-      # The step that will act on the verdict. Left here, disabled, so the
-      # thing being enabled later is reviewable now. Turning it on is setting
-      # one repo variable; see docs/CI-REVIEW.md.
+      # `vars.ORCH_AUTOMERGE` is the global switch, and an unset variable
+      # reads as off. It gates arming only — turning it off is handled by the
+      # disarm step below, because a PR armed while it was on would otherwise
+      # merge itself long after the switch was flipped.
+      - name: Arm auto-merge
+        if: vars.ORCH_AUTOMERGE == 'on' && steps.evaluate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # `--auto` is refused when the PR is already mergeable right now —
+          # there is nothing left to wait for. That happens on `reopened`, and
+          # on a re-run after the checks finished. `CLEAN` means every required
+          # check passed, `gemini-review` included, so merging on the spot is
+          # the same outcome by a different route, not a shortcut past it.
+          STATE=$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus \
+            --jq '.mergeStateStatus' 2>/dev/null || echo UNKNOWN)
+          echo "mergeStateStatus=$STATE"
+
+          if [ "$STATE" = "CLEAN" ]; then
+            gh pr merge "$PR" --repo "$REPO" --squash
+            echo "merged (nothing left to wait for)"
+            exit 0
+          fi
+
+          if gh pr merge "$PR" --repo "$REPO" --squash --auto 2>err.txt; then
+            echo "auto-merge armed; GitHub will merge when the required checks pass"
+            exit 0
+          fi
+
+          cat err.txt >&2
+          # Every known cause is a repository setting, and the raw GraphQL
+          # error names none of them. See docs/CI-REVIEW.md.
+          echo "::error title=Could not arm auto-merge::Check that 'Allow auto-merge' is on for the repository and that main has branch protection with required checks — see docs/CI-REVIEW.md"
+          exit 1
+
+      # The switch has to undo, not just stop arming. Two cases reach here
+      # with something already armed: ORCH_AUTOMERGE was turned off after the
+      # PR was armed, and a later push made an eligible PR ineligible (it now
+      # touches a protected path, or picked up `needs-human`). Both must take
+      # the PR back out of the queue.
       #
-      # - name: Enable auto-merge
-      #   if: vars.ORCH_AUTOMERGE == 'on' && steps.evaluate.outputs.eligible == 'true'
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-      #     PR: ${{ github.event.pull_request.number }}
-      #     REPO: ${{ github.repository }}
-      #   run: gh pr merge "$PR" --repo "$REPO" --squash --auto
-      #
-      # Needs `pull-requests: write` on this job, branch protection on `main`
-      # with `smoke` and `gemini-review` required, and "Allow auto-merge"
-      # enabled on the repo. Auto-merge waits for the required checks, so the
-      # reviewer's verdict is what actually gates it.
+      # `!cancelled()` rather than `always()`: a push cancels the in-flight
+      # review, and a cancelled run disarming a PR that its replacement is
+      # about to arm is pure churn. A failed `Evaluate` still disarms —
+      # unknown eligibility is not eligible.
+      - name: Disarm auto-merge
+        if: ${{ !cancelled() && (vars.ORCH_AUTOMERGE != 'on' || steps.evaluate.outputs.eligible != 'true') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Ask before disabling: `--disable-auto` errors on a PR that has
+          # nothing armed, which is the overwhelmingly common case here and
+          # would turn every ineligible PR into a red job.
+          ARMED=$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
+            --jq '.autoMergeRequest != null')
+          if [ "$ARMED" = "true" ]; then
+            gh pr merge "$PR" --repo "$REPO" --disable-auto
+            echo "auto-merge disarmed"
+          else
+            echo "nothing was armed"
+          fi
 
   # --------------------------------------------------------------------------
   # The reviewer. Gets the diff and the checklist, returns JSON, and that is
