@@ -1,681 +1,610 @@
-# orch — Step-by-step user manual
+# orch — Step-by-step user manual (Go CLI)
 
 > Also available in: [Español](MANUAL.es.md) · [Português](MANUAL.pt.md)
+>
+> This manual documents the **Go** `orch` binary — the single-binary
+> rewrite. Every command below is real output from `orch --help` on a
+> built binary; the full flag reference lives in [`CLI.md`](CLI.md), which
+> is the source of truth this manual is kept in sync with. Looking for the
+> old Python `orch`? See [Python legacy](#python-legacy) at the bottom.
 
-This manual assumes you use **Claude Code** (or any equivalent CLI with skill
-support). The complete workflow is: **chat the feature with Claude → Claude
-generates the spec in orch's format → orch atomizes to `tasks.json` → orch
-executes → you watch the dashboard**.
-
-**Total setup time**: ~5 minutes.
-**Per-feature time**: ~2 minutes of chat + unattended execution.
+**Total setup time**: ~2 minutes (one `curl | sh`, no Python, no venv).
+**Per-feature time**: a few minutes of spec-writing + unattended execution.
 
 ---
 
 ## Contents
 
-1. [Initial setup (once per machine)](#1-initial-setup-once-per-machine)
-2. [Create a new project (once per project)](#2-create-a-new-project-once-per-project)
-3. [Chat the feature in Claude Code](#3-chat-the-feature-in-claude-code)
-4. [How tasks are generated](#4-how-tasks-are-generated)
-5. [Preview before running (always)](#5-preview-before-running-always)
-6. [Run in auto mode](#6-run-in-auto-mode)
-7. [Open the dashboard](#7-open-the-dashboard)
-8. [What to watch during a run](#8-what-to-watch-during-a-run)
-9. [When something fails](#9-when-something-fails)
-10. [Update orch](#10-update-orch)
+1. [Install](#1-install)
+2. [Create a new project](#2-create-a-new-project)
+3. [Write specs and atomize them into tasks.json](#3-write-specs-and-atomize-them-into-tasksjson)
+4. [Check the plan before running](#4-check-the-plan-before-running)
+5. [Run — dispatch tasks to AI agents](#5-run--dispatch-tasks-to-ai-agents)
+6. [Open the dashboard](#6-open-the-dashboard)
+7. [Inspect a run: status, tasks, events, logs](#7-inspect-a-run-status-tasks-events-logs)
+8. [Fix things by hand: task set, task-status, reset](#8-fix-things-by-hand-task-set-task-status-reset)
+9. [The model router](#9-the-model-router)
+10. [Inspecting config](#10-inspecting-config)
+11. [MCP — letting an agent drive orch directly](#11-mcp--letting-an-agent-drive-orch-directly)
+12. [Installing orch's Claude Code skill](#12-installing-orchs-claude-code-skill)
+13. [When something fails](#13-when-something-fails)
+14. [Updating orch](#14-updating-orch)
+15. [Python legacy](#python-legacy)
 
 ---
 
-## 1. Initial setup (once per machine)
-
-### Install orch
+## 1. Install
 
 ```bash
-# Recommended: isolated venv, `orch` on PATH globally
-pipx install git+https://github.com/hectorcanaimero/orch.git
+curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+```
 
-# Verify
+Downloads the right `linux`/`darwin` × `amd64`/`arm64` tarball from the
+latest GitHub Release, verifies its checksum, and installs to
+`~/.local/bin` (override with `INSTALL_DIR=...`). No Go toolchain, no
+Python, no dependencies to resolve — `orch` is one static binary.
+
+Or via Homebrew:
+
+```bash
+brew install hectorcanaimero/orch/orch
+```
+
+Or grab a tarball directly from
+[the Releases page](https://github.com/hectorcanaimero/orch/releases) and
+put `orch` on your `PATH` yourself. See [`RELEASING.md`](RELEASING.md) for
+the full tag scheme and how releases are built.
+
+Verify:
+
+```bash
+orch --version
 orch --help
-orch init --help
-orch dashboard --help
 ```
 
 ### AI CLIs you need
 
-At least **one** of these three on your PATH, authenticated with a subscription
-or API key:
+At least **one** of these on your `PATH`, authenticated with a
+subscription or API key — today the Go binary only dispatches to
+`claude`, everything else is still Python-only (see
+[`CLI.md`](CLI.md)'s `run` row):
 
 - **`claude`** — Claude Code CLI (Anthropic)
-- **`codex`** — GPT Codex CLI (OpenAI)
-- **`opencode`** — opencode CLI (multi-provider: DeepSeek, Grok, GLM, MiMo, etc.)
 
-Confirm:
+A task routed to a backend without a Go adapter yet (`codex`, `opencode`,
+`gemini`, `agy`) is skipped at dispatch with `backend-unavailable:<name>`
+rather than blocking the whole run.
 
-```bash
-which claude codex opencode
-claude --version
-```
-
-If some are missing, orch still works — it will only dispatch tasks to the
-backends you have installed. But if your spec calls for `claude-opus-4-7` and
-you don't have `claude` installed, orch fails-fast at startup with exit 1.
-
-### SDD skills (optional but recommended)
-
-Verify the skills are installed at `~/.claude/skills/`:
-
-```bash
-ls ~/.claude/skills/ | grep -E 'orch|sdd'
-# expected:
-# orch-plan
-# orch-prd
-# orch-arch
-# orch-spec
-# orch-tasks
-# sdd-apply
-# sdd-archive
-# sdd-design
-# ...
-```
-
-If you don't have them, you can still use orch by writing specs by hand
-(see [`SPEC-FORMAT.md`](SPEC-FORMAT.md)) — but the SDD flow is much smoother.
+Run `orch doctor` any time to check what's actually reachable — see
+[§13](#13-when-something-fails).
 
 ---
 
-## 2. Create a new project (once per project)
+## 2. Create a new project
 
 ```bash
-orch init ~/work/my-app --sdd
+orch init ~/work/my-app --template python-api
 ```
 
-That creates:
-
 ```
-~/work/my-app/
-├── tasks.json                    ← empty skeleton
-├── specs/                        ← Claude writes specs here
-│   └── README.md                 ← format reference
-├── scripts/
-│   ├── task-start.sh             ← executable, functional, jq-based
-│   ├── task-finish.sh
-│   └── task-block.sh
-├── orchestrator/
-│   ├── state/.gitkeep            ← runtime state (gitignored)
-│   ├── config.yaml               ← concurrency, timeouts, retries
-│   ├── model_router.yaml         ← model → CLI mapping
-│   └── budgets.yaml              ← Sprint 7 guardrails
-├── openspec/                     ← SDD (from --sdd flag)
-│   ├── README.md
-│   ├── changes/                  ← in-flight proposals
-│   └── specs/                    ← archived specs (source of truth)
-└── .gitignore
+$ orch init --help
+Scaffold a new orch project.
+
+With no arguments, asks a short series of questions and shows everything it is about to write before writing any of it.
+With a path or any of the flags below, scaffolds directly.
+
+Templates: chatbot-whatsapp, data-pipeline, expo-mobile, nextjs-saas, python-api
+
+Usage:
+  orch init [PATH] [flags]
+
+Flags:
+      --force                 Overwrite an existing project's files
+  -h, --help                  help for init
+      --project-name string   Name used in generated files; default = the directory name
+      --sdd                   Also scaffold the openspec/ layout
+      --template string       Project template (chatbot-whatsapp, data-pipeline, expo-mobile, nextjs-saas, python-api); omit for a blank project
 ```
 
-At the end of init you'll see whether SDD is installed and what to do next:
+Run it with **no arguments** and it asks a short series of questions
+instead (template, project name, SDD layout), showing everything it's
+about to write before writing any of it:
 
+```bash
+orch init
 ```
-✓ orch project initialized at /Users/you/work/my-app
 
-Next steps:
-  1. Write your first spec:
-       $EDITOR specs/f0-foundation.md
-  2. Preview atomize (dry, shows diff):
-       orch atomize --file specs/f0-foundation.md
-     Then apply:
-       orch atomize --file specs/f0-foundation.md --apply
-  ...
+That writes `.orchestrator/config.yaml`, `.orchestrator/model_router.yaml`,
+`tasks.json`, and (with `--sdd`) an `openspec/` layout. It also writes a
+`.mcp.json` pointing at `orch mcp` — see [§11](#11-mcp--letting-an-agent-drive-orch-directly)
+— which is left alone on re-`init`, `--force` included, since it may
+already list your project's other MCP servers.
 
-Spec-Driven Development:
-  ✓ SDD skills detected: orch-plan, orch-spec, orch-tasks, ...
-    Use `/sdd-explore <topic>` in Claude Code to design specs.
-```
+A templated project (`--template`) ships with real, routed tasks in
+`tasks.json` — `orch tasks` works immediately, no atomizing required to
+try the rest of this manual.
 
 ---
 
-## 3. Chat the feature in Claude Code
+## 3. Write specs and atomize them into tasks.json
 
-This is where the magic happens. Open Claude Code **from the project
-directory**:
-
-```bash
-cd ~/work/my-app
-claude
-```
-
-You now have three ways to design the feature, from most to least hands-off:
-
-### Option A — Full pipeline with `/orch-plan` (recommended for larger features)
-
-In Claude's chat, type:
-
-```
-/orch-plan I want to add authentication with email/password + Google + Apple,
-with password reset via email and account verification
-```
-
-Claude will run internally:
-
-1. **`/orch-prd`** — generates a PRD (Product Requirements Document) with
-   orch-friendly YAML frontmatter
-2. **`/orch-arch`** — generates the technical ARCH (Architecture Design)
-3. **`/orch-spec`** — generates specs in F<n>.<pkg>.T<n> format (the one
-   `orch atomize` knows how to parse)
-4. **`/orch-tasks`** — invokes `orch atomize` in **diff-first mode**: shows
-   you which NEW tasks will be added to your `tasks.json` and **asks for
-   confirmation before writing**
-
-Expected output (Claude will print progressively):
-
-```
-[/orch-plan] Generating PRD for "auth email+google+apple"...
-✓ openspec/changes/auth/prd.md
-
-[/orch-plan] Generating ARCH...
-✓ openspec/changes/auth/arch.md
-  Modules: 3 new packages (auth_core, auth_google, auth_apple)
-  Key decisions: Riverpod for state, GoRouter for deep links
-
-[/orch-plan] Generating atomizer-ready SPEC...
-✓ openspec/changes/auth/spec.md
-  15 tasks generated:
-    - F1.1.T1: Set up auth_core package
-    - F1.1.T2: Domain: entities (User, Credentials, ...)
-    - F1.1.T3: Data: AuthRepository interface
-    ...
-
-[/orch-tasks] Diff against current tasks.json:
-  + 15 new tasks in phase 1
-  Models used: claude-sonnet-4-6 (10), opencode-go/glm-5.1 (3), claude-haiku-4-5 (2)
-  Total estimate: 24h
-
-Apply? [y/N]
-```
-
-You type `y` and Claude runs the real `orch atomize`. **`tasks.json` is now
-updated** with the 15 new tasks, `todo` status, correct dependencies,
-declared files, assigned models.
-
-### Option B — Granular with `/orch-spec` (when you already know the design)
-
-If you already know WHAT needs to be done and only want Claude to lay out the
-spec in the correct format:
-
-```
-/orch-spec
-
-I want a Flutter package called auth_core with:
-- Domain: entities User, Credentials, AuthMethod
-- Data: AuthRepositoryImpl that uses supabase.auth
-- Presentation: AuthController with Riverpod
-- 3 use cases: signIn, signUp, resetPassword
-
-Models: use claude-sonnet-4-6 for anything domain/data, opencode for pure
-tests and boilerplate.
-
-Total estimate: ~8h.
-```
-
-Claude returns an atomizer-ready spec. Then:
-
-```
-/orch-tasks
-```
-
-And merge into `tasks.json`.
-
-### Option C — Manual (when you want full control)
-
-Edit `specs/my-feature.md` by hand following the format:
-
-```markdown
-# F1 — Auth
-
-## F1.1 — Package: auth_core
-
-### F1.1.T1 — Set up the package
-
-- **Model**: opencode-go/glm-5.1
-- **Estimate**: 30m
-- **Reason**: Simple boilerplate.
-- **Dependencies**:
-- **Files**:
-  - `packages/auth_core/pubspec.yaml`
-  - `packages/auth_core/lib/auth_core.dart`
-
-### F1.1.T2 — Domain entities
-
-- **Model**: claude-sonnet-4-6
-- **Estimate**: 2h
-- **Reason**: Type design needs reasoning.
-- **Dependencies**: F1.1.T1
-- **Files**:
-  - `packages/auth_core/lib/src/domain/user.dart`
-  - `packages/auth_core/lib/src/domain/credentials.dart`
-```
-
-Then in the terminal:
+Specs are markdown files under `<project-root>/docs` (or wherever
+`spec_root` in `config.yaml` points) in the format described in
+[`SPEC-FORMAT.md`](SPEC-FORMAT.md). `orch atomize` parses them and merges
+new tasks into `tasks.json` — **read-only unless you pass `--apply`**:
 
 ```bash
-# Preview (dry-run — shows what will be added without writing)
-orch atomize --file specs/my-feature.md
+$ orch atomize --help
+Parse markdown specs and merge them into tasks.json (read-only unless --apply)
 
-# Apply — writes tasks.json + creates a tasks.json.bak-<ts> backup
-orch atomize --file specs/my-feature.md --apply
+Usage:
+  orch atomize [flags]
+
+Flags:
+      --apply               Escribí tasks.json (con backup). Sin este flag es read-only.
+      --file string         Sólo un archivo markdown (bypass del walk de --specs-dir)
+  -h, --help                help for atomize
+      --list                Modo listar: sólo imprime lo parseado, sin merge/diff
+      --no-backup           No crear backup .bak-<ts> al escribir (default: sí crea)
+      --specs-dir string    Directorio de specs .md (default: <project-root>/docs)
+      --tasks-json string   Path a tasks.json (default: <project-root>/tasks.json)
 ```
 
-All three flows end at the same place: **`tasks.json` with the new tasks in
-`status: backlog`, ready for dispatch**.
+(The flag help text is in Spanish in the binary today — that's the real
+output, not a typo in this manual.)
+
+```bash
+# Preview: parses every spec under the specs dir, shows a diff, writes nothing
+orch atomize
+
+# Just one file
+orch atomize --file docs/f1-auth.md
+
+# Apply — writes tasks.json (with a tasks.json.bak-<ts> backup unless --no-backup)
+orch atomize --file docs/f1-auth.md --apply
+```
+
+**Guarantees**: idempotent (re-running with the same spec doesn't touch
+existing task IDs, only adds new ones); a task naming a model that isn't
+in `model_router.yaml` is caught by `orch validate` / at dispatch, not
+silently accepted; fenced code blocks in a spec are skipped by the parser
+(so an example spec inside `specs/README.md` doesn't get imported as real
+tasks).
 
 ---
 
-## 4. How tasks are generated
+## 4. Check the plan before running
 
-When `/orch-tasks` (or manual `orch atomize`) runs, it processes the spec
-and produces `tasks.json` entries like:
+The Go binary's `run` command has **no `--dry-run` flag yet** — that's a
+known, documented gap versus Python (see `run`'s row in
+[`CLI.md`](CLI.md)). Preview what a run would do with the read-only
+commands instead:
 
-```json
-{
-  "id": "F1.1.T2",
-  "phase": 1,
-  "title": "Domain entities",
-  "description": "",
-  "model": "claude-sonnet-4-6",
-  "reason": "Type design needs reasoning.",
-  "status": "backlog",
-  "dependencies": ["F1.1.T1"],
-  "estimateHours": 2.0,
-  "files": [
-    "packages/auth_core/lib/src/domain/user.dart",
-    "packages/auth_core/lib/src/domain/credentials.dart"
-  ],
-  "specRef": "specs/my-feature.md",
-  "comments": []
-}
+```bash
+# Everything wrong with the DAG or routing, before you spend a token
+orch validate
+
+# What's ready to dispatch right now
+orch tasks --status todo
+
+# The dependency graph, as Graphviz DOT
+orch graph | dot -Tpng -o plan.png
 ```
 
-Status starts at `backlog` (the atomizer default). orch's main loop promotes
-`backlog` → `todo` when dependencies are satisfied, then `todo` →
-`in-progress` at dispatch time.
+`orch validate` runs the same checks Python's preflight did that have a
+Go home today: config/router/tasks load, schema, dependency cycles, and
+unresolved model routes. Exit code `0` clean, `2` if it found at least one
+error.
 
-**Atomizer guarantees:**
+```bash
+$ orch validate --help
+Static validation of tasks.json + routing (schema, deps, cycles, routes)
 
-- **Idempotent**: re-running `atomize` with the same spec doesn't touch
-  existing tasks. It only adds IDs that weren't there.
-- **Model validation**: if the declared model doesn't exist in
-  `model_router.yaml`, orch fails-fast on first startup with exit 1 and
-  tells you which task is the offender.
-- **Deps preserved as-is**: doesn't validate that they exist (you can declare
-  deps on tasks you'll add later).
+Usage:
+  orch validate [flags]
 
-**What it does NOT guarantee:**
+Flags:
+      --files   Also check that parent dirs of each task.files[] entry exist + are writable (not implemented yet)
+  -h, --help    help for validate
+      --json    Emit the full validation report as JSON on stdout
+```
 
-- That `files` are unique across tasks (two tasks can declare the same file
-  → orch uses `per_file: 1` from `config.yaml` to only dispatch ONE at a
-  time on that file).
-- That the DAG has no cycles (orch detects them at startup with exit 1).
+Also run `orch doctor` here (see [§13](#13-when-something-fails)) — it
+covers the environment side `validate` doesn't: provider CLIs actually on
+`PATH`, VCS readiness, orphaned worktrees, budget preset sanity, SQLite
+health.
 
 ---
 
-## 5. Preview before running (always)
-
-**Never run `--mode auto` without seeing the plan first.** Dry-run is free
-and shows you exactly what will happen:
+## 5. Run — dispatch tasks to AI agents
 
 ```bash
-orch --project-root ~/work/my-app --dry-run
+$ orch run --help
+Walk the DAG, dispatching ready tasks to their CLI agents
+
+Usage:
+  orch run [flags]
+
+Flags:
+  -h, --help            help for run
+      --max-tasks int   Stop after dispatching this many tasks; 0 means no limit
+      --mode string     auto dispatches everything ready; semi asks before each critical task (default "auto")
+      --no-push         Skip pushing task branches — for a project with no remote
+      --only string     Only dispatch tasks whose id matches this glob (dependencies still resolve across the whole DAG)
+      --task-locks      Take a per-task lock, so several orch instances can share one project
+      --worktree-mode   Give each task its own git worktree and branch (also settable as dispatch.worktree_mode)
 ```
 
-Output:
+```bash
+# Dispatch everything ready, no prompts
+orch run
 
-```
-==== ORCH DRY RUN ====
-Project: my-app
-Ready tasks: 15
-Blocked tasks: 0
-Deferred (semi-mode critical): 0
+# Ask before each task marked critical
+orch run --mode semi
 
-Plan (dispatch order):
-  Wave 1 (parallel, no deps):
-    F1.1.T1  [opencode/glm-5.1]     Set up auth_core package             0.5h
-    F1.2.T1  [opencode/glm-5.1]     Set up auth_google package           0.5h
-    F1.3.T1  [opencode/glm-5.1]     Set up auth_apple package            0.5h
+# Isolate each task in its own git worktree/branch and open a PR per task
+# on success (needs dispatch.worktree_mode / vcs.auto_pr — see CONFIG.md)
+orch run --worktree-mode
 
-  Wave 2 (deps: T1):
-    F1.1.T2  [claude/sonnet-4-6]    Domain entities                      2.0h
-    F1.2.T2  [claude/sonnet-4-6]    Google OAuth flow                    1.5h
-    F1.3.T2  [claude/sonnet-4-6]    Apple Sign-In flow                   1.5h
-
-  Wave 3 (deps: T2):
-    ...
-
-Concurrency plan: max 8 in-flight, per-provider caps: claude=3 codex=2 opencode=3
-Budget preset: conservative
-  claude:   0 / 800000 tokens used (0.0%, threshold 60%)
-  codex:    0 / 400000 tokens used (0.0%, threshold 60%)
-  opencode: 0 / 2000000 tokens used (0.0%, threshold 70%)
-
-Estimated total: 24h (parallelizable to ~6h wall clock)
-Estimated cost: $12-18 USD (opencode ~$0.50, claude ~$14, codex $0)
+# No remote to push to yet
+orch run --no-push
 ```
 
-If something doesn't add up — a task with the wrong model, a weird file,
-incorrect deps — **this is the time to edit the spec and re-atomize**.
+**Ctrl-C** drains in-flight work before exiting, with exit code **130**. A
+**second** Ctrl-C SIGKILLs every child process group immediately.
+
+**Worktree mode**: each task gets its own git worktree and branch; on
+success `orch` commits, pushes, and — if `vcs.auto_pr` is on — opens a PR
+into `dispatch.base_branch`, then leaves the task `in-progress` for the CI
+poller. A green CI check marks it `done` (and merges it too, if
+`github.auto_merge` is on); a red one gets one retry with the failing logs
+attached, then `blocked`. A run that opens a PR exits before polling that
+PR's CI — a run finishing green is noticed on the *next* `orch run`, same
+as Python.
+
+**Concurrency, budgets, retries** are all config-driven, not flags — see
+[`CONFIG.md`](CONFIG.md).
 
 ---
 
-## 6. Run in auto mode
-
-When the plan looks right, dispatch:
+## 6. Open the dashboard
 
 ```bash
-# Auto mode — no prompts, dispatches everything
-orch --project-root ~/work/my-app --mode auto
+$ orch dashboard --help
+Serve the operator dashboard on a local HTTP port.
 
-# Or with a more aggressive budget preset if you want max throughput
-orch --project-root ~/work/my-app --mode auto --budgets-preset aggressive
+Reads the project's state and shows it; it never writes. The
+stakeholder profile gates every data route behind a token and an
+allow-list — see `profile` and `token` under `dashboard:` in
+config.yaml, which the flags below override.
 
-# Or semi mode — asks before tasks marked as "critical"
-orch --project-root ~/work/my-app --mode semi
+Usage:
+  orch dashboard [flags]
+
+Flags:
+  -h, --help             help for dashboard
+      --host string      Address to bind; 0.0.0.0 exposes it beyond localhost (default "127.0.0.1")
+      --port int         Port to listen on; 0 picks any free one (default 7420)
+      --profile string   Access profile: operator, stakeholder or both (default: config.yaml)
+      --token string     Shared token a stakeholder session must present (default: config.yaml)
+      --tunnel           Also start the configured tunnel, and stop it on exit
+
+Global Flags:
+      --config string         Path to config.yaml (default: .orchestrator/config.yaml)
+      --project-id string     Project id override. Env fallback: ORCH_PROJECT_ID.
+      --project-root string   Project root; default = cwd. Env fallback: ORCH_PROJECT_ROOT.
 ```
 
-**What you see in the terminal** (auto mode):
+```bash
+# Everything, for you
+orch dashboard
 
-```
-2026-08-21 14:30:00 INFO project_root=~/work/my-app project_id=my-app config=orchestrator/config.yaml
-2026-08-21 14:30:00 INFO budget gate enabled: preset=conservative providers=['claude', 'codex', 'opencode']
-2026-08-21 14:30:00 INFO 15 tasks todo, 0 in-flight, 0 done
-2026-08-21 14:30:01 INFO dispatch F1.1.T1 → opencode/glm-5.1 (attempt 1)
-2026-08-21 14:30:01 INFO dispatch F1.2.T1 → opencode/glm-5.1 (attempt 1)
-2026-08-21 14:30:01 INFO dispatch F1.3.T1 → opencode/glm-5.1 (attempt 1)
-2026-08-21 14:32:15 INFO success F1.1.T1 (2m14s, 4.2K tokens, $0.001)
-2026-08-21 14:32:16 INFO dispatch F1.1.T2 → claude/sonnet-4-6 (attempt 1)
-...
+# A read-only URL to hand a client, tunneled out so it's reachable
+# outside your machine (provider/command configured under
+# dashboard.tunnel in config.yaml — --tunnel just starts/stops it)
+orch dashboard --profile stakeholder --token "$(openssl rand -hex 16)" --tunnel
 ```
 
-**Ctrl-C** = graceful drain (waits for in-flight children to finish before
-exiting). **Ctrl-C twice** = force kill.
-
-**You can leave it running unattended.** The budget gate makes sure it
-doesn't burn your subscription:
-
-- When `claude` reaches 60% (conservative preset threshold) → it pauses
-  claude dispatches, keeps going with codex/opencode
-- When ALL providers are capped → sleep until the next reset (30s chunks
-  so Ctrl-C stays responsive)
-- On reset → automatic resume, picks up where it left off
+`--profile operator` (the default) shows everything: tasks, spend per
+model, logs. `--profile stakeholder` gates every data route behind the
+`--token` and an allow-list of stakeholder-safe routes — no log lines, no
+prompts, no per-model cost breakdown unless `dashboard.show_spend_to_stakeholder`
+is on. See [`DASHBOARD-PROFILES.md`](DASHBOARD-PROFILES.md) for the access
+model in full and [`DELIVERING-TO-STAKEHOLDERS.md`](DELIVERING-TO-STAKEHOLDERS.md)
+for the client-facing walkthrough (executive summary, phase timeline, ETA,
+blockers).
 
 ---
 
-## 7. Open the dashboard
-
-**In ANOTHER terminal** (leaving `orch --mode auto` running in the first):
+## 7. Inspect a run: status, tasks, events, logs
 
 ```bash
-orch dashboard --project-root ~/work/my-app
+# One-screen summary: tasks by status, spend, last events, run summary
+orch status
+
+# Every task with status/routing/deps, filterable
+orch tasks --status todo,in-progress
+orch tasks --only 'F1.*'
+
+# Event history for one task
+orch events F1.1.T2 --tail 50
+
+# That task's raw agent log
+orch logs F1.1.T2 --tail 200
 ```
 
-Output:
-
-```
-INFO:     Started server process
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:7420
-```
-
-Open in your browser:
+All four accept `--json` (except `logs`, which never had one in Python
+either) for scripting, and share the project flags
+(`--project-root`/`--project-id`/`--config`).
 
 ```bash
-open http://127.0.0.1:7420
-```
+$ orch status --help
+Project status: tasks, costs, last events, run summary
 
-### What you see in the dashboard
-
-**Home (`/`)** — Jira-style table with ALL tasks:
-- Columns: ID / Title / Phase / Status / Model / Files / Owner
-- Filters by phase, status, model
-- Live-update via SSE (no need to refresh)
-- Click a task → modal with details (deps, comments, latest logs)
-
-**Kanban (`/kanban`)** — Trello-style view grouped by phase:
-- Columns: backlog / todo / in-progress / done / blocked
-- Cards with model + estimate + progress
-- Colors by criticality
-- Drag & drop DISABLED (read-only by design)
-
-**Metrics (`/metrics`)** — Cost and burndown:
-- Total spend (USD) per day
-- Per model (bars)
-- Burndown chart (remaining tasks vs time)
-- Critical path (longest dep chain)
-
-**Logs (`/logs`)** — Live event feed:
-- SSE stream, updates in real time
-- Filterable by task-id or event_type
-- Shows: dispatch, success, fail, timeout, retry, budget_skip, budget_pause
-
-**Budgets (`/api/budgets` — JSON endpoint or the bar in the UI)**:
-```json
-{
-  "disabled": false,
-  "preset": "conservative",
-  "providers": {
-    "claude": {
-      "tokens_used": 240000,
-      "token_budget": 800000,
-      "usage_pct": 30.0,
-      "threshold_pct": 60,
-      "window_hours": 5,
-      "capped": false,
-      "reset_at": null
-    },
-    "codex": {"tokens_used": 0, "capped": false, ...},
-    "opencode": {"tokens_used": 15000, "capped": false, ...}
-  }
-}
-```
-
-In the UI: 3 horizontal bars per provider:
-- Green 0-60% → OK
-- Amber 60-80% → warning
-- Red 80-100% → PAUSED, with countdown to the next reset
-
----
-
-## 8. What to watch during a run
-
-**"Everything's fine" cheat sheet:**
-
-| Signal | Where | Meaning |
-|---|---|---|
-| Consistent `success` events | `/logs` | Tasks completing OK |
-| Budget bars ≤ 60% green | `/api/budgets` | Healthy consumption |
-| Kanban moves left → right | `/kanban` | Normal progress |
-| Reasonable cost/hour | `/metrics` | No runaway costs |
-
-**Warning signals:**
-
-| Signal | Where | Action |
-|---|---|---|
-| Many `retry` events in a row | `/logs` | Possibly rate-limited — check backend |
-| `budget_pause` events | `/logs` | All providers capped, sleeping until reset |
-| Task stuck in `in-progress` for a long time | `/kanban` | May be hung — check the log |
-| `timeout` events | `/logs` | Tune `default_timeout_multiplier` in config.yaml |
-| `blocked` tasks piling up | `/kanban` | Check `state/logs/<task>.log` |
-
-**Useful commands from a parallel terminal:**
-
-```bash
-# Live tail of all events
-tail -f ~/work/my-app/orchestrator/state/events-*.jsonl | jq -r '"\(.ts | .[11:19])  \(.event_type|ascii_upcase)  \(.task_id)  \(.backend)"'
-
-# Single-task log
-tail -f ~/work/my-app/orchestrator/state/logs/F1.1.T2.log
-
-# Status snapshot (uses jq)
-./status.sh ~/work/my-app
+Flags:
+  -h, --help            help for status
+      --json            Emit the raw snapshot as JSON
+      --only string     Restrict task rows to ids matching this glob
+      --status string   Comma-separated status filter (e.g. todo,in-progress)
 ```
 
 ---
 
-## 9. When something fails
+## 8. Fix things by hand: task set, task-status, reset
+
+```bash
+# Move a task's status directly (illegal transitions exit 3)
+orch task-status F1.1.T5 todo --note "re-queued after manual fix"
+
+# Same thing, via the newer `task set` surface — also where a future
+# model/backend/milestone override will land once state.Backend supports
+# writing them (today those three flags are registered but return a
+# clear "not implemented yet" error rather than silently doing nothing)
+orch task set --id F1.1.T5 --status todo
+
+# See which in-progress tasks look stuck, without touching anything
+orch reset
+
+# Actually revert them to todo
+orch reset --requeue --only 'F1.*'
+```
+
+```bash
+$ orch task set --help
+Set a task's model, backend, milestone, or status
+
+Flags:
+      --backend string     Override the backend for this task (not implemented yet)
+  -h, --help               help for set
+      --id string          Task ID, e.g. F1.1.T3
+      --milestone string   Assign the task to a milestone ID (not implemented yet)
+      --model string       Override the model for this task (not implemented yet)
+      --status string      Set the task status (e.g. done, in-progress, blocked)
+```
+
+`reset` reads the **real** runtime status from the state backend, not
+`tasks.json`'s own (potentially stale) `status` field — a deliberate
+difference from Python, documented in [`CLI.md`](CLI.md).
+
+---
+
+## 9. The model router
+
+`model_router.yaml` maps a task's declared model to a backend CLI, its
+`cli_model` name, and a cost tier.
+
+```bash
+# Every task.model resolves to a router entry?
+orch router validate
+
+# Append inferred entries for anything unrouted, at a given tier
+orch router add-missing --tier standard
+orch router add-missing --yes   # skip the confirmation prompt
+```
+
+```bash
+$ orch router --help
+Inspect and maintain model_router.yaml
+
+Available Commands:
+  add-missing Append inferred model_router.yaml entries for every unrouted task model
+  validate    Check that every task.model resolves to a model_router.yaml entry
+```
+
+`add-missing` shows the plan and asks `y/N` before writing, same as
+Python — `--yes` is how a script opts out of the prompt (never
+TTY-detection: an unattended `--mode auto` run must not silently pause on
+stdin).
+
+---
+
+## 10. Inspecting config
+
+```bash
+orch config show
+```
+
+Prints the effective config — defaults merged with `config.yaml` and any
+overrides — followed by where each value came from, and any keys in your
+`config.yaml` that orch doesn't recognize (a good way to catch a typo'd
+key silently doing nothing). Full key reference: [`CONFIG.md`](CONFIG.md).
+
+```bash
+$ orch config --help
+Config helpers
+
+Available Commands:
+  show        Print the effective config, merged with defaults, and where each value came from
+```
+
+---
+
+## 11. MCP — letting an agent drive orch directly
+
+```bash
+$ orch mcp --help
+Serve orch's state to an MCP-capable agent over stdio.
+
+Seven tools: orch_list_tasks, orch_get_task, orch_set_status,
+orch_block, orch_budget, orch_events, orch_context.
+
+Speaks JSON-RPC on stdin/stdout; run it from an MCP client, not
+from a terminal. See docs/MCP.md.
+```
+
+`orch init` already wrote a `.mcp.json` pointing at `orch mcp` — an
+MCP-capable agent (Claude Code included) picks it up automatically from
+the project root. There is no Python equivalent; see [`MCP.md`](MCP.md)
+for the full tool list and the illegal-transition error shape (it names
+every status the task may legally move to next, since the caller is a
+model that can retry).
+
+---
+
+## 12. Installing orch's Claude Code skill
+
+```bash
+$ orch install-skills --help
+Install orch's Claude Code skill(s) into one or more agent CLIs
+
+Flags:
+      --all              Install every embedded skill (default when --skill is omitted)
+      --dry-run          Show what would be installed without writing anything
+      --force            Overwrite an already-installed skill of the same name
+  -h, --help             help for install-skills
+      --path string      Claude target install directory (default: ~/.claude/skills)
+      --skill strings    Install only this skill (repeatable); default is --all
+      --target strings   Agent(s) to install into: claude, codex, opencode, cursor (repeatable) (default [claude])
+```
+
+```bash
+orch install-skills                          # into ~/.claude/skills, --all
+orch install-skills --target codex --target opencode
+orch install-skills --dry-run                # preview first
+```
+
+`--target claude` writes real skill directories under `~/.claude/skills`.
+`codex`/`opencode` have no skills mechanism of their own, so they get a
+clearly-delimited, idempotently-replaceable section appended to the
+project's `AGENTS.md` instead; `cursor` gets a `.cursor/rules/<name>.mdc`
+file. Only the `orch` skill ships embedded in this binary today — the
+`orch-plan`/`orch-prd`/`orch-arch`/`orch-spec`/`orch-tasks` pipeline
+skills this project's own tooling uses live on the operator's machine,
+not in this repo.
+
+---
+
+## 13. When something fails
+
+### Run `orch doctor` first
+
+```bash
+$ orch doctor --help
+Environment preflight — provider CLIs, VCS, worktrees, budget config, SQLite
+
+Flags:
+  -h, --help   help for doctor
+      --json   Emit the full doctor report as JSON on stdout
+```
+
+```bash
+orch doctor
+```
+
+Checks: provider CLIs referenced by `tasks.json`+`model_router.yaml`
+actually on `PATH`, routing completeness, budget preset sanity, orphaned
+git worktrees, VCS readiness (repo/remote/auth), whether `.mcp.json`
+exists, and SQLite health. Same exit-code convention as `validate`: `0`
+clean, `1` warnings only, `2` at least one error.
 
 ### Task blocked
 
-1. Open the task modal on the dashboard → look at the latest comment
-2. Terminal: `cat ~/work/my-app/orchestrator/state/logs/<task-id>.log | tail -100`
-3. Edit the spec or fix the code manually as needed
-4. Mark the task as `todo` again:
-   ```bash
-   jq --arg id "F1.1.T5" '(.tasks[] | select(.id == $id) | .status) = "todo"' \
-      tasks.json > tasks.json.tmp && mv tasks.json.tmp tasks.json
-   ```
-5. Run `orch --mode auto` again — it only picks up `todo` tasks
+1. `orch logs <task-id> --tail 100` — read the agent's own output
+2. `orch events <task-id>` — see what orch itself recorded (dispatch,
+   fail, retry, budget_pause…)
+3. Fix the spec or the code by hand
+4. `orch task-status <task-id> todo --note "..."` to re-queue it
+5. `orch run` again — it only picks up `todo` tasks
 
-### Budget capped faster than expected
+### `orch` won't start — exit 1, project layout error
 
-1. Check the actual consumption: `/api/budgets` on the dashboard
-2. If the `token_budget` in `budgets.yaml` is mis-calibrated, bump it up
-   (or lower `threshold_pct` for more margin)
-3. Changes to `budgets.yaml` are picked up on the next run — no need for a
-   restart if it's the same run
+`tasks.json` or `.orchestrator/config.yaml` is missing or unreadable.
+`orch init --force` if it's meant to be a real project, or check
+`orch doctor --json`'s `config.parse`/`router.parse` entries for the
+parse error itself.
 
-### Provider rate limit
+### `orch validate` / `orch doctor` exit 2
 
-Different from the budget gate — this is the real CLI throwing 429 at you.
+At least one error-severity finding — read the human output (or `--json`)
+for which check failed and why; both commands print every check they ran,
+not just the failing ones.
 
-1. orch catches the failure and does **retry-once with extended backoff** (60s
-   default for rate limits, configurable in
-   `config.yaml → retry.rate_limit_backoff_seconds`)
-2. If it keeps failing, the task ends up `blocked` with the error
-3. Typical fix: wait for the reset window (~5h Anthropic, ~3h OpenAI) and
-   `orch --mode auto` again
+### An illegal status transition — exit 3
 
-### `orch` won't start — exit 1 with "unrouted model"
-
-Your spec calls for a model that isn't in `model_router.yaml`. The error
-tells you which:
-
-```
-UnroutedModelError: task F1.1.T2 uses model 'claude-opus-5-0' which is not in router
-```
-
-Edit `orchestrator/model_router.yaml`, add:
-
-```yaml
-"claude-opus-5-0":
-  backend: claude
-  cli_model: claude-opus-5-0
-  tier: premium
-  is_premium: true
-```
-
-Then retry.
-
-### `orch` won't start — exit 2 with "project layout invalid"
-
-`tasks.json` or `scripts/task-*.sh` is missing. Run `orch init --force` if
-it's a new project, or create what's missing by hand.
-
-### `orch` won't start — exit 3 with "flock contention"
-
-Another `orch` instance is running against the same `state/`. Check:
-
-```bash
-lsof ~/work/my-app/orchestrator/state/.lock
-```
-
-If it's a zombie instance, kill the PID. If two parallel runs are intentional,
-use `--task-locks` on both.
+`task-status`/`task set --status` refuse a transition the state machine
+doesn't allow (e.g. `done` → `todo` directly). The error names the
+task's current status.
 
 ---
 
-## 10. Update orch
-
-When I (or you) push changes to the repo:
+## 14. Updating orch
 
 ```bash
-# Try upgrade first
-pipx upgrade orchestrator
+# Re-run the installer — it always fetches the latest v* (non -py) release
+curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
 
-# If it says "already up to date" but you know there are changes, force:
-pipx install --force git+https://github.com/hectorcanaimero/orch.git
+# Or, via Homebrew
+brew upgrade orch
 
-# Verify which version you're running
-orch --help | head -3
+# Verify
+orch --version
 ```
 
-**Heads up**: `pipx upgrade` does NOT touch the YAMLs already copied into
-your projects (`~/work/my-app/orchestrator/*.yaml`). To get the new defaults
-into an old project:
-
-```bash
-# Diff first
-diff ~/work/my-app/orchestrator/config.yaml \
-     $(python3 -c 'import orchestrator, pathlib; print(pathlib.Path(orchestrator.__file__).parent)')/config.yaml
-
-# Apply (⚠️ overwrites your project's custom config)
-orch init ~/work/my-app --force
-```
-
-It's intentional that overrides aren't clobbered: if you tuned
-`budgets.yaml` for a specific project, you don't want an `upgrade` to wipe
-it.
+Upgrading the binary never touches a project's own
+`.orchestrator/config.yaml`, `model_router.yaml`, or `budgets.yaml` — if
+you want a new default into an existing project, run `orch init --force`
+there and diff before you commit (it overwrites your project's own
+tuning, so don't do it blindly).
 
 ---
 
-## Complete workflow — visual summary
+## Python legacy
 
+The pre-rewrite `orch` — the FastAPI dashboard, `pipx install orch`, the
+full sprint history this Go binary is replacing feature-by-feature — is
+frozen on the `python-legacy` branch, tagged **`v0.11.0-py`**. It still
+installs and runs exactly as documented in that tag's own manual:
+
+```bash
+git checkout v0.11.0-py
+pipx install .
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  ONCE PER MACHINE                                               │
-│    pipx install git+https://github.com/hectorcanaimero/orch.git │
-└─────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  ONCE PER PROJECT                                               │
-│    orch init ~/work/my-app --sdd                                │
-└─────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  PER FEATURE                                                    │
-│                                                                 │
-│  1. In Claude Code (inside the project):                        │
-│                                                                 │
-│       /orch-plan I want to add email + google auth              │
-│                                                                 │
-│  2. Claude generates PRD → ARCH → SPEC → proposes diff to       │
-│     tasks.json. You confirm with `y`                            │
-│                                                                 │
-│  3. Preview:                                                    │
-│       orch --project-root ~/work/my-app --dry-run               │
-│                                                                 │
-│  4. Execute:                                                    │
-│       orch --project-root ~/work/my-app --mode auto             │
-│                                                                 │
-│  5. In ANOTHER terminal, dashboard:                             │
-│       orch dashboard --project-root ~/work/my-app               │
-│       → http://127.0.0.1:7420                                   │
-│                                                                 │
-│  6. Coffee ☕                                                   │
-└─────────────────────────────────────────────────────────────────┘
+
+or
+
+```bash
+pipx install git+https://github.com/hectorcanaimero/orch.git@v0.11.0-py
 ```
+
+No new features land on that line — only the Go binary moves forward. See
+[`RELEASING.md`](RELEASING.md) for why the two lines share one tag
+namespace, split by a `-py` suffix rather than a separate branch prefix.
 
 ---
 
 ## References
 
-- Atomizer spec format: [`SPEC-FORMAT.md`](SPEC-FORMAT.md)
-- Project history: [`history/README.md`](history/README.md)
-- Full config reference: [`../README.md#configuration`](../README.md#configuration)
-- Sprint 7 (budget guardrails): [`../README.md#budget-guardrails-sprint-7`](../README.md#budget-guardrails-sprint-7)
+- Full CLI flag reference, parity notes with Python: [`CLI.md`](CLI.md)
+- Config keys: [`CONFIG.md`](CONFIG.md)
+- Spec markdown format: [`SPEC-FORMAT.md`](SPEC-FORMAT.md)
+- MCP server / tools: [`MCP.md`](MCP.md)
+- Dashboard access model: [`DASHBOARD-PROFILES.md`](DASHBOARD-PROFILES.md)
+- Sharing the dashboard with a client: [`DELIVERING-TO-STAKEHOLDERS.md`](DELIVERING-TO-STAKEHOLDERS.md)
+- Release process / tag scheme: [`RELEASING.md`](RELEASING.md)
 
 ## Feedback
 
-This manual is a living doc. If you hit a case that isn't covered, open an
-issue at <https://github.com/hectorcanaimero/orch/issues> or send a PR with
-the missing section.
+This manual is a living doc, updated in the same PR that lands a new
+subcommand. If you hit a case that isn't covered, open an issue at
+<https://github.com/hectorcanaimero/orch/issues> or send a PR with the
+missing section.
