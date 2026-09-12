@@ -14,7 +14,7 @@ async function fetchWhoami(): Promise<Whoami> {
 
 /**
  * Sprint E-6 UX: the SPA reads its own profile so it can hide operator-only
- * nav entries (Doctor, Tunnel, Metrics, Logs) when serving a stakeholder
+ * nav entries (Tunnel, Metrics, Logs) when serving a stakeholder
  * session. The endpoint is intentionally on the stakeholder allow-list —
  * profile is not a secret; the token is.
  *
