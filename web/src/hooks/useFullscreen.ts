@@ -3,7 +3,7 @@ import type { RefObject } from "react"
 
 /**
  * Sprint E-6 UX: minimal wrapper around the Fullscreen API for the
- * Architecture and Kanban regions. Returns `[isFullscreen, toggle]`.
+ * Kanban and Graph regions. Returns `[isFullscreen, toggle]`.
  *
  * Listens on the singleton `document.fullscreenchange` event (fires for
  * exits triggered by the browser's Esc key too), so the UI stays in sync

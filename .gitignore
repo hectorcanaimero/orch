@@ -44,6 +44,11 @@ docs/design/
 /tasks.json
 
 # Node / web (frontend/ moved to web/ in G5.1)
+# A worktree that built the SPA before the move still has an untracked
+# frontend/dist/ that no rule covers; the next `git add -A` drags the
+# minified React bundle into a PR (778 KB in #160, which killed the Gemini
+# review job). The directory no longer exists in the repo, so ignore it whole.
+/frontend/
 node_modules/
 .vite/
 web/.env

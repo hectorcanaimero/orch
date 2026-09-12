@@ -1,7 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom"
 import {
   BarChart3,
-  BookOpen,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
@@ -11,10 +10,8 @@ import {
   ListIcon,
   LogOut,
   Milestone,
-  Network,
   Radio,
   ScrollText,
-  Stethoscope,
   Wallet,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -50,10 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/milestones", label: "Milestones", icon: Milestone },
   { to: "/budget", label: "Budget", icon: Wallet, stakeholderSpendGated: true },
   { to: "/sprint", label: "Sprint", icon: CalendarClock },
-  { to: "/architecture", label: "Architecture", icon: Network },
-  { to: "/docs", label: "Documents", icon: BookOpen },
   { to: "/graph", label: "Graph", icon: GitFork, operatorOnly: true },
-  { to: "/doctor", label: "Doctor", icon: Stethoscope, operatorOnly: true },
   { to: "/tunnel", label: "Tunnel", icon: Radio, operatorOnly: true },
   { to: "/metrics", label: "Metrics", icon: BarChart3, operatorOnly: true },
   { to: "/logs", label: "Logs", icon: ScrollText, operatorOnly: true },
