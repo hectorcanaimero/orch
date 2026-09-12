@@ -25,7 +25,10 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ProjectConfigWidget } from "@/components/ProjectConfigWidget"
-import { useStakeholderSummary } from "@/hooks/useStakeholderSummary"
+import {
+  isStakeholderSummaryUnavailable,
+  useStakeholderSummary,
+} from "@/hooks/useStakeholderSummary"
 import type { SpendByDay, StakeholderMilestone, StakeholderPhase } from "@/lib/types"
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
@@ -291,6 +294,22 @@ export function StakeholderSummaryPage() {
   }
 
   if (isError) {
+    // Bug 26's own review (PR #205) found this: the Go dashboard doesn't
+    // implement /stakeholder/summary yet, so this named state is the
+    // COMMON case today, not a rare one — a plain "failed to load"
+    // alert would read as a transient problem worth retrying, when the
+    // real answer is "this binary doesn't have this page yet."
+    if (isStakeholderSummaryUnavailable(error)) {
+      return (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Summary not available</AlertTitle>
+          <AlertDescription>
+            This dashboard doesn't serve the stakeholder summary yet.
+          </AlertDescription>
+        </Alert>
+      )
+    }
     return (
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
