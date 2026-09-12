@@ -1,0 +1,2 @@
+{"type":"error","timestamp":1789234236196,"sessionID":"ses_f695436a6ffegmx7m8lgVK9whZ","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_63d5981f"}}}
+{"type":"error","timestamp":1789234236206,"sessionID":"ses_f695436a6ffegmx7m8lgVK9whZ","error":{"name":"UnknownError","data":{"message":"Model not found: no-such-model-xyz/."}}}

@@ -62,14 +62,112 @@ where Python reaches for `err["message"]`.
 
 ---
 
+## `codex/0.154.0/` — real capture
+
+Captured on 2026-09-12 on this VPS, prompt on stdin, streams merged:
+
+```
+printf '<prompt>' | codex exec --skip-git-repo-check --json \
+    -o <out>.codex.json -C . --approve-for-me -m gpt-5.4
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `auth-error.jsonl` | no `~/.codex/auth.json`, so every request 401s | 1 |
+
+Two things this file pins that no hand-written fixture would have:
+`thread.started` / `turn.started` / `turn.failed` is the real 0.154.0 event
+vocabulary, and the capture has **plain-text stderr interleaved among the
+JSONL** (`2026-…Z ERROR codex_api::endpoint::responses_websocket: …`). That is
+what `jsonlEvents` skipping unparseable lines is for; before this file, the
+only thing exercising that was a truncated final line.
+
+There is no real `success.jsonl`: the CLI is installed but not logged in. The
+happy path is still `codex/synthetic/`.
+
+## `opencode/1.18.30/` — real capture
+
+Captured on 2026-09-12, prompt on stdin:
+
+```
+printf '<prompt>' | opencode run --format json --model <model> --auto --dir <abs>
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `success.json` | `--model opencode/mimo-v2.5-free` | 0 |
+| `unknown-model.json` | `--model no-such-model-xyz` | 1 |
+
+`success.json` is the one real happy path in this tree besides claude's, and
+it exists only because opencode's free tier needs no credential — `opencode
+models` lists 7 models on an unauthenticated machine and they all work. Its
+`cost` is genuinely `0` while both token counts are non-zero, which is the
+case that separates "this provider reports no usage" (Issue #8, `Estimated`)
+from "this run was free".
+
+`unknown-model.json` carries **two** error events: a generic `"Unexpected
+server error"` and then the specific `"Model not found: …"`. Both the Python
+parser and the Go port report the first. See bug 28 in
+`docs/brainstorm/go-migration-notes/sonnet-2.md`.
+
+## `gemini/0.59.0/` — real capture
+
+```
+gemini -p '<prompt>' --model gemini-2.5-flash
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `auth-error.log` | no `GEMINI_API_KEY`, no OAuth credentials | **41** |
+
+The exit code is the point. Nothing should key on "1 means failure" for
+gemini, and `GeminiProvider.Parse` reads success as `exit == 0` for exactly
+this reason.
+
+**The one redacted byte range in this tree.** gemini names the settings file
+by absolute path, so the capture contained the operator's home directory;
+`/home/<user>/` was rewritten to `/home/USER/` before committing, because the
+reviewer checklist forbids personal paths. Nothing else in the line was
+touched and no test asserts on the path. Flagged here rather than left for a
+reader to notice, since "these bytes are what the CLI wrote" is the promise
+this whole directory makes.
+
+## `agy/1.2.1/` — real capture
+
+```
+agy --output-format json --agent executor --model <model> --print '<prompt>'
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `auth-error.json` | not logged in; the OAuth wait timed out after 60s | 1 |
+
+Despite the name this file is **not** pure JSON: agy writes an OAuth prompt
+and a waiting line first, and only then the envelope. That is the whole
+reason to keep it — it is the fixture behind bug 29, and
+`TestAgyParseRealAuthError` asserts the preamble is still there so a later
+clean re-capture cannot silently turn that test into a test of nothing.
+
 ---
 
-## Where codex went
+## The synthetic fixtures, and what would retire them
 
-`CodexProvider` and its fixtures are not in this tree yet. They live on
-`g2/opus2-codex` and stay there until the `codex` CLI can be installed and its
-output captured for real: everything that could be written for it was written
-against hand-made fixtures, and checklist rule 21 exists precisely because
-that is the test which passes while the real CLI breaks. The risk is not a
-mis-written parser — it is a schema that drifted since `dispatcher.py` was
-written, and only a capture can show that.
+`codex/synthetic/`, `gemini/synthetic/`, `agy/synthetic/` and
+`opencode/synthetic/` are hand-written. Everything under them is a **success
+path or an edge case that cannot be provoked without credentials**, which is
+the honest reading of checklist rule 21's limit: the rule wants captured
+output, and a CLI that will not authenticate produces none.
+
+Retiring them is a mechanical job and deliberately not a judgement call:
+
+| Backend | What unblocks a real success capture |
+|---|---|
+| `codex` | `codex login` |
+| `gemini` | `GEMINI_API_KEY`, or one of the two Google auth modes its error names |
+| `agy` | the OAuth flow (interactive — a human has to paste the code) |
+| `opencode` (paid providers) | credentials for the provider a route names |
+
+Re-capture with the argv above, drop the bytes in a **new** version directory,
+and delete the synthetic file the real one replaces. Do not edit a synthetic
+file to match a real capture: the two say different things about how much the
+test is worth.

@@ -836,3 +836,119 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   today's shape-error path with the 404 path `isStakeholderSummaryUnavailable`
   already handles identically — no client-side change needed when that
   lands.
+
+- **G3.4 was blocked on "no CLI installed on the VPS"; the real blocker was
+  narrower and is only half gone.** All four CLIs are installed now — `codex`
+  0.154.0, `opencode` 1.18.30, `gemini` 0.59.0, `agy` 1.2.1 — but *none is
+  authenticated*, and rule 21 needs a captured **success**, not just a
+  captured failure. What could be captured for real, and now lives in
+  `internal/providers/testdata/<backend>/<version>/`:
+
+  | fixture | how | why it is worth having |
+  |---|---|---|
+  | `opencode/1.18.30/success.json` | `--model opencode/mimo-v2.5-free` | the free tier needs no credential, so the happy path is real |
+  | `opencode/1.18.30/unknown-model.json` | `--model no-such-model-xyz` | two error events, see bug 28 |
+  | `codex/0.154.0/auth-error.jsonl` | no `~/.codex/auth.json` | plain-text stderr interleaved among the JSONL events |
+  | `gemini/0.59.0/auth-error.log` | no `GEMINI_API_KEY` | exit **41**, not 1 |
+  | `agy/1.2.1/auth-error.json` | OAuth prompt, timed out | envelope preceded by prose, see bug 29 |
+
+  The success paths for codex, gemini and agy are still synthetic, under
+  `<backend>/synthetic/` per the README's convention, and the honest way to
+  close this is a login followed by a re-capture — not by promoting the
+  hand-made files. `scripts/`-adjacent capture script kept out of the repo on
+  purpose; the README documents the argv for each so a re-capture is a copy
+  and paste.
+
+  Worth recording because it cost an hour: the codex adapter had been waiting
+  on branch `g2/opus2-codex` for 100 commits, and the only thing that had
+  drifted was a duplicated `contains` test helper and one assertion that was
+  *designed* to fail — `TestCodexSyntheticParseAuthError` pinned "auth expired
+  classifies as Other" with a note saying to update the docs if it ever said
+  permission. #117 added the `"auth expired"` marker naming codex. The
+  tripwire fired exactly as written. That is the argument for pinning a gap
+  with a message instead of leaving it untested.
+
+- **Bug 28 — opencode's error message is one level deeper than
+  `dispatcher.py` looks, so every opencode failure reaches the operator as a
+  CPython dict repr.** `OpencodeBackend.parse_result` reads
+  `err.get("message") or str(err)` where `err = ev["error"]`. Real opencode
+  1.18.30 writes:
+
+  ```json
+  {"type":"error","error":{"name":"UnknownError","data":{"message":"Model not found: no-such-model-xyz/."}}}
+  ```
+
+  `error.message` does not exist, so the first branch never fires and the
+  operator gets `{'name': 'UnknownError', 'data': {...}}`. Go reads
+  `error.data.message` first, keeps the Python-shaped `message` as a
+  fallback, and ends at the raw line. Not fixed in Python: the migration rule
+  says a bug found mid-port is logged, and this one is cosmetic-but-daily
+  rather than P0.
+
+  **A second thing the same fixture shows, deliberately NOT changed.**
+  opencode emits a generic `"Unexpected server error. Check server logs for
+  details."` *before* the specific diagnosis, and both Python and the Go port
+  report the **first** error event — so the operator is shown the useless one
+  even after bug 28 is fixed. Preferring a later or "more specific" event
+  would be an invented heuristic and would move what `Classify` reads, so the
+  behaviour is ported as-is and pinned by two tests:
+  `TestOpencodeParseRealUnknownModel` asserts the first event's sentence, and
+  `TestOpencodeRealUnknownModelHidesTheUsefulSentence` asserts the useful one
+  really is in the stream, one event later. Whoever decides to change this has
+  the evidence in a test rather than in a comment.
+
+- **Bug 29 — `AgyBackend.parse_result` runs `json.loads` over the whole log,
+  so anything agy prints before its envelope costs the parser the entire
+  result.** Not hypothetical: an unauthenticated `agy` 1.2.1 writes
+
+  ```
+  Authentication required. Please visit the URL to log in:
+    https://accounts.google.com/o/oauth2/auth?...
+  Waiting for authentication (timeout 60s)...
+  ```
+
+  and only then the JSON object. Python's `json.loads` raises, `payload`
+  becomes `None`, and `status`, `response` and every token count are lost —
+  on a *successful* run that happened to print a warning first, Python would
+  read `status` as absent and report failure. Go tries the whole body first
+  (Python parity when there is no preamble) and falls back to the last line
+  that decodes as a JSON object, which is the same last-line rule
+  `parseClaudeEnvelope` already applies. `TestAgyParseRealAuthError` asserts
+  the preamble is still in the fixture, so a future clean re-capture cannot
+  quietly turn that test into a test of nothing.
+
+- **A gap pinned, not closed: an unauthenticated `gemini` is classified as
+  `FailureOther` and retried.** gemini 0.59.0 exits **41** — worth knowing on
+  its own, since nothing should key on exit 1 — and prints one line: `Please
+  set an Auth method in your /home/…/.gemini/settings.json or specify one of
+  the following environment variables before running: GEMINI_API_KEY, …`.
+  That sentence contains none of `permissionMarkers`, so `Classify` returns
+  `FailureOther` and the reaper retries a dispatch that cannot ever succeed.
+  Adding a marker (`"set an auth method"`, or the bare `"auth method"`)
+  changes behaviour for all five backends at once, which is not a call to
+  slip into a provider PR. `TestGeminiParseRealAuthError` pins the current
+  answer with a message pointing here — the same tripwire shape that worked
+  for codex above.
+
+- **`model_router.yaml`'s opencode routes do not resolve against opencode
+  1.18.30 on this machine, and DeepSeek is the visible casualty.** `opencode
+  models` lists **7** models, all under the `opencode/` free-tier provider;
+  the router's `google/…`, `deepseek/…` and `opencode-go/…` entries resolve to
+  nothing. Most of that is simply "no provider is authenticated", but the
+  CLI's own suggestion is the part that is not explained by credentials:
+
+  ```
+  Model not found: deepseek/deepseek-v4-flash. Did you mean: deepseek-v4-flash, deepseek-v4-flash-vision-exp?
+  ```
+
+  It proposes the **bare** id, which is at least a hint that the
+  `provider/model` spelling the router assumes is not this version's. Cannot
+  be settled without one authenticated paid provider, so nothing is changed:
+  `OpencodeProvider.Argv` passes `cli_model` verbatim, exactly as Python
+  does, and `TestOpencodeArgvPassesModelVerbatim` pins that so a future
+  "helpful" prefix-stripper has to argue with a test. **Consequence worth
+  stating plainly, because it reads the other way at a glance: the two
+  DeepSeek routes in `model_router.yaml` are configuration, not a working
+  path. DeepSeek needs no new backend — it is an opencode model — but it needs
+  the opencode provider authenticated and the model id confirmed before any
+  claim that it works.**

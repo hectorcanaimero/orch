@@ -716,12 +716,15 @@ func TestLoopStopsWhenNothingCanEverBeDispatched(t *testing.T) {
 			want: "no concurrency cap",
 		},
 		{
-			name: "a backend with no Go adapter",
+			// Until G3.4 this was an unported backend; every Python backend
+			// has an adapter now, so the reachable case is a route naming a
+			// backend this binary does not know.
+			name: "a backend no adapter serves",
 			prepare: func(f *runnerFixture) {
-				f.s.Routes["claude/opus"] = route(model.BackendOpencode, "google/gemini", false)
-				f.s.Sems = NewSems(4, map[string]int{"opencode": 2})
+				f.s.Routes["claude/opus"] = route(model.Backend("nosuch"), "some-model", false)
+				f.s.Sems = NewSems(4, map[string]int{"nosuch": 2})
 			},
-			want: "not implemented yet",
+			want: "unknown backend",
 		},
 	}
 

@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"cx-01"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"agent_message"}}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Reading spec..."}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"scripts/task-finish.sh B-020 'ok' 'gpt-5.4'"}}
+{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":0,"output_tokens":120,"reasoning_output_tokens":0}}
+{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":1400,"cached_input_tokens":0,"output_tokens":420,"reasoning_output_tokens":0}}
