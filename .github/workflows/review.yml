@@ -387,9 +387,11 @@ jobs:
           fi
 
       # Always runs, and is the only place a conclusion is decided:
-      #   request_changes           -> failure
-      #   approve / comment         -> success
-      #   no key, crash, bad output -> neutral, never success
+      #   request_changes                          -> failure
+      #   approve / comment                        -> success
+      #   reviewer crashed, empty twice, unreadable -> failure (#207: a neutral
+      #                                               check reads as "clean")
+      #   no API key                               -> neutral, never success
       - name: Publish the gemini-review check
         if: always()
         env:
