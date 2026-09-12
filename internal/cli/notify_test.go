@@ -58,12 +58,8 @@ func TestNotifySendPostsWhatItPrinted(t *testing.T) {
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		var payload struct {
-			Text string `json:"text"`
-		}
-		_ = json.Unmarshal(raw, &payload)
 		mu.Lock()
-		bodies = append(bodies, payload.Text)
+		bodies = append(bodies, slackText(t, raw))
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -214,12 +210,8 @@ func TestNotifyTestPostsTheMessageAndExitsZero(t *testing.T) {
 			)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				raw, _ := io.ReadAll(r.Body)
-				var payload struct {
-					Text string `json:"text"`
-				}
-				_ = json.Unmarshal(raw, &payload)
 				mu.Lock()
-				bodies = append(bodies, payload.Text)
+				bodies = append(bodies, slackText(t, raw))
 				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -258,4 +250,22 @@ func TestNotifyTestFailsWhenTheChannelRejects(t *testing.T) {
 	if got := cli.Run("v-test", append([]string{"notify", "test"}, common...)); got != 1 {
 		t.Errorf("exit = %d, want 1 — a rejected message is a failed test", got)
 	}
+}
+
+// slackText pulls the message out of a Slack webhook body.
+//
+// The decode failing is a real failure, not something to shrug at: a body
+// that is not `{"text": ...}` would otherwise surface as an empty string and
+// fail the comparison with "want <the digest>, got \"\"" — which sends the
+// reader looking at the digest rather than at the payload shape.
+func slackText(t *testing.T, raw []byte) string {
+	t.Helper()
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Errorf("the webhook body is not Slack's {\"text\": ...} shape: %v\n%s", err, raw)
+		return ""
+	}
+	return payload.Text
 }
