@@ -908,7 +908,10 @@ question for Python.
   it is worth one message. Same class as the `BudgetReporter` comment that said
   "aliased" when it was a copy — the fix there was to make the comment true.
 
-## `gh pr checks --json state,conclusion` — a command that could never succeed
+## Bug 27 — `gh pr checks --json state,conclusion`, a command that could never succeed
+
+One number for both halves, because the outer bug made the inner one
+unreachable: the command never ran, so the mapping never executed.
 
 - **The CI-polling feature has never worked, in either binary.** `gh pr checks`
   has **no `conclusion` field**. Asking for one is a usage error, so gh exits
@@ -927,8 +930,10 @@ question for Python.
   never noticed, `vcs.ci_max_retries` never trips, `github.auto_merge` never
   fires, and a task with a PR sits in `in-progress` until a human looks.
 
-  Annotated rather than fixed on the Python side, per the migration rule. The
-  Go fix is pointed: ask for `name,state,bucket`.
+  Annotated rather than fixed on the Python side, per the migration rule —
+  orch-98 is fixing Python after #211 lands, reusing the fixtures captured
+  here, since `test_github_vcs.py` was written from the reader in exactly the
+  same way. The Go fix is pointed: ask for `name,state,bucket`.
 
 - **The lowercase suspicion was right, and was the *second* bug, hidden behind
   the first.** I raised it turns ago as "worth 30 seconds if `gh` is ever
