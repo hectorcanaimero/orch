@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // A real server, the real embedded SPA, real HTTP requests. Not a unit test —
@@ -38,7 +37,14 @@ func TestManualCheckRealSPA(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		body, _ := fs.ReadFile(spa, "index.html")
+		body, rerr := fs.ReadFile(spa, "index.html")
+		if rerr != nil {
+			// An embedded SPA with no index.html is a broken build, and
+			// answering 500 says so where a silent empty 200 would look
+			// like the client-side router losing a route.
+			http.Error(w, "no index.html in the embedded SPA", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(body)
 	})
@@ -50,15 +56,28 @@ func TestManualCheckRealSPA(t *testing.T) {
 		[]byte(`{"meta":{"project":"manual-check"},"tasks":[]}`), 0o600)
 
 	c := cfg(ProfileStakeholder, "test-token-stakeholder")
-	c.Port = 18731
+	// Port 0 and then ask the server what it got: a fixed port races whatever
+	// else is on this machine, and sleeping until it is "probably up" is the
+	// other way this test could be flaky. Ready closes when the listener is
+	// open, so neither.
+	c.Port = 0
 	s, err := New(c, Options{Static: static, Paths: pathsFor(root)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = s.Serve(ctx) }()
-	defer cancel()
-	time.Sleep(300 * time.Millisecond)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.Serve(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-serveErr; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	}()
+	<-s.Ready()
+	if s.BoundAddr() == "" {
+		t.Fatalf("the listener never came up: %v", <-serveErr)
+	}
 
 	// Find the real hashed bundle name rather than hardcoding it.
 	var jsPath string
@@ -72,7 +91,7 @@ func TestManualCheckRealSPA(t *testing.T) {
 		t.Fatal("no bundle in the embedded assets/")
 	}
 
-	base := "http://127.0.0.1:18731"
+	base := "http://" + s.BoundAddr()
 	for _, tc := range []struct {
 		path string
 		want int
@@ -103,11 +122,4 @@ func TestManualCheckRealSPA(t *testing.T) {
 		t.Logf("%s %-36s %d  %s", mark, tc.path, resp.StatusCode,
 			strings.ReplaceAll(strings.TrimSpace(string(body))[:min(60, len(strings.TrimSpace(string(body))))], "\n", " "))
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
@@ -30,6 +31,14 @@ type Server struct {
 	http  *http.Server
 	log   *slog.Logger
 	state StateReader
+	// ready is closed once Serve has a listener (or has failed to get one),
+	// and boundAddr is what it bound. Both exist because `port: 0` is legal
+	// and means "any free one": without them a caller that asked for an
+	// ephemeral port has no way to learn which one it got, so the one config
+	// a test or a tunnel wants most is the one it cannot use.
+	ready     chan struct{}
+	mu        sync.Mutex
+	boundAddr string
 	// static is the SPA handler, mounted at "/" and deliberately NOT gated.
 	static http.Handler
 }
@@ -82,6 +91,7 @@ func New(cfg Config, opts Options) (*Server, error) {
 		log:    log,
 		state:  opts.State,
 		static: opts.Static,
+		ready:  make(chan struct{}),
 	}
 	s.registerRoutes()
 	s.http = &http.Server{
@@ -99,6 +109,21 @@ func New(cfg Config, opts Options) (*Server, error) {
 	return s, nil
 }
 
+// Ready is closed once Serve has finished with the listener — bound, or failed
+// to bind. A waiter is released either way: a channel that only closes on
+// success is a deadlock the first time a port is taken.
+//
+// After it closes, BoundAddr is the address, or "" if the listen failed.
+func (s *Server) Ready() <-chan struct{} { return s.ready }
+
+// BoundAddr is the address the listener actually got, which is not
+// cfg.Addr() when the configured port is 0.
+func (s *Server) BoundAddr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.boundAddr
+}
+
 // Handler exposes the mux, for a test that wants to drive the routes without
 // a listener.
 func (s *Server) Handler() http.Handler { return s.mux }
@@ -113,8 +138,13 @@ func (s *Server) Handler() http.Handler { return s.mux }
 func (s *Server) Serve(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.cfg.Addr())
 	if err != nil {
+		close(s.ready)
 		return fmt.Errorf("listen on %s: %w", s.cfg.Addr(), err)
 	}
+	s.mu.Lock()
+	s.boundAddr = ln.Addr().String()
+	s.mu.Unlock()
+	close(s.ready)
 	s.log.Info("dashboard listening",
 		"addr", ln.Addr().String(), "profile", string(s.cfg.Profile))
 

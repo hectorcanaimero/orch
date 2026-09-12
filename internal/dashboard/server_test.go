@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -335,6 +337,23 @@ func TestServeStartsAndStops(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(ctx) }()
 
+	// Ready closes when the listener is open, and BoundAddr is then the port
+	// the kernel picked. Asking for the address and getting one that answers
+	// is the whole claim in the doc comment, so the test makes a real request
+	// over TCP rather than trusting the log line.
+	<-s.Ready()
+	if s.BoundAddr() == "" {
+		t.Fatalf("no listener: %v", <-done)
+	}
+	resp, err := http.Get("http://" + s.BoundAddr() + "/api/whoami") // #nosec G107 -- the loopback listener this test just started
+	if err != nil {
+		t.Fatalf("GET /api/whoami on the live listener: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("live listener answered %d, want 200", resp.StatusCode)
+	}
+
 	cancel()
 	select {
 	case err := <-done:
@@ -343,6 +362,44 @@ func TestServeStartsAndStops(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Serve did not return after its context was cancelled")
+	}
+}
+
+// A listen that fails must release everyone waiting on Ready. A channel that
+// only closed on success would turn a taken port into a hung caller, which is
+// a worse failure than the error it is hiding.
+func TestServeReleasesReadyWhenTheListenFails(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = taken.Close() }()
+
+	c := cfg(ProfileOperator, "")
+	host, port, err := net.SplitHostPort(taken.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Host = host
+	c.Port, err = strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, c, writeProject(t, "spec_root: specs\n", `{"meta":{}}`))
+
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background()) }()
+
+	select {
+	case <-s.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready never closed after a failed listen")
+	}
+	if got := s.BoundAddr(); got != "" {
+		t.Errorf("BoundAddr = %q after a failed listen, want empty", got)
+	}
+	if err := <-done; err == nil {
+		t.Error("Serve returned nil on a port already held")
 	}
 }
 
