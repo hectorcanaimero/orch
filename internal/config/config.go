@@ -48,6 +48,7 @@ type Config struct {
 	Presentation         Presentation  `yaml:"presentation"`
 	Publish              Publish       `yaml:"publish"`
 	Tunnel               Tunnel        `yaml:"tunnel"`
+	Telemetry            Telemetry     `yaml:"telemetry"`
 }
 
 // Concurrency caps in-flight dispatches. `global_max` is the hard ceiling
@@ -210,4 +211,23 @@ type Tunnel struct {
 	URLRegex         string  `yaml:"url_regex"`
 	URLParseTimeoutS int     `yaml:"url_parse_timeout_s"`
 	StopTimeoutS     float64 `yaml:"stop_timeout_s"`
+}
+
+// Telemetry controls the anonymous, opt-in usage ping G8.6 (F4.9) adds —
+// see internal/telemetry's own package doc for exactly what one event
+// carries (never a path, a prompt, a task id, or a project id/name) and
+// docs/TELEMETRY.md for the field list as shipped documentation.
+//
+// Off by default (Enabled's zero value). The standard `DO_NOT_TRACK`
+// environment variable always overrides Enabled — see
+// internal/telemetry.DoNotTrack — so there is no config knob for it: an
+// environment variable a project's own config.yaml cannot see is the
+// point.
+type Telemetry struct {
+	Enabled bool `yaml:"enabled"`
+	// Endpoint overrides internal/telemetry's own default (empty until a
+	// real collector exists — see that package's defaultEndpoint). Most
+	// projects never set this; it exists for a self-hosted collector or a
+	// future default once one is chosen.
+	Endpoint string `yaml:"endpoint"`
 }

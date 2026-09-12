@@ -266,6 +266,20 @@ tunnel:
   stop_timeout_s: 5
 ```
 
+### `telemetry` — new (G8.6)
+
+Anonymous, opt-in usage pings. Off unless `enabled: true`, and the
+standard `DO_NOT_TRACK` environment variable always overrides this either
+way — see [`TELEMETRY.md`](TELEMETRY.md) for the exact field list and why
+each one is safe to send.
+
+```yaml
+telemetry:
+  enabled: false
+  endpoint: ""    # empty uses the built-in default (unset until a real
+                   # collector exists — see internal/telemetry's own TODO)
+```
+
 ### Misc
 
 ```yaml
@@ -304,6 +318,7 @@ instead, because they belong to one invocation rather than to the project.
 | Variable | What it does |
 |---|---|
 | `ORCH_FAKE_PROVIDER` | Replay canned CLI output instead of running any coding CLI |
+| `DO_NOT_TRACK` | Disables telemetry (G8.6) regardless of `telemetry.enabled` — see [`TELEMETRY.md`](TELEMETRY.md) |
 
 ### `ORCH_FAKE_PROVIDER`
 
@@ -346,3 +361,4 @@ while testing nothing.
 - [`SQLITE-BACKEND.md`](SQLITE-BACKEND.md) — the state backend and `orch migrate`
 - [`DASHBOARD-PROFILES.md`](DASHBOARD-PROFILES.md) — profiles, tokens, tunnels
 - [`PREFLIGHT.md`](PREFLIGHT.md) — what `orch doctor` checks
+- [`TELEMETRY.md`](TELEMETRY.md) — the exact field list for the opt-in usage ping
