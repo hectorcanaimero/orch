@@ -9,6 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/state"
+	"github.com/hectorcanaimero/orch/internal/templates"
 )
 
 // A real server, the real embedded SPA, real HTTP requests. Not a unit test —
@@ -50,10 +55,10 @@ func TestManualCheckRealSPA(t *testing.T) {
 	})
 
 	root := t.TempDir()
-	_ = os.WriteFile(filepath.Join(root, "config.yaml"),
-		[]byte("spec_root: specs\nstate:\n  backend: sqlite\nbudgets_preset: conservative\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(root, "tasks.json"),
-		[]byte(`{"meta":{"project":"manual-check"},"tasks":[]}`), 0o600)
+	writeFile(t, filepath.Join(root, "config.yaml"),
+		"spec_root: specs\nstate:\n  backend: sqlite\nbudgets_preset: conservative\n")
+	writeFile(t, filepath.Join(root, "tasks.json"),
+		`{"meta":{"project":"manual-check"},"tasks":[]}`)
 
 	c := cfg(ProfileStakeholder, "test-token-stakeholder")
 	// Port 0 and then ask the server what it got: a fixed port races whatever
@@ -112,8 +117,13 @@ func TestManualCheckRealSPA(t *testing.T) {
 		if rerr != nil {
 			t.Fatalf("GET %s: %v", tc.path, rerr)
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 120))
-		_ = resp.Body.Close()
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 120))
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Errorf("close the body of %s: %v", tc.path, cerr)
+		}
+		if readErr != nil {
+			t.Fatalf("read the body of %s: %v", tc.path, readErr)
+		}
 		mark := "ok "
 		if resp.StatusCode != tc.want {
 			mark = "BAD"
@@ -121,5 +131,129 @@ func TestManualCheckRealSPA(t *testing.T) {
 		}
 		t.Logf("%s %-36s %d  %s", mark, tc.path, resp.StatusCode,
 			strings.ReplaceAll(strings.TrimSpace(string(body))[:min(60, len(strings.TrimSpace(string(body))))], "\n", " "))
+	}
+}
+
+// The b3 endpoints against a REAL database, not a fake: the two reads they
+// added are SQL, and a fake would be testing the fake. Skipped unless
+// ORCH_MANUAL_CHECK=1, like the SPA check above, and it prints the payloads so
+// "I ran it and read it" is something the next person can re-run.
+func TestManualCheckSprintAndMilestones(t *testing.T) {
+	if os.Getenv("ORCH_MANUAL_CHECK") == "" {
+		t.Skip("set ORCH_MANUAL_CHECK=1")
+	}
+	ctx := context.Background()
+
+	// The DAG is the one `orch init --template nextjs-saas` writes, rendered
+	// from the SHIPPED template rather than hand-written here: a fixture the
+	// project ships is a fixture that stays true (CHECKLIST rule 28).
+	//
+	// Not internal/graph/testdata/parity-project — that one is deliberately
+	// broken (a self-dependency, a cycle, a missing dep, a task with no id) so
+	// the validators have every error kind to report. It is the right fixture
+	// for a validator and the wrong one for a panel that is supposed to show
+	// what a healthy project looks like.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "config.yaml"),
+		"spec_root: specs\nstate:\n  backend: sqlite\nbudgets_preset: conservative\n")
+
+	// nextjs-saas rather than python-api because it ships six tasks: this
+	// check wants one done, one blocked AND something still to do, so that
+	// the ETA and the remaining figures are not all zero.
+	tmpl, err := templates.Project("nextjs-saas")
+	if err != nil {
+		t.Fatalf("read the nextjs-saas template: %v", err)
+	}
+	body, err := fs.ReadFile(tmpl, "tasks.json.tmpl")
+	if err != nil {
+		t.Fatalf("read tasks.json.tmpl: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "tasks.json"),
+		templates.Render(string(body), "manual-check", time.Now().UTC()))
+
+	db, _, err := state.Open(ctx, filepath.Join(root, "orch.db"))
+	if err != nil {
+		t.Fatalf("open the database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the database: %v", err)
+		}
+	})
+
+	backend := state.NewSQLite(db, "manual-check", root)
+	f, err := model.LoadTasksFile(filepath.Join(root, "tasks.json"))
+	if err != nil {
+		t.Fatalf("load tasks.json: %v", err)
+	}
+	if err := backend.Bootstrap(ctx, f.Tasks); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if len(f.Tasks) < 3 {
+		t.Fatalf("the nextjs-saas template has %d tasks; this check needs at least 3", len(f.Tasks))
+	}
+	// The first task finished, the last blocked with a reason on its last
+	// event — enough for every field of the sprint payload to have something
+	// in it.
+	done, blocked := f.Tasks[0].ID, f.Tasks[len(f.Tasks)-1].ID
+	if err := backend.Transition(ctx, done, model.StatusDone, state.Note{}); err != nil {
+		t.Fatalf("finish %s: %v", done, err)
+	}
+	if err := backend.Transition(ctx, blocked, model.StatusBlocked, state.Note{}); err != nil {
+		t.Fatalf("block %s: %v", blocked, err)
+	}
+	if err := backend.AppendEvent(ctx, "run-1", state.Event{
+		EventType: "block", TaskID: blocked, Backend: "claude",
+		TS:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Extra: map[string]any{"reason": "waiting on " + done, "pid": 1},
+	}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	c := cfg(ProfileOperator, "")
+	c.Port = 0
+	s, err := New(c, Options{Static: spaHandler(t), State: backend, Paths: pathsFor(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.Serve(runCtx) }()
+	defer func() {
+		cancel()
+		if err := <-serveErr; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	}()
+	<-s.Ready()
+	if s.BoundAddr() == "" {
+		t.Fatalf("the listener never came up: %v", <-serveErr)
+	}
+
+	for _, path := range []string{"/api/sprint", "/api/milestones"} {
+		resp, rerr := http.Get("http://" + s.BoundAddr() + path) // #nosec G107 -- the loopback listener this test started
+		if rerr != nil {
+			t.Fatalf("GET %s: %v", path, rerr)
+		}
+		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Errorf("close the body of %s: %v", path, cerr)
+		}
+		if readErr != nil {
+			t.Fatalf("read the body of %s: %v", path, readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		t.Logf("%s %d\n%s", path, resp.StatusCode, string(payload))
+	}
+}
+
+// writeFile is os.WriteFile with the error handled, so a setup step that fails
+// stops the test where it failed instead of two assertions later.
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }

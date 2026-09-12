@@ -183,13 +183,47 @@ func TestLastEventByTask(t *testing.T) {
 		t.Errorf("got %d entries for every task, want 2", len(all))
 	}
 
-	// An empty list means none, and asks the database nothing.
 	none, err := b.LastEventByTask(ctx, []string{})
 	if err != nil {
 		t.Fatalf("LastEventByTask([]): %v", err)
 	}
 	if len(none) != 0 {
 		t.Errorf("got %d entries for an empty id list", len(none))
+	}
+}
+
+// The empty-list short-circuit, asserted by what it did NOT do.
+//
+// An empty map is the right answer whether the query ran or not, so returning
+// one proves nothing. Closing the database first does: if the call reaches
+// SQL it fails, and a passing test means it never got there. That matters
+// because the sprint panel calls this on every request of a project with
+// nothing blocked, which is most projects most of the time.
+func TestLastEventByTaskOnAnEmptyListNeverReachesTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	db, _, err := Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	b := NewSQLite(db, "p", "/tmp/p")
+	if err := b.Bootstrap(ctx, tasks("T1")); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// The control: with a real id list, the closed database is an error.
+	if _, err := b.LastEventByTask(ctx, []string{"T1"}); err == nil {
+		t.Fatal("a query against a closed database succeeded; the test proves nothing")
+	}
+
+	got, err := b.LastEventByTask(ctx, []string{})
+	if err != nil {
+		t.Errorf("LastEventByTask([]) on a CLOSED database returned %v — it queried", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d entries", len(got))
 	}
 }
 
