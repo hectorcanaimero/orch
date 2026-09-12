@@ -952,3 +952,126 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   path. DeepSeek needs no new backend — it is an opencode model — but it needs
   the opencode provider authenticated and the model id confirmed before any
   claim that it works.**
+
+- **Re-capture after the operator authenticated all four CLIs. Supersedes the
+  fixture table above: every success path in
+  `internal/providers/testdata/` is now real.** What the second pass changed,
+  and the three findings that only appeared once the CLIs could actually
+  reach a model:
+
+  | Backend | Success | What the failure captures turned out to be |
+  |---|---|---|
+  | codex | real, **no `-m`** | every router codex id is refused by a ChatGPT account |
+  | opencode | real (free tier) | paid tier returns `Insufficient balance` with `statusCode: 401` |
+  | gemini | real, needs `GEMINI_CLI_TRUST_WORKSPACE=true` | without it, exit **55**, bug 30 |
+  | agy | real | a bad model name is answered with the list of good ones, which `Parse` discards |
+
+- **Bug 30 — gemini cannot be dispatched by orch at all, in either binary,
+  and nothing said so before a real capture.** `gemini` 0.59.0 refuses to run
+  in a directory it has not been told to trust:
+
+  ```
+  Gemini CLI is not running in a trusted directory. To proceed, either use
+  `--skip-trust`, set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment
+  variable, or trust this directory in interactive mode.
+  ```
+
+  Exit 55, before any model is contacted. orch dispatches every task into a
+  **fresh git worktree**, which is never a trusted directory, so this is not
+  an edge case — it is every gemini dispatch. `GeminiBackend.build_cmd` passes
+  no `--skip-trust` and sets no environment variable, and neither does the Go
+  port, so parity is intact and both are equally broken.
+
+  **Deliberately not fixed in this PR.** The one-flag fix switches off a
+  security gate on a CLI orch runs unattended with the model free to edit
+  files. That is defensible — orch already runs claude with
+  `--permission-mode acceptEdits` and codex with `--approve-for-me`, so the
+  trust prompt is guarding a door the rest of the argv has already opened —
+  but it is an argument someone should make on purpose, in a change whose diff
+  is about that decision. `internal/providers` is a human-approval zone in the
+  reviewer policy for exactly this kind of reason.
+  `TestGeminiParseUntrustedDirectory` pins the current behaviour with a
+  pointer here.
+
+- **Bug 31 — a typo'd codex model is retried until the budget runs out,
+  and the synthetic fixture said the opposite.** The hand-written
+  `codex/synthetic/unknown-model.jsonl` classified as `FailureVersionDrift`,
+  which is the verdict the reaper needs: a model name the CLI does not know
+  cannot succeed on retry. The real capture does not behave that way. codex
+  emits a *metadata warning* first —
+
+  ```json
+  {"type":"item.completed","item":{"type":"error","message":"Model metadata for `no-such-model-xyz` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+  ```
+
+  — and only afterwards the real 400 (`"The 'no-such-model-xyz' model is not
+  supported…"`). The parser reports the **first** error-ish event, so the
+  warning is what `Classify` reads, it matches no drift marker, and the answer
+  is `FailureOther` → retryable. Same structural problem as opencode's two
+  error events (bug 28's second half), from a different CLI, which is what
+  makes it worth a number of its own: reporting the first error event is not a
+  detail of one adapter, it is a rule the port inherited from Python and it is
+  wrong in at least two places.
+
+  A second thing falls out of the same fixture and is **not** actionable yet:
+  that metadata warning is non-fatal — codex says so itself — but it arrives
+  as an `item.completed` error and `codexNonFatalWarnings` only carries
+  `"Skill descriptions were shortened"`. A run that emits it and then succeeds
+  would be reported as failed. No capture yet shows codex carrying on after
+  it (in both captures the run then died of the 400), so adding the marker
+  would be guessing at behaviour rather than pinning it. Recorded, not fixed.
+
+- **The router's opencode ids: 11 of 43 references resolve to nothing, and
+  the file disagrees with itself.** With one paid provider authenticated,
+  `opencode models` lists 34 entries under exactly two providers, `opencode/`
+  (free) and `opencode-go/`. Checked every `cli_model` and
+  `fallback_cli_model` on an opencode route against that list:
+
+  | Router value | Reality | Verdict |
+  |---|---|---|
+  | `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash` | `opencode-go/deepseek-v4-…` | wrong prefix |
+  | `opencode-go/grok-4.5` (×2) | catalogue has `grok-4.6` | version drift |
+  | `openai/gpt-5.6-luna` | `opencode-go/gpt-5.6-luna` | wrong prefix |
+  | `google/gemini-2.5-{pro,flash}` (×5) | no `google/` provider here | unknown — depends which providers the operator authenticated |
+
+  The first three are not judgement calls, because **the route key already
+  says the right thing and only the value is wrong**: the route named
+  `opencode-go/deepseek-v4-flash` carries `cli_model:
+  deepseek/deepseek-v4-flash`, and the route named `opencode-go/grok-4.6`
+  carries `grok-4.5`. Somebody typed the key correctly and the value from
+  memory. The `google/` ones are left alone: absence here only proves this
+  machine has no Google provider authenticated in opencode, not that the
+  spelling is wrong.
+
+  **What this means for the DeepSeek question that started this work: no new
+  backend was ever needed, but the two DeepSeek routes have never worked.**
+  They name a provider prefix opencode does not serve. Fixing the value is a
+  four-character edit per route; proving it works needs credit on the account,
+  which `opencode/1.18.30/insufficient-balance.json` shows is currently zero.
+
+  **The router fix was written and then pulled back out of the G3.4 PR.** It
+  looked like a four-value edit to `orchestrator/model_router.yaml`; it is
+  not. The same strings live in four places:
+
+  1. `orchestrator/model_router.yaml` — the Python copy
+  2. `internal/scaffold/defaults/model_router.yaml` — the Go copy, which
+     **already differs** from the Python one, so syncing them is its own
+     question with its own answer
+  3. `internal/router/testdata/packaged.golden.json` — a golden that pins the
+     packaged contents
+  4. `orchestrator/tests/test_model_router.py` — an allowlist of accepted
+     model strings that *encodes the very values being corrected*, including
+     the line `"opencode-go/grok-4.6": "opencode-go/grok-4.5"`
+
+  That last one is the argument. Editing the test that exists to catch this
+  mistake, in the same commit that makes the change, is indistinguishable from
+  moving the goalposts — and `pytest` is not installed on this machine, so it
+  could not have been run either way. The 2026-08-20 audit that produced those
+  values was a deliberate pass against the accepted-model registry; replacing
+  it deserves the same, with the catalogue output attached, not a drive-by
+  inside a providers PR.
+
+  It also would not have delivered anything today: the account has no credit
+  (see `insufficient-balance.json`), so a corrected DeepSeek route still
+  cannot run. The evidence is above and the change is four values plus a
+  golden; it wants its own PR titled after the audit, not after the port.

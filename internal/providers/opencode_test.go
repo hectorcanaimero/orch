@@ -127,6 +127,50 @@ func TestOpencodeRealUnknownModelHidesTheUsefulSentence(t *testing.T) {
 	}
 }
 
+// TestOpencodeParseInsufficientBalance is a real capture of a paid route with
+// no credit left. It is the only fixture in the tree where opencode's error
+// carries an HTTP status, and it lands on FailurePermission through the 401
+// rather than through any word in the sentence — worth pinning, because
+// "out of money" and "not allowed" are different operator actions and only
+// the status code is telling them apart today.
+func TestOpencodeParseInsufficientBalance(t *testing.T) {
+	out := readFixture(t, "opencode", "1.18.30", "insufficient-balance.json")
+	res := OpencodeProvider{}.Parse(1, out)
+
+	if res.Success {
+		t.Fatal("want failure")
+	}
+	if !strings.Contains(res.ErrorMessage, "Insufficient balance") {
+		t.Errorf("ErrorMessage = %q", res.ErrorMessage)
+	}
+	if got := Classify(res); got != FailurePermission {
+		t.Errorf("Classify = %q, want %q", got, FailurePermission)
+	}
+}
+
+// TestOpencodeParsePrefixedModelNotFound is the evidence behind the router
+// note: `deepseek/deepseek-v4-flash`, the spelling model_router.yaml ships,
+// does not resolve against opencode 1.18.30 even with the account
+// authenticated. The CLI answers with the bare ids, and `opencode models`
+// serves those DeepSeek models under the `opencode-go/` provider.
+func TestOpencodeParsePrefixedModelNotFound(t *testing.T) {
+	out := readFixture(t, "opencode", "1.18.30", "unknown-model-prefixed.json")
+	res := OpencodeProvider{}.Parse(1, out)
+
+	if res.Success {
+		t.Fatal("want failure")
+	}
+	if !strings.Contains(string(out),
+		"Model not found: deepseek/deepseek-v4-flash") {
+		t.Fatal("the fixture no longer shows the prefixed id being rejected")
+	}
+	// Unretryable, and classified so — a route pointing at a name the CLI
+	// does not know must not burn the attempt budget.
+	if got := Classify(res); got != FailureVersionDrift {
+		t.Errorf("Classify = %q, want %q", got, FailureVersionDrift)
+	}
+}
+
 // TestOpencodeParseNoUsageIsEstimated covers Issue #8: step_finish events with
 // both token counts at zero mean the provider does not report usage, which the
 // budget guardrail has to be able to tell from genuinely free work.

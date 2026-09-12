@@ -40,8 +40,8 @@ func TestGeminiPromptDelivery(t *testing.T) {
 	}
 }
 
-func TestGeminiParseSuccess(t *testing.T) {
-	out := readFixture(t, "gemini", "synthetic", "success.log")
+func TestGeminiParseRealSuccess(t *testing.T) {
+	out := readFixture(t, "gemini", "0.59.0", "success.log")
 	res := GeminiProvider{}.Parse(0, out)
 
 	if !res.Success {
@@ -55,6 +55,43 @@ func TestGeminiParseSuccess(t *testing.T) {
 	if res.CostUSD != 0 || res.TokensIn != 0 || res.TokensOut != 0 {
 		t.Errorf("cost/tokens = (%v,%d,%d), want all zero",
 			res.CostUSD, res.TokensIn, res.TokensOut)
+	}
+	// The real capture opens with a tool notice ("Ripgrep is not available…")
+	// and only then the answer. A hand-written fixture would have been the
+	// answer alone, and would have hidden that gemini's stdout is a
+	// conversation rather than a value — which is why the failure path reads
+	// the LAST non-empty line and not the first.
+	if !strings.Contains(string(out), "Ripgrep is not available") {
+		t.Error("the preamble is gone from the fixture; this test now proves less")
+	}
+}
+
+// TestGeminiParseUntrustedDirectory is bug 30, and it is the one finding in
+// this batch that stops gemini working from orch at all.
+//
+// gemini refuses to run in a directory it has not been told to trust, exiting
+// 55 before contacting any model. orch dispatches every task into a fresh git
+// worktree, which is never a trusted directory, so every gemini dispatch ends
+// here — in Python too, since GeminiBackend.build_cmd passes no --skip-trust
+// and sets no GEMINI_CLI_TRUST_WORKSPACE. The fix is one flag or one
+// environment variable, but it also switches off a security gate on a CLI orch
+// runs unattended, so it is a decision rather than a patch: see
+// docs/brainstorm/go-migration-notes/sonnet-2.md.
+func TestGeminiParseUntrustedDirectory(t *testing.T) {
+	out := readFixture(t, "gemini", "0.59.0", "untrusted-directory.log")
+	res := GeminiProvider{}.Parse(55, out)
+
+	if res.Success {
+		t.Fatal("want failure")
+	}
+	if !strings.Contains(res.ErrorMessage, "not running in a trusted directory") {
+		t.Errorf("ErrorMessage = %q", res.ErrorMessage)
+	}
+	// Nothing marks this as unretryable, so the reaper will try again and get
+	// exit 55 again. Pinned so that changing it is deliberate.
+	if got := Classify(res); got != FailureOther {
+		t.Errorf("Classify = %q, want %q — if this changed, bug 30 moved",
+			got, FailureOther)
 	}
 }
 

@@ -105,20 +105,52 @@ func TestAgyArgvRouteOverrides(t *testing.T) {
 	}
 }
 
-func TestAgyParseSuccess(t *testing.T) {
-	out := readFixture(t, "agy", "synthetic", "success.json")
+func TestAgyParseRealSuccess(t *testing.T) {
+	out := readFixture(t, "agy", "1.2.1", "success.json")
 	res := AgyProvider{}.Parse(0, out)
 
 	if !res.Success {
 		t.Fatalf("want success, got %q", res.ErrorMessage)
 	}
-	if res.TokensIn != 1200 || res.TokensOut != 8 {
-		t.Errorf("tokens = (%d,%d), want (1200,8)", res.TokensIn, res.TokensOut)
+	if res.TokensIn != 13255 || res.TokensOut != 25 {
+		t.Errorf("tokens = (%d,%d), want (13255,25)", res.TokensIn, res.TokensOut)
 	}
 	// agy reports tokens but never a price; the dashboard's pricing.yaml
 	// turns those tokens into USD.
 	if res.CostUSD != 0 {
 		t.Errorf("CostUSD = %v, want 0", res.CostUSD)
+	}
+	// The real run spent 24 thinking tokens and still answered. That is the
+	// case the issue-86 carve-out must NOT catch: thinking tokens alone are
+	// not absorption, an empty response alongside them is.
+	if !strings.Contains(string(out), `"thinking_tokens":24`) {
+		t.Error("fixture no longer has non-zero thinking tokens; this stops " +
+			"being the counter-example to TestAgyParseThinkingModeAbsorption")
+	}
+}
+
+// TestAgyParseRealUnknownModel: agy answers a bad model name with the list of
+// models it does accept — and Parse throws that list away, because Python
+// renders a non-SUCCESS status as "agy status=<X>" and never looks at the
+// `error` field. Ported as-is; recorded because the discarded text is exactly
+// what an operator needs.
+func TestAgyParseRealUnknownModel(t *testing.T) {
+	out := readFixture(t, "agy", "1.2.1", "unknown-model.json")
+	res := AgyProvider{}.Parse(1, out)
+
+	if res.Success {
+		t.Fatal("want failure")
+	}
+	if res.ErrorMessage != "agy status=ERROR" {
+		t.Errorf("ErrorMessage = %q, want the ported status line", res.ErrorMessage)
+	}
+	if !strings.Contains(string(out), "Gemini 3.7 Flash (Medium)") {
+		t.Error("the fixture no longer carries the model list this test is about")
+	}
+	// An unusable model name is unretryable, and here the classifier gets
+	// that right off the raw output rather than off the message.
+	if got := Classify(res); got != FailureVersionDrift {
+		t.Errorf("Classify = %q, want %q", got, FailureVersionDrift)
 	}
 }
 
@@ -217,10 +249,10 @@ func TestAgyParseEdgeCases(t *testing.T) {
 }
 
 func TestAgyExtractCost(t *testing.T) {
-	out := readFixture(t, "agy", "synthetic", "success.json")
+	out := readFixture(t, "agy", "1.2.1", "success.json")
 	cost, in, outTok := AgyProvider{}.ExtractCost(out)
-	if cost != 0 || in != 1200 || outTok != 8 {
-		t.Errorf("ExtractCost = (%v,%d,%d), want (0,1200,8)", cost, in, outTok)
+	if cost != 0 || in != 13255 || outTok != 25 {
+		t.Errorf("ExtractCost = (%v,%d,%d), want (0,13255,25)", cost, in, outTok)
 	}
 }
 

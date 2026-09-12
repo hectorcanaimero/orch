@@ -2,6 +2,7 @@ package providers
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -71,12 +72,13 @@ func TestCodexDefaultOutputPath(t *testing.T) {
 
 // ---- Parse: codex fixtures ----------------------------------------------
 //
-// Every fixture below is SYNTHETIC — codex is not installed on the machine
-// this port was written on. See testdata/README.md; re-capture before trusting
-// this parser in anger.
+// The success, auth-error, unknown-model and truncated fixtures are REAL
+// captures from codex 0.154.0. rate-limit, nonfatal-warning and killed-empty
+// are still synthetic because none can be provoked on demand. See
+// testdata/README.md.
 
-func TestCodexSyntheticParseSuccess(t *testing.T) {
-	out := readFixture(t, "codex", "synthetic", "success.jsonl")
+func TestCodexParseRealSuccess(t *testing.T) {
+	out := readFixture(t, "codex", "0.154.0", "success.jsonl")
 	res := CodexProvider{}.Parse(0, out)
 
 	if !res.Success {
@@ -85,12 +87,10 @@ func TestCodexSyntheticParseSuccess(t *testing.T) {
 	if res.ErrorMessage != "" {
 		t.Errorf("ErrorMessage = %q, want empty", res.ErrorMessage)
 	}
-	// Usage sums across BOTH turn.completed events, not just the last.
-	if res.TokensIn != 2200 {
-		t.Errorf("TokensIn = %d, want 2200 (800+1400)", res.TokensIn)
-	}
-	if res.TokensOut != 540 {
-		t.Errorf("TokensOut = %d, want 540 (120+420)", res.TokensOut)
+	// Usage comes off turn.completed, which is where 0.154.0 puts it — the
+	// pre-0.148 step_finish shape is gone.
+	if res.TokensIn != 18345 || res.TokensOut != 5 {
+		t.Errorf("tokens = (%d,%d), want (18345,5)", res.TokensIn, res.TokensOut)
 	}
 	// codex's JSONL reports no USD figure at all.
 	if res.CostUSD != 0 {
@@ -98,8 +98,8 @@ func TestCodexSyntheticParseSuccess(t *testing.T) {
 	}
 }
 
-func TestCodexSyntheticExtractCostMatchesParse(t *testing.T) {
-	out := readFixture(t, "codex", "synthetic", "success.jsonl")
+func TestCodexExtractCostMatchesParse(t *testing.T) {
+	out := readFixture(t, "codex", "0.154.0", "success.jsonl")
 	cost, in, outTok := CodexProvider{}.ExtractCost(out)
 	res := CodexProvider{}.Parse(0, out)
 	if cost != res.CostUSD || in != res.TokensIn || outTok != res.TokensOut {
@@ -108,24 +108,22 @@ func TestCodexSyntheticExtractCostMatchesParse(t *testing.T) {
 	}
 }
 
-func TestCodexSyntheticParseAuthError(t *testing.T) {
-	out := readFixture(t, "codex", "synthetic", "auth-error.jsonl")
+func TestCodexParseRealAuthError(t *testing.T) {
+	out := readFixture(t, "codex", "0.154.0", "auth-error.jsonl")
 	res := CodexProvider{}.Parse(1, out)
 
 	if res.Success {
 		t.Fatal("want failure")
 	}
-	// The message comes from the item.completed error, which precedes
-	// turn.failed in the stream.
-	if res.ErrorMessage != "OpenAI API auth expired; run codex auth" {
-		t.Errorf("ErrorMessage = %q", res.ErrorMessage)
+	// A real 401 arrives as a reconnect notice, not as a tidy "auth expired":
+	// the CLI retries the websocket five times and the first error event is
+	// the first of those retries.
+	if !strings.Contains(res.ErrorMessage, "401 Unauthorized") {
+		t.Errorf("ErrorMessage = %q, want it to carry the 401", res.ErrorMessage)
 	}
-	// This assertion used to pin a gap — "auth expired" matched no permission
-	// marker, so an expired login was retried like a transient blip — with a
-	// tripwire saying to update the notes if it ever started saying
-	// permission. #117 added the marker, naming codex in the comment, so the
-	// tripwire fired exactly as designed while this adapter sat on its branch.
-	// An expired login is now a permission failure, which is not retried.
+	// Classified from the status code and the word "Unauthorized", not from
+	// the "auth expired" spelling #117 added for the synthetic fixture. Both
+	// reach the same verdict, which is the point of having markers and codes.
 	if got := Classify(res); got != FailurePermission {
 		t.Errorf("Classify = %q, want %q", got, FailurePermission)
 	}
@@ -146,18 +144,41 @@ func TestCodexSyntheticParseRateLimit(t *testing.T) {
 	}
 }
 
-func TestCodexSyntheticParseUnknownModel(t *testing.T) {
-	out := readFixture(t, "codex", "synthetic", "unknown-model.jsonl")
+// TestCodexParseRealUnknownModel is bug 31, pinned rather than fixed.
+//
+// The synthetic fixture this replaces made an unknown model look like
+// FailureVersionDrift, which is the verdict the retry logic needs: a bad model
+// name cannot succeed on retry. The real capture does not behave that way.
+// codex emits a *metadata warning* before the 400 — "Model metadata for `X`
+// not found. Defaulting to fallback metadata" — and since the parser reports
+// the first error-ish event, that warning is what Parse surfaces and what
+// Classify reads. It matches no drift marker, so a typo'd model name is
+// classified FailureOther and retried until the attempt budget runs out.
+//
+// Not fixed here for the same reason as opencode's twin problem: reporting a
+// different event, or adding a marker, changes retry behaviour for every
+// backend and belongs in its own change with its own argument. See
+// docs/brainstorm/go-migration-notes/sonnet-2.md.
+func TestCodexParseRealUnknownModel(t *testing.T) {
+	out := readFixture(t, "codex", "0.154.0", "unknown-model.jsonl")
 	res := CodexProvider{}.Parse(1, out)
 
 	if res.Success {
 		t.Fatal("want failure")
 	}
-	if got := Classify(res); got != FailureVersionDrift {
-		t.Errorf("Classify = %q, want %q", got, FailureVersionDrift)
+	if !strings.Contains(res.ErrorMessage, "Model metadata for") {
+		t.Errorf("ErrorMessage = %q, want the metadata warning codex emits first",
+			res.ErrorMessage)
 	}
-	if !IsVersionDrift(res) {
-		t.Error("IsVersionDrift must agree with Classify")
+	if got := Classify(res); got != FailureOther {
+		t.Errorf("Classify = %q, want %q — if this now says version_drift, "+
+			"bug 31 was fixed and the note needs closing", got, FailureOther)
+	}
+
+	// The sentence that would have classified correctly is in the stream, one
+	// event later. Asserting it here keeps the claim above checkable.
+	if !strings.Contains(string(out), "model is not supported") {
+		t.Error("the real 400 is no longer in the fixture; bug 31's evidence is gone")
 	}
 }
 
@@ -179,8 +200,8 @@ func TestCodexSyntheticNonFatalWarning(t *testing.T) {
 // TestCodexSyntheticParseTruncated proves a half-written final line costs only
 // itself: the events before it still parse, and the run fails because the
 // terminal turn.completed was in the line that got cut.
-func TestCodexSyntheticParseTruncated(t *testing.T) {
-	out := readFixture(t, "codex", "synthetic", "truncated.jsonl")
+func TestCodexParseRealTruncated(t *testing.T) {
+	out := readFixture(t, "codex", "0.154.0", "truncated.jsonl")
 	res := CodexProvider{}.Parse(0, out)
 
 	if res.Success {
