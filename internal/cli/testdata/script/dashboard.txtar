@@ -44,3 +44,13 @@ stderr 'not a port'
 # ---- a project that is not a project ---------------------------------------
 ! exec orch dashboard --project-root nowhere --project-id nowhere
 stderr 'missing tasks.json'
+
+# ---- --tunnel needs a tunnel to be configured ------------------------------
+# The fixture has no `tunnel:` block, so the flag has nothing to start. It
+# says so instead of serving a dashboard whose tunnel panel would never work.
+! exec orch dashboard --project-root proj --project-id proj --tunnel
+stderr 'tunnel.enabled'
+
+# ---- and it is named in the help -------------------------------------------
+exec orch dashboard --help
+stdout '--tunnel'

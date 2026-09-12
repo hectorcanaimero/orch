@@ -440,3 +440,27 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   into `$WORK/proj` for every script, which is why an `orch init proj` at the
   top of a new txtar fails with a conflict). They are not interchangeable and
   the names do not say so.
+
+- **PATH is consulted only after all three tunnel gates pass, and that order
+  is the decision.** `/api/tunnel/capabilities` answers 200 to anyone — it has
+  to, because the SPA decides whether to draw the tunnel panel before it has
+  asked anybody for a token — so what it discloses is the whole of its
+  security surface. The gates run config → operator profile → loopback host →
+  binary on PATH, and the reported `reason` is the FIRST failure, never a
+  list.
+
+  Checking PATH first would be cheaper and would tell a stakeholder on a
+  shared URL whether the box has `autossh` installed, before establishing they
+  may ask anything at all. Python's TUN-4 states the order; the Go port folds
+  it into one function (`tunnel.EvaluateCapabilities` plus the caller's own
+  `if` for the binary) so a future handler cannot reorder it by accident. The
+  table test fails every row on a different gate with everything after it also
+  failing, which is what catches a reordering.
+
+- **`/api/tunnel/{start,stop,logs}` are not ported.** G5.5 made the operator
+  SPA read-only, so the three POST/stream routes have no consumer, and this
+  server takes a read-only `StateReader` by construction. The lever moved to
+  `orch dashboard --tunnel`, which is the safer shape anyway: the person
+  holding it is the person who started the process. It refuses under any
+  profile but `operator` — raising a public URL from a dashboard whose own
+  gate says the operator is absent is not something to do quietly.

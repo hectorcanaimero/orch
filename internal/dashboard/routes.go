@@ -24,7 +24,8 @@ func (s *Server) routes() []route {
 	}
 	out = append(out, s.readRoutes()...)
 	out = append(out, s.metricRoutes()...)
-	return append(out, s.sprintRoutes()...)
+	out = append(out, s.sprintRoutes()...)
+	return append(out, s.tunnelRoutes()...)
 }
 
 // whoamiPayload is `/api/whoami`'s body.

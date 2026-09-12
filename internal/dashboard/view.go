@@ -29,6 +29,11 @@ import (
 // "this project has no tasks".
 var errNoBackend = errors.New("dashboard: no state backend")
 
+// errNoTunnelManager is `tunnel.enabled: true` with no manager wired — a
+// wiring bug rather than a config state, which is why it is a 500 and not the
+// 404 a disabled tunnel gets.
+var errNoTunnelManager = errors.New("dashboard: tunnel enabled but no manager")
+
 type projectView struct {
 	Tasks            []model.Task
 	Summary          graph.Summary
