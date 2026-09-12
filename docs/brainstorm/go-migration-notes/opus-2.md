@@ -160,3 +160,58 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
      Asking `gh` about an empty URL is an error every tick, forever, and the
      filter that should prevent it lives in SQL where this code cannot see
      it.
+
+## G3.3 (b) — turning worktree mode, auto-PR and CI on
+
+Three things found by **running** the chain end to end against a real bare git
+remote and a fake `gh`, not by reading it. Two are mine; the third is a
+question for Python.
+
+- **The database never learned a task was in-progress.** Mine, from G3.1.
+  `spawnOne` marked the in-memory queue and nothing else, so a running agent
+  showed as `todo` to `orch status`, to the dashboard, and to any other orch
+  sharing the project. Python does this by shelling `scripts/task-start.sh`,
+  which shells straight back into `orch task-status <id> in-progress`; the Go
+  port goes to the backend directly, which is the same write without the round
+  trip and is the source of truth since F-12. Caught because the first real
+  run ended with the task reading `todo` while its PR was open.
+
+- **The CI poller marked the queue done but not the database.** Also mine,
+  from the poller PR. `ciSucceeded` wrote `ci_status = success` and marked the
+  queue, so the run behaved correctly and `orch status` showed the task
+  in-progress forever afterwards. Python's queue mirrors every mark into the
+  backend (F-8's `_persist`); the Go queue deliberately does not, and the
+  scheduler owns that write — which means every place that finishes a task has
+  to do it, and this one did not. Both now go through a transition.
+
+  The pair is worth stating as one lesson: **splitting "the run's view" from
+  "the stored truth" is right, and it makes every new terminal path a place to
+  forget the second half.** Both were invisible to the unit tests, which
+  assert on the queue, and obvious the moment a real run's output was read
+  back with `orch tasks --json`.
+
+- **A run that opens a PR exits before CI is ever polled.** Not fixed, and a
+  question rather than a bug report, because Python does the same and it may
+  be deliberate. The terminate condition is "nothing in flight, nothing ready,
+  no retries pending": a task waiting on CI is none of those, so the loop ends
+  the moment the last PR is opened. The task stays `in-progress` with
+  `ci_status = pending`, and the poll happens on the *next* `orch run` — one
+  poll per invocation, so a green CI needs a second run to be noticed and a
+  red one needs a third to be retried.
+
+  Verified: first run opens the PR and exits 0 with zero `gh pr checks` calls;
+  a second run polls once and finishes the task. That is what
+  `run-worktree-pr.txtar` asserts, because it is what both binaries do.
+
+  The alternative — keeping the run alive while any task waits on CI — needs a
+  timeout, or `orch run` hangs whenever CI never reports. That is a product
+  decision, not a port decision, so it is recorded rather than taken.
+
+- **Unverified assumption shared by both binaries**: `internal/vcs` and
+  `orchestrator/vcs/github.py` both compare `gh pr checks --json
+  state,conclusion` output against **lowercase** keys (`success`, `failure`,
+  `in_progress`). If a real `gh` emits upper-case values, both read every
+  check as pending and no CI ever resolves. Not verifiable here — `gh` is
+  installed on this machine but not authenticated, so its real output cannot
+  be captured. Flagged rather than guessed: inventing the casing is exactly
+  the fixture that passes while the real CLI breaks.

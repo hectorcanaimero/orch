@@ -12,6 +12,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/providers"
+	"github.com/hectorcanaimero/orch/internal/vcs"
 )
 
 // Mode is how much the operator is asked. Port of orch.py's `--mode`.
@@ -74,6 +75,13 @@ type SchedulerOptions struct {
 	Cwd string
 	// RunID ties every event and dispatch row to this run.
 	RunID string
+
+	// WorktreeMode gives each task its own git worktree and branch (F-2).
+	WorktreeMode bool
+	// BaseBranch is what a worktree branches from and what a PR targets.
+	BaseBranch string
+	// AutoPR opens a pull request after a successful push (F-4).
+	AutoPR bool
 }
 
 // Scheduler decides what to dispatch and starts it. Port of orch.py's
@@ -98,8 +106,16 @@ type Scheduler struct {
 	// which is how the concurrency tests run without a database.
 	Backend RecordBackend
 	// Worktree isolates each task in its own git worktree when the project
-	// asks for it. Nil turns the whole thing off.
-	Worktree Worktree
+	// asks for it. Nil turns the whole thing off, and the task runs in the
+	// project root as it did before F-2.
+	Worktree WorktreeManager
+	// VCS opens the pull request after a successful push. Nil, or AutoPR
+	// off, means no PR is opened and the task finishes normally.
+	VCS vcs.Provider
+	// CIRecorder writes the PR URL, which is also what puts the task into
+	// the CI poller's filter. Without it a PR would be opened and never
+	// watched, so openPR refuses to leave one in that state.
+	CIRecorder PRRecorder
 	// Log receives the operator-facing lines. Nil uses slog's default.
 	Log *slog.Logger
 
@@ -130,6 +146,14 @@ type Scheduler struct {
 	spentUSD map[string]float64
 	// now is the clock, injectable so the backoff tests do not wait.
 	now func() time.Time
+}
+
+// PRRecorder writes a task's pull request URL. Separate from RecordBackend
+// because only the auto-PR path needs it, and state.Backend's SetTaskPR moves
+// ci_status to pending in the same write — the thing that makes the CI poller
+// notice the task at all.
+type PRRecorder interface {
+	SetTaskPR(ctx context.Context, taskID, prURL string) error
 }
 
 // RecordBackend is the slice of state.Backend the engine writes through.
@@ -411,6 +435,24 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		return false, nil
 	}
 
+	// The worktree is created before the prompt is rendered, because the
+	// child runs IN it: the prompt's "Working dir:" line has to name the
+	// place the agent will actually be. A failure here blocks the task —
+	// dispatching into the project root instead would let one task's agent
+	// edit another's files, which is the whole thing worktree mode exists to
+	// prevent.
+	workdir := s.Opts.Cwd
+	if s.Worktree != nil && s.Opts.WorktreeMode {
+		created, err := s.Worktree.Create(ctx, task.ID, s.baseBranch())
+		if err != nil {
+			release()
+			s.logger().Error("creating the worktree failed", "task", task.ID, "err", err)
+			s.blockAtDispatch(ctx, task, route, fmt.Sprintf("worktree create failed: %v", err))
+			return false, nil
+		}
+		workdir = created
+	}
+
 	// Render the prompt and write it before forking. The provider pipes this
 	// file to the child's stdin, so a dispatch without it is a CLI with no
 	// instructions — Python renders it at the same point, for the same
@@ -418,7 +460,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 	promptPath, warnings, err := prompt.Write(task, s.completedDeps(task), task.SpecRef, prompt.Options{
 		RunID:       s.Opts.RunID,
 		StateDir:    s.Opts.StateDir,
-		ProjectRoot: s.Opts.Cwd,
+		ProjectRoot: workdir,
 		SpecRoot:    s.Opts.Cfg.SpecRoot,
 	})
 	if err != nil {
@@ -436,13 +478,13 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		Req: providers.Request{
 			TaskID:    task.ID,
 			Route:     route,
-			Cwd:       s.Opts.Cwd,
+			Cwd:       workdir,
 			SessionID: providers.NewSessionID(),
 			BudgetUSD: s.Opts.BudgetUSD,
 		},
 		PromptPath: promptPath,
 		LogPath:    LogPathFor(s.Opts.StateDir, task.ID),
-		Cwd:        s.Opts.Cwd,
+		Cwd:        workdir,
 		Timeout:    TimeoutFor(task.EstimateHours, s.Opts.TimeoutMultiplier),
 	}
 
@@ -464,6 +506,20 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 
 	if err := s.Queue.MarkInFlight(task.ID); err != nil {
 		s.logger().Error("mark in-flight failed", "task", task.ID, "err", err)
+	}
+	// And in the database, which is what `orch status` and the dashboard
+	// read. Python does this by shelling `scripts/task-start.sh`, which
+	// shells straight back into `orch task-status <id> in-progress`; going
+	// to the backend directly is the same write without the round trip, and
+	// it is the source of truth since F-12.
+	//
+	// Without it a running agent shows as `todo` to everyone outside this
+	// process, and a crashed run leaves no task-level trace to reconcile.
+	if s.Backend != nil {
+		if err := s.Backend.Transition(ctx, task.ID, model.StatusInProgress,
+			"dispatched to "+string(route.Backend)+"/"+route.CLIModel); err != nil {
+			s.logger().Error("recording in-progress failed", "task", task.ID, "err", err)
+		}
 	}
 
 	s.inFlight[sp.PID] = &InFlight{
@@ -598,6 +654,15 @@ func (s *Scheduler) inFlightIDs() map[string]bool {
 		ids[e.Task.ID] = true
 	}
 	return ids
+}
+
+// baseBranch is what a worktree branches from and what a PR targets.
+// Python's default is "main".
+func (s *Scheduler) baseBranch() string {
+	if s.Opts.BaseBranch == "" {
+		return "main"
+	}
+	return s.Opts.BaseBranch
 }
 
 func (s *Scheduler) logger() *slog.Logger {

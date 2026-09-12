@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -14,13 +16,9 @@ type completion struct {
 	outcome Outcome
 }
 
-// Worktree is the slice of internal/worktree the reaper drives. An interface
-// so the reaper is testable without git, and so the ordering contract has one
-// place to be asserted.
-//
-// The ordering is the Caller contract in internal/worktree's package comment,
-// which that package cannot enforce itself because it has no notion of a
-// dispatch's outcome:
+// The worktree ordering the reaper honours is the Caller contract in
+// internal/worktree's package comment, which that package cannot enforce
+// itself because it has no notion of a dispatch's outcome:
 //
 //  1. on a finished task, CommitPending then Push then Remove, and Push only
 //     when the task succeeded — a Push failure must not skip Remove and must
@@ -28,12 +26,8 @@ type completion struct {
 //  2. RemoveAll after the drain wait completes, never from inside a signal
 //     handler, because cleanup racing a still-draining task would delete a
 //     worktree a backend process is still writing into.
-type Worktree interface {
-	CommitPending(ctx context.Context, taskID string) error
-	Push(ctx context.Context, taskID string) error
-	Remove(ctx context.Context, taskID string) error
-	RemoveAll(ctx context.Context) error
-}
+//
+// The interface itself is WorktreeManager, in worktreeadapter.go.
 
 // supervise waits for one child and posts its outcome. Started by spawnOne
 // for every successful spawn.
@@ -111,7 +105,7 @@ func (s *Scheduler) finish(ctx context.Context, c completion) error {
 		}
 	}
 
-	s.tidyWorktree(ctx, entry, out)
+	prOpened := s.tidyWorktree(ctx, entry, out)
 
 	// Capacity comes back before the verdict, so a retry queued below can be
 	// picked up by the very next refill rather than waiting a tick.
@@ -119,15 +113,24 @@ func (s *Scheduler) finish(ctx context.Context, c completion) error {
 	entry.Lock.Release()
 
 	if out.Result.Success {
+		if prOpened {
+			// The work is pushed and under review. The CI poller decides
+			// whether it is done; marking it now would finish a task whose
+			// tests have not run.
+			s.logger().Info("waiting on CI", "task", entry.Task.ID)
+			return nil
+		}
 		return s.markDone(ctx, entry)
 	}
 	return s.handleFailure(ctx, entry, out)
 }
 
 // tidyWorktree runs the Caller contract from internal/worktree.
-func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outcome) {
+// tidyWorktree returns whether it opened a PR — a task waiting on CI is not
+// finished, so the caller must not mark it done yet.
+func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outcome) (prOpened bool) {
 	if s.Worktree == nil {
-		return
+		return false
 	}
 	id := entry.Task.ID
 
@@ -141,10 +144,16 @@ func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outco
 	// failure is logged and does NOT downgrade the task: the work is
 	// committed locally either way, and failing a finished task over a
 	// broken remote would be the worse trade.
+	//
+	// The PR is opened only after the push actually succeeded. Opening one
+	// from a branch that never reached the remote would produce a PR that
+	// cannot be reviewed and a task waiting on CI that will never run.
 	if out.Result.Success {
 		if err := s.Worktree.Push(ctx, id); err != nil {
 			s.logger().Error("worktree: push failed; the task still counts as done",
 				"task", id, "err", err)
+		} else {
+			prOpened = s.openPR(ctx, entry)
 		}
 	}
 
@@ -152,6 +161,61 @@ func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outco
 	if err := s.Worktree.Remove(ctx, id); err != nil {
 		s.logger().Error("worktree: remove failed", "task", id, "err", err)
 	}
+	return prOpened
+}
+
+// openPR opens a pull request for a task whose work is pushed, and records
+// the URL so the CI poller starts watching it.
+//
+// Reports whether a PR is now open. Every failure answers false: without a
+// recorded PR URL nothing would ever poll it, so a task that thinks it is
+// waiting on CI would wait forever. Better to finish it normally.
+func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) bool {
+	if s.VCS == nil || !s.Opts.AutoPR {
+		return false
+	}
+	task := entry.Task
+
+	spec := task.SpecRef
+	if spec == "" {
+		spec = "n/a"
+	}
+	title := task.Title
+	if title == "" {
+		title = task.ID
+	}
+	body := strings.TrimSpace(fmt.Sprintf("Task: `%s`\nSpec: %s\n\n%s", task.ID, spec, task.Reason))
+
+	prURL, err := s.VCS.CreatePR(s.Worktree.BranchName(task.ID), s.Opts.BaseBranch, title, body)
+	if err != nil {
+		s.logger().Error("opening the PR failed; finishing the task without one",
+			"task", task.ID, "err", err)
+		return false
+	}
+	if prURL == "" {
+		// The CLI ran and produced no PR — Python's None. Not an error, and
+		// not something to wait on either.
+		s.logger().Warn("no PR was opened; finishing the task without one", "task", task.ID)
+		return false
+	}
+
+	if s.CIRecorder == nil {
+		s.logger().Error("a PR was opened with nowhere to record it; CI will not be polled",
+			"task", task.ID, "pr", prURL)
+		return false
+	}
+	// SetTaskPR also moves ci_status to pending, which is what puts the task
+	// into the poller's filter. Without it the PR is open and nobody watches.
+	if err := s.CIRecorder.SetTaskPR(ctx, task.ID, prURL); err != nil {
+		s.logger().Error("recording the PR failed; CI will not be polled",
+			"task", task.ID, "pr", prURL, "err", err)
+		return false
+	}
+	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventPRCreated, task.ID,
+		string(entry.Route.Backend), map[string]any{"pr_url": prURL}); err != nil {
+		s.logger().Error("recording the pr_created event failed", "task", task.ID, "err", err)
+	}
+	return true
 }
 
 // markDone finishes a successful task.
