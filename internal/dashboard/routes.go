@@ -18,10 +18,11 @@ import (
 // can reach it, which is why they are written next to the pattern rather than
 // derived from it.
 func (s *Server) routes() []route {
-	return []route{
+	out := []route{
 		{pattern: "GET /api/whoami", name: "api_whoami", handler: s.handleWhoami},
 		{pattern: "GET /api/config/status", name: "api_config_status", handler: s.handleConfigStatus},
 	}
+	return append(out, s.readRoutes()...)
 }
 
 // whoamiPayload is `/api/whoami`'s body.

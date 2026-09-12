@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/state"
 )
 
 // Server is the dashboard's HTTP surface.
@@ -50,10 +51,15 @@ type Server struct {
 // the property the profile guard rests on. CHECKLIST rule 13 says the same
 // thing about the package; this says it in the type.
 type StateReader interface {
-	// Deliberately empty for now. (a) wires the skeleton and the two routes
-	// that need no state; the read endpoints arrive in (b) and each adds the
-	// one method it uses, so the interface grows with visible callers rather
-	// than being guessed at up front.
+	// Tasks is the live status of every task, which every task-shaped view
+	// overlays on tasks.json. Filtered queries exist on the backend; the
+	// dashboard filters in memory because it needs the unfiltered totals in
+	// the same response.
+	Tasks(ctx context.Context, filter state.TaskFilter) ([]state.TaskRuntime, error)
+	// AllEvents is the event log across every task, oldest first. n <= 0
+	// means all of it. The log view reads the tail; the per-task figures
+	// (hours spent, last updated) are derived from the whole thing.
+	AllEvents(ctx context.Context, n int) ([]state.Event, error)
 }
 
 // Options are what New needs beyond the config.

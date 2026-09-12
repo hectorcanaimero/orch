@@ -302,3 +302,40 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   next person can re-run. It is what proved #97 is shut: the shell, the hashed
   bundle and the root-level public files all answer 200 with no token while
   `/api/config/status` answers 401 in the same server.
+
+- **Two Python functions that look total and are not.** Both surfaced while
+  porting `metrics.py`, and both would have passed a test written from the
+  docstring.
+
+  `critical_path` breaks ties by DICT INSERTION ORDER. `max(dist, key=…)`
+  returns the first maximal key, `dist` is filled in the order a LIFO stack
+  pops, and the stack is seeded in tasks order. Two branches of equal weight —
+  which is what an un-estimated project of parallel work is made of — resolve
+  to whichever was declared LAST. The Go port reproduces the pop order and
+  keeps its own insertion list, because a Go map would have decided it at
+  random: a test that passes four times out of five is worse than one that
+  fails. `testdata/make-analytics-golden.py` has the same graph declared in
+  both orders and Python answers differently for each; that pair is the test.
+
+  `parallelizable_tasks` iterates `by_id.values()`, so **on a duplicate id only
+  the last row is considered at all**. With `[A todo, A done, B deps=[A]]`
+  Python answers `["B"]`: B's dependency is satisfied by the second A, and the
+  first A — the row a reader would expect to see offered — is not evaluated.
+  Verified against Python rather than assumed; it is in the Go tests as
+  `TestDuplicateIDsResolveToTheLastOne`.
+
+- **`human_hours_by_task` raises on mixed timestamp forms.** `_parse_ts`
+  returns a naive datetime for a timestamp with no offset and an aware one for
+  a `Z`-suffixed one, and `(term_ts - pending_dispatch_ts)` on one of each is
+  a `TypeError` that escapes the function into whatever endpoint called it —
+  `/api/tasks` among them. Both forms are in the wild: the SQLite rows carry
+  `Z`, some imported JSONL does not. The Go port reads the offsetless form as
+  UTC, which is what `_parse_ts`'s own comment intends, and answers instead of
+  failing. A deliberate divergence, not an oversight.
+
+- **`round(x, 3)` is not `math.Round(x*1000)/1000`.** CPython rounds the exact
+  binary value, correctly, half to even; the arithmetic form rounds half away
+  from zero AND rounds an already-scaled value, so it is wrong twice.
+  `strconv.FormatFloat(v, 'f', 3, 64)` parsed back is the correct form, and it
+  is what `project.round3` and `dashboard.round1` do. Worth knowing before the
+  next port reaches for the multiply.

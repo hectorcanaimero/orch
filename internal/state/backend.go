@@ -67,6 +67,9 @@ type Backend interface {
 	// Events returns the last n events for a task, oldest first. n <= 0
 	// means every event.
 	Events(ctx context.Context, taskID string, n int) ([]Event, error)
+	// AllEvents returns events across every task, oldest first. n <= 0 means
+	// every event; n > 0 returns the newest n in chronological order.
+	AllEvents(ctx context.Context, n int) ([]Event, error)
 
 	// SpendSince returns one backend's spend rows newer than `since`,
 	// oldest first — the rolling window the budget gate reads.
