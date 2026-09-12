@@ -121,6 +121,7 @@ To keep context small, do not proactively call these MCP servers or skills on or
 
 ## Gotchas already learned
 
+- `go test ./...` fails locally in `internal/dashboard` until you run `make web` once: G5.1 embeds the built SPA and `TestSPARequiresABuild` says so on purpose. CI runs `make web` before `make test`, so it never sees this.
 - `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. The dashboard itself is the React SPA now (server-rendered Jinja templates are gone) — `jinja2` is no longer a runtime dependency.
 - Project templates (`orchestrator/templates/projects/*/tasks.json.tmpl`) must use `Task.from_json`'s camelCase keys (`estimateHours`, `specRef`) — snake_case silently defaults to `0.0`/`""` instead of erroring (see `docs/brainstorm/go-migration-notes.md`).
 - `orch dashboard` ships templates + `pricing.yaml` + `dashboard.yaml` + `static/` inside the wheel (see `pyproject.toml [tool.setuptools.package-data]`).
