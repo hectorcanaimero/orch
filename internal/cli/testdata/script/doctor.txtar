@@ -24,3 +24,31 @@ stdout '"project":\{"id":"parity-project"'
 stdout '"backend":"sqlite"'
 stdout '"name":"mcp\.config","status":"warn"'
 stdout '"summary":\{"ok":[0-9]+,"warn":[0-9]+,"error":[0-9]+,"skip":[0-9]+\}'
+
+# A malformed config.yaml: config.Load fails, and that failure becomes its
+# own `config.parse` error check rather than aborting before any other
+# check runs (doctor.go:70-79's tolerant-load branch — this specific path
+# had no test until Gemini flagged it on #183: "new behaviour without a
+# test", rule 8). Seen red first: with the `else` branch that appends this
+# check deleted, this assertion fails (no `config.parse` line at all,
+# `orch doctor` instead runs against config.Defaults() silently).
+! exec orch doctor --json --project-root badcfg --project-id badcfg
+stdout '"name":"config\.parse","status":"error","detail":"config load failed:'
+stdout '"exit_code":2'
+
+# Same for a malformed model_router.yaml: router.Load fails -> its own
+# `router.parse` error check (doctor.go:82-90). Also unseen by any test
+# before this PR — same rule-8 finding, same "seen red without the else
+# branch" verification.
+! exec orch doctor --json --project-root badrouter --project-id badrouter
+stdout '"name":"router\.parse","status":"error","detail":"router load failed:'
+stdout '"exit_code":2'
+
+-- badcfg/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- badcfg/.orchestrator/config.yaml --
+concurrency: [this is not a mapping
+-- badrouter/tasks.json --
+{"meta":{},"phases":[],"tasks":[]}
+-- badrouter/.orchestrator/model_router.yaml --
+claude/claude-sonnet-4-6: [this is not a mapping
