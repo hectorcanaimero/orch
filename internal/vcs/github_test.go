@@ -2,6 +2,8 @@ package vcs
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -71,10 +73,32 @@ func TestGitHubCreatePRReturnsCLIErrorWhenBinaryMissing(t *testing.T) {
 }
 
 // ---- CIStatus -----------------------------------------------------------
+//
+// These used to feed shapes real `gh` never emits —
+// `{"state":"completed","conclusion":"success"}` — written from what the
+// Python code reads rather than captured from the CLI. They passed while the
+// command itself could not run: `gh pr checks` has no `conclusion` field, so
+// asking for one is a usage error and gh exits non-zero. The fixtures below
+// are real, from `gh 2.100.0` against merged PRs of this repository, in
+// testdata/gh/2.100.0/.
 
+// realChecks loads one of the captured payloads.
+func realChecks(t *testing.T, name string) string {
+	t.Helper()
+	// #nosec G304 -- a constant name from this file, under testdata.
+	raw, err := os.ReadFile(filepath.Join("testdata", "gh", "2.100.0", name))
+	if err != nil {
+		t.Fatalf("read the captured fixture: %v", err)
+	}
+	return string(raw)
+}
+
+// TestGitHubCIStatusSuccess uses a real all-green PR. Note the UPPERCASE
+// `state`: the old lowercase comparison would have missed it even if the
+// command had worked.
 func TestGitHubCIStatusSuccess(t *testing.T) {
 	withFakeBin(t)
-	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[{"state":"completed","conclusion":"success"}]`)
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", realChecks(t, "pr-checks-all-pass.json"))
 	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
 	if err != nil {
 		t.Fatal(err)
@@ -84,42 +108,134 @@ func TestGitHubCIStatusSuccess(t *testing.T) {
 	}
 }
 
-func TestGitHubCIStatusFailure(t *testing.T) {
+// A real PR carrying a NEUTRAL check alongside eight SUCCESSes. Python maps
+// `neutral` to success, so the whole PR is success — and this is the fixture
+// that proves the mapping is reached at all, since every check on it is
+// spelled in capitals.
+func TestGitHubCIStatusNeutralAmongSuccessesIsSuccess(t *testing.T) {
 	withFakeBin(t)
-	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[{"state":"completed","conclusion":"failure"}]`)
+	body := realChecks(t, "pr-checks-with-neutral.json")
+	if !strings.Contains(body, `"NEUTRAL"`) {
+		t.Fatalf("the fixture no longer contains a NEUTRAL check; it is the point of this test")
+	}
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", body)
 	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != CIFailure {
-		t.Errorf("got %q, want failure", got)
+	if got != CISuccess {
+		t.Errorf("got %q, want success", got)
 	}
 }
 
-func TestGitHubCIStatusPendingWhenInProgress(t *testing.T) {
+// The uppercase vocabulary, one state at a time.
+//
+// Each row is a state `gh pr checks` can put in that field — GitHub's own
+// conclusion names once a check finishes, its status names before that. The
+// lowercase spellings are here too because the maps are keyed that way and
+// normalising must not depend on which case arrives.
+func TestGitHubCIStatusMapsGitHubsUppercaseStates(t *testing.T) {
+	cases := []struct {
+		state string
+		want  CIState
+	}{
+		{"SUCCESS", CISuccess},
+		{"NEUTRAL", CISuccess},
+		{"SKIPPED", CISuccess},
+		{"FAILURE", CIFailure},
+		{"TIMED_OUT", CIFailure},
+		{"CANCELLED", CIFailure},
+		{"ACTION_REQUIRED", CIFailure},
+		{"STALE", CIFailure},
+		{"IN_PROGRESS", CIPending},
+		{"QUEUED", CIPending},
+		{"WAITING", CIPending},
+		{"REQUESTED", CIPending},
+		{"PENDING", CIPending},
+		{"EXPECTED", CIPending},
+		// A state nobody has seen is pending, not a guess in either
+		// direction: orch waits rather than declaring a run green or red on
+		// a word it does not know.
+		{"SOMETHING_NEW", CIPending},
+		// Case does not decide the answer.
+		{"success", CISuccess},
+		{"failure", CIFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state, func(t *testing.T) {
+			withFakeBin(t)
+			t.Setenv("FAKE_GH_CHECKS_STDOUT",
+				`[{"name":"build","state":"`+tc.state+`","bucket":"pass"}]`)
+			got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("state %q -> %q, want %q", tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitHubCIStatusAsksForFieldsThatExist is the regression that matters, and
+// it asserts on the ARGV rather than on the answer.
+//
+// The bug was not a wrong mapping — it was asking gh for a field it does not
+// have, so the command failed and every answer became "pending" forever. A
+// test that only checked the returned state could not tell that apart from a
+// run still in progress, which is exactly why it went unnoticed in both
+// binaries.
+func TestGitHubCIStatusAsksForFieldsThatExist(t *testing.T) {
 	withFakeBin(t)
-	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[{"state":"in_progress","conclusion":""}]`)
-	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
-	if err != nil {
+	logPath := ghLog(t)
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", realChecks(t, "pr-checks-all-pass.json"))
+
+	if _, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1"); err != nil {
 		t.Fatal(err)
 	}
-	if got != CIPending {
-		t.Errorf("got %q, want pending", got)
+	argv, err := os.ReadFile(logPath) // #nosec G304 -- a path ghLog made in t.TempDir()
+	if err != nil {
+		t.Fatalf("read the argv log: %v", err)
+	}
+	if strings.Contains(string(argv), "conclusion") {
+		t.Errorf("still asking gh for a `conclusion` field it does not have:\n%s", argv)
+	}
+	if !strings.Contains(string(argv), "state") {
+		t.Errorf("not asking for `state`, which is the field that answers:\n%s", argv)
 	}
 }
 
-func TestGitHubCIStatusPendingOnGhError(t *testing.T) {
+// A gh that fails now REPORTS, where it used to answer "pending" and say
+// nothing. Swallowing it is what hid a command that could never succeed: a
+// run whose CI never resolves looked exactly like one still waiting.
+func TestGitHubCIStatusReportsAGhFailure(t *testing.T) {
 	withFakeBin(t)
 	t.Setenv("FAKE_GH_CHECKS_EXIT", "1")
 	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Error("a failing gh was reported as a clean pending")
 	}
+	// Still pending as the state, so a caller that ignores the error keeps
+	// the safe answer rather than a zero value.
 	if got != CIPending {
-		t.Errorf("got %q, want pending", got)
+		t.Errorf("got %q, want pending alongside the error", got)
 	}
 }
 
+func TestGitHubCIStatusReportsMalformedJSON(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", `not json`)
+	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
+	if err == nil {
+		t.Error("unparseable output was reported as a clean pending")
+	}
+	if got != CIPending {
+		t.Errorf("got %q, want pending alongside the error", got)
+	}
+}
+
+// No checks yet is NOT an error: a PR opened a second ago has none, and that
+// is the one case where "pending, nothing to report" is the whole truth.
 func TestGitHubCIStatusPendingOnEmptyChecks(t *testing.T) {
 	withFakeBin(t)
 	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[]`)
@@ -129,20 +245,6 @@ func TestGitHubCIStatusPendingOnEmptyChecks(t *testing.T) {
 	}
 	if got != CIPending {
 		t.Errorf("got %q, want pending", got)
-	}
-}
-
-func TestGitHubCIStatusSkippedConclusionMapsToSuccess(t *testing.T) {
-	// Pins the documented Python behavior (see go-migration-notes.md): a
-	// "skipped" conclusion is success, not a distinct third state.
-	withFakeBin(t)
-	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[{"state":"completed","conclusion":"skipped"}]`)
-	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != CISuccess {
-		t.Errorf("got %q, want success", got)
 	}
 }
 

@@ -158,17 +158,11 @@ func TestRunIDFromURLReturnsEmptyWithNoDigits(t *testing.T) {
 // ---- Malformed JSON is treated as pending/empty, matching Python's
 // json.JSONDecodeError handling. ------------------------------------------
 
-func TestGitHubCIStatusPendingOnMalformedJSON(t *testing.T) {
-	withFakeBin(t)
-	t.Setenv("FAKE_GH_CHECKS_STDOUT", "not json")
-	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != CIPending {
-		t.Errorf("got %q, want pending", got)
-	}
-}
+// GitHub's half of this pair moved to github_test.go as
+// TestGitHubCIStatusReportsMalformedJSON: unparseable output is now an error
+// rather than a silent "pending", because swallowing it is what hid a
+// `gh pr checks` invocation that could never succeed. GitLab's is unchanged
+// below — its own read has not been captured against a real `glab` yet.
 
 func TestGitLabCIStatusPendingOnMalformedJSON(t *testing.T) {
 	withFakeBin(t)

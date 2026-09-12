@@ -907,3 +907,73 @@ question for Python.
   is their file and their change, and a comment that contradicts the code under
   it is worth one message. Same class as the `BudgetReporter` comment that said
   "aliased" when it was a copy — the fix there was to make the comment true.
+
+## Bug 27 — `gh pr checks --json state,conclusion`, a command that could never succeed
+
+One number for both halves, because the outer bug made the inner one
+unreachable: the command never ran, so the mapping never executed.
+
+- **The CI-polling feature has never worked, in either binary.** `gh pr checks`
+  has **no `conclusion` field**. Asking for one is a usage error, so gh exits
+  non-zero and prints the field list it does have:
+
+  ```
+  $ gh pr checks 209 --json state,conclusion
+  Unknown JSON field: "conclusion"
+  Available fields:
+    bucket, completedAt, description, event, link, name, startedAt, state, workflow
+  ```
+
+  `orchestrator/vcs/github.py:40` asks for exactly that, and on a non-zero
+  return code answers `"pending"`. Go ported it faithfully, swallow included.
+  So `get_ci_status` returns `"pending"` for every PR forever: a green CI is
+  never noticed, `vcs.ci_max_retries` never trips, `github.auto_merge` never
+  fires, and a task with a PR sits in `in-progress` until a human looks.
+
+  Annotated rather than fixed on the Python side, per the migration rule —
+  orch-98 is fixing Python after #211 lands, reusing the fixtures captured
+  here, since `test_github_vcs.py` was written from the reader in exactly the
+  same way. The Go fix is pointed: ask for `name,state,bucket`.
+
+- **The lowercase suspicion was right, and was the *second* bug, hidden behind
+  the first.** I raised it turns ago as "worth 30 seconds if `gh` is ever
+  authenticated": both binaries compare `state` against lowercase keys. Real
+  `gh` emits **`SUCCESS`, `NEUTRAL`, `IN_PROGRESS`** — uppercase. So even with
+  the field name fixed, every lookup would have missed and every answer would
+  still have been "pending". Two bugs in four lines, and the outer one made the
+  inner one untestable.
+
+  `state` is one field doing two jobs: GitHub's conclusion once a check
+  finishes, its status before that. That is why a single map lookup answers
+  both questions the ported code asks with two.
+
+- **`bucket` exists and is tempting, and is not what this maps on.** It is
+  gh's own lowercase normalisation (`pass`, `fail`, `pending`, `skipping`,
+  `cancel`) and would have avoided the case problem. It is captured in the
+  fixtures but not used: the vocabulary this package ports is GitHub's own
+  (`_CI_STATE_MAP`), and mapping on gh's editorial summary instead would mean
+  the Go and Python tables stop being comparable — the thing that makes a
+  ported table reviewable.
+
+- **The swallow is what made it invisible, and it is gone.** `if err != nil {
+  return CIPending, nil }` turns "this command cannot run" into "still
+  waiting", and those look identical to every caller and every operator. The
+  poller already logs and continues on an error (`cipoll.go`), so returning one
+  costs nothing and buys the line that says why nothing finishes. Only "no
+  checks yet" stays a silent pending — for a PR opened a second ago that is the
+  whole truth.
+
+- **The tests were written from the reader, again.** They fed
+  `{"state":"completed","conclusion":"success"}` — a shape with a field that
+  does not exist and a `state` value (`completed`) that `gh pr checks` does not
+  emit either. Green for months over a command that could not run. It is the
+  same failure as bug 24's comment fixtures and
+  `make-goldens.py`'s `dep()` helper, now three for three: **a fixture written
+  from what the code reads tests the code against itself.**
+
+  The regression test for it asserts on the **argv**, not on the returned
+  state, and that distinction is the lesson: a test that checked the answer
+  could not tell "the command failed" from "CI is still running", which is
+  precisely why nobody noticed. Real captures now live in
+  `internal/vcs/testdata/gh/2.100.0/`, version in the path because the field
+  set is gh's to change.
