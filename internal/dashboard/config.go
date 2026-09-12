@@ -17,9 +17,27 @@ import (
 // block rather than widening the shared config struct for one consumer.
 type Config struct {
 	Profile Profile
-	// Token is the shared secret a stakeholder session must present. Empty
-	// under the operator profile, where nothing is gated.
+	// Token is the shared secret from config.yaml/--token, in plaintext.
+	// Empty under the operator profile, where nothing is gated. Never
+	// itself compared against a supplied token — see TokenHash — and kept
+	// only as the source `orch dashboard` hashes when the database has no
+	// row for this project yet (see cli's newDashboardCmd).
 	Token string
+	// TokenHash is the resolved effective hash AT STARTUP: from the
+	// database (state.Backend.StakeholderToken) if this project has ever
+	// rotated one, else HashToken(Token). Consumed by Validate() and the
+	// startup banner, which both need an answer before a listener opens.
+	// NOT consulted by decide() at request time — Server resolves it fresh
+	// on every gated request instead (see server.go's expectedTokenHash),
+	// so a rotation takes effect on an already-running dashboard with no
+	// restart. This field would go stale the moment that happens, which is
+	// exactly why request handling does not read it.
+	TokenHash string
+	// TokenSource is "database" or "config.yaml" — which one produced
+	// TokenHash at startup. Empty when TokenHash is empty. Informational
+	// only: the startup banner and `orch dashboard token show` print it,
+	// nothing gates on it.
+	TokenSource string
 	// StakeholderRoutes is the allow-list, by route name or path prefix.
 	StakeholderRoutes []string
 	// Host and Port are where the server listens.
@@ -84,10 +102,11 @@ func (c Config) Validate() error {
 			"dashboard profile %q is not one of %s, %s, %s",
 			c.Profile, ProfileOperator, ProfileStakeholder, ProfileBoth)
 	}
-	if c.Profile == ProfileStakeholder && c.Token == "" {
+	if c.Profile == ProfileStakeholder && c.TokenHash == "" {
 		return fmt.Errorf(
-			"dashboard.profile is %q but dashboard.token is empty — every "+
-				"request would be refused, including the SPA's own token form",
+			"dashboard.profile is %q but no stakeholder token is set (checked "+
+				"the database and dashboard.token/--token) — every request "+
+				"would be refused, including the SPA's own token form",
 			ProfileStakeholder)
 	}
 	// Port 0 is legal and means "any free one" — `net.Listen` picks it, and

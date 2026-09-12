@@ -47,6 +47,12 @@ type Server struct {
 	// and the manager when it is. Zero value = not configured, which is what
 	// every project that has never set one up has.
 	tunnel tunnelDeps
+	// fallbackTokenHash is HashToken(cfg.Token), computed once here rather
+	// than on every request. expectedTokenHash falls back to it whenever
+	// the database has no rotated token for this project — the config/flag
+	// value doesn't change while the process runs, so there is nothing to
+	// re-resolve about it the way there is for the database's.
+	fallbackTokenHash string
 }
 
 // StateReader is the slice of the state backend the dashboard reads.
@@ -90,6 +96,12 @@ type StateReader interface {
 	// EventsSince is what that tail polls, keyed on the row id rather than on
 	// a timestamp — see state.EventsSince for why.
 	EventsSince(ctx context.Context, afterID int64, limit int) ([]state.Event, error)
+
+	// StakeholderToken is this project's rotated stakeholder token hash, if
+	// any (G8.2/F3.3) — resolved fresh on every gated request (see
+	// expectedTokenHash) rather than once at startup, so
+	// `orch dashboard token rotate` takes effect without a restart.
+	StakeholderToken(ctx context.Context) (tokenHash string, rotatedAt time.Time, ok bool, err error)
 }
 
 // TunnelOptions is the tunnel half of Options, kept as its own type so a
@@ -148,7 +160,8 @@ func New(cfg Config, opts Options) (*Server, error) {
 			Command:  opts.Tunnel.Command,
 			Manager:  opts.Tunnel.Manager,
 		},
-		ready: make(chan struct{}),
+		fallbackTokenHash: HashToken(cfg.Token),
+		ready:             make(chan struct{}),
 	}
 	s.registerRoutes()
 	s.http = &http.Server{
@@ -254,7 +267,16 @@ type route struct {
 // list in another file.
 func (s *Server) gated(r route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch s.cfg.decide(req.URL.Path, r.name, tokenFrom(req)) {
+		var expectedHash string
+		// The operator profile never gates anything (decide's own first
+		// check), so there is nothing to resolve — skipping the database
+		// read here is what keeps an operator dashboard, the common case,
+		// from taking one extra SQLite query per request for a check whose
+		// answer is always "allow" anyway.
+		if s.cfg.Profile != ProfileOperator {
+			expectedHash = s.expectedTokenHash(req.Context())
+		}
+		switch s.cfg.decide(req.URL.Path, r.name, tokenFrom(req), expectedHash) {
 		case Unauthorized:
 			writePlain(w, http.StatusUnauthorized, "unauthorized")
 		case Forbidden:
@@ -263,6 +285,57 @@ func (s *Server) gated(r route) http.Handler {
 			r.handler(w, req)
 		}
 	})
+}
+
+// expectedTokenHash resolves the hash a supplied token must match, fresh on
+// every call.
+//
+// The database wins whenever this project has a row (G8.2/F3.3): a caller
+// running `orch dashboard token rotate` against an already-running
+// dashboard changes what the very next request compares against, with no
+// restart.
+//
+// A read error is NOT the same as "no row", and must not be treated as
+// one: "this project never rotated a token" (ok=false, err=nil) means the
+// config/flag fallback is exactly correct, but "the database couldn't
+// answer" (err != nil) says nothing about whether a row exists. Falling
+// back to config.yaml/--token in that case would resurrect a token an
+// operator deliberately rotated away — the database might hold today's
+// real token while a lock, a moved file, or a full disk is the only reason
+// this read failed, and that's precisely the moment `rotate` was meant to
+// defend against (a leaked token still being live). Failing closed — "" is
+// this package's own sentinel for "no token", which decide() already turns
+// into Unauthorized — costs an operator a retry on a transient hiccup;
+// failing open would cost them not knowing the old token still works.
+//
+// One resolution per gated request, with one exception: the SSE stream
+// (stream.go) resolves this once when a client connects and then holds
+// that connection open for hours, so a rotation doesn't reach an
+// already-open stream until it reconnects. Not fixed here — a local,
+// single-operator dashboard doesn't need every open connection to notice
+// a rotation mid-stream — but worth knowing rather than assuming every
+// consumer of this method re-checks as often as a plain request does.
+func (s *Server) expectedTokenHash(ctx context.Context) string {
+	// Options.State is not required the way Options.Static is — a test
+	// server built only to exercise /api/whoami or /api/config/status
+	// (neither of which reads state otherwise) legitimately has none. Those
+	// routes are still gated, so this is reached for them too; falling back
+	// rather than requiring State everywhere keeps that a valid shape
+	// instead of a nil-pointer panic the first time this method runs.
+	if s.state == nil {
+		return s.fallbackTokenHash
+	}
+	hash, _, ok, err := s.state.StakeholderToken(ctx)
+	if err != nil {
+		s.log.Error("cannot read the stakeholder token; refusing every "+
+			"request rather than falling back to a token that may have "+
+			"been rotated away", "err", err)
+		return ""
+	}
+	if ok {
+		return hash
+	}
+	return s.fallbackTokenHash
 }
 
 func (s *Server) registerRoutes() {

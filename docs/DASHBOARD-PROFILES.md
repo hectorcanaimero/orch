@@ -77,7 +77,30 @@ process behind a tunnel or reverse proxy. Read on.
 
 ## Setting up the shared secret
 
-You have three options, in precedence order (first non-empty wins):
+> **Go binary note (G8.2/F3.3).** This whole doc otherwise describes the
+> Python dashboard, `ORCH_DASHBOARD_TOKEN` included — the Go binary has no
+> such env var; see [`CLI.md`](CLI.md)'s `dashboard` row for its real
+> `--token`/`dashboard.token` flags. What's new there: `orch dashboard
+> token rotate` generates a token, stores only its SHA-256 hash in the
+> project's database, and prints it once; `orch dashboard token show`
+> reports where the active token came from (never the token itself). A
+> database-stored token **wins unconditionally** over both `--token` and
+> `dashboard.token` — ahead of the CLI-flag precedence below, which
+> otherwise still applies — specifically so a rotation can't be silently
+> undone by a stale `--token` left in a saved command or shell alias. It
+> also takes effect on an already-running `orch dashboard` with no
+> restart: the server re-checks the database on every gated request. A
+> plain SHA-256 hash is only as strong as what it's hashing: `rotate`
+> generates a random 32-byte token, where that's a non-issue, but a token
+> **you** chose and put in `dashboard.token`/`--token` is only as hard to
+> guess as that string is — a short or dictionary-word token is
+> dictionary-attackable against its hash the same way a weak password
+> would be. Use `rotate` rather than hand-picking one if that matters to
+> you.
+
+You have three options, in precedence order (first non-empty wins) — this
+list is Python's; see the note above for how the Go binary's database
+source fits in:
 
 ### 1. CLI flag (highest priority)
 

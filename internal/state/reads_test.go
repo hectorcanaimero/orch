@@ -18,8 +18,11 @@ func pythonBackend(t *testing.T) *SQLite {
 		t.Fatalf("Open the Python fixture: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if applied != 0 {
-		t.Fatalf("applied %d migrations to a v0.11.0 database", applied)
+	// 1, not 0: 006 (Go-only, no Python counterpart) still applies on top
+	// of a v0.11.0 (schema 5) fixture — see migrate_test.go's
+	// TestOpenPythonWrittenDatabaseAppliesOnlyGoOnlyMigrations.
+	if applied != 1 {
+		t.Fatalf("applied %d migrations to a v0.11.0 database, want 1", applied)
 	}
 	return NewSQLite(db, "billing-api", "/tmp/billing-api")
 }

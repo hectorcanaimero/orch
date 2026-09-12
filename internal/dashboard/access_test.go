@@ -8,8 +8,13 @@ import "testing"
 
 func cfg(profile Profile, token string) Config {
 	return Config{
-		Profile:           profile,
-		Token:             token,
+		Profile: profile,
+		Token:   token,
+		// Mirrors what newDashboardCmd resolves at startup when the
+		// database has no row yet — see config.go's own doc comment on
+		// TokenHash for why Validate() (called inside New()) checks this
+		// field and not Token directly.
+		TokenHash:         HashToken(token),
 		StakeholderRoutes: DefaultStakeholderRoutes,
 		Host:              DefaultHost,
 		Port:              DefaultPort,
@@ -97,12 +102,27 @@ func TestDecide(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := c.cfg.decide(c.path, c.route, c.token)
+			// Table-testable per decide's own doc comment: the expected
+			// hash is derived right here from the plaintext each case
+			// wrote into cfg.Token, the same transform HashToken(c.token)
+			// applies to what a caller supplies — decide reads neither
+			// value's plaintext, only the two hashes.
+			got := c.cfg.decide(c.path, c.route, c.token, HashToken(c.cfg.Token))
 			if got != c.want {
 				t.Errorf("decide(%q, %q, token=%q) = %v, want %v\n%s",
 					c.path, c.route, c.token, got, c.want, c.because)
 			}
 		})
+	}
+}
+
+// The comparison is against the supplied token's hash, not its plaintext —
+// a caller cannot authenticate by presenting the stored hash itself.
+func TestDecideComparesHashesNotPlaintext(t *testing.T) {
+	c := cfg(ProfileStakeholder, "test-token-stakeholder")
+	got := c.decide("/api/whoami", "api_whoami", c.TokenHash, c.TokenHash)
+	if got != Unauthorized {
+		t.Errorf("presenting the stored hash as the token = %v, want Unauthorized", got)
 	}
 }
 

@@ -105,6 +105,17 @@ type Backend interface {
 
 	// OrphanRows reports runtime and definition rows with no project row.
 	OrphanRows(ctx context.Context) (OrphanRows, error)
+
+	// StakeholderToken returns this project's stored stakeholder token hash
+	// and when it was last rotated (G8.2/F3.3). ok is false when no row
+	// exists — the caller falls back to config.yaml/--token. See
+	// internal/dashboard.HashToken for how the hash is computed on both the
+	// write side (`orch dashboard token rotate`) and the read side (the
+	// dashboard's access middleware).
+	StakeholderToken(ctx context.Context) (tokenHash string, rotatedAt time.Time, ok bool, err error)
+	// SetStakeholderToken stores a freshly rotated token's hash, replacing
+	// any row this project already had.
+	SetStakeholderToken(ctx context.Context, tokenHash string, rotatedAt time.Time) error
 }
 
 // Sentinel errors callers act on. Everything else is wrapped context.

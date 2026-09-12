@@ -93,16 +93,23 @@ const (
 	Forbidden
 )
 
-// decide answers whether one request may proceed.
+// decide answers whether one request may proceed, given the hash the
+// supplied token is compared against.
 //
-// Split out from the HTTP plumbing so the whole model is testable as a table:
-// profile × path × route name × token, with no server, no recorder and no
-// handler. The rules are easier to get wrong than the plumbing is.
+// expectedHash is resolved by the caller (Server.expectedTokenHash) rather
+// than looked up in here on purpose — G8.2 (F3.3) moved the token itself
+// into the database, keyed by project, and a live lookup inside a function
+// this deliberately pure would turn the whole-model-as-a-table test below
+// into a test that needs a server, a database and a clock. Passing the
+// already-resolved hash in keeps it a table: profile × path × route name ×
+// token × expected hash, with no server, no recorder, no handler, no
+// database. See tokenhash.go for HashToken, the one place a token is turned
+// into what gets compared.
 //
 // Order matters and matches Python's: authentication before authorisation, so
 // an unauthenticated caller gets 401 and never learns from a 403 which routes
 // exist.
-func (c Config) decide(path, routeName, suppliedToken string) Verdict {
+func (c Config) decide(path, routeName, suppliedToken, expectedHash string) Verdict {
 	if !c.stakeholderContext(path) {
 		return Allow
 	}
@@ -110,14 +117,15 @@ func (c Config) decide(path, routeName, suppliedToken string) Verdict {
 		return Allow
 	}
 
-	// A stakeholder profile with no token configured is a misconfigured
-	// server, and it answers 401 like a wrong token would. Saying "the server
-	// has no token" would tell an anonymous caller how to think about the
-	// deployment; saying nothing costs the operator one look at their config.
-	if c.Token == "" {
+	// A stakeholder profile with no token configured (in config.yaml, via
+	// --token, or in the database) is a misconfigured server, and it
+	// answers 401 like a wrong token would. Saying "the server has no
+	// token" would tell an anonymous caller how to think about the
+	// deployment; saying nothing costs the operator one look at their setup.
+	if expectedHash == "" {
 		return Unauthorized
 	}
-	if !constantTimeEqual(suppliedToken, c.Token) {
+	if !constantTimeEqual(HashToken(suppliedToken), expectedHash) {
 		return Unauthorized
 	}
 
