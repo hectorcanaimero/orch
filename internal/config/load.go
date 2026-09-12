@@ -249,6 +249,7 @@ var knownKeys = map[string]bool{
 	"tunnel.enabled": true, "tunnel.provider": true, "tunnel.command": true,
 	"tunnel.args": true, "tunnel.url_regex": true,
 	"tunnel.url_parse_timeout_s": true, "tunnel.stop_timeout_s": true,
+	"telemetry.enabled": true, "telemetry.endpoint": true,
 }
 
 // droppedKeys explains the keys a pre-Go config is most likely to carry, so

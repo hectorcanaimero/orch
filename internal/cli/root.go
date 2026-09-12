@@ -7,8 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/telemetry"
 )
 
 // errNotImplemented marks a subcommand that is wired into the CLI surface
@@ -65,7 +70,7 @@ func registerProjectFlags(root *cobra.Command) *projectFlags {
 	return f
 }
 
-func newRootCmd(version string) *cobra.Command {
+func newRootCmd(version string) (*cobra.Command, *projectFlags) {
 	root := &cobra.Command{
 		Use:           "orch",
 		Short:         "Task orchestrator that walks a tasks.json DAG and dispatches to CLI coding agents",
@@ -96,16 +101,21 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newDashboardCmd(flags))
 	root.AddCommand(newExplainCmd(flags))
 	root.AddCommand(newReportCmd(flags))
-	return root
+	return root, flags
 }
 
 // Run executes the CLI against args and returns the process exit code.
 // main() calls os.Exit(Run(...)) — kept separate so tests can drive it
 // in-process without os.Exit killing the test binary.
 func Run(version string, args []string) int {
-	root := newRootCmd(version)
+	root, flags := newRootCmd(version)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
+
+	start := time.Now()
+	matched, err := root.ExecuteC()
+	reportTelemetry(matched, flags, version, time.Since(start), err == nil)
+
+	if err != nil {
 		var ee *exitError
 		if errors.As(err, &ee) {
 			if ee.err != nil && ee.err.Error() != "" {
@@ -120,4 +130,48 @@ func Run(version string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// reportTelemetry sends one best-effort usage ping (G8.6/F4.9) — see
+// internal/telemetry's package doc for exactly what it carries. Off unless
+// the project's own config.yaml sets telemetry.enabled: true, and the
+// standard DO_NOT_TRACK environment variable always overrides that either
+// way. A config load failure, a missing home directory, or any other
+// resolution problem just means nothing is sent — telemetry is never
+// allowed to change a command's own exit code or print anything of its
+// own; the command already ran to completion by the time this is called.
+func reportTelemetry(matched *cobra.Command, flags *projectFlags, version string, dur time.Duration, success bool) {
+	if telemetry.DoNotTrack() {
+		return
+	}
+	// Tolerant on purpose, and independent of whatever the command itself
+	// did with these flags: `orch init` on a bare directory and `orch
+	// status` on a fully-formed project both need an answer to "is
+	// telemetry on", and neither's own config-loading path (or lack of
+	// one) should gate this.
+	paths, err := config.ResolvePaths(flags.root, flags.id, flags.configPath)
+	if err != nil {
+		return
+	}
+	res, err := config.Load(paths.ConfigYAML, paths.Root)
+	if err != nil || !res.Config.Telemetry.Enabled {
+		return
+	}
+
+	installID, err := telemetry.InstallID()
+	if err != nil {
+		return
+	}
+
+	command := ""
+	if matched != nil {
+		command = strings.TrimSpace(strings.TrimPrefix(matched.CommandPath(), matched.Root().Name()))
+	}
+
+	telemetry.Reporter{
+		Enabled:   true,
+		Endpoint:  res.Config.Telemetry.Endpoint,
+		InstallID: installID,
+		Version:   version,
+	}.Report(command, dur, success)
 }
