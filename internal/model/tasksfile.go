@@ -47,27 +47,37 @@ func metaFromJSON(raw map[string]json.RawMessage) (Meta, error) {
 	return m, nil
 }
 
+// MarshalJSON preserves both Python's field order (project, generatedAt,
+// template, note) and, for a decoded Meta, its own present-keys set — see
+// Task.MarshalJSON's doc comment for why order is part of the contract
+// here, not cosmetic.
 func (m Meta) MarshalJSON() ([]byte, error) {
-	out := map[string]json.RawMessage{}
-	for k, v := range m.Extra {
-		out[k] = v
+	out := newOrderedJSON()
+	for _, k := range sortedExtraKeys(m.Extra) {
+		if err := out.setRaw(k, m.Extra[k]); err != nil {
+			return nil, err
+		}
 	}
 	include := func(key string) bool { return m.present == nil || m.present[key] }
-	set := func(key, v string) {
-		b, _ := json.Marshal(v) //nolint:errcheck // string always marshals
-		out[key] = b
-	}
 	if include("project") {
-		set("project", m.Project)
+		if err := out.set("project", m.Project); err != nil {
+			return nil, err
+		}
 	}
 	if include("generatedAt") {
-		set("generatedAt", m.GeneratedAt)
+		if err := out.set("generatedAt", m.GeneratedAt); err != nil {
+			return nil, err
+		}
 	}
 	if include("template") {
-		set("template", m.Template)
+		if err := out.set("template", m.Template); err != nil {
+			return nil, err
+		}
 	}
 	if include("note") {
-		set("note", m.Note)
+		if err := out.set("note", m.Note); err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(out)
 }
@@ -92,21 +102,24 @@ type Phase struct {
 	Extra map[string]json.RawMessage
 }
 
+// MarshalJSON preserves Python's field order (id, name) — see
+// Task.MarshalJSON's doc comment. Invisible today ("id" < "name"
+// alphabetically too), but not guaranteed to stay that way, and the other
+// two structs in this file prove alphabetical-by-accident isn't a property
+// worth relying on.
 func (p Phase) MarshalJSON() ([]byte, error) {
-	out := map[string]json.RawMessage{}
-	for k, v := range p.Extra {
-		out[k] = v
+	out := newOrderedJSON()
+	for _, k := range sortedExtraKeys(p.Extra) {
+		if err := out.setRaw(k, p.Extra[k]); err != nil {
+			return nil, err
+		}
 	}
-	idb, err := json.Marshal(p.ID)
-	if err != nil {
+	if err := out.set("id", p.ID); err != nil {
 		return nil, fmt.Errorf("model: marshal phase field \"id\": %w", err)
 	}
-	nameb, err := json.Marshal(p.Name)
-	if err != nil {
+	if err := out.set("name", p.Name); err != nil {
 		return nil, fmt.Errorf("model: marshal phase field \"name\": %w", err)
 	}
-	out["id"] = idb
-	out["name"] = nameb
 	return json.Marshal(out)
 }
 
