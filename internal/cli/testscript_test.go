@@ -51,6 +51,15 @@ func TestCLICommands(t *testing.T) {
 			// across 3 tasks — see its README.md) — testdata/parity-project
 			// has none, so the non-empty `events` path (tabwriter, --json,
 			// --run, shortRunID) has nothing to exercise without it.
+			// A real PNG in $WORK, for the branding cases in report.txtar: a
+			// txtar archive is text, so a binary fixture cannot live inside
+			// one. Tiny (a 1×1 pixel) because what is being tested is that
+			// the file makes the trip, not what it looks like.
+			if err := copyFile(
+				filepath.Join("testdata", "branding-logo.png"),
+				filepath.Join(env.WorkDir, "proj", "logo.png")); err != nil {
+				return err
+			}
 			return setUpEventsFixture(filepath.Join(env.WorkDir, "billing-api"))
 		},
 	})

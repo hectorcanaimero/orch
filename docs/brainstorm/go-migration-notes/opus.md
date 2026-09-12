@@ -697,3 +697,32 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   BYTES rather than its extension, so a PNG named `.jpg` works and a text file
   named `.png` is caught at startup instead of as a broken image three
   surfaces later.
+
+- **"Byte-identical" was not a property this PDF library can offer, and the
+  test that claimed it was a coin flip.** It passed here and failed in CI,
+  which is the only reason the cause was found: **fpdf emits its font objects
+  by ranging a Go map**, so two renders of the SAME document disagree on which
+  font gets object number 5, and therefore on the resource dictionary, the
+  object order and every xref offset. Measured rather than guessed — four
+  renders of one snapshot gave `[Helvetica-Bold Helvetica]` three times and
+  `[Helvetica Helvetica-Bold]` once.
+
+  The criterion survives where it is meetable: the SNAPSHOT is byte-identical
+  without branding, and that is the artefact that gets published, diffed and
+  cached. For the PDF the test now asserts what the format can guarantee —
+  same length, same page geometry, same strings in order, same colour
+  operators, no image — which is "the document did not change" said in terms
+  that are true.
+
+  The general lesson is about accepting a criterion: **"identical bytes" is a
+  claim about the generator, not about the document.** Before promising it,
+  ask what the generator puts in the file that has nothing to do with the
+  input — a timestamp, a uuid, a map iteration.
+
+- **A relative path in config resolves against the PROJECT ROOT, not the cwd.**
+  My first version of `presentation.branding.logo` resolved against the working
+  directory, which works on the machine where you type `orch` from inside the
+  project and fails the moment somebody runs
+  `orch report pdf --project-root ../other`. `budgets_config` already had this
+  right; the txtar found it because a testscript runs from `$WORK` and the
+  project is `$WORK/proj`, which is exactly the shape that breaks.

@@ -28,3 +28,59 @@ stderr 'missing tasks.json'
 # ---- an unwritable destination is an error, not a silent no-op -------------
 ! exec orch report pdf --project-root proj --project-id proj --out nodir/report.pdf
 stderr 'creating'
+
+# ---- branding reaches the page through the real command --------------------
+# The config below names a logo on disk; the command reads it, embeds it in the
+# snapshot as a data URI, and the renderer draws it. An /XObject in the output
+# is the logo having made the whole trip.
+cp branded-config.yaml proj/.orchestrator/config.yaml
+exec orch report pdf --project-root proj --project-id proj --out branded.pdf
+exists branded.pdf
+grep '/XObject' branded.pdf
+grep '/MediaBox \[0 0 595\.28 841\.89\]' branded.pdf
+
+# ---- a colour that is not a colour stops the command, it is not ignored -----
+# Branding that does not apply is invisible, so this is a startup error rather
+# than a value quietly dropped.
+cp bad-colour-config.yaml proj/.orchestrator/config.yaml
+! exec orch report pdf --project-root proj --project-id proj --out never.pdf
+stderr 'accent_color'
+stderr '#rgb'
+! exists never.pdf
+
+# ---- a logo that is not an image is refused, naming the file ---------------
+cp not-an-image-config.yaml proj/.orchestrator/config.yaml
+cp notanimage.png proj/notanimage.png
+! exec orch report pdf --project-root proj --project-id proj --out never2.pdf
+stderr 'branding.logo'
+! exists never2.pdf
+
+-- branded-config.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+presentation:
+  branding:
+    name: "Acme Digital"
+    logo: logo.png
+    accent_color: "#ff6600"
+    footer: "Confidential"
+
+-- bad-colour-config.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+presentation:
+  branding:
+    accent_color: "blue"
+
+-- not-an-image-config.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+presentation:
+  branding:
+    logo: notanimage.png
+
+-- notanimage.png --
+this is plainly not a PNG

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -416,23 +417,74 @@ func TestTruncateAtTinyLimits(t *testing.T) {
 // The other half of the white-label criterion: a snapshot with no branding
 // renders the same PDF it rendered before branding existed.
 //
-// Byte-for-byte, with the clock and the document fixed — the only thing that
-// could differ is what this feature added, and the answer has to be nothing.
-func TestWithoutBrandingThePDFIsByteIdentical(t *testing.T) {
+// # Why this is not a byte comparison
+//
+// It was, and it failed in CI while passing here — which is the only reason
+// the cause was found. **fpdf emits its font objects by ranging a Go map**, so
+// two renders of the SAME document differ in which font gets object number 5,
+// and therefore in the resource dictionary, the object order and every xref
+// offset. Measured, not guessed: four renders of one snapshot produced
+// `[Helvetica-Bold Helvetica]` three times and `[Helvetica Helvetica-Bold]`
+// once.
+//
+// So byte-identity is not a property this library can offer, and a test that
+// claimed it was a coin flip that had been landing the same way locally. What
+// IS stable is everything the document says: its length, its page geometry,
+// every string it draws in order, and every colour operator. Branding adds a
+// logo, a colour and two strings — all four of those would move.
+func TestWithoutBrandingThePDFIsUnchanged(t *testing.T) {
+	at := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+
 	s := demoSnapshot(8)
 	s.Branding = nil
-	first := render(t, s, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	absent := render(t, s, at)
 
-	// The same snapshot through the same path, with an EMPTY branding block
-	// rather than an absent one — the shape a caller produces when the
-	// operator has a `branding:` key with nothing under it.
+	// An EMPTY branding block rather than an absent one — the shape a caller
+	// produces when the operator has a `branding:` key with nothing under it.
 	s.Branding = &snapshot.Branding{}
-	second := render(t, s, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	empty := render(t, s, at)
 
-	if !bytes.Equal(first, second) {
-		t.Errorf("an empty branding block changed the document: %d vs %d bytes",
-			len(first), len(second))
+	if len(absent) != len(empty) {
+		t.Fatalf("an empty branding block changed the document's size: %d vs %d",
+			len(absent), len(empty))
 	}
+	if a, b := pdfStrings(absent), pdfStrings(empty); !reflect.DeepEqual(a, b) {
+		t.Errorf("the text changed:\n absent: %v\n  empty: %v", a, b)
+	}
+	if a, b := pdfColours(absent), pdfColours(empty); !reflect.DeepEqual(a, b) {
+		t.Errorf("the colours changed:\n absent: %v\n  empty: %v", a, b)
+	}
+	if pageCount(t, absent) != pageCount(t, empty) {
+		t.Error("the page count changed")
+	}
+	if !reflect.DeepEqual(mediaBoxes(absent), mediaBoxes(empty)) {
+		t.Error("the page geometry changed")
+	}
+	// And no image: an empty block must not draw a logo it does not have.
+	if bytes.Contains(empty, []byte("/XObject <<\n/I")) {
+		t.Error("an empty branding block embedded an image")
+	}
+}
+
+// pdfStrings is every string the page draws, in order.
+func pdfStrings(b []byte) []string {
+	re := regexp.MustCompile(`\((?:[^()\\]|\\.)*\)\s*Tj`)
+	var out []string
+	for _, m := range re.FindAll(b, -1) {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+// pdfColours is every colour operator, in order — `rg` for a colour and `g`
+// for the grey shorthand fpdf uses when the three channels are equal.
+func pdfColours(b []byte) []string {
+	re := regexp.MustCompile(`[0-9.]+ (?:[0-9.]+ [0-9.]+ )?[rg]g?\b`)
+	var out []string
+	for _, m := range re.FindAll(b, -1) {
+		out = append(out, string(m))
+	}
+	return out
 }
 
 // onePixelPNG is a real 1×1 PNG — a hand-written byte slice would not survive
