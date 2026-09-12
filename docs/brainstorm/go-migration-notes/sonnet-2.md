@@ -203,3 +203,49 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   exercises that tier against temp-dir fixtures it builds itself, so it
   was never coupled to this repo's actual `frontend/`/`web/` directory
   and needed no changes either.
+
+- **`web/` (G5.5) trim — one real bug found by just reading what got
+  deleted, not by a test:** `ProtectedRoute.tsx` had an `is_setup` gate
+  (`GET /api/config/status`, redirect to `/setup` when false) that the
+  brief's file list didn't mention at all — it only names
+  `SetupWizardPage.tsx` itself. Deleting the wizard page and route without
+  also removing this gate would have left a real dead end: a
+  never-set-up project hitting any protected route would `Navigate` to
+  `/setup`, which no longer resolves to anything, and the catch-all route
+  bounces it back to `/`, which redirects to `/setup` again — an infinite
+  loop, not a 404, so it wouldn't even show up as a broken link on a
+  click-through smoke test. Removed the whole gate (`ProtectedRoute` is
+  now just the auth check it always should have reduced to once the
+  wizard was gone). `GET /api/config/status` loses its only SPA consumer
+  along with `POST /api/config/setup` — both reported to orch-opus (G5.2)
+  before this landed, per orch-98's instruction to flag consumer loss
+  ahead of the endpoint port.
+
+  **Tunnel's read-only trim keeps the D#9 gate, doesn't relax it.** The
+  pre-trim panel's own comments call `can_control` gating
+  `useTunnelStatus` "non-negotiable" (`/api/tunnel/status` must never be
+  polled when it's false) — that's a backend contract, not a UI nicety
+  the Start/Stop removal gets to loosen. `TunnelPage` keeps `can_control`
+  as its visibility gate exactly as before; only the mutations
+  (`startTunnel`/`stopTunnel`), the conflict-error handling built around
+  them, and the SSE log stream (`useTunnelLogs`, `/api/tunnel/logs`) are
+  gone. `/api/tunnel/status` and `/api/tunnel/capabilities` keep their
+  consumer unchanged.
+
+  **Bundle**, measured before and after on the same fixture (`pnpm
+  build`, `web/` on this branch): 680.64 kB / 69.62 kB (JS/CSS,
+  gzip 209.46 / 12.36 kB) → 483.30 kB / 46.36 kB (gzip 151.44 / 9.12 kB).
+  `react-markdown` + `remark-gfm` (DocumentsPage's only consumers) came
+  out as direct `package.json` dependencies too, not just dead imports —
+  removed rather than left installed-but-unused.
+
+  **Verified against the real Python dashboard, not just `tsc`/`vite
+  build`:** a fresh venv (`pip install -e ".[dev]"` against this
+  worktree specifically — an existing cached venv from earlier lane work
+  was editable-installed against a different checkout and would have
+  silently tested the wrong `orchestrator/spa/`), `scripts/build-spa.sh`,
+  then `orch dashboard --project-root <copy of testdata/parity-project>`
+  under a 15s `timeout`: `GET /` and the real hashed asset both returned
+  200, log showed `SPA mounted at / → .../orchestrator/spa (packaged)`,
+  and the process exited cleanly with no leftover `uvicorn`/`orch`
+  process after the timeout fired.

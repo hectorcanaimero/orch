@@ -3,8 +3,6 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { AppLayout } from "@/components/AppLayout"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
-import { ArchitecturePage } from "@/pages/ArchitecturePage"
-import { DoctorPage } from "@/pages/DoctorPage"
 import { GraphPage } from "@/pages/GraphPage"
 import { KanbanPage } from "@/pages/KanbanPage"
 import { ListPage } from "@/pages/ListPage"
@@ -14,10 +12,8 @@ import { MetricsPage } from "@/pages/MetricsPage"
 import { MilestonesPage } from "@/pages/MilestonesPage"
 import { BudgetPage } from "@/pages/BudgetPage"
 import { SprintPage } from "@/pages/SprintPage"
-import { DocumentsPage } from "@/pages/DocumentsPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
-import { SetupWizardPage } from "@/pages/SetupWizardPage"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,7 +33,6 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/setup" element={<SetupWizardPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/"
@@ -115,36 +110,6 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <LogsPage />
-                </AppLayout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/architecture"
-            element={
-              <ProtectedRoute>
-                <AppLayout>
-                  <ArchitecturePage />
-                </AppLayout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/docs"
-            element={
-              <ProtectedRoute>
-                <AppLayout>
-                  <DocumentsPage />
-                </AppLayout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/doctor"
-            element={
-              <ProtectedRoute>
-                <AppLayout>
-                  <DoctorPage />
                 </AppLayout>
               </ProtectedRoute>
             }

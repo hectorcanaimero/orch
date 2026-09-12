@@ -220,74 +220,6 @@ export interface ProjectConfig {
   default_timeout_multiplier?: number
 }
 
-export interface ArchitectureStatus {
-  exists: boolean
-  generated_at: string | null
-  source_hash: string | null
-  count: number
-  last_cost_usd: number | null
-  regenerate_in_progress: boolean
-  // Live progress fields — null when idle, populated during a run so the
-  // UI can show which phase is active + how long it's been going.
-  phase?: "dispatching" | "claude_working" | "finalizing" | null
-  phase_at?: string | null
-  started_at?: string | null
-}
-
-export interface ArchitectureSnapshot {
-  timestamp: string
-  source_hash: string
-  cost_usd: number
-  model: string
-  source_artifacts: {
-    prd_count: number
-    spec_count: number
-    task_count: number
-  }
-}
-
-export interface ArchitectureHistory {
-  snapshots: ArchitectureSnapshot[]
-}
-
-export interface ArchitectureRegenerateResponse {
-  started_at: string
-  run_id: string
-}
-
-/**
- * Sprint E-3 — Doctor view types.
- *
- * Matches the payload returned by `GET /api/doctor` (and by the CLI
- * `orch doctor --json`). Both surfaces are built by
- * `orchestrator/doctor.py::build_doctor_report`, so this type must stay in
- * lock-step with the `CheckResult.as_json()` shape in
- * `orchestrator/preflight.py`.
- */
-export type DoctorStatus = "ok" | "warn" | "error" | "skip"
-
-export interface DoctorCheck {
-  name: string
-  status: DoctorStatus
-  detail: string
-  remediation: string | null
-}
-
-export interface DoctorSummary {
-  ok: number
-  warn: number
-  error: number
-  skip: number
-}
-
-export interface DoctorReport {
-  project: { id: string; root: string }
-  backend: string
-  checks: DoctorCheck[]
-  summary: DoctorSummary
-  exit_code: number
-}
-
 /**
  * Sprint E-5 — Tunnel manager types.
  *
@@ -337,22 +269,6 @@ export interface TunnelStatus {
   last_exit_code: number | null
   phase: TunnelState
 }
-
-export interface TunnelStartResponse extends TunnelStatus {}
-export interface TunnelStopResponse extends TunnelStatus {}
-
-/**
- * 409 conflict envelope shapes returned by `/start` and `/stop`.
- *
- * Backend never mixes these codes:
- *   POST /start when running   → { error: "already_running", state: TunnelState }
- *   POST /start when locked    → { error: "locked" }
- *   POST /stop when idle       → { error: "not_running" }
- */
-export type TunnelConflictError =
-  | { error: "already_running"; state: TunnelState }
-  | { error: "locked" }
-  | { error: "not_running" }
 
 // ---- Sprint health (Sprint F-5) --------------------------------------------
 
