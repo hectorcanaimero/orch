@@ -34,6 +34,11 @@ VERDICTS = ("approve", "request_changes", "comment")
 MARKER = "<!-- orch:gemini-review -->"
 
 
+# A tool-call attempt rendered as text by the CLI: `‹call:name{...}›`, or the
+# ASCII-bracket form some builds print.
+TOOL_CALL_RE = re.compile(r"^\s*[‹<]call:[A-Za-z_]+")
+
+
 class EmptyReview(ValueError):
     """The reviewer ran but produced no text. Distinct from a malformed
     verdict, because the fix is different: an empty response is worth
@@ -94,6 +99,18 @@ def extract_json(raw: str) -> dict:
         raise EmptyReview("the reviewer produced no output at all")
 
     text = unwrap_cli_envelope(text)
+
+    # The model tried to call a tool instead of answering. Every tool is
+    # disabled in the workflow, so the CLI hands the attempt back as text
+    # (`‹call:glob{pattern:"web/**/*test*"}›`, run 34663899673 on #176: the
+    # reviewer went looking for tests to satisfy rule 24). Nothing was
+    # reviewed, and a second run usually answers, so this is the same class
+    # as an empty response: retry, and say what happened.
+    if TOOL_CALL_RE.match(text):
+        raise EmptyReview(
+            "the reviewer tried to call a tool instead of answering "
+            f"(first 120 chars: {text[:120]!r}). Nothing was reviewed."
+        )
 
     # ```json ... ``` or ``` ... ```
     fenced = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)

@@ -109,6 +109,14 @@ ENVELOPE_EMPTY='{"session_id":"0e2a9d39","response":"","stats":{"models":{"gemin
 
 rejects "the CLI envelope with an empty response" "$ENVELOPE_EMPTY" 2
 
+# A tool-call attempt rendered as text (run 34663899673, #176): every tool is
+# disabled, the CLI hands the attempt back as the answer, and nothing was
+# reviewed. Retryable, like an empty response — not a schema violation.
+TOOL_CALL='‹call:glob{pattern:"web/**/*test*"}›'
+rejects "a tool-call attempt instead of a verdict" "$TOOL_CALL" 2
+ENVELOPE_TOOL_CALL='{"session_id":"0e2a9d39","response":"‹call:glob{pattern:\"web/**/*test*\"}›","stats":{}}'
+rejects "the CLI envelope wrapping a tool-call attempt" "$ENVELOPE_TOOL_CALL" 2
+
 # And the error has to name what actually happened, plus the model, because
 # the next question is always "which model did that?".
 printf '%s' "$ENVELOPE_EMPTY" > "$TMP/raw.txt"
