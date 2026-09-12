@@ -35,6 +35,11 @@ Both jobs also skip PRs from forks outright.
 
 ---
 
+It never opens a browser, so nothing about a rendered page is covered here —
+a route that answers 200 with the wrong body, a component that throws on
+first render, a login form shown to a profile that needs no token. See
+[`UI-CHECKS.md`](UI-CHECKS.md) for how those are checked.
+
 ## Before you open the PR
 
 Run what you built and read its output once (checklist rule 29). The reviewer
@@ -81,22 +86,45 @@ checklist, not an argument in the thread. That is why it is versioned.
 | `gemini-review` | Meaning |
 |---|---|
 | ✅ success | Verdict was `approve` or `comment` |
-| ❌ failure | Verdict was `request_changes` |
-| ⚪ neutral | The review **did not run** — no API key, the CLI failed, the reviewer returned nothing twice, or the model answered off-schema |
+| ❌ failure | Verdict was `request_changes`, **or the review did not produce one** — the CLI failed, the reviewer returned nothing twice, or it answered off-schema |
+| ⚪ neutral | **Only** "no API key" — a repository setting, not a review outcome |
 
-Two neutrals read differently, and the title says which:
+**A review that did not happen is a failure, not a neutral**, and that is a
+deliberate change. A neutral check leaves the PR reading "clean and
+mergeable" in the checks summary, so an unread verdict looks exactly like an
+approval at a glance — #206 nearly merged that way. The only thing that stays
+neutral is a missing API key, because that is a repository that has not
+switched the reviewer on rather than a review that went wrong.
 
-- **"Unreadable verdict"** — the reviewer answered, but not to the schema. A
-  retry would reproduce the same shape, so there isn't one. Read the run log
-  to see what it said.
-- **"Reviewer returned nothing"** — the reviewer ran and produced an empty
-  response, twice. This one is non-deterministic (the Gemini CLI does it
-  occasionally on a long prompt), so the workflow retries once before giving
-  up. If it starts happening often, pin a stronger model with
-  `GEMINI_REVIEW_MODEL` — the empty responses observed so far came from
-  `gemini-3.1-flash-lite`, the CLI's default.
+The failure title says which happened:
 
-Neutral is never a pass. It is the state that says "nobody reviewed this".
+- **"Reviewer failed"** — the Gemini CLI step did not complete.
+- **"Reviewer returned nothing"** — it ran and produced an empty response,
+  twice. This one is non-deterministic (the CLI does it occasionally on a long
+  prompt), so the workflow retries once before giving up. If it starts
+  happening often, pin a stronger model with `GEMINI_REVIEW_MODEL` — the empty
+  responses observed so far came from `gemini-3.1-flash-lite`, the CLI's
+  default.
+- **"Unreadable verdict"** — it answered, but not to the schema.
+
+### When the verdict is unreadable, read what it said
+
+The raw reviewer output is uploaded as an artifact **before** parsing, so a
+parser crash cannot lose it:
+
+```bash
+gh run download <run-id> -n reviewer-raw-<pr>-<attempt>
+cat reviewer-raw.txt
+```
+
+Kept for 7 days. **Download it before re-running.** A re-run may well produce
+a readable verdict and hide the reason the first one was not — the unreadable
+verdicts seen so far were a finding about the PR itself (its title) with no
+`file` to attach it to, which the parser required and now treats as optional,
+rendering it as "(PR)".
+
+Neither neutral nor an unread failure is a pass. Both mean "nobody reviewed
+this".
 
 **It is advisory.** Nothing is enforced until branch protection is turned on
 (see below), and a human owns the merge either way. A wrong `request_changes`
