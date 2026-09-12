@@ -1,0 +1,36 @@
+# orch explain — the one-screen summary, through the real CLI.
+#
+# $WORK/proj is the shipped parity fixture, copied in by the harness.
+
+# ---- text: the whole shape, on one screen ----------------------------------
+exec orch explain --project-root proj --project-id proj
+stdout 'Project proj'
+stdout 'specs'
+stdout 'Tasks: 5 total'
+# `blocked` prints even at zero: "nothing is blocked" is one of the two things
+# a person opens this to find out, and a line that vanishes when the answer is
+# good sends them looking for it elsewhere.
+stdout 'blocked'
+stdout 'Ready to dispatch'
+stdout 'Budget: not configured'
+stdout 'Safe to run'
+stdout 'orch status'
+stdout 'orch validate'
+
+# ---- json: the same structure orch_context returns -------------------------
+exec orch explain --project-root proj --project-id proj --json
+stdout '"project":'
+stdout '"counts":'
+stdout '"ready":'
+# Never null: a caller iterates it without branching on a case that does not
+# exist. The fixture has no budgets.yaml, so this is the empty form.
+stdout '"budget":\{"enabled":false,"providers":\{\}\}'
+! stdout '"providers":null'
+
+# ---- it takes no positional arguments --------------------------------------
+! exec orch explain --project-root proj --project-id proj extra-arg
+stderr 'accepts 0 arg|unknown command'
+
+# ---- a project that is not a project ---------------------------------------
+! exec orch explain --project-root nowhere --project-id nowhere
+stderr 'missing tasks.json'

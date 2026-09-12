@@ -523,3 +523,36 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   decoration — but the damage is visible in the log view instead of being
   indistinguishable from an empty object. A deliberate one-key divergence from
   Python, on a path only a corrupt row reaches.
+- **`orch explain` is new, and the reason is that the answer was already there
+  and scattered.** Task counts live in `orch status`, what could run now in
+  `orch tasks`, the guardrail in `orch budget` — so somebody arriving at a
+  project had to know three commands to assemble a picture none of them draws.
+  Python has no equivalent.
+
+  It shares one function with the MCP server's `orch_context`
+  (`internal/explain.Gather`), rendered as text for a person and as JSON for an
+  agent. That is the point rather than a convenience: the way a story like this
+  drifts is by being assembled twice, which this migration has already found in
+  the duplicated `dashboard:` block and in two spellings of `burndown_by_day`.
+
+  `internal/explain` and not `internal/project`, because `project` is
+  deliberately the narrow "tasks.json + runtime row + event log" layer that
+  `orch status` sits on, and putting the budget guardrail in it would make
+  every consumer of `Hydrate` depend on the gate.
+
+- **The typed-nil interface trap, closed on purpose and worth naming.**
+  `newBudgetGate` returns `*budget.Gate`, and nil means "no budgets.yaml".
+  Assigning that nil POINTER to an interface field produces a non-nil
+  INTERFACE holding a nil pointer — so `opts.Budget != nil` passes and the
+  first method call panics, because `Gate.Disabled` dereferences its config.
+  The conversion is three lines with a name and a comment rather than an inline
+  assignment, which is the only version of this that survives a refactor.
+
+- **Reading my own output changed it twice.** The first run of `orch explain`
+  against a real project printed "(1 in progress; the rest are waiting on
+  them)" — asserting a cause it had not checked, since a task with an
+  unfinished dependency is waiting on THAT dependency and not necessarily on
+  the one in flight. And the "safe to run" list came out with no fourth line at
+  all for that project, because none of its cases matched: nothing ready,
+  nothing blocked, tasks present. Both are now fixed, and neither would have
+  shown up in a test I wrote from the code.

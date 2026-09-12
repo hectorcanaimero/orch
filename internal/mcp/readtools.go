@@ -7,6 +7,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hectorcanaimero/orch/internal/budget"
+	"github.com/hectorcanaimero/orch/internal/explain"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/state"
@@ -167,8 +168,19 @@ type taskContextOut struct {
 }
 
 type contextOut struct {
-	Project projectContext  `json:"project"`
-	Task    *taskContextOut `json:"task,omitempty"`
+	Project projectContext `json:"project"`
+	// Ready is what could be dispatched right now, and Budget is the rolling
+	// window. Both are ADDED rather than derived by the caller: answering
+	// "what can I start" used to mean calling `orch_list_tasks{ready:true}`
+	// and `orch_budget` and joining them, and a join an agent performs is a
+	// join that can disagree with the one the dispatch loop performs.
+	//
+	// Same types the other tools publish — `graph.Parallelizable`'s notion of
+	// ready, and `orch_budget`'s own snapshot shape — so there is one spelling
+	// of each across every surface.
+	Ready  []explain.ReadyTask `json:"ready"`
+	Budget explain.Budget      `json:"budget"`
+	Task   *taskContextOut     `json:"task,omitempty"`
 }
 
 func (s *server) taskContext(ctx context.Context, _ *mcpsdk.CallToolRequest, in contextIn) (*mcpsdk.CallToolResult, contextOut, error) {
@@ -182,24 +194,31 @@ func (s *server) taskContext(ctx context.Context, _ *mcpsdk.CallToolRequest, in 
 		specRoot = prompt.DefaultSpecRoot
 	}
 
-	counts := map[string]int{}
-	for _, st := range []model.Status{
-		model.StatusBacklog, model.StatusTodo, model.StatusInProgress,
-		model.StatusDone, model.StatusBlocked,
-	} {
-		counts[string(st)] = 0
-	}
-	for _, t := range tasks {
-		counts[string(t.Status)]++
+	// The project block, the ready set and the budget window all come from
+	// one place, shared with `orch explain` — the same answer rendered as
+	// JSON here and as text there, rather than assembled twice.
+	overview, err := explain.Gather(ctx, explain.Options{
+		ProjectID:   s.opts.ProjectID,
+		ProjectRoot: s.opts.ProjectRoot,
+		SpecRoot:    specRoot,
+		Tasks:       tasks,
+		Budget:      s.opts.Budget,
+	})
+	if err != nil {
+		return nil, contextOut{}, err
 	}
 
-	out := contextOut{Project: projectContext{
-		ID:       s.opts.ProjectID,
-		Root:     s.opts.ProjectRoot,
-		SpecRoot: specRoot,
-		Counts:   counts,
-		Total:    len(tasks),
-	}}
+	out := contextOut{
+		Project: projectContext{
+			ID:       overview.Project.ID,
+			Root:     overview.Project.Root,
+			SpecRoot: overview.Project.SpecRoot,
+			Counts:   overview.Project.Counts,
+			Total:    overview.Project.Total,
+		},
+		Ready:  overview.Ready,
+		Budget: overview.Budget,
+	}
 
 	if in.TaskID == "" {
 		return nil, out, nil

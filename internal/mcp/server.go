@@ -47,7 +47,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/hectorcanaimero/orch/internal/budget"
+	"github.com/hectorcanaimero/orch/internal/explain"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
@@ -55,15 +55,15 @@ import (
 // agent's tool list groups these seven under, so it matches the binary.
 const ServerName = "orch"
 
-// BudgetReporter is the slice of *budget.Gate that `orch_budget` needs.
+// BudgetReporter is the slice of *budget.Gate that `orch_budget` and
+// `orch_context` need. Aliased to explain's so there is one definition of
+// "what this server needs from the guardrail" rather than two that must be
+// kept identical by hand.
 //
 // An interface rather than the concrete gate so a project with no
 // budgets.yaml can pass nil and the tool can answer "not configured" instead
 // of the package having to build a disabled gate to ask.
-type BudgetReporter interface {
-	Disabled() bool
-	Snapshot(ctx context.Context) (map[string]budget.ProviderSnapshot, error)
-}
+type BudgetReporter = explain.BudgetReporter
 
 // Options is everything the tools read.
 //
