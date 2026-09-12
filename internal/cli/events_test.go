@@ -68,3 +68,35 @@ func TestFilterAndTail(t *testing.T) {
 		})
 	}
 }
+
+// The run-level row's task column.
+//
+// No Python-written database contains one — `sprint_done` is Go's own event
+// type (F4.7) — so `testdata/orch-py-0.11.0.db` cannot exercise this and the
+// testscript over it does not. Tested here instead of being left to a fixture
+// that structurally cannot reach it.
+//
+// The em dash rather than an empty cell: in a tab-aligned table a blank reads
+// as a rendering bug, where "—" says there is nothing to put there. It is the
+// same mark the dashboard uses for a milestone with no ETA.
+func TestTaskColumn(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"F1.T3", "F1.T3"},
+		{"", "—"},
+	}
+	for _, c := range cases {
+		if got := taskColumn(c.in); got != c.want {
+			t.Errorf("taskColumn(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// An error reading the whole log must not name a task id it was never given.
+func TestForTask(t *testing.T) {
+	if got := forTask(""); got != "" {
+		t.Errorf("forTask(\"\") = %q, want empty", got)
+	}
+	if got, want := forTask("F1.T3"), ` for "F1.T3"`; got != want {
+		t.Errorf("forTask = %q, want %q", got, want)
+	}
+}

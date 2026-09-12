@@ -29,3 +29,29 @@ stdout '^\[\]$'
 
 exec orch events F1.T2 --json --project-root billing-api --project-id billing-api
 stdout '"event_type":"block"'
+
+# --- no TASK_ID: the whole project ---------------------------------------
+# New in Go; Python's parser requires the argument. The fixture's four rows
+# span three tasks, so this is also where "the task column is load-bearing"
+# is checked: the one-task table cannot show it.
+
+exec orch events --json --project-root billing-api --project-id billing-api
+! stderr .
+stdout '"task_id":"F0.T1"'
+stdout '"task_id":"F1.T1"'
+stdout '"task_id":"F1.T2"'
+stdout '"event_type":"block"'
+
+exec orch events --project-root billing-api --project-id billing-api
+stdout 'TS\s+TASK\s+EVENT\s+BACKEND\s+RUN'
+stdout 'F0\.T1\s+dispatch'
+stdout 'F1\.T2\s+block'
+
+# Oldest first, across tasks, as the one-task form is.
+exec orch events --tail 1 --project-root billing-api --project-id billing-api
+stdout 'F1\.T2\s+block'
+! stdout 'F0\.T1'
+
+# --run narrows before --tail here too.
+exec orch events --run some-other-run --json --project-root billing-api --project-id billing-api
+stdout '^\[\]$'
