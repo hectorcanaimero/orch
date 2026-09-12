@@ -237,6 +237,33 @@ Display only. Internal status values never change. Both `in_progress` and
 `in-progress` are listed because the two spellings appear in different
 surfaces.
 
+#### `presentation.branding` — new (G8.4)
+
+White-label. What a client sees on the three surfaces built for them: the
+stakeholder snapshot, the bundle that renders it, and `orch report pdf`. An
+agency sets this once and sends a link with their own mark on it.
+
+```yaml
+presentation:
+  branding:
+    name: "Acme Digital"              # replaces the project name for the CLIENT
+    logo: assets/acme.png             # a local file, or a data: URI
+    accent_color: "#ff6600"           # #rgb or #rrggbb
+    footer: "Confidential — Acme Digital"
+```
+
+Every field is optional, and **the whole block is optional in a way that is
+tested**: with none of it set, the snapshot JSON and the PDF are byte-identical
+to what they produced before this feature existed. Nothing you already publish
+changes by upgrading.
+
+| Key | Notes |
+|---|---|
+| `name` | What the client reads. The project's own `meta.project` is untouched — this replaces it in client-facing headers only. |
+| `logo` | A path to a local file, or a `data:` URI. A path is **read and embedded at build time**: the snapshot has to stand alone, because a viewer holding that JSON cannot reach your filesystem. **PNG or JPEG only** — the PDF renderer draws raster images, and a logo that appeared on the web but not on the printed page would be worse than one that says which formats work. Capped at 128 KiB, since the logo travels inside a document a live viewer re-fetches on a timer. The format is detected from the file's own bytes, so a PNG named `.jpg` works and a text file named `.png` is refused at startup. |
+| `accent_color` | `#rgb` or `#rrggbb`. Anything else is a **startup error**, not a value quietly ignored: branding that does not apply is invisible, and you would go looking at the browser, the PDF and your cache before suspecting the spelling. |
+| `footer` | One line at the bottom of the page. |
+
 ### `publish` — new
 
 Where the stakeholder snapshot goes. **Nothing reads this yet**; it ships now

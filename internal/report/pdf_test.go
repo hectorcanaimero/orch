@@ -2,7 +2,9 @@ package report
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -408,6 +410,194 @@ func TestTruncateAtTinyLimits(t *testing.T) {
 		}
 		if r := []rune(truncate(tc.in, tc.max)); len(r) > tc.max {
 			t.Errorf("truncate(%q, %d) returned %d runes", tc.in, tc.max, len(r))
+		}
+	}
+}
+
+// The other half of the white-label criterion: a snapshot with no branding
+// renders the same PDF it rendered before branding existed.
+//
+// # Why this is not a byte comparison
+//
+// It was, and it failed in CI while passing here — which is the only reason
+// the cause was found. **fpdf emits its font objects by ranging a Go map**, so
+// two renders of the SAME document differ in which font gets object number 5,
+// and therefore in the resource dictionary, the object order and every xref
+// offset. Measured, not guessed: four renders of one snapshot produced
+// `[Helvetica-Bold Helvetica]` three times and `[Helvetica Helvetica-Bold]`
+// once.
+//
+// So byte-identity is not a property this library can offer, and a test that
+// claimed it was a coin flip that had been landing the same way locally. What
+// IS stable is everything the document says: its length, its page geometry,
+// every string it draws in order, and every colour operator. Branding adds a
+// logo, a colour and two strings — all four of those would move.
+func TestWithoutBrandingThePDFIsUnchanged(t *testing.T) {
+	at := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+
+	s := demoSnapshot(8)
+	s.Branding = nil
+	absent := render(t, s, at)
+
+	// An EMPTY branding block rather than an absent one — the shape a caller
+	// produces when the operator has a `branding:` key with nothing under it.
+	s.Branding = &snapshot.Branding{}
+	empty := render(t, s, at)
+
+	if len(absent) != len(empty) {
+		t.Fatalf("an empty branding block changed the document's size: %d vs %d",
+			len(absent), len(empty))
+	}
+	if a, b := pdfStrings(absent), pdfStrings(empty); !reflect.DeepEqual(a, b) {
+		t.Errorf("the text changed:\n absent: %v\n  empty: %v", a, b)
+	}
+	if a, b := pdfColours(absent), pdfColours(empty); !reflect.DeepEqual(a, b) {
+		t.Errorf("the colours changed:\n absent: %v\n  empty: %v", a, b)
+	}
+	if pageCount(t, absent) != pageCount(t, empty) {
+		t.Error("the page count changed")
+	}
+	if !reflect.DeepEqual(mediaBoxes(absent), mediaBoxes(empty)) {
+		t.Error("the page geometry changed")
+	}
+	// And no image: an empty block must not draw a logo it does not have.
+	if bytes.Contains(empty, []byte("/XObject <<\n/I")) {
+		t.Error("an empty branding block embedded an image")
+	}
+}
+
+// pdfStrings is every string the page draws, in order.
+func pdfStrings(b []byte) []string {
+	re := regexp.MustCompile(`\((?:[^()\\]|\\.)*\)\s*Tj`)
+	var out []string
+	for _, m := range re.FindAll(b, -1) {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+// pdfColours is every colour operator, in order — `rg` for a colour and `g`
+// for the grey shorthand fpdf uses when the three channels are equal.
+func pdfColours(b []byte) []string {
+	re := regexp.MustCompile(`[0-9.]+ (?:[0-9.]+ [0-9.]+ )?[rg]g?\b`)
+	var out []string
+	for _, m := range re.FindAll(b, -1) {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+// onePixelPNG is a real 1×1 PNG — a hand-written byte slice would not survive
+// the image decoder fpdf runs on it.
+var onePixelPNG = mustDecodeB64(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+func mustDecodeB64(s string) []byte {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// With branding, the client's name, colour, logo and footer are all on the
+// page — the criterion is "an agency sends a link with their logo without
+// touching code", and the PDF is one of the three surfaces that has to honour
+// it.
+func TestBrandingReachesThePage(t *testing.T) {
+	s := demoSnapshot(3)
+	s.Branding = &snapshot.Branding{
+		Name:        "Acme Digital",
+		Logo:        "data:image/png;base64," + base64.StdEncoding.EncodeToString(onePixelPNG),
+		AccentColor: "#ff6600",
+		Footer:      "Confidential — Acme Digital",
+	}
+	b := render(t, s, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+
+	if !containsText(b, "Acme Digital") {
+		t.Error("the branded name is not on the page")
+	}
+	// The project's own name is replaced, not printed alongside: the client
+	// reads one name.
+	if containsText(b, "Facturación Ágil") {
+		t.Error("the project's own name is still on the page next to the brand")
+	}
+	if !containsText(b, "Confidential — Acme Digital") {
+		t.Error("the footer is missing")
+	}
+	// The accent, as a PDF colour operator: 0xff/0xff = 1, 0x66/0xff ≈ 0.4.
+	// fpdf writes `rg` for a colour and the shorter `g` when r==g==b, so a
+	// branded accent is the three-component form.
+	if !bytes.Contains(b, []byte("1.000 0.400 0.000 rg")) {
+		t.Errorf("the accent colour is not applied to the heading")
+	}
+	// An /XObject means the logo was actually embedded, not just carried.
+	if !bytes.Contains(b, []byte("/XObject")) {
+		t.Error("no image in the document; the logo was not drawn")
+	}
+	if n := pageCount(t, b); n != 1 {
+		t.Errorf("branding pushed the report to %d pages", n)
+	}
+}
+
+// A logo that cannot be decoded is skipped, not fatal. `ResolveLogo` refuses
+// every form of this at config time, so reaching here means a hand-edited
+// snapshot — which is not a reason to withhold the page somebody needs.
+func TestAnUndecodableLogoIsSkipped(t *testing.T) {
+	for _, logo := range []string{
+		"data:image/png;base64,!!!not base64!!!",
+		"data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte("<svg/>")),
+		"/etc/passwd",
+		"data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("not an image")),
+	} {
+		s := demoSnapshot(2)
+		s.Branding = &snapshot.Branding{Name: "Acme", Logo: logo}
+
+		b := render(t, s, time.Time{})
+		if !containsText(b, "Acme") {
+			t.Errorf("logo %q took the whole header down with it", logo)
+		}
+		if n := pageCount(t, b); n != 1 {
+			t.Errorf("logo %q produced %d pages", logo, n)
+		}
+	}
+}
+
+// A colour the renderer cannot parse falls back rather than painting garbage.
+// config.validateBranding refuses these, but this package also renders
+// snapshots it did not build — a published data.json somebody hands it.
+func TestAnUnparseableAccentFallsBack(t *testing.T) {
+	s := demoSnapshot(2)
+	s.Branding = &snapshot.Branding{Name: "Acme", AccentColor: "rebeccapurple"}
+
+	b := render(t, s, time.Time{})
+	if !containsText(b, "Acme") {
+		t.Error("a bad colour took the name with it")
+	}
+	// Near-black, the unbranded default. fpdf writes the single-component
+	// grey operator when the three channels are equal.
+	if !bytes.Contains(b, []byte("0.067 g")) {
+		t.Error("the heading is not in the default colour")
+	}
+}
+
+func TestParseHexColor(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want [3]int
+		ok   bool
+	}{
+		{"#ff6600", [3]int{255, 102, 0}, true},
+		{"ff6600", [3]int{255, 102, 0}, true},
+		{"#f60", [3]int{255, 102, 0}, true}, // #abc is #aabbcc, as in CSS
+		{"#FFF", [3]int{255, 255, 255}, true},
+		{"", [3]int{}, false},
+		{"#ff66", [3]int{}, false},
+		{"#gggggg", [3]int{}, false},
+	} {
+		got, ok := parseHexColor(tc.in)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("parseHexColor(%q) = %v, %v; want %v, %v", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }

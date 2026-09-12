@@ -10,6 +10,21 @@ the operator's project tree.
 - **`schema: 1`.** A future incompatible change bumps this number rather
   than growing an optional field forever; a viewer built against schema 1
   should refuse a `schema: 2` document rather than render it half-understood.
+
+  **`branding` is the one optional field, added under schema 1 on purpose
+  (G8.4).** The rule above is about *incompatible* changes, and this is not
+  one: the key is absent entirely unless an operator configures it, a schema-1
+  viewer that ignores unknown keys renders exactly what it rendered before,
+  and nothing existing moved or changed meaning. Bumping to 2 would have said
+  "refuse to render this" to every viewer already deployed, for a document
+  they can read perfectly.
+
+  The property that makes it safe is tested rather than asserted: with no
+  branding configured, `Build` produces **byte-identical** output to what it
+  produced before the field existed
+  (`TestWithoutBrandingTheDocumentIsByteIdentical`). That is also why the
+  field is a POINTER — `omitempty` does not omit a struct, so a value type
+  would have grown `"branding":{}` on every unbranded document.
 - **No internal ids.** No task id (`F2.T3`), no run id, no database row id.
   Phase numbers are the exception — they are the same small integers
   `tasks.json`'s own `phases[]` list carries and are not a task identity.
@@ -24,8 +39,16 @@ the operator's project tree.
 
 `internal/publish/snapshot/snapshot_test.go`'s `TestNoOperatorFields`
 enforces the first four points with an explicit forbidden-field list (not a
-golden-file comparison): a new field this package emits must be added to
-that list on purpose before the test can pass again.
+golden-file comparison).
+
+That is a DENY-list, and a deny-list cannot catch a field nobody thought to
+forbid — this paragraph used to claim that "a new field this package emits
+must be added to that list on purpose before the test can pass again", and
+that was not true: a new key passed silently unless its name was already
+known to be operator-only. `TestEveryEmittedKeyIsInTheSchema` (added in G8.4)
+is the allow-list that makes the claim true: every key name the document emits
+must appear in this file and in that test's `allowedKeys`, or the test fails
+naming the key.
 
 ## Top level
 
@@ -39,6 +62,7 @@ that list on purpose before the test can pass again.
 | `milestones` | array of object | One per phase that has at least one task. |
 | `blockers` | array of object | One per task currently `blocked`. |
 | `budget` | object | See below. |
+| `branding` | object | **Optional**, absent unless `presentation.branding` is configured. See below. |
 | `executive_summary` | object | See below. |
 
 ## `summary`
@@ -175,3 +199,19 @@ reads cleanly.
   }
 }
 ```
+
+## Branding (optional)
+
+Absent entirely unless an operator sets `presentation.branding` in
+config.yaml. Every field inside it is optional too.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | What the CLIENT reads. The project's own `meta.project` is unchanged; this replaces it in a client-facing header. |
+| `logo` | string | Always a `data:` URI, **never a path**. The document has to stand alone: a viewer holding this JSON has no access to the operator's filesystem. PNG or JPEG only — the PDF renderer draws raster images, and a white-label logo that appears on the web and is missing from the printed page is worse than one that says which formats work. Capped at 128 KiB raw, because a live viewer re-fetches this document on a timer. |
+| `accent_color` | string | `#rgb` or `#rrggbb`. `config.Load` refuses anything else at startup rather than ignoring it — a colour that does not apply is invisible, and the operator would go looking in the wrong place. |
+| `footer` | string | One line at the bottom of the page. |
+
+Nothing here is an internal id, a path, a backend name or raw technical text:
+it is what the operator chose to show a client, which is the one category of
+operator-authored text this document is *for*.

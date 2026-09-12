@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -108,6 +109,20 @@ func newReportPDFCmd(flags *projectFlags) *cobra.Command {
 	return cmd
 }
 
+// brandingLogoPath resolves a relative logo against the PROJECT ROOT, the way
+// `budgets_config` already resolves.
+//
+// Not against the working directory: `orch report pdf --project-root ../other`
+// is a normal thing to type, and a logo that only resolves when you happen to
+// be standing in the project is a logo that works on the operator's machine
+// and not in CI. A `data:` URI and an absolute path are left alone.
+func brandingLogoPath(paths config.Paths, logo string) string {
+	if logo == "" || strings.HasPrefix(logo, "data:") || filepath.IsAbs(logo) {
+		return logo
+	}
+	return filepath.Join(paths.Root, logo)
+}
+
 // buildStakeholderSnapshot assembles the stakeholder snapshot from the
 // project. Named for its audience rather than `buildSnapshot`, because
 // `status.go` already has one of those and they are different documents: that
@@ -147,6 +162,20 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		name = paths.ID
 	}
 
+	// The logo is read HERE, not in the snapshot package: reading a file is a
+	// caller's job, and the document's own rule is that it must stand alone —
+	// by the time it reaches Build it is a data URI or nothing.
+	branding := snapshot.Branding{
+		Name:        cfg.Presentation.Branding.Name,
+		AccentColor: cfg.Presentation.Branding.AccentColor,
+		Footer:      cfg.Presentation.Branding.Footer,
+	}
+	logo, err := snapshot.ResolveLogo(brandingLogoPath(paths, cfg.Presentation.Branding.Logo))
+	if err != nil {
+		return snapshot.Snapshot{}, err
+	}
+	branding.Logo = logo
+
 	return snapshot.Build(snapshot.Input{
 		Tasks:       tasks,
 		Phases:      f.Phases,
@@ -158,6 +187,7 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		// leaves spend out when it is off, and `internal/report` renders
 		// whatever the snapshot carries — one decision, one place.
 		ShowSpend: cfg.Dashboard.ShowSpendToStakeholder,
+		Branding:  branding,
 		Now:       now,
 	}), nil
 }

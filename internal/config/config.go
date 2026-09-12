@@ -176,6 +176,39 @@ type Notifications struct {
 // change — this is the label the client reads.
 type Presentation struct {
 	StatusLabels map[string]string `yaml:"status_labels"`
+	Branding     Branding          `yaml:"branding"`
+}
+
+// Branding is the white-label block (F3.5): what an agency puts on the
+// snapshot, the stakeholder bundle and the PDF so a client sees their own
+// name rather than ours.
+//
+// Every field is optional and the zero value changes nothing — a project
+// without this block produces the same bytes it produced before the block
+// existed, which is the property that makes it safe to add to a document with
+// a frozen schema.
+type Branding struct {
+	// Name replaces the project name in a client-facing header. The project's
+	// own `meta.project` stays what it is; this is what the client reads.
+	Name string `yaml:"name"`
+	// Logo is a path to a local image file, or a `data:` URI already. A path
+	// is read and embedded at build time — the document must stand alone, so
+	// nothing in it may point at a file the viewer cannot reach.
+	Logo string `yaml:"logo"`
+	// AccentColor is `#rgb` or `#rrggbb`. Anything else is a config error
+	// rather than a silently ignored value: a colour that does not apply is
+	// invisible, and the operator would go looking in the wrong place.
+	AccentColor string `yaml:"accent_color"`
+	// Footer is one line at the bottom of the page — an agency's name, a
+	// confidentiality note.
+	Footer string `yaml:"footer"`
+}
+
+// Configured reports whether anything was set. The zero block is the "no
+// branding" case every caller has to distinguish, so it has a name rather
+// than four comparisons repeated at each site.
+func (b Branding) Configured() bool {
+	return b.Name != "" || b.Logo != "" || b.AccentColor != "" || b.Footer != ""
 }
 
 // Publish is new in Go (blueprint F2). Nothing reads it yet; it ships now so
