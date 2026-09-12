@@ -260,3 +260,100 @@ func TestTextNamesACappedProvider(t *testing.T) {
 		t.Errorf("a capped provider is not called out:\n%s", b.String())
 	}
 }
+
+// More ready tasks than fit on the screen: the list stops and says how many
+// it stopped at, rather than pushing the budget and the commands off the page.
+func TestTextTruncatesALongReadySet(t *testing.T) {
+	tasks := []model.Task{task("done", 0, model.StatusDone, nil, 0, "seed")}
+	for i := 0; i < 9; i++ {
+		tasks = append(tasks, task(
+			"T-"+string(rune('a'+i)), 0, model.StatusTodo, []string{"done"}, 1, "work"))
+	}
+
+	got, err := Gather(context.Background(), Options{Tasks: tasks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Ready) != 9 {
+		t.Fatalf("ready = %d, want 9 — the JSON is not truncated, only the text", len(got.Ready))
+	}
+
+	var b strings.Builder
+	if err := got.Text(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "Ready to dispatch: 9") {
+		t.Errorf("the count is not the full one:\n%s", out)
+	}
+	if !strings.Contains(out, "and 4 more (`orch tasks --ready`)") {
+		t.Errorf("the list does not say what it left out:\n%s", out)
+	}
+	// Five listed, and the sixth is the "and N more" line rather than a task.
+	if strings.Count(out, "  T-") != readyShown {
+		t.Errorf("listed %d tasks, want %d:\n%s", strings.Count(out, "  T-"), readyShown, out)
+	}
+}
+
+// Nothing ready, nothing in flight, nothing blocked, and work remaining: every
+// remaining task is waiting on one that is not done. The default arm of the
+// explanation, and the one a half-finished chain lands on.
+func TestTextExplainsAPureDependencyWait(t *testing.T) {
+	got, err := Gather(context.Background(), Options{Tasks: []model.Task{
+		// T-1 is neither done nor ready: `skipped` is not a status the Go
+		// model has, so a task nobody can start is spelled this way — a todo
+		// whose dependency does not exist.
+		task("T-1", 0, model.StatusTodo, []string{"GHOST"}, 1, "a"),
+		task("T-2", 0, model.StatusTodo, []string{"T-1"}, 1, "b"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := got.Text(&b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "waiting on a dependency") {
+		t.Errorf("no explanation for a stalled chain:\n%s", b.String())
+	}
+}
+
+// A budgets.yaml whose preset names no providers is configured-but-empty, and
+// that is a different line from "not configured". An operator who wrote the
+// file should not be told it is missing.
+func TestTextDistinguishesAnEmptyBudgetFromNoBudget(t *testing.T) {
+	got, err := Gather(context.Background(), Options{
+		Tasks:  demoTasks(),
+		Budget: fakeBudget{providers: map[string]budget.ProviderSnapshot{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := got.Text(&b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Budget: configured, no providers") {
+		t.Errorf("an empty preset reads as missing:\n%s", b.String())
+	}
+}
+
+// With something ready and nothing blocked, the suggested command is about the
+// task you would start. demoTasks cannot reach this — it has a blocked task,
+// and blocked wins — so the case needs a project of its own.
+func TestTextSuggestsTheReadyTasksLog(t *testing.T) {
+	got, err := Gather(context.Background(), Options{Tasks: []model.Task{
+		task("T-1", 0, model.StatusDone, nil, 1, "seed"),
+		task("T-2", 0, model.StatusTodo, []string{"T-1"}, 1, "next"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := got.Text(&b); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "orch events T-2") {
+		t.Errorf("no command offered for the task you would start:\n%s", b.String())
+	}
+}
