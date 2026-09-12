@@ -57,9 +57,8 @@ func TestNotifySendPostsWhatItPrinted(t *testing.T) {
 		bodies []string
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		bodies = append(bodies, slackText(t, raw))
+		bodies = append(bodies, slackText(t, r.Body))
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -159,10 +158,18 @@ func captureStdout(t *testing.T, fn func()) string {
 	saved := os.Stdout
 	os.Stdout = w
 
-	done := make(chan string, 1)
+	// The read runs in a goroutine because the pipe's buffer is finite: a
+	// digest longer than it would block the command under test. The error
+	// comes back over the channel rather than being reported from the
+	// goroutine, so the failure is attributed on the test's own goroutine.
+	type capture struct {
+		text string
+		err  error
+	}
+	done := make(chan capture, 1)
 	go func() {
-		raw, _ := io.ReadAll(r)
-		done <- string(raw)
+		raw, err := io.ReadAll(r)
+		done <- capture{text: string(raw), err: err}
 	}()
 
 	fn()
@@ -171,7 +178,11 @@ func captureStdout(t *testing.T, fn func()) string {
 	if err := w.Close(); err != nil {
 		t.Fatalf("close the pipe: %v", err)
 	}
-	out := <-done
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("reading the captured stdout: %v", got.err)
+	}
+	out := got.text
 	if err := r.Close(); err != nil {
 		t.Fatalf("close the read end: %v", err)
 	}
@@ -209,9 +220,8 @@ func TestNotifyTestPostsTheMessageAndExitsZero(t *testing.T) {
 				bodies []string
 			)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				raw, _ := io.ReadAll(r.Body)
 				mu.Lock()
-				bodies = append(bodies, slackText(t, raw))
+				bodies = append(bodies, slackText(t, r.Body))
 				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -252,14 +262,19 @@ func TestNotifyTestFailsWhenTheChannelRejects(t *testing.T) {
 	}
 }
 
-// slackText pulls the message out of a Slack webhook body.
+// slackText reads a Slack webhook body and pulls the message out of it.
 //
-// The decode failing is a real failure, not something to shrug at: a body
-// that is not `{"text": ...}` would otherwise surface as an empty string and
-// fail the comparison with "want <the digest>, got \"\"" — which sends the
-// reader looking at the digest rather than at the payload shape.
-func slackText(t *testing.T, raw []byte) string {
+// Both steps fail the test rather than returning a zero value, and for the
+// same reason: an unread or undecodable body surfaces as an empty string, and
+// the comparison then fails with `want <the digest>, got ""` — which sends
+// the reader to look at the digest when the problem is the payload.
+func slackText(t *testing.T, body io.Reader) string {
 	t.Helper()
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		t.Errorf("reading the webhook body: %v", err)
+		return ""
+	}
 	var payload struct {
 		Text string `json:"text"`
 	}
