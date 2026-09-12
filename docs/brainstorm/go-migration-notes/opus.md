@@ -287,6 +287,14 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   policy, not inventory**, and it says what a stakeholder may see when it
   exists. Worth knowing before someone reads it as a route table.
 
+- **A config option nothing can consume is not an option.** `Validate` accepts
+  `port: 0` — "any free one", which is what a test or an ephemeral tunnel
+  wants — and `Serve` bound it correctly, but the only address a caller could
+  read back was `cfg.Addr()`, still `:0`. The option was legal, documented and
+  unusable. `Ready()` + `BoundAddr()` close that; the general shape is worth
+  keeping in mind as the Go tree grows: **a setting is finished when something
+  can read back what it did**, not when the write path accepts it.
+
 - **`internal/dashboard/manualcheck_test.go` is checklist rule 29 written down
   as code.** It starts the real server with the real embedded SPA and makes ten
   real requests, skipped unless `ORCH_MANUAL_CHECK=1`. The point is that "I ran
