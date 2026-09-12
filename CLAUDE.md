@@ -51,31 +51,30 @@ distinto al de v1 — ver `.golangci.yml`).
 ```
 cmd/orch/            — main package, arg parsing, entrypoint (existe)
 internal/
-  cli/               — subcomandos (status, tasks, dispatch, findings…)
-  config/            — carga + merge de config.yaml / overrides
-  model/             — Task, Finding, DAG y demás tipos de dominio
+  cli/               — subcomandos (existe: status, tasks, validate, graph, router, config, atomize, init, migrate, run, task-status…; docs/CLI.md es la lista viva)
+  config/            — carga + merge de config.yaml / overrides (existe; docs/CONFIG.md)
+  model/             — Task, Finding, DAG y demás tipos de dominio (existe; puede importar pyfmt, regla 11)
   graph/             — validate / cycles / orden / DOT sobre el DAG (#111)
   pyfmt/             — emulación del formato de Python (repr, separador de miles) (#124)
-  atomize/           — tasks.json <-> spec
-  router/            — model_router.yaml
-  budget/            — guardrails por proveedor
-  state/             — backend (SQLite única fuente de verdad, ver F-12)
-  engine/            — el loop de dispatch (equivalente a dispatcher.py)
-  providers/         — adapters por CLI (claude/codex/opencode/agy…)
-  prompt/            — prompt_builder.py equivalente
-  worktree/          — aislamiento git por task
-  vcs/               — github/gitlab
-  dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: solo
-                       spa.go, embebe web/ — G5.1. El servidor en sí es
-                       G5.2, otro carril.)
+  atomize/           — tasks.json <-> spec (existe)
+  router/            — model_router.yaml (existe)
+  budget/            — guardrails por proveedor (existe)
+  state/             — backend (SQLite única fuente de verdad, ver F-12) (existe)
+  engine/            — el loop de dispatch: refill, reaper, scheduler, run loop, poller de CI (existe)
+  project/           — lo que CLI y dashboard comparten sobre un proyecto: tasks.json hidratado con el estado, horas humanas, último cambio (llega con G5.2 b1)
+  providers/         — adapters por CLI (existe: claude; codex/opencode/gemini/agy esperan a que sus CLIs estén instaladas para capturar fixtures reales)
+  prompt/            — prompt_builder.py equivalente (existe)
+  worktree/          — aislamiento git por task (existe)
+  vcs/               — github/gitlab (existe)
+  dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: spa.go embebe web/ — G5.1; servidor, modelo de acceso y endpoints — G5.2, en curso)
   publish/           — snapshot del stakeholder: export estático, watch, destino git/cloud
   mcp/               — servidor MCP stdio (tools orch_*) para agentes
-  skills/            — instalación de skills (`orch install-skills`)
+  skills/            — instalación de skills (`orch install-skills`) (existe)
   templates/         — plantillas de proyecto (embebidas; #145)
   scaffold/          — `orch init`: batch, wizard, confirm gate (el paquete no se llama `init` porque ese nombre exige alias en cada import)
-  doctor/            — `orch doctor` / `orch validate`
+  doctor/            — `orch doctor` / `orch validate` (existe)
   notify/            — Slack/Discord webhooks
-  tunnel/            — supervisor de túneles del dashboard
+  tunnel/            — supervisor de túneles del dashboard: autossh (Pinggy) y bore, los dos que Python tiene; no hay cloudflared (G5.6, en curso)
 web/                 — SPA (existe; movida desde frontend/ en G5.1),
                        embebida por internal/dashboard vía el
                        `build.outDir` de vite (no `web/dist/`)
@@ -83,11 +82,12 @@ web/                 — SPA (existe; movida desde frontend/ en G5.1),
 
 **Go tree**: `make build` (bin/orch, versión desde `git describe`), `make test`
 (`go test ./... -race -cover`), `make lint` (golangci-lint si está instalado,
-si no `go vet` con aviso), `make parity` (placeholder hasta G1.5). Hoy el
-árbol Go es solo `cmd/orch/main.go` — root cobra + `orch status` como stub
-que sale con código 2. CI en `.github/workflows/go.yml` (jobs `go-test` /
-`go-lint`); no confundir con `ci-build.yml` (smoke del wheel Python) ni
-`review.yml` (revisor Gemini).
+si no `go vet` con aviso), `make web` (construye la SPA que internal/dashboard
+embebe; `make build` depende de él), `make parity` (scripts/parity.sh: corre
+init → atomize con los dos binarios y compara el árbol; goldens generados
+ejecutando Python, nunca a mano). CI en `.github/workflows/go.yml` (jobs
+`go-test` / `go-lint` / `parity`); no confundir con `ci-build.yml` (smoke
+del wheel Python) ni `review.yml` (revisor Gemini).
 
 Regla de la migración: **no se añaden features nuevas en la versión Python.**
 Los bugs que aparezcan mientras dure la migración se anotan en
