@@ -11,17 +11,34 @@ import {
 } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { isMilestoneComplete, type StakeholderSnapshot } from "./types"
+import type { StakeholderSnapshot } from "./types"
+
+declare global {
+  interface Window {
+    // Populated by a `data.js` sibling file `orch publish` writes next to
+    // this HTML, wrapping the same document `data.json` carries. Reading
+    // this first (before the fetch fallback below) is what lets a
+    // downloaded zip opened straight from disk (file://) render without a
+    // server: a `<script src="data.js">` tag is not subject to the
+    // same-origin fetch restriction a bare `fetch('./data.json')` is
+    // under `file://`, since it's just script execution, not a network
+    // read.
+    __ORCH_SNAPSHOT__?: StakeholderSnapshot
+  }
+}
 
 /**
  * Stakeholder snapshot — G6.2.
  *
- * No API, no login, no polling: this whole page is `fetch('./data.json')`
- * against a file `orch publish` writes next to this HTML at export time —
- * everything it needs to render is either baked into this bundle or in
- * that one sibling file. Schema (schema: 1) is internal/publish's (G6.1),
- * confirmed with orch-sonnet — see ./types.ts for the exact shape and one
- * flagged issue in their draft.
+ * No API, no login, no polling: this whole page reads a snapshot `orch
+ * publish` writes next to this HTML at export time — everything it needs
+ * to render is either baked into this bundle or in those sibling files.
+ * Two ways to get it, tried in order: `window.__ORCH_SNAPSHOT__` (set by a
+ * `data.js` sibling, works under `file://`) and, only if that's absent,
+ * `fetch('./data.json')` (works when served over http, e.g. the operator
+ * dashboard's own stakeholder profile route). Schema (schema: 1) is
+ * internal/publish's (G6.1) — see ./types.ts and
+ * docs/SNAPSHOT-SCHEMA.md for the exact, committed shape.
  */
 
 type LoadState =
@@ -33,6 +50,15 @@ export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" })
 
   useEffect(() => {
+    // window.__ORCH_SNAPSHOT__ is set synchronously by data.js, which is
+    // loaded via a <script> tag before this bundle in the exported HTML
+    // — so by the time this component mounts, it's already there if the
+    // exporter wrote one.
+    if (window.__ORCH_SNAPSHOT__) {
+      setState({ status: "ready", data: window.__ORCH_SNAPSHOT__ })
+      return
+    }
+
     let cancelled = false
     fetch("./data.json")
       .then((res) => {
@@ -47,7 +73,11 @@ export default function App() {
         // A file:// page blocked by the browser's cross-origin policy
         // throws a bare TypeError with no HTTP status to inspect —
         // distinguish that from "the file is genuinely missing" so the
-        // message tells the viewer what to actually do about it.
+        // message tells the viewer what to actually do about it. This
+        // path is now only reached when data.js is also missing or
+        // failed to set window.__ORCH_SNAPSHOT__ (an older export, or a
+        // build that skipped it) — a current export's file:// case is
+        // handled above, before any fetch is attempted.
         const isLikelyCorsBlock =
           err instanceof TypeError && window.location.protocol === "file:"
         setState({
@@ -151,15 +181,22 @@ function SummaryCard({ summary }: { summary: StakeholderSnapshot["summary"] }) {
 }
 
 function BudgetCard({ budget }: { budget: StakeholderSnapshot["budget"] }) {
-  const last = budget.spend_by_day[budget.spend_by_day.length - 1]
+  // Only rendered by the caller when budget.enabled is true, at which
+  // point the snapshot always carries both fields (docs/SNAPSHOT-SCHEMA.md)
+  // — they're optional in the type only because the schema omits them
+  // entirely when disabled. The fallbacks below are for a malformed or
+  // stale document, not the documented shape.
+  const spendByDay = budget.spend_by_day ?? []
+  const spendUsd = budget.spend_usd ?? 0
+  const last = spendByDay[spendByDay.length - 1]
   return (
     <Card>
       <CardHeader>
         <CardTitle>Budget</CardTitle>
-        <CardDescription>Last {budget.spend_by_day.length} day(s)</CardDescription>
+        <CardDescription>Last {spendByDay.length} day(s)</CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-3 text-sm">
-        <Stat label="Total spend" value={`$${budget.spend_usd.toFixed(2)}`} />
+        <Stat label="Total spend" value={`$${spendUsd.toFixed(2)}`} />
         <Stat
           label="Yesterday"
           value={last ? `$${last.cost_usd.toFixed(2)}` : "—"}
@@ -184,22 +221,19 @@ function MilestonesCard({
           <p className="text-sm text-muted-foreground">No milestones.</p>
         ) : (
           <ul className="space-y-2 text-sm">
-            {milestones.map((m) => {
-              const complete = isMilestoneComplete(m)
-              return (
-                <li key={m.phase} className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5">
-                    {complete ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
-                    ) : null}
-                    {m.name}
-                  </span>
-                  <Badge variant={complete ? "success" : "muted"} className="font-mono text-[10px]">
-                    {m.done}/{m.total}
-                  </Badge>
-                </li>
-              )
-            })}
+            {milestones.map((m) => (
+              <li key={m.phase} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  {m.complete ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
+                  ) : null}
+                  {m.name}
+                </span>
+                <Badge variant={m.complete ? "success" : "muted"} className="font-mono text-[10px]">
+                  {m.done}/{m.total}
+                </Badge>
+              </li>
+            ))}
           </ul>
         )}
       </CardContent>

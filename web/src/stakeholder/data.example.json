@@ -1,5 +1,5 @@
 {
-  "_comment": "EXAMPLE — matches G6.1's draft schema 1 as shared by orch-sonnet, not yet the committed JSON Schema. Used only for local dev/preview of this bundle (pnpm dev / pnpm build:stakeholder); orch publish writes the real data.json at export time.",
+  "_comment": "EXAMPLE — matches the committed schema 1 (docs/SNAPSHOT-SCHEMA.md). Used only for local dev/preview of this bundle (pnpm dev / pnpm build:stakeholder); orch publish writes the real data.json (and data.js) at export time.",
   "schema": 1,
   "generated_at": "2026-09-12T18:30:00Z",
   "project_name": "Example Project",
@@ -23,7 +23,8 @@
       "in_progress": 0,
       "blocked": 0,
       "backlog": 0,
-      "percent_done": 100.0
+      "percent_done": 100.0,
+      "complete": true
     },
     {
       "phase": 1,
@@ -33,7 +34,8 @@
       "in_progress": 3,
       "blocked": 1,
       "backlog": 3,
-      "percent_done": 41.7
+      "percent_done": 41.7,
+      "complete": false
     }
   ],
   "blockers": [
