@@ -67,7 +67,7 @@ internal/
   worktree/          — aislamiento git por task (existe)
   vcs/               — github/gitlab (existe)
   dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: spa.go embebe web/ — G5.1; servidor, modelo de acceso y endpoints — G5.2, en curso)
-  publish/           — snapshot del stakeholder: export estático, watch, destino git/cloud
+  publish/           — snapshot del stakeholder (existe): snapshot/ es el documento (G6.1) y export/git/watch el sitio estático de `orch publish` (G6.3). Embebe el segundo bundle de web/ en dist/stakeholder, así que `make web` construye los dos (`pnpm build` y `pnpm build:stakeholder`). `to: cloud` sigue sin implementar y el comando lo rechaza por su nombre
   mcp/               — servidor MCP stdio (tools orch_*) para agentes (existe: las siete tools sobre state.Backend, G6.4; docs/MCP.md)
   skills/            — instalación de skills (`orch install-skills`) (existe)
   templates/         — plantillas de proyecto (embebidas; #145)

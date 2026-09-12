@@ -834,3 +834,60 @@ medio.
   No es de ninguna PR en vuelo: está en `main` y lleva ahí desde G5.x. Lo dejo
   anotado con el comando exacto para que quien lleve `web/` lo reproduzca en
   vez de discutirlo.
+
+## G6.3 — `orch publish`, el sitio estático del stakeholder
+
+- **El bundle que había que embeber no se construía nunca.** G6.2 dejó
+  `web/vite.stakeholder.config.ts` apuntando a `internal/publish/dist/stakeholder`
+  con un comentario que decía «placeholder, coordinar la ruta final antes de que
+  esto aterrice de verdad», `.gitignore` ignoraba `internal/publish/dist/` entero
+  — parent incluido — y `make web` solo corría `pnpm build`. Tres piezas que por
+  separado parecían acabadas y juntas no producían nada: el `go:embed` no habría
+  compilado (un patrón que no casa ningún fichero es error de compilación, y el
+  padre estaba ignorado), y aunque hubiera compilado, ni CI ni una máquina limpia
+  habrían tenido bundle que embeber. **La regla general**: un `outDir` que nada
+  construye y un `.gitignore` que tapa el fichero centinela son la misma clase de
+  bug que "una opción de config que nada consume" — parece terminado desde cada
+  lado y no lo está desde ninguno.
+
+- **El bundle trae un `data.json` que NO debe salir.** `publicDir` del config
+  stakeholder es `src/stakeholder/public/`, y ahí vive el snapshot de ejemplo que
+  hace que `pnpm dev:stakeholder` renderice algo. Vite copia publicDir a la raíz
+  del build, así que el bundle embebido lleva dentro las cifras de un proyecto
+  inventado. La primera versión del exportador escribía los datos reales y luego
+  copiaba el bundle encima: un cliente habría visto el proyecto de demostración
+  en una página por lo demás perfecta. Ahora el bundle va primero y los datos
+  después, *y además* `copyBundle` se niega a copiar esos dos nombres. Doble
+  cinturón a propósito: el fallo es silencioso y del todo plausible.
+
+- **`stakeholder.html` no es `index.html`.** Vite nombra la salida según su
+  entrada, y un directorio cuya portada se llama `stakeholder.html` da 404 en
+  `/`. El renombrado es del exportador y no del build: el bundle es una entrada,
+  la exportación es un sitio web.
+
+- **El `<script src="data.js">` lo inyecta el exportador**, no lo trae el HTML.
+  Si lo trajera, `pnpm dev:stakeholder` — donde no hay data.js — cargaría un 404
+  en cada recarga. Y hacen falta las dos grafías del documento (`data.json` para
+  el `fetch`, `data.js` para `window.__ORCH_SNAPSHOT__`) porque el navegador
+  bloquea que una página local *lea* un fichero local pero no que *ejecute* uno
+  como script: es lo que hace que un zip enviado por correo se abra y funcione.
+
+- **El digest de `--watch` excluye `generated_at`.** Si no, cada tick es un
+  cambio y `--to git` acumula un commit por intervalo cuyo historial entero son
+  marcas de tiempo. Lo que decide si publicar es lo que vería un espectador.
+
+- **La rama publicada es salida, no historia**: se reemplaza entera en cada
+  publicación (un asset viejo que sobrevive es una página que medio funciona) y
+  nace huérfana (si no, el primer push serviría el árbol de fuentes en un host
+  estático). Y se construye en un clon temporal: publicar durante un run no puede
+  tocar el checkout del run.
+
+- **Go no está instalado en la máquina de desarrollo.** Compilado, testeado
+  (`-race`) y pasado por `golangci-lint v2.13.2` dentro de `golang:1.25` y
+  `golangci/golangci-lint:v2.13.2` por docker. Dos tests de la suite completa
+  fallan dentro del contenedor —
+  `engine.TestRunTimeoutKillsTheWholeProcessGroup` y
+  `worktree.TestPushSendsBranchToOrigin` — y **fallan igual en `origin/main` sin
+  tocar**, así que son del namespace de PIDs y de la identidad git del
+  contenedor, no regresiones. Anotado para que la próxima sesión que vea esos dos
+  nombres no los persiga.

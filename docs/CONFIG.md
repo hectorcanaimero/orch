@@ -264,18 +264,26 @@ changes by upgrading.
 | `accent_color` | `#rgb` or `#rrggbb`. Anything else is a **startup error**, not a value quietly ignored: branding that does not apply is invisible, and you would go looking at the browser, the PDF and your cache before suspecting the spelling. |
 | `footer` | One line at the bottom of the page. |
 
-### `publish` — new
+### `publish` — new (G6.3)
 
-Where the stakeholder snapshot goes. **Nothing reads this yet**; it ships now
-so a project's config does not need rewriting when `orch publish` lands.
+Where the stakeholder snapshot goes. Read by [`orch publish`](CLI.md); every
+key here is the default for the flag of the same name, and a flag that is not
+passed never overwrites it.
 
 ```yaml
 publish:
-  interval_s: 60         # how often --watch re-exports during a run
-  to: dir                # dir | git | cloud
-  dir: public            # output directory for `to: dir`
-  git_branch: gh-pages   # branch pushed for `to: git`
+  interval_s: 60         # seconds between --watch checks (default 30)
+  to: dir                # dir | git
+  dir: public            # output directory for `to: dir`, relative to the project root
+  git_branch: gh-pages   # branch replaced and pushed for `to: git`
 ```
+
+| Key | Notes |
+|---|---|
+| `interval_s` | How often `--watch` rebuilds the snapshot and compares it. It re-publishes only when the **content** changed — `generated_at` is excluded from the comparison, or every tick would be a change and `to: git` would grow one commit per interval. |
+| `to` | `dir` writes the site to a directory; `git` replaces a branch with it and pushes. **`cloud` is accepted by the config loader and refused by the command**: it was reserved in the struct before there was a provider, a credentials story or an acceptance criterion behind it. `orch publish` says so by name rather than failing as "unknown". |
+| `dir` | Relative paths resolve against the project root, not the working directory — `orch publish --project-root ../other` is a normal thing to type. |
+| `git_branch` | The branch is treated as **output, not history**: every publish replaces its whole tree, so an asset a previous export emitted and this one does not is gone rather than left serving. It is created as an **orphan** the first time, so the published site shares no history with the source and a static host serving it never serves your repository. |
 
 ### `tunnel` — new (G5.6)
 

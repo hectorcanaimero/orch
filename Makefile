@@ -6,16 +6,26 @@ VERSION := $(shell git describe --tags --always)
 build: web
 	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/orch
 
-# Builds the SPA into internal/dashboard/dist/build (web/vite.config.ts's
-# build.outDir — see internal/dashboard/spa.go) so `go:embed` has a real
-# SPA, not just the placeholder dist/README.md keeps it compiling with.
-# `build` depends on this so `make build` always ships a real dashboard;
+# Builds BOTH bundles web/ produces, because both are embedded in the
+# binary and neither is optional:
+#
+#   pnpm build             -> internal/dashboard/dist/build     (web/vite.config.ts)
+#   pnpm build:stakeholder -> internal/publish/dist/stakeholder (web/vite.stakeholder.config.ts)
+#
+# They are separate vite configs, not two entries of one build, because
+# they need incompatible `base` values — the dashboard is served at `/` by
+# a real server, the stakeholder page is read off disk with relative
+# paths. So they are two commands here too.
+#
+# `build` depends on this so `make build` always ships real pages, not
+# just the placeholder dist/README.md files keep it compiling with;
 # `test` deliberately does NOT — TestSPARequiresABuild
-# (internal/dashboard/spa_test.go) gives a clear "run pnpm build in web/"
+# (internal/dashboard/spa_test.go) and TestBundleRequiresABuild
+# (internal/publish/bundle_test.go) give a clear "run pnpm build in web/"
 # failure for a bare `make test`/`go test ./...` instead of silently
 # building the SPA for you every run.
 web:
-	cd web && pnpm install --frozen-lockfile && pnpm build
+	cd web && pnpm install --frozen-lockfile && pnpm build && pnpm build:stakeholder
 
 test:
 	go test ./... -race -cover
