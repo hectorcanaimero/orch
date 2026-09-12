@@ -1,0 +1,30 @@
+# orch report pdf — through the real CLI, against the shipped parity fixture.
+
+exec orch report pdf --project-root proj --project-id proj --out report.pdf
+stdout 'report.pdf'
+exists report.pdf
+
+# It is a PDF, and the magic is the first thing in the file.
+grep '^%PDF-' report.pdf
+
+# One page of A4. The requirement is the page count, so the test is the page
+# count — not "the file is non-empty".
+grep '/MediaBox \[0 0 595\.28 841\.89\]' report.pdf
+! grep '/Type /Pages?/Type /Page' report.pdf
+
+# ---- default destination ---------------------------------------------------
+exec orch report pdf --project-root proj --project-id proj
+stdout 'orch-report\.pdf'
+exists proj/orch-report.pdf
+
+# ---- it takes no positional arguments --------------------------------------
+! exec orch report pdf --project-root proj --project-id proj extra-arg
+stderr 'accepts 0 arg|unknown command'
+
+# ---- a project that is not a project ---------------------------------------
+! exec orch report pdf --project-root nowhere --project-id nowhere
+stderr 'missing tasks.json'
+
+# ---- an unwritable destination is an error, not a silent no-op -------------
+! exec orch report pdf --project-root proj --project-id proj --out nodir/report.pdf
+stderr 'creating'

@@ -94,6 +94,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newDoctorCmd(flags))
 	root.AddCommand(newDashboardCmd(flags))
 	root.AddCommand(newExplainCmd(flags))
+	root.AddCommand(newReportCmd(flags))
 	return root
 }
 

@@ -585,3 +585,68 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   The general shape is the one this lane keeps finding: **a field that moved
   stores, and a reader nobody moved with it.** Same family as the four writers
   that landed without their readers.
+
+- **`go-pdf/fpdf` is the first third-party dependency that is not cobra, yaml,
+  sqlite or the MCP SDK.** MIT, v0.9.0, the maintained fork of
+  `jung-kurt/gofpdf` (archived by its author in 2021). Approved as a decision
+  rather than arrived at by a `go get`: the alternative is writing a PDF
+  generator, and a one-page A4 of text and rectangles is about 200 lines of
+  flat PDF — which is 200 lines of a format nobody here wants to own.
+
+- **The core PDF fonts are single-byte, and that is a trap a byte-level test
+  walks straight past.** Helvetica, Times and Courier take CP1252, not UTF-8.
+  Hand fpdf a Go string with an accent in it and the PDF is valid, the text is
+  "there", and the page reads `FacturaciÃ³n`. The transcoder is twenty lines;
+  the test asserts the ENCODED bytes (`0xF3` for `ó`) rather than the Go
+  string, because asserting the string is asserting nothing.
+
+  Three characters are not their own code points in CP1252 and all three are in
+  this document's vocabulary: the em dash (0x97), the ellipsis (0x85) and the
+  euro sign (0x80).
+
+- **A PDF's page count is a thing the document declares, not a thing you
+  count.** The first version of the test counted `/Type /Page` objects, which
+  also matches `/Type /Pages` — one character away from reporting a two-page
+  document as one. It now reads the `/Count` on the page tree AND
+  cross-checks it against the objects, so a malformed document fails rather
+  than passing quietly.
+
+  Proven it can fail rather than assumed: with the caps removed and automatic
+  page breaks on, 40 milestones render as 2 pages and the assertion catches it.
+
+- **No PDF tooling on this VPS.** No `pdftoppm`, `pdftocairo`, `pdfinfo`,
+  `qpdf`, `gs`, `mutool` or ImageMagick; no `pypdf` or `pymupdf` in either
+  Python. The rule-29 check is therefore structural and textual rather than
+  visual: render the same page uncompressed, read its `/MediaBox`, its
+  `/Count`, and every `Tj` string back out in order. Installing poppler on a
+  shared VPS is the user's decision, not a lane's.
+
+- **"Never discard an error" is three rules, not one.** Gemini flagged two
+  identical-looking `_ = x.Close()` in the same PR, and they wanted different
+  answers:
+
+  - `closeDB` in a READ-ONLY command: discarded, with one line saying why. The
+    process is exiting and the handle never wrote anything; a close error
+    there changes nothing a caller could act on.
+  - `closeDB` in a command that WRITES a file: reported to stderr, exit code
+    unchanged. The artefact on disk is already correct, so it is not a
+    failure — but a database handle that will not close is worth knowing about
+    next to a file somebody is about to email.
+  - `f.Close` in a TEST: `t.Errorf`. A test that cannot close the file it just
+    wrote has not verified what it claims to.
+
+  The syntax is identical in all three; what differs is what the error would
+  tell the reader. A blanket "always wrap it" produces noise in the first case
+  and a missed signal in the third.
+
+- **A gate that cannot tell must fail closed.** From reviewing G8.2's
+  per-project stakeholder token: its resolver did `if err != nil { ok = false }`
+  and fell back to the token in config.yaml. That collapses two different
+  states — "this project never rotated" (fall back, correct) and "I cannot
+  read whether it rotated" (fall back, and a token rotated away after a leak
+  becomes valid again). A database error should not resurrect a revoked
+  credential, and the symptom of this one is a page that works.
+
+  Same family as the unknown profile in #184: a degradation that reads as
+  robustness. The tell is a branch where an ERROR and an ABSENCE are handled
+  by the same line.

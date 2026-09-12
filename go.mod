@@ -3,6 +3,7 @@ module github.com/hectorcanaimero/orch
 go 1.25.0
 
 require (
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/rogpeppe/go-internal v1.16.0
