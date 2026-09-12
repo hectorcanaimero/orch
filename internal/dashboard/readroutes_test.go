@@ -20,13 +20,24 @@ import (
 // what it returns, including the answers a real one is hard to provoke — a
 // read that fails, an event log with a malformed row.
 type fakeState struct {
-	tasks     []state.TaskRuntime
-	events    []state.Event
-	spends    []state.Spend
-	tasksErr  error
-	eventsErr error
-	spendErr  error
-	lastN     int
+	tasks      []state.TaskRuntime
+	events     []state.Event
+	spends     []state.Spend
+	tasksErr   error
+	eventsErr  error
+	spendErr   error
+	milestones []state.Milestone
+	done7d     int
+	lastEvents map[string]state.Event
+
+	milestonesErr error
+	done7dErr     error
+	lastEventsErr error
+	// askedForEvents records the id list the sprint handler passed, which is
+	// how "it only asks about the blocked tasks" is testable.
+	askedForEvents []string
+
+	lastN int
 	// lastSince records the window the handler asked for, which is how the
 	// budget summary's "today" and the metrics page's "all of history" are
 	// told apart.
@@ -83,6 +94,25 @@ func (f *fakeState) SpendSince(_ context.Context, backend string, since time.Tim
 	return out, nil
 }
 
+func (f *fakeState) Milestones(context.Context) ([]state.Milestone, error) {
+	return f.milestones, f.milestonesErr
+}
+
+func (f *fakeState) CountDoneLastNDays(_ context.Context, _ int) (int, error) {
+	return f.done7d, f.done7dErr
+}
+
+func (f *fakeState) LastEventByTask(_ context.Context, taskIDs []string) (map[string]state.Event, error) {
+	f.askedForEvents = taskIDs
+	if f.lastEventsErr != nil {
+		return nil, f.lastEventsErr
+	}
+	if f.lastEvents == nil {
+		return map[string]state.Event{}, nil
+	}
+	return f.lastEvents, nil
+}
+
 const testTasksJSON = `{
   "meta": {"project": "demo"},
   "tasks": [
@@ -100,6 +130,22 @@ func newReadServer(t *testing.T, st StateReader) *Server {
 	t.Helper()
 	root := writeProject(t, "spec_root: specs\n", testTasksJSON)
 	s, err := New(cfg(ProfileOperator, ""), Options{
+		Static: spaHandler(t),
+		State:  st,
+		Paths:  config.Paths{Root: root, ID: "demo", ConfigYAML: filepath.Join(root, "config.yaml")},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s
+}
+
+// newGatedServer is newReadServer under the stakeholder profile, for the
+// tests that check a route is behind the gate.
+func newGatedServer(t *testing.T, st StateReader) *Server {
+	t.Helper()
+	root := writeProject(t, "spec_root: specs\n", testTasksJSON)
+	s, err := New(cfg(ProfileStakeholder, "test-token-stakeholder"), Options{
 		Static: spaHandler(t),
 		State:  st,
 		Paths:  config.Paths{Root: root, ID: "demo", ConfigYAML: filepath.Join(root, "config.yaml")},

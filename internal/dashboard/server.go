@@ -69,6 +69,15 @@ type StateReader interface {
 	// numbers the dispatch guardrail enforces by asking the same gate, rather
 	// than by recomputing a window that could drift from it.
 	SpendSince(ctx context.Context, backend string, since time.Time) ([]state.Spend, error)
+
+	// Milestones is every milestone with its progress counts.
+	Milestones(ctx context.Context) ([]state.Milestone, error)
+	// CountDoneLastNDays is the numerator of velocity: tasks that finished
+	// inside the window.
+	CountDoneLastNDays(ctx context.Context, days int) (int, error)
+	// LastEventByTask is the newest event per task id, which is how a blocked
+	// task explains itself. The sprint panel asks only about the blocked ones.
+	LastEventByTask(ctx context.Context, taskIDs []string) (map[string]state.Event, error)
 }
 
 // Options are what New needs beyond the config.
