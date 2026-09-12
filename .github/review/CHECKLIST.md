@@ -189,6 +189,28 @@ These apply to files under `cmd/` and `internal/`.
     banner, an error, a report — the body should show it, pasted. Minor when
     the PR only changes internals.
 
+30. **`tasks.json` does not know a task's status. Anything that renders one
+    has to hydrate first.** Since F-12 the runtime truth is `tasks_runtime`;
+    the file's `status` and `comments` are frozen at whatever they were when
+    it was written, and for a scaffolded project that is `todo` and nothing,
+    forever. `project.Hydrate` is the one overlay, and it is not optional
+    decoration — a reader that skips it is not "slightly stale", it is
+    reporting the project as never started.
+
+    Three times now, in three places, by three different paths: the dashboard's
+    task detail served the file's empty `comments` (bug 24, inherited from
+    Python); `orch graph` coloured every node by the file's `status` — a bug of
+    the Go port, which Python does not have — so the shipped parity fixture
+    (three tasks done, one in progress, one blocked) rendered as five untouched
+    boxes, with a testscript asserting the uncoloured form; and the MCP tools
+    got it right only because their author wrote the trap down first.
+
+    Reviewer-facing form: when a diff reads `.Status` or `.Comments` off a
+    `model.Task`, follow that slice back to where it was loaded. If it came
+    from `model.LoadTasksFile` without a `project.Hydrate` between, that is a
+    finding — unless a comment says why the authored value is the one wanted
+    (`orch validate` and `orch atomize` legitimately want the file's).
+
 ---
 
 ## How to review

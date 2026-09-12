@@ -726,3 +726,65 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `orch report pdf --project-root ../other`. `budgets_config` already had this
   right; the txtar found it because a testscript runs from `$WORK` and the
   project is `$WORK/proj`, which is exactly the shape that breaks.
+
+## Auditoría acotada: tres formas, un hallazgo real (G8 cierre)
+
+Tres patrones vistos durante el carril, buscados a propósito en todo el árbol
+Go. Cada uno verificado ejecutando, no leyendo.
+
+- **Bug del port (sin número) — `orch graph` pintaba el fichero, no el
+  proyecto.** Es un bug del port en Go, no de Python: la serie numerada de
+  `go-migration-notes.md` cuenta bugs de Python, y este Python no lo tiene.
+
+  Cada nodo del DOT se colorea por `Task.Status`, y `orch graph` cargaba `tasks.json`
+  directamente sin pasar por `project.Hydrate`. Desde F-12 ese campo está
+  congelado en lo que el fichero traía al escribirse; la verdad vive en
+  `tasks_runtime`. La fixture de paridad que el repo envía lo dice sola: su
+  `tasks.json` declara los cinco tasks en `todo` y su base de datos dice tres
+  `done`, uno `in-progress` y uno `blocked`. El comando dibujaba cinco cajas
+  sin color — un proyecto terminado renderizado como uno que no ha empezado.
+
+  Lo que lo mantuvo invisible: el `graph.txtar` **afirmaba la forma sin color**
+  (`"F0.T1" [label="…"]`), y el test unitario de `statusAttrs` construía sus
+  tasks a mano con el status ya puesto. La función estaba probada y ningún
+  camino de producción podía alimentarla. Python no tiene el bug: su
+  `_run_graph_subcommand` pasa por `build_status_snapshot`, que lee la base.
+
+  Arreglado en la misma PR, con el txtar en rojo primero. El comentario del
+  comando decía literalmente lo contrario de lo que hacía ("DOT is a pure
+  function of tasks.json's shape … never opens a Backend"), que es la parte
+  que conviene recordar: **el comentario no era una descripción, era una
+  intención que el código había dejado atrás.**
+
+- **`vcs.CILogs` devuelve `("", nil)` ante cualquier fallo — y es fiel a
+  Python, no un bug.** `GitHubProvider.CILogs` colapsa cinco fallos distintos
+  (el `gh pr view` que falla, el JSON que no parsea, la URL sin run id, el `gh
+  run view` que falla) en el mismo valor que "no hay nada fallado que
+  enseñar"; `gitlab.go` hace lo mismo en seis sitios. El único consumidor,
+  `engine/cipoll.go`, tiene una rama `if err != nil` que escribe
+  `"(log retrieval failed)"` en `.orch-ci-feedback.md` — y esa rama solo la
+  alcanza `checkBinary("gh")`. Python es idéntico: `get_ci_logs` devuelve
+  `str` sin canal de error y hace `return ""` en cada uno de esos puntos; el
+  `except` del llamador existe para el `FileNotFoundError` del binario
+  ausente, que es justo lo que `checkBinary` porta.
+
+  Es decir: el agente que se re-dispatcha tras un CI rojo puede recibir un
+  fichero de feedback vacío sin que nada lo diga, en las dos versiones. **No
+  se toca durante la migración** (sería una feature, no un fix), pero queda
+  anotado para después de la paridad. Dueño: el carril de `vcs`/`engine`.
+  Mínimo honesto si se retoma: que el doc de la interfaz diga que `""`
+  significa "nada que enseñar **o** no se pudo obtener", que hoy no lo dice.
+
+- **Ramas inalcanzables: nada nuevo, salvo la cara B de ese mismo bug.** Con perfil
+  de cobertura sobre `internal/`, los bloques sin cubrir del carril son casi
+  todos propagación de error. Los dos que no lo eran resultaron ser los brazos
+  `in-progress` y `backlog` de `statusAttrs` — los mismos que ningún camino
+  real podía producir. Cubiertos ahora, uno por el txtar (la fixture tiene un
+  task en `in-progress`) y otro por el test unitario.
+
+**Regla 30 del checklist** sale de aquí: el bug 24 (comments, de Python), el de
+`orch graph` (status, del port) y el comentario preventivo de
+`internal/mcp/tasks.go` son la misma forma tres veces — *un campo que cambió de almacén y un lector que nadie movió*. La regla
+la enuncia al revés, que es como se revisa: si el diff lee `.Status` o
+`.Comments`, sigue el slice hasta su carga y comprueba que hay un `Hydrate` en
+medio.

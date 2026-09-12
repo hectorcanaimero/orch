@@ -480,6 +480,8 @@ func TestDOTStructure(t *testing.T) {
 		{ID: "A", Phase: 0, Title: "First", Status: model.StatusDone},
 		{ID: "B", Phase: 1, Title: "Second", Status: model.StatusBlocked,
 			Dependencies: []string{"A"}},
+		{ID: "C", Phase: 1, Title: "Third", Status: model.StatusInProgress},
+		{ID: "D", Phase: 1, Title: "Fourth", Status: model.StatusBacklog},
 		{ID: "SELF", Phase: 1, Dependencies: []string{"SELF"}},
 	}
 	got := DOT(tasks)
@@ -492,6 +494,11 @@ func TestDOTStructure(t *testing.T) {
 		{"the dependency edge", `"A" -> "B";`},
 		{"done is coloured", `fillcolor="#dcf5e5"`},
 		{"blocked is coloured", `fillcolor="#fde2e2"`},
+		// Every arm of statusAttrs, because a colour nothing renders is a
+		// colour nobody notices is wrong — and until `orch graph` hydrated,
+		// these two were the arms no end-to-end run could reach.
+		{"in-progress is coloured", `fillcolor="#fdeed3"`},
+		{"backlog is dimmed", `color="#999999"`},
 	}
 	for _, c := range mustContain {
 		if !strings.Contains(got, c.needle) {
