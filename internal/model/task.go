@@ -2,7 +2,8 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
+
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // Task is a single unit of work from tasks.json. Field names match the
@@ -112,48 +113,49 @@ func TaskFromJSON(raw map[string]json.RawMessage) (Task, error) {
 
 // MarshalJSON reproduces the wire key set the Task was decoded with
 // (t.present == nil, i.e. built in Go rather than decoded, emits every
-// optional field).
+// optional field), in the same field order Python's dataclass — and this
+// struct's own declaration — use. Order matters here: tasks.json is a file
+// both binaries write and a person reads, not just an API response.
 func (t Task) MarshalJSON() ([]byte, error) {
-	out := map[string]json.RawMessage{}
-	for k, v := range t.Extra {
-		out[k] = v
-	}
-	must := func(key string, v any) error {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Errorf("model: marshal task field %q: %w", key, err)
+	out := newOrderedJSON()
+	for _, k := range sortedExtraKeys(t.Extra) {
+		if err := out.setRaw(k, t.Extra[k]); err != nil {
+			return nil, err
 		}
-		out[key] = b
-		return nil
 	}
 	include := func(key string) bool {
 		return t.present == nil || t.present[key]
 	}
 
-	if err := must("id", t.ID); err != nil {
+	if err := out.set("id", t.ID); err != nil {
 		return nil, err
 	}
-	if err := must("phase", t.Phase); err != nil {
+	if err := out.set("phase", t.Phase); err != nil {
 		return nil, err
 	}
-	if err := must("title", t.Title); err != nil {
+	if err := out.set("title", t.Title); err != nil {
 		return nil, err
 	}
-	if err := must("model", t.Model); err != nil {
-		return nil, err
-	}
+	// description sits between title and model in Python's own dataclass
+	// (orchestrator/models.py's Task) — a real ordering bug this file had
+	// from the start, found the same way as the map-sorting one above: by
+	// diffing a Go- and Python-written tasks.json, not by checking a
+	// field's value.
 	if include("description") {
-		if err := must("description", t.Description); err != nil {
+		if err := out.set("description", t.Description); err != nil {
 			return nil, err
 		}
 	}
+	if err := out.set("model", t.Model); err != nil {
+		return nil, err
+	}
 	if include("reason") {
-		if err := must("reason", t.Reason); err != nil {
+		if err := out.set("reason", t.Reason); err != nil {
 			return nil, err
 		}
 	}
 	if include("status") {
-		if err := must("status", t.Status); err != nil {
+		if err := out.set("status", t.Status); err != nil {
 			return nil, err
 		}
 	}
@@ -162,12 +164,16 @@ func (t Task) MarshalJSON() ([]byte, error) {
 		if deps == nil {
 			deps = []string{}
 		}
-		if err := must("dependencies", deps); err != nil {
+		if err := out.set("dependencies", deps); err != nil {
 			return nil, err
 		}
 	}
 	if include("estimateHours") {
-		if err := must("estimateHours", t.EstimateHours); err != nil {
+		// Python dumps a plain float, so a whole number still carries a
+		// decimal point ("1.0", never "1") — encoding/json's default
+		// formatting drops it. See pyfmt.Float's own doc comment.
+		if err := out.setRaw("estimateHours",
+			json.RawMessage(pyfmt.Float(t.EstimateHours))); err != nil {
 			return nil, err
 		}
 	}
@@ -176,12 +182,12 @@ func (t Task) MarshalJSON() ([]byte, error) {
 		if files == nil {
 			files = []string{}
 		}
-		if err := must("files", files); err != nil {
+		if err := out.set("files", files); err != nil {
 			return nil, err
 		}
 	}
 	if include("specRef") {
-		if err := must("specRef", t.SpecRef); err != nil {
+		if err := out.set("specRef", t.SpecRef); err != nil {
 			return nil, err
 		}
 	}
@@ -190,7 +196,7 @@ func (t Task) MarshalJSON() ([]byte, error) {
 		if comments == nil {
 			comments = []json.RawMessage{}
 		}
-		if err := must("comments", comments); err != nil {
+		if err := out.set("comments", comments); err != nil {
 			return nil, err
 		}
 	}

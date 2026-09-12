@@ -103,3 +103,48 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   hand-copied string, so the test tracks the shipped file. End-to-end
   regression: `orch init` (blank) → `orch atomize --apply` with no `--file`
   now finds zero tasks, in `internal/cli/testdata/script/atomize.txtar`.
+
+- **G3.5 (the CI parity harness) found three Go-port bugs in
+  `internal/model` before the harness itself existed** — walking the
+  recorrido by hand (`orch init` → `orch atomize --apply`, diffing the
+  resulting tasks.json against Python's byte for byte) surfaced them
+  before a single line of harness or CI code was written. These are bugs
+  in the Go port itself, not in Python — there is no number for them in
+  the Python bug series `docs/brainstorm/go-migration-notes.md` tracks.
+
+  1. **`Task`/`Meta`/`Phase.MarshalJSON` alphabetized every key.** Each
+     builds its fields in the right order, into a
+     `map[string]json.RawMessage` — and `encoding/json` always sorts a
+     plain map's keys alphabetically on the final `Marshal` call,
+     regardless of insertion order. So every tasks.json Go ever wrote
+     (via `orch init`, `orch atomize --apply`, `SaveTasksFile` generally)
+     came out `comments, dependencies, description, estimateHours, files,
+     id, model, phase, reason, specRef, status, title` instead of
+     `orchestrator/models.py`'s real dataclass order (`id, phase, title,
+     description, model, reason, status, dependencies, estimateHours,
+     files, specRef, comments`). No existing test caught it because every
+     one of them asserts a field's *value*, never the file's own key
+     order — and `Phase`'s two fields (`id`, `name`) happen to sort the
+     same alphabetically as declared, which is exactly why this package's
+     own tests, all green, never noticed.
+
+  2. **`description` and `model` were swapped relative to Python's real
+     field order**, found while fixing bug 1 above — a second, unrelated
+     ordering mistake baked into `Task.MarshalJSON` since it was first
+     written (G1.3), not something the map-sorting bug caused.
+
+  3. **`estimateHours` rendered `1`, not `1.0`, for a whole number** —
+     the same Python `sum()`/`json.dump` float-vs-int quirk `pyfmt.Float`
+     already exists to handle everywhere else (`internal/state`,
+     `internal/cli`'s cost fields), just never wired into
+     `Task.MarshalJSON`.
+
+  Fixed with a small `orderedJSON` builder (same pattern as
+  `internal/cli`'s `orderedCount` and `internal/graph`'s `Problem`) in
+  place of the map, plus `pyfmt.Float` for `estimateHours`. Verified end
+  to end: `orch init` and `orch atomize --apply` now produce **byte-
+  identical** tasks.json between the Python and Go binaries over the same
+  project and spec — confirmed by actually running both and diffing, not
+  by re-reading the code. New tests pin the key order via
+  `encoding/json`'s token-by-token `Decoder` (`Unmarshal` into a map would
+  discard the very thing under test).
