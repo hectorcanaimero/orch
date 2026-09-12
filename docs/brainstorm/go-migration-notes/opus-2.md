@@ -674,3 +674,46 @@ question for Python.
   field it is silently zero for every unavailable project, and with the
   conversion the build stops until somebody decides what the caller's type
   should say about it.
+
+- **A boundary that matters has to be typed, not documented.** The first cut of
+  the portfolio wrote "the listener is the boundary" in
+  `docs/DASHBOARD-PROFILES.md` and left it there. orch-98 pushed back: a single
+  operator dashboard already carries that risk, but N projects — every one's
+  counters, blockers and spend on one unauthenticated route — multiply it, and
+  a note in a file the operator may never open is not a decision.
+
+  `--allow-remote` is the answer rather than an outright refusal, because
+  running this on a box reached over a network is an ordinary case: it is where
+  several projects live, and closing the door would push an operator to
+  something worse. The flag makes the exposure something they typed, and the
+  banner names what they exposed — "exposed" in the abstract is easy to wave
+  past, a list of your own project names is not.
+
+  Two details that turned out to be the load-bearing ones:
+
+  - **Refused before anything is opened**, not merely before `Serve`. A first
+    version checked after `openPortfolio` so the message could count the
+    projects. That makes the refusal depend on N databases opening first, and a
+    refused command should touch nothing. It names the glob instead — which is
+    what the operator typed and can edit.
+  - **`hostIsLoopback` cannot be `host != "127.0.0.1"`.** `0.0.0.0` and `::`
+    parse as valid IPs and are *not* loopback — binding every interface is the
+    exact case the gate exists for — while `::1` and the whole `127.0.0.0/8`
+    range are. A hostname that is not `localhost` is assumed reachable rather
+    than resolved: a DNS lookup would make a security decision depend on what a
+    resolver happened to answer. Seen failing: the naive predicate reports
+    `hostIsLoopback("::") = true`.
+
+- **`cmd.Flags().Changed` had leaked into a function that is not a command.**
+  `runPortfolio` took its flags as a struct and then consulted
+  `cmd.Flags().Changed("host")` to decide whether to apply them, so a test
+  calling it directly got the default host no matter what it passed — the first
+  version of the exposure test passed while the gate was never reached. The
+  dance exists in the single-project path because config.yaml may hold a value
+  an unset flag must not overwrite; a portfolio has no single config.yaml, so
+  the flag values are already the answer.
+
+  The empty-host fallback that replaced it is not cosmetic: `hostIsLoopback("")`
+  says true while an empty `Host` makes `Addr()` `":port"`, which binds every
+  interface. The predicate and the bind have to agree, or the gate is checking
+  something the listener does not do.

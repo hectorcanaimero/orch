@@ -26,12 +26,13 @@ import (
 // killing the process mid-response.
 func newDashboardCmd(flags *projectFlags) *cobra.Command {
 	var (
-		host       string
-		port       int
-		profile    string
-		token      string
-		withTunnel bool
-		portfolio  string
+		host        string
+		port        int
+		profile     string
+		token       string
+		withTunnel  bool
+		portfolio   string
+		allowRemote bool
 	)
 
 	cmd := &cobra.Command{
@@ -54,7 +55,18 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 				return runPortfolio(cmd, portfolio, portfolioFlags{
 					host: host, port: port, profile: profile,
 					withTunnel: withTunnel, token: token,
+					allowRemote: allowRemote,
 				})
+			}
+			// Registered on this command but meaningful only with
+			// --portfolio, so passing it alone is refused rather than
+			// silently doing nothing. A single-project dashboard has its own
+			// answer to remote binding — its profile and its token — and
+			// pretending this flag participates in that would be a third
+			// story about the same question.
+			if allowRemote {
+				return fmt.Errorf("--allow-remote only applies with --portfolio; " +
+					"a single project's exposure is decided by its profile and token")
 			}
 
 			paths, cfg, err := loadProjectConfig(flags)
@@ -164,6 +176,9 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 	cmd.Flags().StringVar(&portfolio, "portfolio", "",
 		"Serve every orch project matching this glob from one process "+
 			"(operator only). Quote it, or the shell expands it first.")
+	cmd.Flags().BoolVar(&allowRemote, "allow-remote", false,
+		"With --portfolio: allow a non-loopback --host, exposing every "+
+			"project's counters on an unauthenticated /api/portfolio")
 	cmd.AddCommand(newDashboardTokenCmd(flags))
 	return cmd
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -200,11 +201,31 @@ func closeNow(closeDB func() error, warn warnFunc, root string) {
 // Not `--project-root`/`--project-id`: the glob names the projects, and a
 // single root would contradict it. Not `--tunnel` either — see runPortfolio.
 type portfolioFlags struct {
-	host       string
-	port       int
-	profile    string
-	token      string
-	withTunnel bool
+	host        string
+	port        int
+	profile     string
+	token       string
+	withTunnel  bool
+	allowRemote bool
+}
+
+// hostIsLoopback reports whether binding to host keeps the listener on this
+// machine.
+//
+// The unspecified addresses are the ones worth being explicit about: `0.0.0.0`
+// and `::` parse as valid IPs and are NOT loopback — they bind every
+// interface, which is the whole case this check exists for. A hostname that is
+// not `localhost` is treated as non-loopback without resolving it: a DNS
+// lookup here would make a security decision depend on what a resolver
+// happened to answer, and the safe reading of "I do not know" is "assume it is
+// reachable".
+func hostIsLoopback(host string) bool {
+	switch host {
+	case "", dashboard.DefaultHost, "localhost":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // runPortfolio serves N projects from one process (G8.5 / F3.6).
@@ -228,6 +249,39 @@ func runPortfolio(cmd *cobra.Command, pattern string, flags portfolioFlags) erro
 			"configured per project, and this process serves several")
 	}
 
+	// The host gate, before anything is opened and long before anything
+	// listens. Deliberately a gate rather than a note in the docs.
+	//
+	// `/api/portfolio` is ungated by design — the operator profile never
+	// gates anything — so the listener IS the boundary. A single-project
+	// operator dashboard already carries that risk; N projects, with every
+	// one's counters, blockers and spend on a single unauthenticated route,
+	// multiply it. A boundary that matters has to be a decision the operator
+	// makes on the command line, not a sentence in a file they may never
+	// open.
+	//
+	// Refused rather than merely warned, and opt-in rather than forbidden: an
+	// operator running this on a box they reach over a network is an
+	// ordinary case — it is where N projects live — and closing the door on
+	// them would push them to something worse. `--allow-remote` makes the
+	// exposure a thing they typed.
+	//
+	// Checked before openPortfolio so the refusal never depends on N
+	// databases opening first, and so a refused command touches nothing.
+	host := flags.host
+	if host == "" {
+		host = dashboard.DefaultHost
+	}
+	if !hostIsLoopback(host) && !flags.allowRemote {
+		return fmt.Errorf(
+			"--portfolio with --host %s would expose every project matching %q "+
+				"on an unauthenticated /api/portfolio: it is operator-only, "+
+				"which means there is no stakeholder portfolio, NOT that the "+
+				"route asks for a token. Bind to %s, or pass --allow-remote if "+
+				"that is what you meant",
+			host, pattern, dashboard.DefaultHost)
+	}
+
 	spa, err := dashboard.SPA()
 	if err != nil {
 		return fmt.Errorf("reading the embedded SPA: %w", err)
@@ -243,16 +297,24 @@ func runPortfolio(cmd *cobra.Command, pattern string, flags portfolioFlags) erro
 	}
 	defer closeAll()
 
+	// Taken straight from the flags, with no `cmd.Flags().Changed` dance.
+	// The single-project path needs that dance because config.yaml may hold
+	// a host or a port that an unset flag's default must not overwrite; a
+	// portfolio has no single config.yaml to defer to, so the flag values —
+	// whose own defaults are these constants — are already the answer.
+	//
+	// `host` is already resolved above, empty string included: that fallback
+	// is not cosmetic, because `hostIsLoopback("")` says true while an empty
+	// Host would make Addr() ":port" and bind every interface. The predicate
+	// and the bind have to agree, or the gate is checking something the
+	// listener does not do.
 	cfg := dashboard.Config{
 		Profile: dashboard.ProfileOperator,
-		Host:    dashboard.DefaultHost,
-		Port:    dashboard.DefaultPort,
+		Host:    host,
+		Port:    flags.port,
 	}
-	if cmd.Flags().Changed("host") {
-		cfg.Host = flags.host
-	}
-	if cmd.Flags().Changed("port") {
-		cfg.Port = flags.port
+	if cfg.Port == 0 && !cmd.Flags().Changed("port") {
+		cfg.Port = dashboard.DefaultPort
 	}
 
 	p, err := dashboard.NewPortfolio(dashboard.PortfolioOptions{
@@ -287,6 +349,16 @@ func runPortfolio(cmd *cobra.Command, pattern string, flags portfolioFlags) erro
 		}
 		_, _ = fmt.Fprintln(out, "  Operator profile: nothing on /api/portfolio is "+
 			"token-gated. Each project's own routes under /p/<id>/ keep theirs.")
+		// Said again, louder, when the listener is not the boundary it
+		// usually is. Naming the projects is the point: "exposed" in the
+		// abstract is easy to wave past, a list of your own project names is
+		// not.
+		if !hostIsLoopback(host) {
+			_, _ = fmt.Fprintf(out,
+				"  !! --allow-remote: bound to %s, so anyone who can reach this "+
+					"port sees the counters, blockers and spend of: %s\n",
+				cfg.Host, strings.Join(p.Projects(), ", "))
+		}
 	}()
 	return p.Serve(ctx)
 }

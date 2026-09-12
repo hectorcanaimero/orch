@@ -203,6 +203,47 @@ matters for your setup, do not bind the portfolio beyond localhost.
 token would suggest a shared one exists, and a tunnel is configured per project
 — there is no single project here to take one from.
 
+### Binding beyond localhost needs `--allow-remote`
+
+Because the listener is the boundary, moving it is a decision you make on the
+command line:
+
+```
+$ orch dashboard --portfolio '/path/to/projects/*' --host 0.0.0.0
+--portfolio with --host 0.0.0.0 would expose every project matching
+'/path/to/projects/*' on an unauthenticated /api/portfolio: it is
+operator-only, which means there is no stakeholder portfolio, NOT that the
+route asks for a token. Bind to 127.0.0.1, or pass --allow-remote if that is
+what you meant
+```
+
+Refused before anything is opened and long before anything listens — a process
+that binds and then warns has already exposed what it was warning about.
+
+Running on a box you reach over a network is an ordinary case (it is where
+several projects live), so this is opt-in rather than forbidden. With the flag,
+the banner says what you exposed, by name:
+
+```
+Orch portfolio dashboard running on http://[::]:34998
+  3 project(s): billing-api, data-lake, e2e
+  Operator profile: nothing on /api/portfolio is token-gated. Each project's own routes under /p/<id>/ keep theirs.
+  !! --allow-remote: bound to 0.0.0.0, so anyone who can reach this port sees the counters, blockers and spend of: billing-api, data-lake, e2e
+```
+
+`0.0.0.0` and `::` count as remote — they bind every interface — and so does
+any hostname that is not `localhost`, which is assumed reachable rather than
+resolved: a DNS lookup would make this decision depend on what a resolver
+happened to answer. The whole `127.0.0.0/8` range and `::1` are local.
+
+`--allow-remote` is refused without `--portfolio`: a single project's exposure
+is decided by its profile and its token, and a second knob for the same
+question would be a third story about it.
+
+Putting a tunnel in front (below) is the other way to reach it from elsewhere,
+and a stakeholder-profile project is the shape meant for that — the portfolio
+is not.
+
 ### One broken project does not blank the page
 
 A glob over a working directory matches things that are not projects. Each one

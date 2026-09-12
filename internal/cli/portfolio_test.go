@@ -223,3 +223,118 @@ func newPortfolioTestCmd(t *testing.T) *cobra.Command {
 	cmd.SetContext(context.Background())
 	return cmd
 }
+
+// TestHostIsLoopback is the predicate the exposure gate rests on, so the two
+// cases that decide it are the unspecified addresses: `0.0.0.0` and `::`
+// parse as valid IPs and are NOT loopback — they bind every interface, which
+// is the whole reason the gate exists. An `ip.IsLoopback()` check alone gets
+// those right; a naive `host != "127.0.0.1"` gets `::1` wrong in the other
+// direction and starts nagging an operator who did bind locally.
+func TestHostIsLoopback(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"", true}, // unset means the default, which is loopback
+		{"127.0.0.1", true},
+		{"127.0.0.53", true}, // the whole /8 is loopback, not just .1
+		{"::1", true},
+		{"localhost", true},
+
+		{"0.0.0.0", false}, // every interface
+		{"::", false},      // every interface, v6
+		{"192.168.1.10", false},
+		{"10.0.0.5", false},
+		// A hostname that is not localhost is assumed reachable rather than
+		// resolved: a DNS lookup would make a security decision depend on
+		// what a resolver happened to answer.
+		{"dashboard.internal", false},
+	}
+	for _, tc := range cases {
+		if got := hostIsLoopback(tc.host); got != tc.want {
+			t.Errorf("hostIsLoopback(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestPortfolioRefusesARemoteHostWithoutTheFlag is the gate itself.
+//
+// `/api/portfolio` is ungated by design, so the listener is the boundary — and
+// a boundary that matters has to be a decision on the command line rather than
+// a sentence in a doc. The refusal happens BEFORE the listener opens, which is
+// the part worth asserting: a process that binds and then complains has
+// already exposed what it was warning about.
+func TestPortfolioRefusesARemoteHostWithoutTheFlag(t *testing.T) {
+	dir := t.TempDir()
+	scaffoldProject(t, filepath.Join(dir, "alpha"), "spec_root: specs\n")
+	glob := filepath.Join(dir, "*")
+
+	cases := []struct {
+		name        string
+		host        string
+		allowRemote bool
+		wantRefused bool
+	}{
+		{"every interface, no flag", "0.0.0.0", false, true},
+		{"every interface v6, no flag", "::", false, true},
+		{"a LAN address, no flag", "192.168.1.10", false, true},
+		// The flag is what makes it the operator's decision, so with it the
+		// startup gets past this check. It then fails on the listener (a LAN
+		// address this machine does not have), which is the proof it got
+		// through rather than being refused earlier.
+		{"a LAN address with the flag", "192.168.1.10", true, false},
+		// Loopback never needs the flag.
+		{"loopback, no flag", "127.0.0.1", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newPortfolioTestCmd(t)
+			// Port 0 so the loopback case does not hold a fixed port; it is
+			// cancelled immediately below.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			cmd.SetContext(ctx)
+
+			err := runPortfolio(cmd, glob, portfolioFlags{
+				host: tc.host, port: 0, allowRemote: tc.allowRemote,
+			})
+			refused := err != nil && strings.Contains(err.Error(), "--allow-remote")
+			if refused != tc.wantRefused {
+				t.Fatalf("refused = %v (err = %v), want %v", refused, err, tc.wantRefused)
+			}
+			if tc.wantRefused {
+				// The message has to name the host and say how many projects
+				// are at stake; "refused" on its own tells the operator
+				// nothing about what they nearly did.
+				if !strings.Contains(err.Error(), tc.host) {
+					t.Errorf("the refusal does not name the host: %v", err)
+				}
+				// Named, not counted: the gate runs before anything is
+				// opened, so the glob the operator typed is what it has
+				// to hand back.
+				if !strings.Contains(err.Error(), glob) {
+					t.Errorf("the refusal does not name the glob: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// `--allow-remote` alone is refused rather than quietly doing nothing.
+//
+// Same rule as `--token` and `--tunnel` with `--portfolio`: a flag that is
+// accepted and has no effect is the failure this port keeps finding. A single
+// project's exposure is decided by its profile and its token, and pretending
+// this flag participates in that would be a third story about one question.
+func TestAllowRemoteWithoutPortfolioIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "proj")
+	scaffoldProject(t, root, "spec_root: specs\n")
+	// scaffoldProject writes what the portfolio opener needs;
+	// resolveAndValidate also wants scripts/task-start.sh, so the
+	// single-project path would fail later either way. The assertion is that
+	// it fails HERE, on the flag, before any of that.
+	code := Run("v-test", []string{"dashboard", "--allow-remote", "--project-root", root})
+	if code == 0 {
+		t.Fatal("--allow-remote was accepted without --portfolio")
+	}
+}
