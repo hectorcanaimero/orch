@@ -76,6 +76,9 @@ type Backend interface {
 	SpendSince(ctx context.Context, backend string, since time.Time) ([]Spend, error)
 	// TotalSpendUSD sums cost across every backend since `since`.
 	TotalSpendUSD(ctx context.Context, since time.Time) (float64, error)
+	// AllSpend returns every spend row newer than `since`, across every
+	// backend, oldest first. The zero Time means all of history.
+	AllSpend(ctx context.Context, since time.Time) ([]Spend, error)
 
 	// LatestRun returns the most recently started run. ErrNoRuns when the
 	// project has never been run.

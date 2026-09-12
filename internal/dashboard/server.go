@@ -60,6 +60,15 @@ type StateReader interface {
 	// means all of it. The log view reads the tail; the per-task figures
 	// (hours spent, last updated) are derived from the whole thing.
 	AllEvents(ctx context.Context, n int) ([]state.Event, error)
+	// AllSpend is every spend row newer than `since`, across every backend.
+	// The metrics page asks for all of history; the budget summary asks for
+	// today.
+	AllSpend(ctx context.Context, since time.Time) ([]state.Spend, error)
+	// SpendSince is one provider's rolling window, and it is here because
+	// `budget.Gate` takes exactly this method: the dashboard reports the same
+	// numbers the dispatch guardrail enforces by asking the same gate, rather
+	// than by recomputing a window that could drift from it.
+	SpendSince(ctx context.Context, backend string, since time.Time) ([]state.Spend, error)
 }
 
 // Options are what New needs beyond the config.

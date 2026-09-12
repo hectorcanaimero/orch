@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // AllEvents against a real database, because what it is for is the ordering
@@ -120,5 +121,90 @@ func TestAllEventsIsScopedToItsProject(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("zulu sees %d of alpha's events", len(got))
+	}
+}
+
+// ---- spend -----------------------------------------------------------------
+
+// AllSpend against a real database: the ordering and the `since` cutoff are
+// both in the SQL, and so is the one behaviour worth pinning — a row whose
+// timestamp does not parse is dropped rather than dated to the epoch.
+func TestAllSpendIsOrderedAndWindowed(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1", "T2")
+
+	rows := []Spend{
+		{TS: "2026-09-11T12:00:00Z", TaskID: "T2", Backend: "codex", Model: "gpt-5", TokensIn: 3, CostUSD: 0.3},
+		{TS: "2026-09-11T10:00:00Z", TaskID: "T1", Backend: "claude", Model: "sonnet", TokensIn: 1, CostUSD: 0.1},
+		{TS: "2026-09-11T12:00:00Z", TaskID: "T1", Backend: "claude", Model: "sonnet", TokensIn: 2, CostUSD: 0.2},
+		{TS: "not a timestamp", TaskID: "T1", Backend: "claude", Model: "sonnet", TokensIn: 9, CostUSD: 9},
+	}
+	for i, r := range rows {
+		if err := b.RecordSpend(ctx, r); err != nil {
+			t.Fatalf("RecordSpend %d: %v", i, err)
+		}
+	}
+
+	all, err := b.AllSpend(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("AllSpend: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d rows, want 3 — the undated one is dropped, not dated to the epoch", len(all))
+	}
+	// Chronological, and the two sharing 12:00 break the tie on task id.
+	want := []string{"T1", "T1", "T2"}
+	for i, w := range want {
+		if all[i].TaskID != w {
+			t.Errorf("row %d is %s, want %s (order is ts then task id)", i, all[i].TaskID, w)
+		}
+	}
+
+	cutoff, _ := ParseTS("2026-09-11T11:00:00Z")
+	windowed, err := b.AllSpend(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("AllSpend windowed: %v", err)
+	}
+	if len(windowed) != 2 {
+		t.Fatalf("got %d rows since 11:00, want 2", len(windowed))
+	}
+	// It crosses backends — that is what separates it from SpendSince.
+	backends := map[string]bool{}
+	for _, s := range windowed {
+		backends[s.Backend] = true
+	}
+	if !backends["claude"] || !backends["codex"] {
+		t.Errorf("saw backends %v, want both claude and codex", backends)
+	}
+}
+
+func TestAllSpendIsScopedToItsProject(t *testing.T) {
+	ctx := context.Background()
+	db, _, err := Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	a := NewSQLite(db, "alpha", "/tmp/alpha")
+	z := NewSQLite(db, "zulu", "/tmp/zulu")
+	if err := a.Bootstrap(ctx, tasks("A1")); err != nil {
+		t.Fatalf("bootstrap alpha: %v", err)
+	}
+	if err := z.Bootstrap(ctx, tasks("Z1")); err != nil {
+		t.Fatalf("bootstrap zulu: %v", err)
+	}
+	if err := a.RecordSpend(ctx, Spend{
+		TS: "2026-09-11T10:00:00Z", TaskID: "A1", Backend: "claude", Model: "sonnet", CostUSD: 1,
+	}); err != nil {
+		t.Fatalf("alpha RecordSpend: %v", err)
+	}
+
+	got, err := z.AllSpend(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("zulu AllSpend: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("zulu sees %d of alpha's spend rows", len(got))
 	}
 }
