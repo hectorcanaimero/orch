@@ -65,6 +65,15 @@ export function adoptTokenFromQuery(): void {
 }
 
 
+/**
+ * Local storage's own view of the token — `token`, plus `setToken`/
+ * `clearToken` to change it. Deliberately does NOT expose an
+ * `isAuthenticated`/similar boolean: whether a session may actually see
+ * protected content depends on what the server says about that token
+ * (or about needing one at all), not on whether *something* happens to
+ * be saved — see ProtectedRoute (bug 26) for the gate that asks the
+ * server via `/api/whoami` instead of trusting this alone.
+ */
 export function useAuth() {
   const token = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
@@ -82,6 +91,5 @@ export function useAuth() {
     token,
     setToken,
     clearToken,
-    isAuthenticated: Boolean(token),
   }
 }
