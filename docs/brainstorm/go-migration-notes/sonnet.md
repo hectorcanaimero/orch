@@ -202,3 +202,67 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   pnpm/node setup (for `make build`'s `web` dependency) plus a Python 3.12
   venv (`pip install -e ".[dev]"`), then runs `make build && make parity`
   — the first time this repo's CI has ever run the Python package at all.
+
+- **G6.1 — `internal/publish/snapshot`, new-in-Go, not a port.** The
+  stakeholder snapshot's contract (agreed with orch-98) is stricter than
+  anything Python ships: no task ids, no backend/provider names, no file
+  paths, no raw technical text. `docs/SNAPSHOT-SCHEMA.md` has the full
+  shape; two things are worth recording here because they are findings
+  about Python, not just design notes about Go.
+
+  1. **Python's own stakeholder JSON leaks spend past its own opt-in flag.**
+     `config.yaml`'s `dashboard.show_spend_to_stakeholder` defaults to
+     `false` with the comment "spend is sensitive"
+     (`orchestrator/dashboard/server.py:486-490`) — but that flag only
+     gates the SPA's own rendering. `_stakeholder_payload()` (the function
+     behind `/stakeholder/summary`) computes and returns
+     `spend_rounded_usd`/`spend_by_day` unconditionally
+     (`orchestrator/dashboard/server.py:1707-1718`); a direct `curl` of the
+     JSON endpoint sees spend with the flag off. This is a real gap, not a
+     migration-notes hypothetical, but per the migration rule (fixes yes,
+     features no, and Python is frozen) it is recorded here rather than
+     patched there. Go's `snapshot.Build` honors the flag itself
+     (`Input.ShowSpend`): with it false, `spend_usd`/`spend_by_day` are
+     absent from the document, not merely zeroed or unrendered — the
+     stricter behavior the flag's own comment already promised.
+
+  2. **Python's `blocked_reasons` ships a blocked task's raw comment text,
+     truncated to 120 characters, unredacted**
+     (`orchestrator/dashboard/server.py:1682-1687`) — whatever a human,
+     a CI log, or the dispatch loop itself wrote there, which can include
+     exit codes or provider error text. The Go contract explicitly forbids
+     this, so `blockers[].reason` is not a port of that field: it comes from
+     a small translation table (`internal/publish/snapshot/translate.go`)
+     over `internal/providers.Failure` — the closed classification the
+     dispatch loop already runs every failure through
+     (`internal/providers/classify.go`) — one fixed sentence per class per
+     language. A blocked task with no classified failure (an unmet
+     dependency, a manual defer) gets a generic sentence. This is new
+     vocabulary, not a translation of anything Python has; Python has no
+     structured "why is this blocked" signal to translate from.
+
+  Coordinated with opus (G5.2 b1/b2, in progress) before writing anything:
+  `graph.Summarize`/`PhaseCounts`/`Parallelizable`/`DownstreamImpact`/
+  `CriticalPath`/`OrphanDependencies` and `project.Hydrate`/
+  `HumanHoursByTask`/`LastUpdatedByTask` had already landed (PR #172) and
+  cover most of what the snapshot needs — deliberately NOT the id-bearing
+  ones (`CriticalPath`, `DownstreamImpact`, `Parallelizable` return per-task
+  detail), since the sanitized snapshot only ever consumes the aggregate
+  `Summarize`/`PhaseCounts`. `eta_hours_remaining` and `executive_summary`
+  (metrics.py) had no Go equivalent anywhere and no second consumer other
+  than this snapshot (opus confirmed by checking call sites — `orch.py`'s
+  `/api/sprint` uses a different, velocity-based ETA under a confusingly
+  similar name, `sprint_eta`; `/api/summary`'s `executive_summary` caller
+  is not one of the nine endpoints Go's dashboard is porting), so both are
+  built here rather than in `internal/project`, per his own reasoning: a
+  pure function with tests is cheap to move later if a second consumer
+  appears, guessing the right shared package ahead of one is not.
+
+  Known follow-up, not blocking this PR: `totalSpend` sums `state.Spend`'s
+  `CostUSD` directly, same as `internal/cli`'s existing `computeCostByTask`
+  — a recorded `0` is ambiguous (some backends, e.g. opencode, never report
+  a cost at all, so their real spend and "no data" both read as zero).
+  `internal/pricing` (opus, PR #175, not yet merged) is where Python's own
+  cost-vs-estimate logic (`orchestrator/dashboard/pricing.py`) is landing in
+  Go; once it exposes something shared, this package should switch to it
+  instead of the raw sum, in a small follow-up.
