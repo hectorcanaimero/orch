@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,11 @@ type fakeState struct {
 	lastEvents map[string]state.Event
 
 	milestonesErr error
+	latestErr     error
+	sinceErr      error
+	// mu guards events, which the live-tail tests append to while a stream
+	// goroutine reads it.
+	mu            sync.Mutex
 	done7dErr     error
 	lastEventsErr error
 	// askedForEvents records the id list the sprint handler passed, which is
@@ -49,6 +55,8 @@ func (f *fakeState) Tasks(context.Context, state.TaskFilter) ([]state.TaskRuntim
 }
 
 func (f *fakeState) AllEvents(_ context.Context, n int) ([]state.Event, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lastN = n
 	if f.eventsErr != nil {
 		return nil, f.eventsErr
@@ -92,6 +100,50 @@ func (f *fakeState) SpendSince(_ context.Context, backend string, since time.Tim
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// latestEventID and eventsSince back the live tail. The fake keeps its own
+// slice so a test can append while a stream is running, which is what makes
+// "the tail delivers what arrives after you connected" testable at all.
+func (f *fakeState) LatestEventID(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.latestErr != nil {
+		return 0, f.latestErr
+	}
+	var max int64
+	for _, e := range f.events {
+		if e.ID > max {
+			max = e.ID
+		}
+	}
+	return max, nil
+}
+
+func (f *fakeState) EventsSince(_ context.Context, afterID int64, limit int) ([]state.Event, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sinceErr != nil {
+		return nil, f.sinceErr
+	}
+	out := make([]state.Event, 0, len(f.events))
+	for _, e := range f.events {
+		if e.ID <= afterID {
+			continue
+		}
+		out = append(out, e)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// appendEvent is how a test writes into the log while a stream is reading it.
+func (f *fakeState) appendEvent(e state.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, e)
 }
 
 func (f *fakeState) Milestones(context.Context) ([]state.Milestone, error) {

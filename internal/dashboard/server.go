@@ -83,6 +83,13 @@ type StateReader interface {
 	// LastEventByTask is the newest event per task id, which is how a blocked
 	// task explains itself. The sprint panel asks only about the blocked ones.
 	LastEventByTask(ctx context.Context, taskIDs []string) (map[string]state.Event, error)
+
+	// LatestEventID is where a live tail starts, so it carries only what
+	// happens after the client connected.
+	LatestEventID(ctx context.Context) (int64, error)
+	// EventsSince is what that tail polls, keyed on the row id rather than on
+	// a timestamp — see state.EventsSince for why.
+	EventsSince(ctx context.Context, afterID int64, limit int) ([]state.Event, error)
 }
 
 // TunnelOptions is the tunnel half of Options, kept as its own type so a

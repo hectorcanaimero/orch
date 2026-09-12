@@ -95,6 +95,13 @@ type Backend interface {
 	// LastEventByTask returns the newest event per task id. A nil list means
 	// every task; an empty one means none, and asks nothing of the database.
 	LastEventByTask(ctx context.Context, taskIDs []string) (map[string]Event, error)
+	// LatestEventID is the id of the newest event, or 0 for a project with
+	// none — where a live tail starts.
+	LatestEventID(ctx context.Context) (int64, error)
+	// EventsSince returns events newer than afterID, oldest first, at most
+	// limit rows. Keyed on the id rather than on a timestamp: see the
+	// implementation for the same-second window that closes.
+	EventsSince(ctx context.Context, afterID int64, limit int) ([]Event, error)
 
 	// OrphanRows reports runtime and definition rows with no project row.
 	OrphanRows(ctx context.Context) (OrphanRows, error)

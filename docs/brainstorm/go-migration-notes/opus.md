@@ -464,3 +464,49 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   holding it is the person who started the process. It refuses under any
   profile but `operator` — raising a public URL from a dashboard whose own
   gate says the operator is absent is not something to do quietly.
+
+- **Bug 25 — the SSE tailer drops events that share a second.** Event
+  timestamps have SECOND precision (`_utc_now_iso`, a format shared with
+  `scripts/task-*.sh`, so it is a contract rather than a choice). Python's
+  SQLite tailer remembers the last timestamp it delivered and polls
+  `WHERE ts > last_ts`, so an event written in the same second as the last one
+  delivered — but after the poll that delivered it — is skipped, and since
+  `last_ts` never goes back, it is never seen again. A dispatch and the block
+  it causes land in the same second constantly.
+
+  **Reproduced against the real Python tailer** before reporting it, with
+  three events and a 0.2s poll:
+
+  ```
+  delivered: ['dispatch', 'success']
+  ```
+
+  The `block`, written in the same second as the `dispatch`, is missing.
+
+  Go polls `id > afterID`. The id is monotonic and unique, so there is no
+  window at any clock resolution. Annotated in Python rather than fixed — it
+  is the legacy dashboard, and the migration is where the corrected version
+  belongs.
+
+- **The Go tail starts at the newest id; Python replays the whole log.**
+  Python's tailer starts with `last_ts = ""`, so every connect re-delivers
+  every event ever recorded as if it were new. The SPA survives it — it
+  deduplicates against the history it fetched from `/api/events` — but
+  `useEventStream` invalidates the tasks query once per event, so a project
+  with a long log pays N refetches for one connect. The Go stream starts at
+  `LatestEventID`, carrying only what happens after the client connected.
+
+- **An SSE handler has to clear the server's write deadline.**
+  `http.Server.WriteTimeout` is 30s for every other route and a stream lives
+  for hours; without `http.NewResponseController(w).SetWriteDeadline(time.Time{})`
+  the connection is cut mid-stream at thirty seconds, and the client cannot
+  tell that from a network fault. Worth knowing before the next long-lived
+  response: the timeout that protects every normal handler is the one that
+  breaks this one.
+
+- **A fake cannot test the bug its own shape forbids.** My first version of
+  the same-second test drove the dashboard's `fakeState`, which indexes events
+  by id — so it could not fail the way Python fails, whatever the handler did.
+  The assertion that matters moved to `internal/state`, against a real
+  database, where the key actually lives. Same family as the three complicit
+  tests in rule 23; this one I caught in my own work rather than in Python's.
