@@ -717,3 +717,52 @@ question for Python.
   says true while an empty `Host` makes `Addr()` `":port"`, which binds every
   interface. The predicate and the bind have to agree, or the gate is checking
   something the listener does not do.
+
+- **A route that does not exist answered 200 with HTML, and a whole feature
+  gate was built on its 404.** `/api/portfolio` is registered only under
+  `--portfolio`; on a single-project dashboard it fell through to the SPA at
+  `"/"`. G8.6's page asks "is this process a portfolio?" by reading a 404, so
+  it got a page of HTML as a truthy payload, showed the Portfolio nav item on
+  every single-project dashboard, and then indexed a string.
+
+  Found by orch-opus reviewing this PR **against the other one**, in a seam
+  neither PR owns: each half was right about itself. Worth naming as a class —
+  *a client's negative case tested against a server that never returns it* —
+  because both sides pass their own tests and the bug lives only where they
+  meet. The cheap fix is on the server: register the route and refuse it.
+
+  The refusal is **ungated**, which makes it the second exception to "every
+  data route goes through `gated`" after the SPA. It carries no data; it is
+  the absence of a feature. Gating it would make a stakeholder dashboard answer
+  401 for something that does not exist in that process — the same unusable
+  answer as the 200, by another route.
+
+- **Two sections sharing one `else`, and a test that only looked at one of
+  them.** `portfolioRow` nested the blocker lookup inside the `else` of the
+  velocity read, so a failed `CountDoneLastNDays` silently took the blocker
+  reasons with it: the row went on saying "3 blocked" and listed none, and an
+  operator could not tell "no reasons recorded" from "a query failed". Against
+  this function's own stated rule, in the same file that states it.
+
+  `TestPartialReadKeepsTheCounters` did not see it because it asserted
+  `VelocityPerDay == 0` and nothing about the blockers. The replacement asserts
+  the **pair** — the count and the reasons — because the count alone is what
+  made the old behaviour look right.
+
+- **`project_name` was the id a second time.** Both fields were `paths.ID`, so
+  a project's "name" was its directory's base name and the payload carried one
+  value under two keys — an invitation for the page to render the wrong one.
+  It now comes from `tasks.json`'s `meta.project`, falling back to the id when
+  the file names none. Visible immediately on a real copy: a directory renamed
+  to `billing-api` whose tasks.json still says `e2e` now reports
+  `project_id: "billing-api"`, `project_name: "e2e"`, which is the honest
+  answer and the reason the two keys exist.
+
+- **`Config.Addr()` could not spell an IPv6 host.** `fmt.Sprintf("%s:%d")`
+  produces `:::7420` for `--host ::`, which `net.Listen` rejects with "too many
+  colons in address". Pre-existing and unreachable while every host anyone
+  passed was v4 — `--allow-remote` is what made binding `::` something an
+  operator can ask for, so the same commit that opened the door fixes the step
+  behind it. `net.JoinHostPort` now, with a table that checks every case is
+  still parseable by `net.SplitHostPort` rather than only that the string looks
+  right.

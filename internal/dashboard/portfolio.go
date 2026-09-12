@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -44,7 +45,11 @@ type unavailableRow struct {
 // page composes; a field would be a second source of truth for a one-line
 // rule.
 type portfolioProject struct {
-	ProjectID   string `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	// ProjectName is tasks.json's `meta.project` — the name a human gave the
+	// project — falling back to the id when the file names none. It was the
+	// id twice over in the first cut, which is two keys carrying one value
+	// and an invitation for the page to render the wrong one.
 	ProjectName string `json:"project_name"`
 	Root        string `json:"root"`
 	// Available is false when this project's state could not be read. The
@@ -133,6 +138,9 @@ func (s *Server) portfolioRow(ctx context.Context, now time.Time) portfolioProje
 		return row
 	}
 	row.Available = true
+	if view.ProjectName != "" {
+		row.ProjectName = view.ProjectName
+	}
 	row.Total = view.Summary.Total
 	row.Done = view.Summary.Done
 	row.InProgress = view.Summary.InProgress
@@ -144,29 +152,42 @@ func (s *Server) portfolioRow(ctx context.Context, now time.Time) portfolioProje
 	// the counters above are already true, and dropping them because the
 	// event log would not answer would be throwing away the answer to keep
 	// the question tidy.
+	// The velocity read and the blocker reasons are two sections, and
+	// nesting the second inside the first's `else` made one failure take
+	// both: the row went on saying "3 blocked" and listed none, so an
+	// operator could not tell "no reasons recorded" from "a query failed".
+	// Exactly the thing this function's own rule forbids, and it survived
+	// because TestPartialReadKeepsTheCounters only checked that velocity was
+	// zero. Caught by orch-opus reviewing G8.5.
+	//
+	// A failed count becomes a velocity of zero, which `sprintHealth` already
+	// renders as no projection at all (`confidence: "none"`, null ETA) rather
+	// than as a confident "nothing left to do".
 	done7d, err := s.state.CountDoneLastNDays(ctx, velocityWindowDays)
 	if err != nil {
 		s.log.Error("portfolio: velocity unavailable", "project", s.paths.ID, "err", err)
-	} else {
-		blockedIDs := make([]string, 0)
-		for _, t := range view.Tasks {
-			if t.Status == model.StatusBlocked {
-				blockedIDs = append(blockedIDs, t.ID)
-			}
-		}
-		lastEvents, evErr := s.state.LastEventByTask(ctx, blockedIDs)
-		if evErr != nil {
-			s.log.Error("portfolio: blocker reasons unavailable",
-				"project", s.paths.ID, "err", evErr)
-			lastEvents = nil
-		}
-		health := sprintHealth(view.Tasks, done7d, lastEvents, now)
-		row.VelocityPerDay = health.VelocityPerDay
-		row.ETADays = health.ETADays
-		row.ETADate = health.ETADate
-		row.Confidence = health.Confidence
-		row.Blockers = capBlockers(health.Blockers)
+		done7d = 0
 	}
+
+	blockedIDs := make([]string, 0)
+	for _, t := range view.Tasks {
+		if t.Status == model.StatusBlocked {
+			blockedIDs = append(blockedIDs, t.ID)
+		}
+	}
+	lastEvents, evErr := s.state.LastEventByTask(ctx, blockedIDs)
+	if evErr != nil {
+		s.log.Error("portfolio: blocker reasons unavailable",
+			"project", s.paths.ID, "err", evErr)
+		lastEvents = nil
+	}
+
+	health := sprintHealth(view.Tasks, done7d, lastEvents, now)
+	row.VelocityPerDay = health.VelocityPerDay
+	row.ETADays = health.ETADays
+	row.ETADate = health.ETADate
+	row.Confidence = health.Confidence
+	row.Blockers = capBlockers(health.Blockers)
 
 	if spends, err := s.state.AllSpend(ctx, time.Time{}); err != nil {
 		s.log.Error("portfolio: spend unavailable", "project", s.paths.ID, "err", err)
@@ -194,4 +215,23 @@ func capBlockers(rows []blockerRow) []blockerRow {
 		return rows[:portfolioBlockerLimit]
 	}
 	return rows
+}
+
+// portfolioDisabledPayload is what a single-project dashboard answers on
+// `/api/portfolio`.
+//
+// The **404 is the contract** — the page's "is this process a portfolio?"
+// check reads the status, not the body. The body is for whoever curls the
+// route and needs to know it is a mode they did not start rather than a
+// version that lacks the feature. Wording agreed with orch-98.
+type portfolioDisabledPayload struct {
+	Error string `json:"error"`
+	Hint  string `json:"hint"`
+}
+
+func handlePortfolioDisabled(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusNotFound, portfolioDisabledPayload{
+		Error: "portfolio mode is off",
+		Hint:  "start orch dashboard with --portfolio '<glob>' to serve several projects",
+	})
 }

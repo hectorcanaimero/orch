@@ -3,6 +3,8 @@ package dashboard
 import (
 	"crypto/subtle"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/hectorcanaimero/orch/internal/config"
@@ -120,7 +122,12 @@ func (c Config) Validate() error {
 
 // Addr is the host:port to listen on.
 func (c Config) Addr() string {
-	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+	// net.JoinHostPort, not fmt.Sprintf("%s:%d"): an IPv6 literal has to be
+	// bracketed, and `fmt` produces ":::7420" for `--host ::`, which
+	// net.Listen rejects with "too many colons in address". Unreachable while
+	// the only hosts anyone passed were v4 — `--allow-remote` (G8.5) is what
+	// made binding `::` a thing an operator can ask for.
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // constantTimeEqual compares two secrets without leaking their length through
