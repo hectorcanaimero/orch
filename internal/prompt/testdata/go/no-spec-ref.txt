@@ -1,0 +1,28 @@
+TASK_ID=T-A
+You are executing task T-A.
+
+Working dir: /tmp/orch-golden-project
+Title: Root A
+Description: First root
+Files you may write: []
+Spec ref (READ FIRST): (no spec ref provided — proceed with the description only)
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for T-A.
+2. Do the work. T-A is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "T-A", status "done", note "<what you did>", author "opencode-go/glm-5.1"
+     blocked: orch_block       task_id "T-A", reason "<why>", author "opencode-go/glm-5.1"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh T-A "<what you did>" "opencode-go/glm-5.1"
+     blocked: scripts/task-block.sh T-A "<why>" "opencode-go/glm-5.1"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on T-A are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "T-A") read this task and its
+   dependencies back if you need them again.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress through one of the two channels above only.

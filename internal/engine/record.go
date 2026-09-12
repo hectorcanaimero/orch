@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -219,6 +220,18 @@ func (r StateRecorder) TaskStatus(ctx context.Context, taskID string) (model.Sta
 		return "", err
 	}
 	return t.Status, nil
+}
+
+// TaskComments reads a task's comment trail, for the prompt's dependency
+// block. The rows are passed through as the JSON they already are: Python
+// types a comment `list[dict]` with no fixed shape, and the renderer only
+// needs two of its keys.
+func (r StateRecorder) TaskComments(ctx context.Context, taskID string) ([]json.RawMessage, error) {
+	t, err := r.Backend.Task(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return t.Comments, nil
 }
 
 // Transition moves a task, recording who moved it and why.

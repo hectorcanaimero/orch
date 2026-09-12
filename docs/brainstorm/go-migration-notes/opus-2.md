@@ -252,7 +252,7 @@ question for Python.
 
 ## G6.4 — the MCP server
 
-- **Bug 21 — the dispatch prompt's "Completed dependencies (context)" block is
+- **Bug 24 — the dispatch prompt's "Completed dependencies (context)" block is
   always empty.** Found building `orch_context`, which answers the same
   question the prompt's dep block does, so the first version reused
   `prompt.LastComment` — and it returned `""` for a dependency that had just
@@ -305,6 +305,10 @@ question for Python.
 
   Found the way the last four were: by running the thing and reading one line
   of its output.
+
+  **Renumbered from 21 to 24** after orch-98 reconciled the lanes: 21 is opus's
+  velocity-by-`updated_at`, 22 the stakeholder spend, 23 sonnet's raw
+  `blocked_reasons`.
 
 - **An illegal transition is a tool error, not a protocol error, and the
   difference is the whole feature.** The SDK makes both easy: a handler that
@@ -379,3 +383,98 @@ question for Python.
   dependency had just finished. Closing stdin exits 0 with an empty stderr.
   Rule 29 is not satisfied by the in-process test — it was the printed
   transcript that showed `last_comment` empty.
+
+
+## G6.6 — the prompt offers MCP first
+
+- **Bug 24, both halves, fixed on the Go side.** The key (`text` → `body`) was
+  the half that reads like the whole bug. It is not.
+
+  1. **The key.** `prompt_builder._read_dep_last_comment` reads `text`. Every
+     writer writes `body`. Changing the key alone would still have rendered
+     nothing, because —
+  2. **The source.** Since F-12 the trail lives in
+     `tasks_runtime.comments_json`, and the prompt's dependencies come from the
+     queue, which is built from tasks.json, whose `comments` array is whatever
+     was in the file. `project.Hydrate` overlays `Status` and nothing else. So
+     the renderer was reading the right field off the wrong object.
+  3. **And a third, which only showed up by running it.** Even with the key and
+     the source fixed, `comments[-1]` is the wrong entry. A normally-finished
+     task's trail, dumped from a real run:
+
+     ```
+     orch                       dispatched to claude/claude-sonnet-4-6
+     orch                       dispatch succeeded
+     claude/claude-sonnet-4-6   created pyproject.toml and app/main.py …
+     ```
+
+     The agent reports from inside its run; the reaper transitions the task to
+     done *afterwards*, with its own note (`dispatch succeeded`, or `CI passed`
+     from the poller, or the bare status name for a hand-made `orch task set`).
+     So the last entry is always orch's bookkeeping. `AgentComment` scans back
+     for the first entry whose `author` is not `orch` — the field is already
+     there, already meaningful, and already distinguishes the two writers.
+
+  The engine reads the trail at **dispatch time** (`Scheduler.Comments`, a
+  one-method `CommentReader`), not from a snapshot taken when the queue was
+  built: the dependency most often finishes during the same run, minutes
+  before, so a startup snapshot would be empty for exactly the summary that
+  matters most.
+
+  Verified end to end against the built binary, not just in tests: scaffolded a
+  `python-api` project, dispatched F0.T1 with `ORCH_FAKE_PROVIDER`, wrote an
+  agent-authored note, appended an engine note *after* it to reproduce the real
+  order, then dispatched F1.T1 and read its prompt file:
+
+  ```
+  Completed dependencies (context):
+    - F0.T1: created pyproject.toml and app/main.py with the FastAPI app
+  ```
+
+- **One prompt, not a variant switch.** G2.3's doc comment predicted a
+  scripts/MCP variant pair chosen by something. There is nothing to choose it
+  with: `.mcp.json` existing on disk does not mean the agent CLI loaded it, a
+  project scaffolded before G6.4 has none, and orch never sees the agent's tool
+  list. So the protocol block names both, MCP first, with an explicit "if you
+  do not have those tools". Being wrong costs the agent one tool-not-found
+  error it recovers from by reading the next line; guessing wrong costs a task
+  that cannot report at all.
+
+- **`orch_set_status`'s author default had to change, and finding out why took
+  a failing test.** It was `orch`, "matching `orch task-status`". That default
+  is right for a command a human also runs. For a tool only agents call it is a
+  trap: `AgentComment` skips `orch`-authored entries, so an agent that omitted
+  `author` would write a summary nothing downstream ever shows — silently, and
+  visible only two tasks later as a `(no comment)` in someone else's prompt.
+  Now `agent`, with a test asserting it is never `prompt.EngineAuthor`, because
+  the two constants live in different packages and that is how a rename drifts
+  them apart.
+
+- **The goldens split rather than moved.** Everything from `TASK_ID=` down to
+  `Spec ref (READ FIRST):` is unchanged and is still compared byte for byte
+  against Python's goldens; the two blocks below it have Go goldens of their
+  own. The split is on a line the template itself emits, not a guessed offset.
+
+  The Python files earn their keep twice over now: they are the head's
+  reference, and they are the **evidence** for bug 24 —
+  `TestPythonRendersEveryDependencyAsNoComment` asserts that every dependency
+  line in every Python golden reads `(no comment)`, including the one whose
+  note sits in `cases.json` three lines away. That test fails if anyone
+  regenerates them from a fixture shape that humours the reader again, which is
+  exactly how the bug survived three passing tests in `test_prompt_builder.py`.
+
+- **The fixture was the bug's accomplice, and it was in the Go tree too.**
+  `make-goldens.py`'s `dep()` helper wrote `{"author", "ts", "text"}` — copied
+  from the reader's docstring, not captured from a writer. Rule 21's lesson is
+  filed under `internal/providers`, but it is not about providers: *a fixture
+  written from the consumer's own description of its input tests the consumer
+  against itself.* The new helper's docstring pastes the `sqlite3` query it
+  came from.
+
+- **Not touched, and it has the same cause.** `internal/dashboard/view.go`
+  ships `comments` (and `has_comments`) straight off `model.Task`, i.e. off
+  tasks.json — so the dashboard reports an empty comment array for every task
+  in any project orch has actually run. Same root as bug 24's second half.
+  It belongs to whoever owns `internal/project`/`internal/dashboard`: either
+  `Hydrate` overlays `Comments` too, or `view.go` reads the runtime row.
+  Raised with opus rather than fixed across a lane boundary mid-PR.

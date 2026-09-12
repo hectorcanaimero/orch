@@ -13,6 +13,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/scaffold"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
@@ -507,7 +508,9 @@ func TestContextReportsDependenciesAndCounts(t *testing.T) {
 		t.Errorf("dependencies = %v; want none while F0.T1 is unfinished", blocked.Task.Dependencies)
 	}
 
-	// Finish F0.T1 and it moves across, carrying what it reported.
+	// Finish F0.T1 and it moves across, carrying what it reported. No
+	// `author` on either call, which is the case that matters: the default
+	// must not be the engine's, or the note would be skipped as bookkeeping.
 	var done setStatusOut
 	call(t, cs, "orch_set_status", map[string]any{"task_id": "F0.T1", "status": "in-progress"}, &done)
 	call(t, cs, "orch_set_status", map[string]any{
@@ -721,5 +724,19 @@ func TestAnUnreadableTasksFileIsReportedAsItself(t *testing.T) {
 	call(t, cs, "orch_set_status", map[string]any{"task_id": "F0.T1", "status": "in-progress"}, &out)
 	if !out.OK {
 		t.Errorf("a known task became unwritable: %+v", out)
+	}
+}
+
+// The default author must never be the one orch's own notes carry.
+//
+// `prompt.AgentComment` skips every entry authored by prompt.EngineAuthor, so
+// if this tool defaulted to that name an agent that omitted `author` would
+// write a note nothing downstream ever shows — silently, and only visible two
+// tasks later in a prompt that said "(no comment)". The two constants live in
+// different packages, which is exactly how a rename drifts them apart.
+func TestTheDefaultAuthorIsNotTheEngines(t *testing.T) {
+	if defaultAuthor == prompt.EngineAuthor {
+		t.Fatalf("defaultAuthor is %q, the same author orch's own notes carry; "+
+			"an agent that omits `author` would have its report skipped", defaultAuthor)
 	}
 }

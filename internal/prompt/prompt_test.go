@@ -10,9 +10,30 @@ import (
 	"github.com/hectorcanaimero/orch/internal/model"
 )
 
-func comment(text string) json.RawMessage {
+// comment is one entry in a task's trail, in the shape every writer writes.
+//
+// `{"author", "body", "at"}` — captured from a database Python wrote
+// (internal/state/testdata/orch-py-0.11.0.db), not copied from
+// `prompt_builder.py`'s docstring, which says `text`/`ts` and is the reason
+// bug 24 survived three passing tests in test_prompt_builder.py.
+//
+// The author is a model name because these stand in for an agent's report.
+// engineComment is the other writer.
+func comment(body string) json.RawMessage {
+	return entry("claude/claude-sonnet-4-6", body)
+}
+
+// engineComment is a note orch itself wrote: the dispatch marker, the reaper's
+// "dispatch succeeded", the poller's "CI passed", or the bare status name when
+// a transition carried no note. Every real trail ends with one of these, which
+// is why the renderer cannot simply take the last entry.
+func engineComment(body string) json.RawMessage {
+	return entry(EngineAuthor, body)
+}
+
+func entry(author, body string) json.RawMessage {
 	raw, err := json.Marshal(map[string]string{
-		"author": "agent", "ts": "2026-01-01", "text": text,
+		"author": author, "body": body, "at": "2026-01-01T09:00:00+00:00",
 	})
 	if err != nil {
 		panic(err)
@@ -131,7 +152,7 @@ func TestFilesListAppearsOnce(t *testing.T) {
 
 // ---- dependency comments ---------------------------------------------------
 
-func TestLastCommentTakesTheMostRecent(t *testing.T) {
+func TestLastCommentTakesTheMostRecentAgentNote(t *testing.T) {
 	dep := model.Task{ID: "T-DEP", Comments: []json.RawMessage{
 		comment("first"), comment("second"), comment("third"),
 	}}
@@ -148,9 +169,18 @@ func TestLastCommentEdgeCases(t *testing.T) {
 	}{
 		{"no comments", nil, ""},
 		{"empty list", []json.RawMessage{}, ""},
-		// Python's `.get("text", "")`.
-		{"an entry with no text key", []json.RawMessage{json.RawMessage(`{"author":"a"}`)}, ""},
-		{"an empty text", []json.RawMessage{comment("")}, ""},
+		{"an entry with no body key", []json.RawMessage{json.RawMessage(`{"author":"a"}`)}, ""},
+		{"an empty body", []json.RawMessage{comment("")}, ""},
+		// Only orch ever wrote: there is no report to show, and echoing the
+		// bookkeeping would read as the dependency having said "done".
+		{"nothing but engine notes", []json.RawMessage{
+			engineComment("in-progress"), engineComment("dispatch succeeded"),
+		}, ""},
+		// The agent's note is not the last entry in any real trail.
+		{"an agent note under engine notes", []json.RawMessage{
+			engineComment("in-progress"), comment("wired the parser"),
+			engineComment("dispatch succeeded"),
+		}, "wired the parser"},
 		// Not an object: Python stringifies the whole entry, and a bare JSON
 		// string is the only form of that which reads as a comment.
 		{"a bare string entry", []json.RawMessage{json.RawMessage(`"just a string"`)}, "just a string"},
@@ -413,23 +443,23 @@ func TestExpandHandlesMalformedTemplates(t *testing.T) {
 	}
 }
 
-// A `text` that is not a JSON string renders as the JSON rather than as
+// A `body` that is not a JSON string renders as the JSON rather than as
 // Python's `str()`. Documented divergence — nothing in the tree writes one —
 // and pinned so that "nothing writes one" stops being the only thing holding
 // it up.
-func TestNonStringCommentTextRendersAsJSON(t *testing.T) {
+func TestNonStringCommentBodyRendersAsJSON(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
 		want string
 	}{
-		{"a number", `{"text": 42}`, "42"},
-		{"a bool", `{"text": true}`, "true"},
+		{"a number", `{"body": 42}`, "42"},
+		{"a bool", `{"body": true}`, "true"},
 		// JSON null unmarshals into a string as "", so the prompt says
 		// "(no comment)". Python's `str(None)` would put the literal text
 		// "None" in front of the agent, which is worse than saying nothing.
-		{"null", `{"text": null}`, ""},
-		{"an object", `{"text": {"a": 1}}`, `{"a": 1}`},
+		{"null", `{"body": null}`, ""},
+		{"an object", `{"body": {"a": 1}}`, `{"a": 1}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -7,7 +7,7 @@ Description: `pnpm add @clerk/nextjs`. Wrap the root layout with `<ClerkProvider
 Files you may write: ['src/app/layout.tsx', 'src/middleware.ts', 'src/app/sign-in/[[...sign-in]]/page.tsx', 'src/app/sign-up/[[...sign-up]]/page.tsx', '.env.local.example']
 Spec ref (READ FIRST): specs/f1-clerk.md#T1
 Completed dependencies (context):
-  - F0.T1: scaffolded the app router and tailwind
+  - F0.T1: (no comment)
 
 Coordination protocol:
 1. Read the spec ref for the exact acceptance criteria for F1.T1.

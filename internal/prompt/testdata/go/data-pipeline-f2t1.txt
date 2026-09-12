@@ -1,0 +1,31 @@
+TASK_ID=F2.T1
+You are executing task F2.T1.
+
+Working dir: /tmp/orch-golden-project
+Title: Load raw + transform into marts
+Description: pipeline/load.py: `load_raw(df, table)` writes to `raw.<table>` via duckdb.append_df, idempotent by dedupe on the natural key from sources.yaml. pipeline/transform.py: `run_sql_from(dir)` executes every .sql under transforms/ in filename order, each into `marts.<name>` (name = filename stem). Add tests/test_load.py + tests/test_transform.py using an in-memory DuckDB, asserting row counts + dedupe semantics.
+Files you may write: ['pipeline/load.py', 'pipeline/transform.py', 'transforms/.gitkeep', 'tests/test_load.py', 'tests/test_transform.py']
+Spec ref (READ FIRST): specs/f2-load-transform.md#T1
+Completed dependencies (context):
+  - F0.T1: created the warehouse schema
+  - F1.T1: (no comment)
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for F2.T1.
+2. Do the work. F2.T1 is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "F2.T1", status "done", note "<what you did>", author "claude/claude-sonnet-4-6"
+     blocked: orch_block       task_id "F2.T1", reason "<why>", author "claude/claude-sonnet-4-6"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh F2.T1 "<what you did>" "claude/claude-sonnet-4-6"
+     blocked: scripts/task-block.sh F2.T1 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on F2.T1 are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "F2.T1") read this task and its
+   dependencies back if you need them again.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress through one of the two channels above only.

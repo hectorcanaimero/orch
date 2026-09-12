@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -120,6 +121,10 @@ type Scheduler struct {
 	// the CI poller's filter. Without it a PR would be opened and never
 	// watched, so openPR refuses to leave one in that state.
 	CIRecorder PRRecorder
+	// Comments reads a finished dependency's notes for the prompt's
+	// "Completed dependencies (context)" block. Nil falls back to whatever
+	// tasks.json carried, which since F-12 is nothing — see completedDeps.
+	Comments CommentReader
 	// Log receives the operator-facing lines. Nil uses slog's default.
 	Log *slog.Logger
 
@@ -192,6 +197,15 @@ type RecordBackend interface {
 	TaskStatus(ctx context.Context, taskID string) (model.Status, error)
 	// Transition moves a task, recording the note.
 	Transition(ctx context.Context, taskID string, to model.Status, note string) error
+}
+
+// CommentReader reads a finished task's comment trail.
+//
+// Separate from RecordBackend rather than a method on it: the concurrency
+// tests build a RecordBackend double and none of them is about prompts, and
+// this is read at one call site for one block of one file.
+type CommentReader interface {
+	TaskComments(ctx context.Context, taskID string) ([]json.RawMessage, error)
 }
 
 // NewScheduler wires a scheduler over a queue and a route table.
@@ -473,7 +487,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 	// file to the child's stdin, so a dispatch without it is a CLI with no
 	// instructions — Python renders it at the same point, for the same
 	// reason.
-	promptPath, warnings, err := prompt.Write(task, s.completedDeps(task), task.SpecRef, prompt.Options{
+	promptPath, warnings, err := prompt.Write(task, s.completedDeps(ctx, task), task.SpecRef, prompt.Options{
 		RunID:       s.Opts.RunID,
 		StateDir:    s.Opts.StateDir,
 		ProjectRoot: workdir,
@@ -591,16 +605,41 @@ func (s *Scheduler) blockAtDispatch(ctx context.Context, task model.Task, route 
 
 // completedDeps are the task's dependencies that are done, for the prompt's
 // "what came before" section.
-func (s *Scheduler) completedDeps(task model.Task) []model.Task {
+//
+// The comment trail is read from the database here, not taken from the queue's
+// copy of tasks.json. Two reasons, and the second is the one that decides it:
+//
+//   - Since F-12 the trail lives in `tasks_runtime.comments_json`. The queue is
+//     built from tasks.json, whose `comments` array is whatever was in the file
+//     — empty for every project orch has actually run. That is the other half
+//     of bug 24.
+//   - The dependency most likely finished during THIS run, minutes ago. A
+//     snapshot taken when the queue was built would be empty for exactly the
+//     summary that matters most.
+//
+// A read that fails is logged and the dependency still goes in the block with
+// no comment: a prompt without one dependency's sentence is worse than the
+// same prompt, and far better than no dispatch.
+func (s *Scheduler) completedDeps(ctx context.Context, task model.Task) []model.Task {
 	var out []model.Task
 	for _, id := range task.Dependencies {
 		dep, ok := s.Queue.Task(id)
 		if !ok {
 			continue
 		}
-		if st, _ := s.Queue.Status(id); st == model.StatusDone {
-			out = append(out, dep)
+		if st, _ := s.Queue.Status(id); st != model.StatusDone {
+			continue
 		}
+		if s.Comments != nil {
+			comments, err := s.Comments.TaskComments(ctx, id)
+			if err != nil {
+				s.logger().Warn("reading a dependency's notes for the prompt",
+					"task", task.ID, "dep", id, "err", err)
+			} else {
+				dep.Comments = comments
+			}
+		}
+		out = append(out, dep)
 	}
 	return out
 }

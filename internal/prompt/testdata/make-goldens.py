@@ -12,6 +12,21 @@ Everything a prompt depends on is pinned — project root, run id, spec root,
 dependency comments — because the point of a golden is that a diff means the
 renderer changed, not that the machine did.
 
+WHAT THESE FILES ARE FOR, SINCE G6.6
+------------------------------------
+They are no longer the whole target. Go's prompt diverges below the
+`Spec ref (READ FIRST):` line on purpose — the protocol block offers MCP
+first, and the dependency block finally has content (bug 24). So:
+
+  * the HEAD of each file, down to and including the spec-ref line, is still
+    compared byte for byte against Go's render;
+  * the rest is kept as EVIDENCE: it is what Python renders for a dependency
+    whose real note is right there in the fixture, and what it renders is
+    `(no comment)`, every time.
+
+`testdata/go/*.txt` are the Go goldens for the whole body. See
+`testdata/README.md`.
+
 The spec-ref line in the template cases reads `specs/f0-foundation.md#T1`.
 It read `specs/specs/f0-foundation.md#T1` when these goldens were first
 generated — the templates carried the `specs/` prefix that `spec_root` already
@@ -62,9 +77,51 @@ def from_template(name: str, index: int) -> Task:
     return Task.from_json(data["tasks"][index])
 
 
-def dep(tid: str, text: str) -> Task:
-    return task(id=tid, title=f"Dep {tid}",
-                comments=[{"author": "agent", "ts": "2026-01-01", "text": text}])
+def dep(tid: str, body: str) -> Task:
+    """A finished dependency carrying its REAL comment trail.
+
+    Shape and interleaving captured from a database Python wrote — not
+    invented, which is how bug 24 survived three passing tests:
+
+        $ sqlite3 internal/state/testdata/orch-py-0.11.0.db \
+            "select comments_json from tasks_runtime where task_id='F0.T1';"
+        [{"author": "orch", "body": "in-progress", "at": "2026-09-01T09:00:00+00:00"},
+         {"author": "orch", "body": "green",       "at": "2026-09-01T10:30:00+00:00"}]
+
+    Keys are `author`/`body`/`at`. `prompt_builder` reads `text`, which nothing
+    writes; the previous version of this helper wrote `{"author","ts","text"}`,
+    copied from that reader's docstring, so Python's renderer found its own key
+    and every golden looked right.
+
+    Three entries, because that is what a normally-finished task has: orch at
+    dispatch, the agent's own report, orch again when the reaper transitions it
+    to done. The agent's note is therefore NOT the last entry, which is the
+    other half of the bug.
+    """
+    return task(id=tid, title=f"Dep {tid}", comments=[
+        {"author": "orch", "body": "in-progress",
+         "at": "2026-01-01T09:00:00+00:00"},
+        {"author": "claude/claude-sonnet-4-6", "body": body,
+         "at": "2026-01-01T10:00:00+00:00"},
+        {"author": "orch", "body": "dispatch succeeded",
+         "at": "2026-01-01T10:30:00+00:00"},
+    ])
+
+
+def dep_unreported(tid: str) -> Task:
+    """A dependency orch closed and no agent ever reported on.
+
+    `orch task set --id X --status done` with no note, or a reap whose agent
+    never called task-finish. Every entry is orch's own, so there is no
+    sentence to show and the block must say so rather than echoing the
+    bookkeeping.
+    """
+    return task(id=tid, title=f"Dep {tid}", comments=[
+        {"author": "orch", "body": "in-progress",
+         "at": "2026-01-01T09:00:00+00:00"},
+        {"author": "orch", "body": "dispatch succeeded",
+         "at": "2026-01-01T10:30:00+00:00"},
+    ])
 
 
 CASES = [
@@ -74,7 +131,7 @@ CASES = [
      [dep("F0.T1", "scaffolded the app router and tailwind")], "specs"),
     ("data-pipeline-f2t1.txt", from_template("data-pipeline", 2),
      [dep("F0.T1", "created the warehouse schema"),
-      dep("F1.T1", "")], "specs"),
+      dep_unreported("F1.T1")], "specs"),
     # No spec ref at all: the placeholder path.
     ("no-spec-ref.txt", task(id="T-A", title="Root A", description="First root",
                              model="opencode-go/glm-5.1"), [], "specs"),

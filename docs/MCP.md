@@ -31,6 +31,24 @@ scripts already have, so a project can use either:
 | `scripts/task-finish.sh ID "summary" "author"` | `orch_set_status{task_id, status: "done", note, author}` |
 | `scripts/task-block.sh ID "reason" "author"` | `orch_block{task_id, reason, author}` |
 
+Since G6.6 the dispatch prompt names both, MCP first:
+
+```
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "F1.T3", status "done", note "<what you did>", author "claude/claude-sonnet-4-6"
+     blocked: orch_block       task_id "F1.T3", reason "<why>", author "claude/claude-sonnet-4-6"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh F1.T3 "<what you did>" "claude/claude-sonnet-4-6"
+     blocked: scripts/task-block.sh F1.T3 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
+```
+
+Both, rather than one chosen from config, because orch cannot know which the
+agent got: `.mcp.json` on disk does not mean the agent CLI loaded it, and a
+project scaffolded before G6.4 has none. Being wrong costs one tool-not-found
+error the agent recovers from by reading the next line; guessing wrong costs a
+task that cannot report at all.
+
 ---
 
 ## Setup
@@ -87,8 +105,20 @@ dependencies, attempts, PR URL and CI status, the comment trail, and
 
 ### `orch_set_status`
 
-`{task_id, status, note?, author?}`. `author` defaults to `orch`; an agent
-passes its model name, exactly as the scripts do.
+`{task_id, status, note?, author?}`. An agent passes its model name, exactly as
+the scripts do.
+
+**`author` matters more than it looks.** It defaults to `agent`, deliberately
+*not* to `orch` the way `orch task-status --author` does. `orch` is the author
+on every note the engine writes — the dispatch marker, the reaper's `dispatch
+succeeded`, the poller's `CI passed` — and that field is how orch tells a
+report from its own bookkeeping when it renders a downstream task's
+`Completed dependencies (context):` block. A note attributed to `orch` is read
+as bookkeeping and never shown to the next agent.
+
+**`note` is the next task's context**, not a log line: it is what every task
+depending on this one gets rendered in its own prompt. "done" tells the next
+agent nothing.
 
 A move the transition table forbids is **not** a protocol error. It comes back
 as a tool error whose structured payload names where the task is and where it
@@ -141,6 +171,12 @@ With a task, it also returns what that task's dispatch prompt carries —
 `description`, `files`, `spec_ref_path` (already joined to `spec_root`), its
 finished `dependencies` **with the last thing each one reported**, and
 `pending_dependencies`, the ids that are not done yet.
+
+`last_comment` is chosen exactly as the prompt chooses it
+(`prompt.AgentComment` — one implementation, two callers), so a tool call and a
+prompt never disagree about what a dependency said. Untruncated here, where the
+prompt caps it at 500 characters: a prompt is a fixed budget, a tool result is
+fetched on demand.
 
 ---
 

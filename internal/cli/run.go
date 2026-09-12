@@ -114,6 +114,10 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				RunID:             runID,
 			})
 			scheduler.Backend = engine.NewStateRecorder(backend)
+			// The same adapter, named separately because it answers a
+			// different question: what a finished dependency reported, for
+			// the prompt's context block.
+			scheduler.Comments = engine.NewStateRecorder(backend)
 			// Built unconditionally: with no webhook configured it is a
 			// working no-op, so the engine never has to ask whether the
 			// operator wanted notifications.

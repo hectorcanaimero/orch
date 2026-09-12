@@ -13,9 +13,21 @@ import (
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
-// defaultAuthor matches `orch task-status`'s own `--author` default, so a
-// tool call with no author leaves the same trail a script call would.
-const defaultAuthor = "orch"
+// defaultAuthor is who a tool call is attributed to when it does not say.
+//
+// Deliberately NOT `orch task-status`'s own default, which is "orch". That
+// default is right for a command a human or a script also runs; this tool is
+// only ever called by a dispatched agent, and "orch" is the author every note
+// the ENGINE writes carries — the dispatch marker, the reaper's "dispatch
+// succeeded", the poller's "CI passed". `prompt.AgentComment` tells a report
+// from bookkeeping by exactly that field (bug 24), so an agent that omitted
+// `author` would have its summary skipped and the next task would be told its
+// dependency said nothing.
+//
+// "agent" is the honest answer for a caller that did not identify itself, and
+// it is never `prompt.EngineAuthor` — asserted in the tests, because the two
+// constants living in different packages is how they drift.
+const defaultAuthor = "agent"
 
 // Error codes carried by transitionError.Code. A model reads the code, not
 // the prose, so they are a closed set and spelled here once.

@@ -1,0 +1,30 @@
+TASK_ID=B-020
+You are executing task B-020.
+
+Working dir: /tmp/orch-golden-project
+Title: Café ☕
+Description: ñandú
+Files you may write: ['src/a.ts', 'src/b.ts']
+Spec ref (READ FIRST): docs/specs/deep/nested.md#Anchor
+Completed dependencies (context):
+  - T-LONG: ññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññññ…
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for B-020.
+2. Do the work. B-020 is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "B-020", status "done", note "<what you did>", author "claude/claude-sonnet-4-6"
+     blocked: orch_block       task_id "B-020", reason "<why>", author "claude/claude-sonnet-4-6"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh B-020 "<what you did>" "claude/claude-sonnet-4-6"
+     blocked: scripts/task-block.sh B-020 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on B-020 are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "B-020") read this task and its
+   dependencies back if you need them again.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress through one of the two channels above only.
