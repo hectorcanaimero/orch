@@ -34,6 +34,22 @@ func waitReaderDone(t *testing.T, m *Manager) {
 	}
 }
 
+// waitForCondition blocks until cond reports true, waking on each state
+// write instead of polling with a bare time.Sleep (CHECKLIST rule 22).
+// The caller must set m.stateChanged (a channel with capacity >= 1)
+// before triggering whatever eventually makes cond true.
+func waitForCondition(t *testing.T, m *Manager, cond func() bool) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for !cond() {
+		select {
+		case <-m.stateChanged:
+		case <-deadline:
+			t.Fatal("timed out waiting for the expected state")
+		}
+	}
+}
+
 func TestStartWritesRunningStateAndOnDiskFiles(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
@@ -70,6 +86,7 @@ func TestStartWritesRunningStateAndOnDiskFiles(t *testing.T) {
 func TestStartCapturesURLFromStdout(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
+	m.stateChanged = make(chan struct{}, 1)
 	cfg := ManagerConfig{
 		Provider: ProviderAutossh,
 		Command:  fakeTunnelScript(t),
@@ -78,18 +95,8 @@ func TestStartCapturesURLFromStdout(t *testing.T) {
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	var url *string
-	for time.Now().Before(deadline) {
-		url = m.Status().URL
-		if url != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if url == nil {
-		t.Fatal("URL was never captured")
-	}
+	waitForCondition(t, m, func() bool { return m.Status().URL != nil })
+	url := m.Status().URL
 	if *url != "https://abc123.a.pinggy.link" {
 		t.Errorf("URL = %q, want %q", *url, "https://abc123.a.pinggy.link")
 	}
@@ -102,6 +109,7 @@ func TestStartCapturesURLFromStdout(t *testing.T) {
 func TestStartAssemblesBoreURLFromNamedGroup(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
+	m.stateChanged = make(chan struct{}, 1)
 	cfg := ManagerConfig{
 		Provider: ProviderBore,
 		Command:  fakeTunnelScript(t),
@@ -110,17 +118,10 @@ func TestStartAssemblesBoreURLFromNamedGroup(t *testing.T) {
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	var url *string
-	for time.Now().Before(deadline) {
-		url = m.Status().URL
-		if url != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if url == nil || *url != "http://bore.pub:41230" {
-		t.Fatalf("URL = %v, want %q", url, "http://bore.pub:41230")
+	waitForCondition(t, m, func() bool { return m.Status().URL != nil })
+	url := m.Status().URL
+	if *url != "http://bore.pub:41230" {
+		t.Errorf("URL = %q, want %q", *url, "http://bore.pub:41230")
 	}
 	if _, err := m.Stop(); err != nil {
 		t.Fatal(err)
@@ -131,15 +132,13 @@ func TestStartAssemblesBoreURLFromNamedGroup(t *testing.T) {
 func TestReconnectsAreCountedForAutosshOnly(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
+	m.stateChanged = make(chan struct{}, 1)
 	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
 	t.Setenv("FAKE_TUNNEL_LINES", "starting ssh\nssh exited\nstarting ssh\n")
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && m.Status().AutosshReconnects < 3 {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForCondition(t, m, func() bool { return m.Status().AutosshReconnects >= 3 })
 	if got := m.Status().AutosshReconnects; got != 3 {
 		t.Errorf("AutosshReconnects = %d, want 3", got)
 	}
@@ -153,7 +152,10 @@ func TestRedactionAppliesToBufferedLogs(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
 	cfg := ManagerConfig{Provider: ProviderBore, Command: fakeTunnelScript(t)}
-	secret := "abcdef0123456789ABCDEF0123456789"
+	// Obviously-fake placeholder (the classic "deadbeef" filler), not a
+	// string shaped like a real credential — still matches the ≥32-hex
+	// redaction pattern this test exercises.
+	secret := strings.Repeat("deadbeef", 4)
 	t.Setenv("FAKE_TUNNEL_LINES", "Authorization: Bearer "+secret+"\n")
 	t.Setenv("FAKE_TUNNEL_EXIT", "0")
 	if _, err := m.Start(cfg); err != nil {
@@ -211,6 +213,77 @@ func TestStartWhenLockedByLivePeerReturnsErrLocked(t *testing.T) {
 	_, err := m.Start(cfg)
 	if err != ErrLocked {
 		t.Errorf("err = %v, want ErrLocked", err)
+	}
+}
+
+func TestStartUnknownProviderReturnsError(t *testing.T) {
+	m := NewManager(t.TempDir(), nil, 0)
+	_, err := m.Start(ManagerConfig{Provider: "cloudflared", Command: "cloudflared"})
+	if err == nil {
+		t.Fatal("expected an error for an unregistered provider")
+	}
+	if !strings.Contains(err.Error(), "unknown provider") {
+		t.Errorf("err = %v, want it to mention \"unknown provider\"", err)
+	}
+	// The lock this Start acquired before validating the provider must not
+	// be left behind — a second Start (with a real provider this time)
+	// should not see ErrLocked because of the failed first attempt.
+	if _, err := os.Stat(filepath.Join(m.tunnelDir, lockFilename)); !os.IsNotExist(err) {
+		t.Errorf("expected the lock file cleaned up after a rejected provider, stat err = %v", err)
+	}
+}
+
+func TestStartSpawnFailureSetsErrorState(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, nil, 0)
+	cfg := ManagerConfig{
+		Provider: ProviderAutossh,
+		// A path that cannot exist — exec.Command.Start returns a real
+		// ENOENT-shaped error here, not a mock.
+		Command: filepath.Join(dir, "no-such-binary-anywhere"),
+	}
+	_, err := m.Start(cfg)
+	if err == nil {
+		t.Fatal("expected an error when the provider binary doesn't exist")
+	}
+	got, ok := ReadState(dir)
+	if !ok {
+		t.Fatal("expected state.json to have been written")
+	}
+	if got.State != StateError {
+		t.Errorf("State = %q, want %q", got.State, StateError)
+	}
+	if got.LastError == nil || !strings.HasPrefix(*got.LastError, "spawn_failed:") {
+		t.Errorf("LastError = %v, want a \"spawn_failed:...\" prefix", got.LastError)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tunnel", lockFilename)); !os.IsNotExist(err) {
+		t.Errorf("expected the lock file cleaned up after a spawn failure, stat err = %v", err)
+	}
+}
+
+func TestStartBadURLRegexFailsBeforeSpawning(t *testing.T) {
+	// Compiling the URL regex up front (before Start spawns anything) —
+	// not asynchronously inside the reader goroutine — is itself the fix
+	// for a bug this test used to expose: a bad regex used to spawn a
+	// real child with no reader ever attached to reap it. See the
+	// migration notes.
+	dir := t.TempDir()
+	m := NewManager(dir, nil, 0)
+	cfg := ManagerConfig{
+		Provider: ProviderAutossh,
+		Command:  fakeTunnelScript(t),
+		URLRegex: "(", // invalid — unbalanced group
+	}
+	if _, err := m.Start(cfg); err == nil {
+		t.Fatal("expected Start to fail for an invalid URLRegex")
+	}
+	if m.Status().State != StateIdle {
+		t.Errorf("State = %q, want %q — nothing should have been spawned", m.Status().State, StateIdle)
+	}
+	for _, name := range []string{lockFilename, pidFilename} {
+		if _, err := os.Stat(filepath.Join(dir, "tunnel", name)); !os.IsNotExist(err) {
+			t.Errorf("expected %s cleaned up after the rejected regex, stat err = %v", name, err)
+		}
 	}
 }
 

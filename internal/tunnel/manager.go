@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -272,6 +273,11 @@ type Manager struct {
 	// final. Tests synchronize on it instead of sleeping (CHECKLIST rule
 	// 22); production code never reads it.
 	readerDone chan struct{}
+
+	// stateChanged, when a test sets it (buffered, capacity >= 1), receives
+	// a non-blocking notification on every writeStateLocked — see
+	// notifyStateChanged. nil in production.
+	stateChanged chan struct{}
 }
 
 // NewManager builds a Manager rooted at stateDir (its own "tunnel"
@@ -349,6 +355,29 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 		m.releaseLockFiles()
 		return State{}, fmt.Errorf("tunnel: unknown provider %q", cfg.Provider)
 	}
+	// Compiled up front, synchronously, mirroring manager.py's own
+	// `_start_reader_thread` call chain — Python's `re.compile` there
+	// runs in start()'s own call stack, so a bad pattern fails Start
+	// itself before anything is ever spawned. Doing this asynchronously
+	// inside the reader goroutine instead (an earlier draft did) meant a
+	// bad regex spawned a real, unmonitored child with no reader ever
+	// attached to reap it — a self-inflicted leak a test caught.
+	pattern := cfg.URLRegex
+	if pattern == "" {
+		pattern = spec.URLPattern
+	}
+	urlRe, err := compileURLRegex(pattern)
+	if err != nil {
+		m.mu.Unlock()
+		m.releaseLockFiles()
+		return State{}, fmt.Errorf("tunnel: %w", err)
+	}
+	reconnectRe, err := compileReconnectRegex(spec)
+	if err != nil {
+		m.mu.Unlock()
+		m.releaseLockFiles()
+		return State{}, fmt.Errorf("tunnel: %w", err)
+	}
 	args := cfg.Args
 	if len(args) == 0 {
 		args = spec.DefaultArgs
@@ -371,7 +400,7 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 		m.state.State = StateError
 		m.state.Phase = StateError
 		m.state.LastError = strPtr("spawn_failed:" + err.Error())
-		_ = m.writeStateLocked()
+		m.writeStateBestEffort()
 		m.mu.Unlock()
 		m.releaseLockFiles()
 		return State{}, fmt.Errorf("tunnel: spawn %q: %w", cfg.Command, err)
@@ -393,7 +422,7 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 	snapshot := m.state
 	m.mu.Unlock()
 
-	m.startReader(spec, cfg, spawned.Stdout)
+	m.startReader(spec, cfg, urlRe, reconnectRe, spawned.Stdout)
 	return snapshot, nil
 }
 
@@ -422,7 +451,7 @@ func (m *Manager) Stop() (State, error) {
 	m.stopRequested = true
 	m.state.State = StateStopping
 	m.state.Phase = StateStopping
-	_ = m.writeStateLocked()
+	m.writeStateBestEffort()
 	m.mu.Unlock()
 
 	reaped := true
@@ -445,7 +474,7 @@ func (m *Manager) Stop() (State, error) {
 		m.mu.Lock()
 		m.state = State{State: StateIdle, Phase: StateIdle, RestartCount: m.state.RestartCount + 1}
 		m.stopRequested = false
-		_ = m.writeStateLocked()
+		m.writeStateBestEffort()
 		m.proc = nil
 		m.mu.Unlock()
 		m.releaseLockFiles()
@@ -501,7 +530,7 @@ func (m *Manager) SweepStaleLock(cfg *ManagerConfig) {
 			PID:       intPtr(pid),
 			StartedAt: strPtr(utcISO(time.Now())),
 		}
-		_ = m.writeStateLocked()
+		m.writeStateBestEffort()
 		m.mu.Unlock()
 		return
 	}
@@ -517,7 +546,13 @@ func (m *Manager) acquireLockOrErr(provider string) error {
 		if json.Unmarshal(data, &payload) == nil && payload.PID > 0 && pidAlive(payload.PID) {
 			return ErrLocked
 		}
-		_ = os.Remove(lockPath) // stale — sweep and continue
+		// Stale — sweep and continue regardless of whether the remove
+		// itself succeeds (matches Python's `except OSError: pass`), but
+		// a genuine removal failure (permissions, not just "already
+		// gone") is still worth a log line rather than a silent drop.
+		if rmErr := os.Remove(lockPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			slog.Warn("tunnel: failed to remove a stale lock file", "path", lockPath, "error", rmErr)
+		}
 	}
 	return atomicWriteJSON(lockPath, map[string]any{
 		"pid":        os.Getpid(),
@@ -552,37 +587,52 @@ func (m *Manager) releaseLockFiles() {
 	}
 }
 
-// writeStateLocked persists m.state. Caller must hold m.mu.
+// writeStateLocked persists m.state and notifies stateChanged (tests only
+// — see its doc comment). Caller must hold m.mu.
 func (m *Manager) writeStateLocked() error {
-	return atomicWriteJSON(m.statePath(), m.state)
+	err := atomicWriteJSON(m.statePath(), m.state)
+	m.notifyStateChanged()
+	return err
+}
+
+// writeStateBestEffort persists m.state the same way writeStateLocked
+// does, for the many call sites (inside the reader goroutine, lock/pid
+// cleanup) that cannot usefully propagate a disk-write failure — the
+// in-memory state is already correct regardless, and the caller has
+// nothing more specific to do with the error than what logging it here
+// already does. Caller must hold m.mu.
+func (m *Manager) writeStateBestEffort() {
+	if err := m.writeStateLocked(); err != nil {
+		slog.Warn("tunnel: failed to persist state.json", "path", m.statePath(), "error", err)
+	}
+}
+
+// notifyStateChanged wakes anything selecting on stateChanged after a
+// state write. nil in production (no one ever sets it); tests assign a
+// buffered channel so a polling loop can block on an actual event
+// instead of a bare time.Sleep (CHECKLIST rule 22) while state that
+// isn't tied to the reader goroutine's own exit (readerDone) changes —
+// a captured URL or an incremented reconnect count, while the child is
+// still very much running. The send is non-blocking so a test that
+// isn't currently receiving can never stall a real write.
+func (m *Manager) notifyStateChanged() {
+	if m.stateChanged == nil {
+		return
+	}
+	select {
+	case m.stateChanged <- struct{}{}:
+	default:
+	}
 }
 
 // startReader tails stdout on its own goroutine, redacting each line,
 // buffering it, appending to stdout.log, and watching for the provider's
 // URL and (autossh only) reconnect patterns — mirrors manager.py's
 // `_start_reader_thread` closure.
-func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, stdout io.ReadCloser) {
+func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, urlRe, reconnectRe *regexp.Regexp, stdout io.ReadCloser) {
 	done := make(chan struct{})
 	m.readerDone = done
 
-	pattern := cfg.URLRegex
-	if pattern == "" {
-		pattern = spec.URLPattern
-	}
-	urlRe, err := compileURLRegex(pattern)
-	if err != nil {
-		m.mu.Lock()
-		m.state.LastError = strPtr("bad_url_regex:" + err.Error())
-		_ = m.writeStateLocked()
-		m.mu.Unlock()
-		_ = stdout.Close()
-		close(done)
-		return
-	}
-	reconnectRe, err := compileReconnectRegex(spec)
-	if err != nil {
-		reconnectRe = regexp.MustCompile(`$^`) // matches nothing, same effect as Python's empty pattern
-	}
 	timeoutS := cfg.URLParseTimeoutS
 	if timeoutS < 1 {
 		timeoutS = 1
@@ -608,7 +658,7 @@ func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, stdout io.Re
 					m.mu.Lock()
 					m.state.URL = strPtr(captured)
 					m.state.URLAt = strPtr(utcISO(time.Now()))
-					_ = m.writeStateLocked()
+					m.writeStateBestEffort()
 					m.mu.Unlock()
 					urlSeen = true
 				}
@@ -616,13 +666,13 @@ func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, stdout io.Re
 			if spec.ReconnectPattern != "" && reconnectRe.MatchString(line) {
 				m.mu.Lock()
 				m.state.AutosshReconnects++
-				_ = m.writeStateLocked()
+				m.writeStateBestEffort()
 				m.mu.Unlock()
 			}
 			if !urlSeen && !timeoutFlagged && time.Now().After(deadline) {
 				m.mu.Lock()
 				m.state.LastError = strPtr("url_parse_timeout")
-				_ = m.writeStateLocked()
+				m.writeStateBestEffort()
 				m.mu.Unlock()
 				timeoutFlagged = true
 			}
@@ -630,7 +680,7 @@ func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, stdout io.Re
 		if err := scanner.Err(); err != nil {
 			m.mu.Lock()
 			m.state.LastError = strPtr("reader_error:" + err.Error())
-			_ = m.writeStateLocked()
+			m.writeStateBestEffort()
 			m.mu.Unlock()
 		}
 		m.onChildExit()
@@ -709,7 +759,7 @@ func (m *Manager) onChildExit() {
 	}
 	m.state = next
 	m.stopRequested = false
-	_ = m.writeStateLocked()
+	m.writeStateBestEffort()
 	m.proc = nil
 	m.mu.Unlock()
 	m.releaseLockFiles()
