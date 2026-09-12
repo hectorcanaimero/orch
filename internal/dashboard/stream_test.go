@@ -35,55 +35,70 @@ func streamServer(t *testing.T, f *fakeState) *httptest.Server {
 	return srv
 }
 
-// readFrames reads SSE frames until it has n of them or the deadline passes.
-// Comment frames (`: keepalive`) are counted separately — they are not events
-// and a test that confused the two would pass on a silent stream.
-func readFrames(t *testing.T, body *bufio.Reader, n int, deadline time.Duration) (events []eventPayload, comments int) {
+// frameReader turns a live SSE body into frames a test can take one at a time.
+//
+// One goroutine per stream, started when the stream opens — not one per read.
+// Two readers on the same body is a data race, and it is the shape a "read
+// some frames" helper falls into the moment a test wants to read, act, and
+// read again.
+type frameReader struct {
+	events   chan eventPayload
+	comments chan struct{}
+	t        *testing.T
+}
+
+func newFrameReader(t *testing.T, body *bufio.Reader) *frameReader {
 	t.Helper()
-	done := time.After(deadline)
-	lines := make(chan string, 64)
+	fr := &frameReader{
+		events:   make(chan eventPayload, 64),
+		comments: make(chan struct{}, 64),
+		t:        t,
+	}
 	go func() {
+		defer close(fr.events)
+		var pendingEvent string
 		for {
 			line, err := body.ReadString('\n')
 			if err != nil {
-				close(lines)
 				return
-			}
-			lines <- line
-		}
-	}()
-
-	var pendingEvent string
-	for len(events) < n {
-		select {
-		case <-done:
-			return events, comments
-		case line, ok := <-lines:
-			if !ok {
-				return events, comments
 			}
 			line = strings.TrimRight(line, "\n")
 			switch {
 			case strings.HasPrefix(line, ": "):
-				comments++
+				select {
+				case fr.comments <- struct{}{}:
+				default:
+				}
 			case strings.HasPrefix(line, "event: "):
 				pendingEvent = strings.TrimPrefix(line, "event: ")
 			case strings.HasPrefix(line, "data: "):
 				if pendingEvent != "event" {
-					t.Errorf("frame arrived with event name %q, want %q", pendingEvent, "event")
+					return
 				}
 				var ev eventPayload
-				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
-					t.Fatalf("frame is not JSON: %v", err)
+				if jsonErr := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); jsonErr != nil {
+					return
 				}
-				events = append(events, ev)
+				fr.events <- ev
 			}
 		}
-	}
-	return events, comments
+	}()
+	return fr
 }
 
-func openStream(t *testing.T, srv *httptest.Server, path string) (*bufio.Reader, func()) {
+// next waits for one event frame. ok is false when the deadline passed or the
+// stream ended, which is what a test asserting "nothing arrives" checks.
+func (fr *frameReader) next(timeout time.Duration) (ev eventPayload, ok bool) {
+	fr.t.Helper()
+	select {
+	case ev, ok = <-fr.events:
+		return ev, ok
+	case <-time.After(timeout):
+		return eventPayload{}, false
+	}
+}
+
+func openStream(t *testing.T, srv *httptest.Server, path string) (*frameReader, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, nil)
@@ -108,7 +123,7 @@ func openStream(t *testing.T, srv *httptest.Server, path string) (*bufio.Reader,
 	if resp.Header.Get("X-Accel-Buffering") != "no" {
 		t.Error("X-Accel-Buffering is not set; a proxy would buffer this stream")
 	}
-	return bufio.NewReader(resp.Body), func() {
+	return newFrameReader(t, bufio.NewReader(resp.Body)), func() {
 		cancel()
 		_ = resp.Body.Close()
 	}
@@ -131,17 +146,22 @@ func TestEventStreamStartsFromNowNotFromTheBeginning(t *testing.T) {
 	f.appendEvent(state.Event{ID: 3, TaskID: "T-2", EventType: "block",
 		TS: "2026-09-01T10:01:00Z", Extra: map[string]any{"reason": "waiting on T-1"}})
 
-	events, _ := readFrames(t, body, 1, 3*time.Second)
-	if len(events) != 1 {
-		t.Fatalf("got %d frames, want exactly 1 — the two pre-existing events must not replay", len(events))
+	ev, ok := body.next(3 * time.Second)
+	if !ok {
+		t.Fatal("nothing arrived")
 	}
-	if events[0].TaskID != "T-2" || events[0].EventType != "block" {
-		t.Errorf("frame = %+v, want the event appended after connecting", events[0])
+	if ev.TaskID != "T-2" || ev.EventType != "block" {
+		t.Errorf("frame = %+v, want the event appended after connecting", ev)
 	}
 	// And it is the FORMATTED shape, the same one /api/events serves, so the
 	// SPA's history and its live tail render identically.
-	if events[0].Severity != "block" || !strings.Contains(events[0].Human, "waiting on T-1") {
-		t.Errorf("frame is not formatted: %+v", events[0])
+	if ev.Severity != "block" || !strings.Contains(ev.Human, "waiting on T-1") {
+		t.Errorf("frame is not formatted: %+v", ev)
+	}
+	// Nothing else follows: the two events that already existed must not
+	// replay. A second frame here would be the whole log arriving late.
+	if extra, more := body.next(1500 * time.Millisecond); more {
+		t.Errorf("a second frame arrived (%+v); the pre-existing events replayed", extra)
 	}
 }
 
@@ -159,17 +179,30 @@ func TestEventStreamDeliversTwoEventsInTheSameSecond(t *testing.T) {
 
 	const sameSecond = "2026-09-01T10:00:00Z"
 	f.appendEvent(state.Event{ID: 2, TaskID: "T-1", EventType: "dispatch", TS: sameSecond})
-	// Long enough for the first poll to have delivered event 2 and recorded
-	// its position — which is exactly the state Python loses the next one in.
-	time.Sleep(900 * time.Millisecond)
-	f.appendEvent(state.Event{ID: 3, TaskID: "T-1", EventType: "block", TS: sameSecond})
 
-	events, _ := readFrames(t, body, 2, 4*time.Second)
-	if len(events) != 2 {
-		t.Fatalf("got %d frames, want 2 — the second event of the same second is the one Python drops", len(events))
+	// Reading the first frame is the synchronisation, not a sleep: the frame
+	// cannot arrive until a poll has delivered event 2 AND recorded its
+	// position, which is exactly the state Python loses the next event in. A
+	// sleep would be guessing at the same thing and would still be guessing
+	// on a slow machine.
+	first, ok := body.next(4 * time.Second)
+	if !ok {
+		t.Fatal("the stream never delivered the first event; nothing to lose the second one after")
 	}
-	if events[0].EventType != "dispatch" || events[1].EventType != "block" {
-		t.Errorf("frames = %q, %q; want dispatch then block", events[0].EventType, events[1].EventType)
+
+	f.appendEvent(state.Event{ID: 3, TaskID: "T-1", EventType: "block", TS: sameSecond})
+	second, ok := body.next(4 * time.Second)
+	if !ok {
+		t.Fatal("the second event of the same second never arrived — this is the one Python drops")
+	}
+	if first.EventType != "dispatch" || second.EventType != "block" {
+		t.Errorf("frames = %q, %q; want dispatch then block", first.EventType, second.EventType)
+	}
+	// Both really did carry the same timestamp, so the test is about the key
+	// and not about two rows that happen to be a second apart.
+	if first.TS != sameSecond || second.TS != sameSecond {
+		t.Errorf("timestamps = %q, %q; the fixture is not exercising the collision",
+			first.TS, second.TS)
 	}
 }
 
@@ -187,13 +220,13 @@ func TestEventStreamFiltersByTask(t *testing.T) {
 	f.appendEvent(state.Event{ID: 3, TaskID: "T-1", EventType: "success", TS: "2026-09-01T10:00:02Z"})
 	f.appendEvent(state.Event{ID: 4, TaskID: "T-2", EventType: "success", TS: "2026-09-01T10:00:03Z"})
 
-	events, _ := readFrames(t, body, 2, 4*time.Second)
-	if len(events) != 2 {
-		t.Fatalf("got %d frames, want 2", len(events))
-	}
-	for _, e := range events {
-		if e.TaskID != "T-2" {
-			t.Errorf("frame for %s reached a stream filtered to T-2", e.TaskID)
+	for i := 0; i < 2; i++ {
+		ev, ok := body.next(4 * time.Second)
+		if !ok {
+			t.Fatalf("only %d frames arrived, want 2", i)
+		}
+		if ev.TaskID != "T-2" {
+			t.Errorf("frame for %s reached a stream filtered to T-2", ev.TaskID)
 		}
 	}
 }
@@ -206,7 +239,7 @@ func TestEventStreamStopsWhenTheClientLeaves(t *testing.T) {
 	body, closeStream := openStream(t, srv, "/api/events/stream")
 
 	f.appendEvent(state.Event{ID: 1, TaskID: "T-1", EventType: "dispatch", TS: "2026-09-01T10:00:00Z"})
-	if events, _ := readFrames(t, body, 1, 3*time.Second); len(events) != 1 {
+	if _, ok := body.next(3 * time.Second); !ok {
 		t.Fatalf("the stream never delivered anything")
 	}
 
@@ -243,8 +276,8 @@ func TestEventStreamReadFailures(t *testing.T) {
 		// failed, which is the whole reason this cannot be a 500.
 		body, closeStream := openStream(t, srv, "/api/events/stream")
 		defer closeStream()
-		if events, _ := readFrames(t, body, 1, 2*time.Second); len(events) != 0 {
-			t.Errorf("got %d frames from a stream whose reads all fail", len(events))
+		if ev, ok := body.next(2 * time.Second); ok {
+			t.Errorf("got a frame (%+v) from a stream whose reads all fail", ev)
 		}
 	})
 }
