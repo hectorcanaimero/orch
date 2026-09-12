@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -92,7 +94,7 @@ func get(t *testing.T, s *Server, path string) *http.Response {
 // the page rendered blank with a 200 already on the wire. The files at the
 // root of the build are the half an allow-list would have missed.
 func TestStaticFilesNeedNoToken(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	for _, path := range []string{
 		"/", "/index.html",
@@ -116,7 +118,7 @@ func TestStaticFilesNeedNoToken(t *testing.T) {
 
 // And the data routes are still gated in the same server.
 func TestDataRoutesAreGatedInTheSameServer(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	resp := get(t, s, "/api/config/status")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -129,7 +131,7 @@ func TestDataRoutesAreGatedInTheSameServer(t *testing.T) {
 // not registered. It must serve the shell rather than 401 — a client-side
 // route named /api-docs is a page, not an endpoint.
 func TestUnregisteredPathFallsToTheSPA(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 	resp := get(t, s, "/api-docs")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /api-docs = %d, want the SPA shell", resp.StatusCode)
@@ -159,10 +161,10 @@ func TestWhoamiReportsTheProfile(t *testing.T) {
 // more. The SPA reads it to hide operator-only navigation; the profile is not
 // a secret, the token is.
 func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	req.Header.Set("Authorization", "Bearer s3cret")
+	req.Header.Set("Authorization", "Bearer test-token-stakeholder")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -170,7 +172,7 @@ func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
 	}
 
 	// config/status is not on the list: authenticated, still forbidden.
-	req = httptest.NewRequest(http.MethodGet, "/api/config/status?token=s3cret", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/config/status?token=test-token-stakeholder", nil)
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -181,8 +183,8 @@ func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
 // The token may arrive in a query parameter, because the stakeholder profile
 // exists to make a shareable URL and a pasted link carries no header.
 func TestTokenFromQueryParameter(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
-	resp := get(t, s, "/api/whoami?token=s3cret")
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
+	resp := get(t, s, "/api/whoami?token=test-token-stakeholder")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET with ?token= = %d, want 200", resp.StatusCode)
 	}
@@ -191,7 +193,7 @@ func TestTokenFromQueryParameter(t *testing.T) {
 
 // A rejection says nothing but the word.
 func TestRejectionsLeakNothing(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 	resp := get(t, s, "/api/config/status")
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -335,6 +337,23 @@ func TestServeStartsAndStops(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Serve(ctx) }()
 
+	// Ready closes when the listener is open, and BoundAddr is then the port
+	// the kernel picked. Asking for the address and getting one that answers
+	// is the whole claim in the doc comment, so the test makes a real request
+	// over TCP rather than trusting the log line.
+	<-s.Ready()
+	if s.BoundAddr() == "" {
+		t.Fatalf("no listener: %v", <-done)
+	}
+	resp, err := http.Get("http://" + s.BoundAddr() + "/api/whoami") // #nosec G107 -- the loopback listener this test just started
+	if err != nil {
+		t.Fatalf("GET /api/whoami on the live listener: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("live listener answered %d, want 200", resp.StatusCode)
+	}
+
 	cancel()
 	select {
 	case err := <-done:
@@ -343,6 +362,44 @@ func TestServeStartsAndStops(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Serve did not return after its context was cancelled")
+	}
+}
+
+// A listen that fails must release everyone waiting on Ready. A channel that
+// only closed on success would turn a taken port into a hung caller, which is
+// a worse failure than the error it is hiding.
+func TestServeReleasesReadyWhenTheListenFails(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = taken.Close() }()
+
+	c := cfg(ProfileOperator, "")
+	host, port, err := net.SplitHostPort(taken.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Host = host
+	c.Port, err = strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, c, writeProject(t, "spec_root: specs\n", `{"meta":{}}`))
+
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background()) }()
+
+	select {
+	case <-s.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Ready never closed after a failed listen")
+	}
+	if got := s.BoundAddr(); got != "" {
+		t.Errorf("BoundAddr = %q after a failed listen, want empty", got)
+	}
+	if err := <-done; err == nil {
+		t.Error("Serve returned nil on a port already held")
 	}
 }
 

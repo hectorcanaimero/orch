@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -75,7 +76,7 @@ func (s *Server) configStatus() (configStatusPayload, error) {
 
 	loaded, err := config.Load(s.paths.ConfigYAML, s.paths.Root)
 	if err != nil {
-		return out, err
+		return out, fmt.Errorf("reading %s: %w", s.paths.ConfigYAML, err)
 	}
 	out.SpecRoot = loaded.Config.SpecRoot
 	out.Backend = loaded.Config.State.Backend
@@ -83,7 +84,7 @@ func (s *Server) configStatus() (configStatusPayload, error) {
 
 	raw, err := os.ReadFile(s.paths.TasksJSON()) // #nosec G304 -- the project's own tasks.json
 	if err != nil {
-		return out, err
+		return out, fmt.Errorf("reading %s: %w", s.paths.TasksJSON(), err)
 	}
 	var doc struct {
 		Meta struct {
@@ -91,7 +92,7 @@ func (s *Server) configStatus() (configStatusPayload, error) {
 		} `json:"meta"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return out, err
+		return out, fmt.Errorf("parsing %s: %w", s.paths.TasksJSON(), err)
 	}
 	out.ProjectID = doc.Meta.Project
 
