@@ -620,3 +620,33 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   visual: render the same page uncompressed, read its `/MediaBox`, its
   `/Count`, and every `Tj` string back out in order. Installing poppler on a
   shared VPS is the user's decision, not a lane's.
+
+- **"Never discard an error" is three rules, not one.** Gemini flagged two
+  identical-looking `_ = x.Close()` in the same PR, and they wanted different
+  answers:
+
+  - `closeDB` in a READ-ONLY command: discarded, with one line saying why. The
+    process is exiting and the handle never wrote anything; a close error
+    there changes nothing a caller could act on.
+  - `closeDB` in a command that WRITES a file: reported to stderr, exit code
+    unchanged. The artefact on disk is already correct, so it is not a
+    failure — but a database handle that will not close is worth knowing about
+    next to a file somebody is about to email.
+  - `f.Close` in a TEST: `t.Errorf`. A test that cannot close the file it just
+    wrote has not verified what it claims to.
+
+  The syntax is identical in all three; what differs is what the error would
+  tell the reader. A blanket "always wrap it" produces noise in the first case
+  and a missed signal in the third.
+
+- **A gate that cannot tell must fail closed.** From reviewing G8.2's
+  per-project stakeholder token: its resolver did `if err != nil { ok = false }`
+  and fell back to the token in config.yaml. That collapses two different
+  states — "this project never rotated" (fall back, correct) and "I cannot
+  read whether it rotated" (fall back, and a token rotated away after a leak
+  becomes valid again). A database error should not resurrect a revoked
+  credential, and the symptom of this one is a page that works.
+
+  Same family as the unknown profile in #184: a degradation that reads as
+  robustness. The tell is a branch where an ERROR and an ABSENCE are handled
+  by the same line.
