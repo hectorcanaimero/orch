@@ -49,7 +49,7 @@ func TestManualCheckRealSPA(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(root, "tasks.json"),
 		[]byte(`{"meta":{"project":"manual-check"},"tasks":[]}`), 0o600)
 
-	c := cfg(ProfileStakeholder, "s3cret")
+	c := cfg(ProfileStakeholder, "test-token-stakeholder")
 	c.Port = 18731
 	s, err := New(c, Options{Static: static, Paths: pathsFor(root)})
 	if err != nil {
@@ -85,8 +85,8 @@ func TestManualCheckRealSPA(t *testing.T) {
 		{"/icon-192.png", 200, "and another"},
 		{"/kanban", 200, "a client-side route falls back to the shell"},
 		{"/api/config/status", 401, "a data route with no token"},
-		{"/api/whoami?token=s3cret", 200, "on the allow-list, with a token"},
-		{"/api/config/status?token=s3cret", 403, "authenticated, not allow-listed"},
+		{"/api/whoami?token=test-token-stakeholder", 200, "on the allow-list, with a token"},
+		{"/api/config/status?token=test-token-stakeholder", 403, "authenticated, not allow-listed"},
 		{"/api/whoami?token=wrong", 401, "the wrong token"},
 	} {
 		resp, rerr := http.Get(base + tc.path) // #nosec G107 -- a fixed loopback URL in a test

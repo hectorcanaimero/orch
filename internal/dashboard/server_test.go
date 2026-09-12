@@ -92,7 +92,7 @@ func get(t *testing.T, s *Server, path string) *http.Response {
 // the page rendered blank with a 200 already on the wire. The files at the
 // root of the build are the half an allow-list would have missed.
 func TestStaticFilesNeedNoToken(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	for _, path := range []string{
 		"/", "/index.html",
@@ -116,7 +116,7 @@ func TestStaticFilesNeedNoToken(t *testing.T) {
 
 // And the data routes are still gated in the same server.
 func TestDataRoutesAreGatedInTheSameServer(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	resp := get(t, s, "/api/config/status")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -129,7 +129,7 @@ func TestDataRoutesAreGatedInTheSameServer(t *testing.T) {
 // not registered. It must serve the shell rather than 401 — a client-side
 // route named /api-docs is a page, not an endpoint.
 func TestUnregisteredPathFallsToTheSPA(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 	resp := get(t, s, "/api-docs")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /api-docs = %d, want the SPA shell", resp.StatusCode)
@@ -159,10 +159,10 @@ func TestWhoamiReportsTheProfile(t *testing.T) {
 // more. The SPA reads it to hide operator-only navigation; the profile is not
 // a secret, the token is.
 func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
-	req.Header.Set("Authorization", "Bearer s3cret")
+	req.Header.Set("Authorization", "Bearer test-token-stakeholder")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -170,7 +170,7 @@ func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
 	}
 
 	// config/status is not on the list: authenticated, still forbidden.
-	req = httptest.NewRequest(http.MethodGet, "/api/config/status?token=s3cret", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/config/status?token=test-token-stakeholder", nil)
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -181,8 +181,8 @@ func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
 // The token may arrive in a query parameter, because the stakeholder profile
 // exists to make a shareable URL and a pasted link carries no header.
 func TestTokenFromQueryParameter(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
-	resp := get(t, s, "/api/whoami?token=s3cret")
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
+	resp := get(t, s, "/api/whoami?token=test-token-stakeholder")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET with ?token= = %d, want 200", resp.StatusCode)
 	}
@@ -191,7 +191,7 @@ func TestTokenFromQueryParameter(t *testing.T) {
 
 // A rejection says nothing but the word.
 func TestRejectionsLeakNothing(t *testing.T) {
-	s := newTestServer(t, cfg(ProfileStakeholder, "s3cret"), t.TempDir())
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
 	resp := get(t, s, "/api/config/status")
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
