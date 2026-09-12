@@ -1,0 +1,223 @@
+package dashboard
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/hectorcanaimero/orch/internal/config"
+)
+
+// Server is the dashboard's HTTP surface.
+//
+// Ported from `create_app` in `orchestrator/dashboard/server.py`, minus
+// FastAPI: the routes are plain handlers on a `http.ServeMux` and the access
+// model is a decorator rather than middleware (see access.go for why).
+//
+// What this file owns is the plumbing — listening, routing, shutting down.
+// Which routes exist is routes.go; who may reach them is access.go; serving
+// the SPA is spa.go, which this never wraps.
+type Server struct {
+	cfg   Config
+	paths config.Paths
+	mux   *http.ServeMux
+	http  *http.Server
+	log   *slog.Logger
+	state StateReader
+	// static is the SPA handler, mounted at "/" and deliberately NOT gated.
+	static http.Handler
+}
+
+// StateReader is the slice of the state backend the dashboard reads.
+//
+// Narrow and read-only by construction: a dashboard that could write would be
+// a second writer to a database with one writer, and "read-only by design" is
+// the property the profile guard rests on. CHECKLIST rule 13 says the same
+// thing about the package; this says it in the type.
+type StateReader interface {
+	// Deliberately empty for now. (a) wires the skeleton and the two routes
+	// that need no state; the read endpoints arrive in (b) and each adds the
+	// one method it uses, so the interface grows with visible callers rather
+	// than being guessed at up front.
+}
+
+// Options are what New needs beyond the config.
+type Options struct {
+	// Paths locates the project this dashboard reports on.
+	Paths config.Paths
+	// Static serves the built SPA. Required: a dashboard with no UI is a
+	// JSON API nobody asked for, and a nil handler here would 404 the shell
+	// while every API route worked — a failure that looks like a broken
+	// build rather than a missing argument.
+	Static http.Handler
+	// State is the backend the read endpoints query. May be nil until (b).
+	State StateReader
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// New builds a server. It does not listen; Serve does.
+func New(cfg Config, opts Options) (*Server, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if opts.Static == nil {
+		return nil, errors.New("dashboard: no SPA handler — see internal/dashboard/spa.go")
+	}
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+
+	s := &Server{
+		cfg:    cfg,
+		paths:  opts.Paths,
+		mux:    http.NewServeMux(),
+		log:    log,
+		state:  opts.State,
+		static: opts.Static,
+	}
+	s.registerRoutes()
+	s.http = &http.Server{
+		Addr:    cfg.Addr(),
+		Handler: s.mux,
+		// A dashboard reads a SQLite file and answers; nothing here should
+		// take ten seconds. The write timeout is the one that matters when
+		// the read endpoints land: a slow query holding a connection is the
+		// shape that starves the single writer.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	return s, nil
+}
+
+// Handler exposes the mux, for a test that wants to drive the routes without
+// a listener.
+func (s *Server) Handler() http.Handler { return s.mux }
+
+// Serve listens and blocks until the context is cancelled, then shuts down
+// gracefully.
+//
+// The listener is opened before this returns control, so a caller that prints
+// the URL prints one that already answers. Python's own runner prints it
+// before uvicorn binds, which produces a URL that 404s for the first moment
+// somebody is fast enough to click it.
+func (s *Server) Serve(ctx context.Context) error {
+	ln, err := net.Listen("tcp", s.cfg.Addr())
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", s.cfg.Addr(), err)
+	}
+	s.log.Info("dashboard listening",
+		"addr", ln.Addr().String(), "profile", string(s.cfg.Profile))
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	// A fixed grace period rather than the caller's context: the context is
+	// already cancelled, so passing it would make Shutdown return instantly
+	// and drop every request in flight — which is the bug this pattern is
+	// usually written to avoid and usually still contains.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.http.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("dashboard shutdown: %w", err)
+	}
+	return <-errCh
+}
+
+// ---- route registration ----------------------------------------------------
+
+// route is one registered endpoint.
+//
+// `name` is Python's route name and is what the stakeholder allow-list matches
+// on, so it is not decoration: changing one silently changes who can reach the
+// route. They are the same strings `DEFAULT_STAKEHOLDER_ROUTES` uses.
+type route struct {
+	pattern string
+	name    string
+	handler http.HandlerFunc
+}
+
+// gated wraps a handler with the access model.
+//
+// Every data route goes through this and the SPA handler does not. That is the
+// whole design: public is the default for what the static handler serves, so
+// there is no path classification to get wrong, and a route registered without
+// `gated` is a visible omission here rather than an invisible hole in a prefix
+// list in another file.
+func (s *Server) gated(r route) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch s.cfg.decide(req.URL.Path, r.name, tokenFrom(req)) {
+		case Unauthorized:
+			writePlain(w, http.StatusUnauthorized, "unauthorized")
+		case Forbidden:
+			writePlain(w, http.StatusForbidden, "forbidden")
+		default:
+			r.handler(w, req)
+		}
+	})
+}
+
+func (s *Server) registerRoutes() {
+	for _, r := range s.routes() {
+		s.mux.Handle(r.pattern, s.gated(r))
+	}
+	// Last, and ungated. `http.ServeMux` resolves by pattern specificity, not
+	// registration order, so "/api/whoami" wins over "/" wherever this line
+	// sits — but keeping it last is how a reader sees that everything above
+	// is gated and this one thing is not.
+	s.mux.Handle("/", s.static)
+}
+
+// writePlain sends a bare status line.
+//
+// No path, no route name, no detail. A 401 that echoed what was asked for
+// would confirm to an unauthenticated caller which routes exist, and
+// `no-store` keeps a proxy from serving somebody else the rejection.
+func writePlain(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintln(w, msg)
+}
+
+// writeJSON sends one object.
+//
+// Compact, like Python's `JSONResponse`, and with HTML escaping off — the SPA
+// parses this, nothing interpolates it into a page, and the escaping turns
+// `<` in a task title into `<` for no reader's benefit.
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	// Encoded into a buffer first, not straight onto the ResponseWriter. The
+	// streaming form writes a 200 and part of a body before it can discover
+	// the value does not encode, and there is no taking a status code back.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		writePlain(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(buf.Bytes())
+}
