@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -153,8 +152,13 @@ type taskContextOut struct {
 	// declares none, which is the case the prompt warns about.
 	SpecRefPath string `json:"spec_ref_path,omitempty"`
 	// Dependencies are the task's completed dependencies, with what each
-	// one reported. The prompt carries these inline; this is how an agent
+	// one reported — the same sentence, chosen the same way, that the
+	// dispatch prompt renders (prompt.AgentComment). This is how an agent
 	// re-reads them without its prompt in front of it.
+	//
+	// Untruncated, unlike the prompt's copy: a prompt is a fixed budget and
+	// caps each note at 500 characters, but a tool result is fetched on
+	// demand and orch_get_task returns the whole trail anyway.
 	Dependencies []depContext `json:"dependencies"`
 	// PendingDependencies are the dependency ids that are not done yet —
 	// the reason a task is not ready, named rather than implied.
@@ -236,44 +240,10 @@ func (s *server) taskContext(ctx context.Context, _ *mcpsdk.CallToolRequest, in 
 		tc.Dependencies = append(tc.Dependencies, depContext{
 			ID:          dep.ID,
 			Title:       dep.Title,
-			LastComment: lastComment(runtime[dep.ID].Comments),
+			LastComment: prompt.AgentComment(runtime[dep.ID].Comments),
 		})
 	}
 
 	out.Task = &tc
 	return nil, out, nil
-}
-
-// lastComment is the most recent entry's body, or "" when the task has none.
-//
-// It reads the `body` key, which is what every writer of a comment writes:
-// `state.appendComment` in Go and `sqlite_backend.py`'s three call sites in
-// Python all marshal `{"author", "body", "at"}`.
-//
-// `prompt.LastComment` is deliberately NOT reused here even though it answers
-// the same question, because it answers it wrongly for any comment orch
-// itself wrote — it reads `text`, from tasks.json rather than from the
-// runtime row. That is a faithful port of `prompt_builder.py`, which is
-// exactly the problem: see bug 21 in
-// docs/brainstorm/go-migration-notes/opus-2.md. Fixing it belongs to the
-// prompt, whose goldens it would change; a tool whose whole purpose is
-// telling an agent what its dependencies reported cannot ship the empty
-// string in the meantime.
-//
-// Nothing is truncated. `prompt.LastComment` caps at 500 characters because a
-// prompt is a fixed budget; a tool result is fetched on demand, and
-// orch_get_task already returns the same text in full.
-func lastComment(comments []json.RawMessage) string {
-	for i := len(comments) - 1; i >= 0; i-- {
-		var entry struct {
-			Body string `json:"body"`
-		}
-		if err := json.Unmarshal(comments[i], &entry); err != nil {
-			continue
-		}
-		if entry.Body != "" {
-			return entry.Body
-		}
-	}
-	return ""
 }

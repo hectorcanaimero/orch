@@ -1,0 +1,28 @@
+TASK_ID=F0.T1
+You are executing task F0.T1.
+
+Working dir: /tmp/orch-golden-project
+Title: Scaffold FastAPI project layout
+Description: Create pyproject.toml (dependencies: fastapi>=0.115,<0.116, uvicorn[standard]>=0.30; dev: pytest>=8.0, ruff>=0.6, httpx>=0.27). Add app/__init__.py, app/main.py exposing `app = FastAPI()`, and tests/__init__.py. Ensure `pip install -e .[dev]` completes.
+Files you may write: ['pyproject.toml', 'app/__init__.py', 'app/main.py', 'tests/__init__.py']
+Spec ref (READ FIRST): specs/f0-foundation.md#T1
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for F0.T1.
+2. Do the work. F0.T1 is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "F0.T1", status "done", note "<what you did>", author "claude/claude-sonnet-4-6"
+     blocked: orch_block       task_id "F0.T1", reason "<why>", author "claude/claude-sonnet-4-6"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh F0.T1 "<what you did>" "claude/claude-sonnet-4-6"
+     blocked: scripts/task-block.sh F0.T1 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on F0.T1 are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "F0.T1") read this task and its
+   dependencies back if you need them again.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress through one of the two channels above only.

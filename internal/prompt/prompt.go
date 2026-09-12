@@ -1,11 +1,10 @@
 // Package prompt renders the per-dispatch prompt an agent receives.
 //
 // Ported from `orchestrator/prompt_builder.py`. The template body is contract
-// with the agent, not a message to a human: the shell-out lines name the
-// scripts the agent must call to report back, and the `TASK_ID=` marker on
-// line 1 is what the id-spoofing check reads (AS-10). Rewording any of it
-// changes what agents do. It is copied byte for byte, and the goldens in
-// testdata are the proof — they were rendered by Python, not by this package.
+// with the agent, not a message to a human: the report-back lines name the
+// only two channels that write a status, and the `TASK_ID=` marker on line 1
+// is what the id-spoofing check reads (AS-10). Rewording any of it changes
+// what agents do.
 //
 // # Two things the template does not do
 //
@@ -17,16 +16,25 @@
 // scheduler's business; an agent that knew its task was estimated at 0.3 hours
 // would have an opinion about it.
 //
-// # The MCP variant
+// # MCP first, the scripts as fallback (G6.6)
 //
-// This is the scripts variant: the agent reports progress by running
-// `scripts/task-finish.sh` and friends. G6.6 adds an MCP variant where the
-// same state transitions arrive as tool calls instead, at which point the
-// "Coordination protocol" and "Constraints" blocks are replaced and the rest
-// of the prompt stays as it is. Nothing here is built for that yet — an
-// unused variant switch would be a guess at a design that has not been made —
-// but the template is a package-level const named for its variant so the
-// second one has an obvious place to go.
+// There is one template, not a variant switch. The protocol block offers the
+// `orch_*` MCP tools first and `scripts/task-{finish,block}.sh` if the agent
+// does not have them, because orch cannot know which it got: `.mcp.json` being
+// on disk does not mean the agent CLI loaded it, and a project scaffolded
+// before G6.4 has no `.mcp.json` at all. A variant chosen from config would be
+// orch guessing at something the agent can simply look at. The cost of being
+// wrong is one tool-not-found error the agent recovers from by reading the
+// next line; the cost of guessing wrong is a task that cannot report at all.
+//
+// # Where the goldens stand now
+//
+// Everything from `TASK_ID=` through the `Spec ref (READ FIRST):` line is
+// unchanged from Python and is still compared byte for byte against goldens
+// Python rendered — see golden_test.go. The two blocks below it changed on
+// purpose (the protocol, and a dependency block that finally has content), so
+// they have Go goldens of their own and the Python ones are kept as the
+// evidence for bug 24.
 package prompt
 
 import (
@@ -95,7 +103,7 @@ func Render(task model.Task, completedDeps []model.Task, specRef string, opts Op
 			"prompt rendered without spec_ref — proceeding with description only")
 	}
 
-	return expand(scriptsTemplate, map[string]string{
+	return expand(template, map[string]string{
 		"id":            task.ID,
 		"title":         task.Title,
 		"description":   task.Description,
@@ -203,45 +211,96 @@ func renderDepsBlock(completedDeps []model.Task) string {
 	return b.String()
 }
 
-// LastComment is the most recent comment text on a task, truncated.
+// EngineAuthor is the author on every note orch itself writes.
 //
-// `comments` is appended to by `scripts/task-finish.sh`, so the last entry is
-// what the agent that finished the dependency said it did. That sentence is
-// the only context a downstream task gets about work it depends on, which is
-// why it is worth 500 characters of prompt.
+// `StateRecorder.Transition` hardcodes it, as does `sqlite_backend.py`'s
+// default. An agent's note carries its model name instead, because
+// `scripts/task-finish.sh` passes `--author "$AUTHOR"` and `orch_set_status`
+// takes an `author` argument. That one field is what tells a report apart
+// from a bookkeeping entry — see AgentComment.
+const EngineAuthor = "orch"
+
+// LastComment is what the agent that finished dep reported, truncated to the
+// prompt's cap. That sentence is the only context a downstream task gets
+// about work it depends on, which is why it is worth 500 characters.
+func LastComment(dep model.Task) string {
+	return truncateRunes(AgentComment(dep.Comments), depCommentMaxChars)
+}
+
+// AgentComment is the most recent note a dispatched agent wrote, untruncated.
 //
-// # Divergence: a non-string `text`
+// # Why not simply the last entry — bug 24
 //
-// Python runs the value through `str()`, so a numeric or boolean `text` would
+// Two things write into a task's comment trail and only one of them is a
+// report. A task that finished normally ends up with a trail like:
+//
+//	{"author": "orch",                    "body": "in-progress"}
+//	{"author": "claude/claude-sonnet-4-6", "body": "added the health endpoint"}
+//	{"author": "orch",                    "body": "dispatch succeeded"}
+//
+// The agent calls task-finish (or orch_set_status) from inside its run; the
+// reaper transitions the task to done afterwards, with its own note. So the
+// LAST entry is always the engine's bookkeeping — `dispatch succeeded`, or
+// `CI passed` from the poller, or the bare status name for a hand-made
+// `orch task set --status done` with no note. Taking `comments[-1]`, as
+// `prompt_builder.py` does, renders "dispatch succeeded" in a block whose
+// heading promises what the dependency reported.
+//
+// Scanning back for the first non-`orch` author returns the agent's sentence,
+// and returns nothing for a task no agent ever reported on — which the caller
+// renders as "(no comment)", honestly.
+//
+// # Why the key is `body`, not `text`
+//
+// `prompt_builder.py` reads `text`. Nothing writes `text`: all three comment
+// writers in `orchestrator/state/sqlite_backend.py` marshal
+// `{"author", "body", "at"}`, and so does Go's `state.appendComment`. The key
+// appears in `orchestrator/` in exactly three places — that reader, Slack's
+// webhook payload, and `test_prompt_builder.py`'s own invented fixtures — so
+// the block has rendered empty on every dispatch since it was written. There
+// is no Python behaviour to be faithful to here, only a Python bug, which is
+// why this diverges rather than porting it. Recorded as bug 24 in
+// docs/brainstorm/go-migration-notes/opus-2.md.
+//
+// # Divergence kept: a non-string body
+//
+// Python runs the value through `str()`, so a numeric or boolean body would
 // render as Python spells it — `42.0`, `True`, and the literal word `None`
 // for an explicit null. This renders the JSON instead (`42`, `true`), and an
 // explicit null comes out empty, which the caller shows as "(no comment)".
-//
-// Reproducing `str()` properly means pulling Python's float repr and list repr
-// into a prompt renderer to serve a shape nothing writes: every producer of a
-// comment in the tree writes a string. Where the two differ the Go answer is
-// the better one anyway — a dependency that reported nothing should read as
-// "(no comment)", not as the word "None".
-func LastComment(dep model.Task) string {
-	if len(dep.Comments) == 0 {
-		return ""
+// Reproducing `str()` means pulling Python's float and list repr into a prompt
+// renderer to serve a shape nothing writes.
+func AgentComment(comments []json.RawMessage) string {
+	for i := len(comments) - 1; i >= 0; i-- {
+		author, body := commentFields(comments[i])
+		if author == EngineAuthor {
+			continue
+		}
+		if body != "" {
+			return body
+		}
 	}
-	return truncateRunes(commentText(dep.Comments[len(dep.Comments)-1]), depCommentMaxChars)
+	return ""
 }
 
-func commentText(raw json.RawMessage) string {
+// commentFields pulls the author and the body out of one entry.
+//
+// An entry that is not an object at all has no author, so it can never be
+// skipped as the engine's: a bare JSON string is returned as its own body,
+// which is the only form of Python's "stringify the whole entry" that is
+// readable.
+func commentFields(raw json.RawMessage) (author, body string) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		// Not an object at all. Python stringifies the whole entry; a bare
-		// JSON string is the only form of that which is readable, so it is
-		// the only one unwrapped.
-		return jsonScalarString(raw)
+		return "", jsonScalarString(raw)
 	}
-	text, ok := obj["text"]
-	if !ok {
-		return "" // Python's `.get("text", "")`
+	if a, ok := obj["author"]; ok {
+		author = jsonScalarString(a)
 	}
-	return jsonScalarString(text)
+	if b, ok := obj["body"]; ok {
+		body = jsonScalarString(b)
+	}
+	return author, body
 }
 
 // jsonScalarString unwraps a JSON string and leaves anything else as written.
@@ -264,14 +323,29 @@ func truncateRunes(s string, n int) string {
 	return string(runes[:n]) + "…"
 }
 
-// scriptsTemplate is verbatim from `sdd/orchestrator/explore.md §3` by way of
-// `prompt_builder._TEMPLATE`.
+// template is `prompt_builder._TEMPLATE` (itself verbatim from
+// `sdd/orchestrator/explore.md §3`) with the protocol and constraints blocks
+// rewritten for G6.6.
 //
-// Do not reword. The `TASK_ID=` marker on line 1 powers the id-spoofing check;
-// the three numbered steps name the scripts the agent reports through; the
-// `Note:` line tells it not to call task-start itself. Every one of those is
-// something an agent acts on.
-const scriptsTemplate = `TASK_ID={id}
+// Do not reword the head. The `TASK_ID=` marker on line 1 powers the
+// id-spoofing check, and every line down to `Spec ref (READ FIRST):` is
+// compared byte for byte against what Python rendered.
+//
+// The protocol block is deliberately different, and three things in it are
+// load-bearing:
+//
+//   - **Two channels, one row.** MCP first, the scripts if the agent has no
+//     tools. Saying "use one, not both" matters because both write through
+//     `Backend.Transition`, and a second `done` is a legal idempotent move
+//     that appends a second comment — harmless, but it buries the first.
+//   - **The note is named as the next task's context.** It is: a downstream
+//     task's prompt renders it in "Completed dependencies (context)". An
+//     agent that knows this writes a sentence instead of "done".
+//   - **The orchestrator has already moved the task to in-progress.** The old
+//     wording was a `Note:` about `scripts/task-start.sh`, a script the agent
+//     must not run. Stating the state rather than naming the script it should
+//     not call is the same fact with one fewer thing to get wrong.
+const template = `TASK_ID={id}
 You are executing task {id}.
 
 Working dir: {working_dir}
@@ -282,12 +356,21 @@ Spec ref (READ FIRST): {spec_ref_line}
 {deps_block}
 Coordination protocol:
 1. Read the spec ref for the exact acceptance criteria for {id}.
-2. Do the work. If blocked, run: scripts/task-block.sh {id} "<reason>" "{model}" and STOP.
-3. On success, run: scripts/task-finish.sh {id} "<what you did>" "{model}"
-   Note: the orchestrator will call scripts/task-start.sh {id} BEFORE launching you.
+2. Do the work. {id} is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "{id}", status "done", note "<what you did>", author "{model}"
+     blocked: orch_block       task_id "{id}", reason "<why>", author "{model}"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh {id} "<what you did>" "{model}"
+     blocked: scripts/task-block.sh {id} "<why>" "{model}"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on {id} are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "{id}") read this task and its
+   dependencies back if you need them again.
 
 Constraints:
 - Do NOT edit tasks.json directly.
 - Do NOT touch files outside the list above unless the spec explicitly requires it.
-- Report progress via the scripts above only.
+- Report progress through one of the two channels above only.
 `

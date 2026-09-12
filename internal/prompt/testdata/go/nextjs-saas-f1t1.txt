@@ -1,0 +1,30 @@
+TASK_ID=F1.T1
+You are executing task F1.T1.
+
+Working dir: /tmp/orch-golden-project
+Title: Clerk auth: middleware + sign-in/sign-up routes
+Description: `pnpm add @clerk/nextjs`. Wrap the root layout with `<ClerkProvider>`. Add `src/middleware.ts` using `authMiddleware` with `publicRoutes: ['/', '/sign-in(.*)', '/sign-up(.*)']`. Scaffold `/sign-in/[[...sign-in]]/page.tsx` and `/sign-up/[[...sign-up]]/page.tsx` using `<SignIn />` / `<SignUp />`. Add `.env.local.example` documenting NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY + CLERK_SECRET_KEY.
+Files you may write: ['src/app/layout.tsx', 'src/middleware.ts', 'src/app/sign-in/[[...sign-in]]/page.tsx', 'src/app/sign-up/[[...sign-up]]/page.tsx', '.env.local.example']
+Spec ref (READ FIRST): specs/f1-clerk.md#T1
+Completed dependencies (context):
+  - F0.T1: scaffolded the app router and tailwind
+
+Coordination protocol:
+1. Read the spec ref for the exact acceptance criteria for F1.T1.
+2. Do the work. F1.T1 is already in-progress — the orchestrator moved it before launching you.
+3. Report back once, through ONE of these two channels.
+   If you have orch's MCP tools, use them:
+     done:    orch_set_status  task_id "F1.T1", status "done", note "<what you did>", author "claude/claude-sonnet-4-6"
+     blocked: orch_block       task_id "F1.T1", reason "<why>", author "claude/claude-sonnet-4-6"  — then STOP.
+   If you do not have those tools, run the project's scripts instead:
+     done:    scripts/task-finish.sh F1.T1 "<what you did>" "claude/claude-sonnet-4-6"
+     blocked: scripts/task-block.sh F1.T1 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
+   Both write the same row, so use one, not both. Your note is what the tasks
+   depending on F1.T1 are shown, so make it a sentence about what changed.
+   orch_get_task and orch_context (task_id "F1.T1") read this task and its
+   dependencies back if you need them again.
+
+Constraints:
+- Do NOT edit tasks.json directly.
+- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Report progress through one of the two channels above only.

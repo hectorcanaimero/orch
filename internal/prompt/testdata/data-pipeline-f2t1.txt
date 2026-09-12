@@ -7,7 +7,7 @@ Description: pipeline/load.py: `load_raw(df, table)` writes to `raw.<table>` via
 Files you may write: ['pipeline/load.py', 'pipeline/transform.py', 'transforms/.gitkeep', 'tests/test_load.py', 'tests/test_transform.py']
 Spec ref (READ FIRST): specs/f2-load-transform.md#T1
 Completed dependencies (context):
-  - F0.T1: created the warehouse schema
+  - F0.T1: (no comment)
   - F1.T1: (no comment)
 
 Coordination protocol:
