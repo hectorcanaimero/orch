@@ -1,0 +1,99 @@
+# goreleaser config for orch's Go binary releases (G7.1).
+#
+# Tag scheme (see docs/RELEASING.md): a bare `v*` tag (no suffix) is a Go
+# binary release, picked up by .github/workflows/release-go.yml. `v*-py`
+# is the frozen Python line's own release.yml — the two never fire on the
+# same tag.
+#
+# `before.hooks` runs `make web`, which builds the operator dashboard SPA
+# into internal/dashboard/dist/build — internal/dashboard/spa.go's
+# `//go:embed` picks that up at compile time. Skipping this step ships a
+# binary whose dashboard is the dist/README.md placeholder, not a real
+# SPA — there is no test that catches this at goreleaser-build time (only
+# `go test`'s TestSPARequiresABuild would, and this pipeline never runs
+# it), so the hook is the only guard. The stakeholder bundle (G6.2,
+# `pnpm run build:stakeholder`) is deliberately NOT built here yet:
+# nothing in the Go tree embeds it (that wiring is G6.3, unassigned as of
+# this PR) — building output nobody consumes would just be dead weight in
+# every release. Add it here once G6.3 lands an embed to feed.
+version: 2
+
+project_name: orch
+
+before:
+  hooks:
+    - make web
+
+builds:
+  - id: orch
+    main: ./cmd/orch
+    binary: orch
+    # modernc.org/sqlite is pure Go (no cgo) — see CLAUDE.md's state
+    # backend notes — so cross-compiling every OS/arch pair below needs
+    # no C toolchain at all.
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Mirrors the Makefile's own `build` target exactly (-s -w to strip
+    # debug info same as there; -X main.version from the tag). {{.Tag}}
+    # rather than goreleaser's default {{.Version}} because the latter
+    # strips the "v" prefix — the Makefile's `git describe --tags` never
+    # does, and `orch --version` should read the same way built either
+    # way.
+    ldflags:
+      - -s -w -X main.version={{.Tag}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  # Both release.yml (Python) and this one already generate release notes
+  # from commits (softprops/action-gh-release and this respectively) —
+  # goreleaser's own changelog block would duplicate that. Off, not
+  # tuned, so there is exactly one source of release-notes text.
+  disable: true
+
+# Requires github.com/hectorcanaimero/homebrew-orch to exist — goreleaser
+# pushes a commit to it, it doesn't create it. NOT created by this PR:
+# creating a new public repo under the maintainer's account is a real,
+# visible action outside a PR's scope — see the note in
+# docs/RELEASING.md. `goreleaser release --snapshot` (local testing, and
+# release-go.yml's CI dry-run) skips this block entirely, so the
+# pipeline is fully testable before that repo exists.
+brews:
+  - name: orch
+    repository:
+      owner: hectorcanaimero
+      name: homebrew-orch
+      branch: main
+    directory: Formula
+    homepage: "https://github.com/hectorcanaimero/orch"
+    description: "Task orchestrator that walks a tasks.json DAG and dispatches to CLI coding agents"
+    license: "MIT"
+    install: |
+      bin.install "orch"
+    test: |
+      system "#{bin}/orch", "--version"
+
+release:
+  github:
+    owner: hectorcanaimero
+    name: orch
+  draft: false
+  # v*.*.* is stable; anything else (a future -rc./-beta. suffix) marks
+  # the GitHub release as a prerelease automatically.
+  prerelease: auto

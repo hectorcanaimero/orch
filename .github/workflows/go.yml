@@ -68,3 +68,30 @@ jobs:
       - run: python -m venv .venv && .venv/bin/pip install -e ".[dev]"
       - run: make build
       - run: make parity
+
+  # G7.1's dry-run: catches a broken .goreleaser.yaml or build matrix on
+  # every PR, rather than only discovering it at the next real `v*` tag.
+  # `--snapshot` skips every publish step (no GitHub release, no
+  # Homebrew push, nothing uploaded anywhere) — see docs/RELEASING.md.
+  goreleaser-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # goreleaser wants tag history even in snapshot mode
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean

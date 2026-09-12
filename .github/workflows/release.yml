@@ -1,9 +1,14 @@
 name: Release wheel
 
+# Python-line tags only. The Python wheel froze at v0.11.0-py (ADR-G0);
+# `v*` without the `-py` suffix is the Go binary's release series from
+# v0.12.0 on — see .github/workflows/release-go.yml and the tagging note
+# in docs/RELEASING.md. A bare `v*` trigger here would double-fire this
+# workflow on every Go release tag too.
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*-py'
   workflow_dispatch:  # allow manual runs from the Actions tab
 
 permissions:
