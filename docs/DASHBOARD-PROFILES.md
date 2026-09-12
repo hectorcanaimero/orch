@@ -203,6 +203,29 @@ matters for your setup, do not bind the portfolio beyond localhost.
 token would suggest a shared one exists, and a tunnel is configured per project
 — there is no single project here to take one from.
 
+### Unimplemented data routes are 404, never the SPA
+
+Any path under `/api/` or `/stakeholder/` that no route claims answers **404
+with JSON**, rather than falling through to the single-page app:
+
+```
+$ curl -s -w '\n[%{http_code} %{content_type}]' localhost:7420/stakeholder/summary
+{"error":"not found","path":"/stakeholder/summary"}
+[404 application/json]
+```
+
+It is a rule rather than a per-route patch because the same bug appeared three
+times. A path the Go port has not implemented used to answer **200 with the
+SPA's HTML**, and a client fetching JSON then parsed a page of markup: it broke
+the portfolio page's "is this a portfolio?" check, and it crashed the landing
+page outright (`Cannot read properties of undefined (reading 'done')` — axios
+passes the HTML string through and a non-empty string is truthy). A 404 is what
+every one of those clients already handles; their error branches exist and were
+unreachable while the server answered 200.
+
+Everything outside those two prefixes still reaches the SPA, so a hard refresh
+on a client-side route like `/kanban` keeps working.
+
 ### Binding beyond localhost needs `--allow-remote`
 
 Because the listener is the boundary, moving it is a decision you make on the
