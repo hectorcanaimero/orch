@@ -628,3 +628,99 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   dashboard, but real enough to write down before someone assumes
   "resolves fresh on every request" means every consumer of that method,
   everywhere.
+
+- **G8.5 (client half): `web/`'s PortfolioPage was written against
+  opus-2's proposed `/api/portfolio` shape before their server-side PR
+  existed on `main`**, per orch-98's explicit instruction for this
+  situation. The agreement (both sides, before either wrote code): flat
+  JSON reusing single-project field names (`SprintHealth`'s
+  `velocity_per_day`/`eta_days`/`eta_date`/`confidence`/`blockers[]`,
+  plus the plain status counters) rather than nesting under `sprint`/
+  `summary`, since the real precedent in this codebase
+  (`internal/dashboard/sprint.go`'s `sprintPayload`) is already flat; no
+  `href` field (the client composes `/p/<project_id>/` itself, a
+  one-line rule not worth a second source of truth); `available`+`reason`
+  per project plus a separate top-level `unavailable` list, mirroring
+  `sprintPayload.Available`'s own degrade-and-say-so pattern.
+  `web/src/lib/portfolio.example.ts` is the fixture this was written and
+  reasoned against — five projects in different states (done, blocked,
+  budget-paused, empty, unavailable) — marked in its own doc comment as
+  provisional and never imported by production code; delete it once the
+  real endpoint has shipped a few times with a stable shape.
+
+  **Gating is two-layered, not one**: `operatorOnly` (existing NAV_ITEMS
+  mechanism) hides Portfolio from a stakeholder session at the profile
+  level, same as Tunnel/Metrics/Logs; a new, separate `portfolioGated`
+  flag additionally hides it when `/api/portfolio` 404s (dashboard not
+  started with `--portfolio`) — the two reasons a nav item disappears
+  read differently to whoever edits this list next, so they're not
+  folded into one boolean. The portfolio query itself is also gated
+  `enabled: !isStakeholder` in `usePortfolio`, so a stakeholder session
+  never issues the request at all, not just fails to show its result —
+  same reasoning as `TunnelPage`'s D#9 constraint on `/api/tunnel/status`.
+
+  **Could not visually verify in a browser.** This VPS blocks starting
+  any dev server (`pnpm dev` included, per this machine's own global
+  CLAUDE.md — two ports are already reserved for unrelated projects and
+  nothing else may bind one), and `web/vite.config.ts`'s dev proxy
+  target (a live `orch dashboard` on :7420) doesn't exist yet for
+  `/api/portfolio` regardless. Verified instead by `pnpm build` (tsc
+  type-checks the page against the real `Portfolio` type — a field-name
+  mismatch against the example fixture would fail the build) and close
+  reading against `MilestonesPage`/`TunnelPage`'s established patterns.
+  Said explicitly in the PR rather than claimed as tested — see this
+  project's own instructions on not claiming UI correctness from a type
+  check alone.
+
+  **Bundle size, measured before/after like G5.5**: 483.30 kB → 488.07 kB
+  raw JS (151.44 kB → 152.33 kB gzip), 46.69 kB → 47.04 kB raw CSS
+  (9.16 kB → 9.22 kB gzip) — measured by stashing this branch's changes
+  with a uniquely-tagged `git stash push -u` (never a bare `stash`,
+  shared stack) and rebuilding at the branch's base commit, then
+  restoring by exact SHA and dropping the entry.
+
+  **Review (Gemini + opus, actually running #201's real server) found
+  three real gaps, all fixed before merging:**
+
+  1. **Rule 8, real**: this PR shipped with zero test coverage — `web/`
+     had none at all before it, and adding a whole page with none too
+     was exactly what the rule exists to catch. Added `web/`'s first
+     test suite: vitest (pinned to `^2`, not latest — vitest 5 needs
+     vite 6+, this repo is on vite 5) plus React Testing Library for one
+     render test file. `@testing-library/react`'s auto-cleanup needs a
+     true global `afterEach` (`test.globals: true`, not set here), so
+     `vitest.setup.ts` registers it explicitly — without it the second
+     render test in a file was finding the first test's still-mounted
+     DOM, which reads as "duplicate elements" and has nothing to do with
+     the component actually rendering twice.
+  2. **Rule 6-adjacent**: `portfolio.example.ts`'s fictional project
+     roots were `/home/u/proyectos/...` — genericized to
+     `/srv/orch-projects/...`, no home directory or username-shaped
+     segment, after Gemini flagged it on the first push.
+  3. **The one that mattered most, found by opus actually running #201's
+     server**: a single-project `orch dashboard` has no `/api/portfolio`
+     route registered at all, so the request falls through to the SPA's
+     own catch-all and comes back **200 with the HTML shell**, not a
+     404. `isPortfolioDisabled`'s 404-only check never fires; `getPortfolio`
+     resolves with a string where a `Portfolio` was promised; the very
+     first read of `.projects.length` throws. Added `PortfolioShapeError`
+     (api.ts): `getPortfolio` now rejects with it whenever the body isn't
+     `Array.isArray(data.projects)`, and `isPortfolioDisabled` treats it
+     exactly like a real 404. Defense in depth, not just a workaround for
+     today's gap — a proxy or redirect could produce the same "200, wrong
+     body" shape later. opus-2 is separately registering a real 404 JSON
+     response in #201's mono-project mux; both fixes stand independently
+     of each other landing.
+
+  Two smaller findings from the same review pass, both one-line fixes:
+  `PortfolioProject.todo` was declared required and filled by this
+  file's own fixture, but #201's real server folds `todo` into
+  `backlog` on purpose and never emits it — removed from the type and
+  every fixture, since nothing but the fixture itself was holding that
+  field up. And `PortfolioPage` called `usePortfolio()` with no
+  `enabled` option, so a stakeholder navigating to `/portfolio` directly
+  (bookmark, typed URL) still issued the request — `usePortfolio`'s own
+  doc comment promised otherwise, but only `AppLayout` actually kept
+  that promise. Fixed by reading `useWhoami` in the page too, tested by
+  asserting the exact `{enabled: false}` / `{enabled: true}` call opus's
+  finding said was missing.

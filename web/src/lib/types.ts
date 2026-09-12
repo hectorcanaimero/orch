@@ -314,3 +314,80 @@ export interface GraphResponse {
   nodes: GraphNode[]
   edges: GraphEdge[]
 }
+
+// ---- Portfolio (G8.5) -------------------------------------------------------
+//
+// `/api/portfolio` — operator-only, one row per project the dashboard was
+// started with `--portfolio` and a glob for. 404 (not an empty list) when
+// the flag wasn't passed — see usePortfolio's isPortfolioDisabled.
+//
+// Field names are the single-project ones (SprintHealth's, and the plain
+// task-status counters) rather than invented ones, agreed with opus-2
+// (G8.5's server half) specifically so a portfolio row can reuse a
+// single-project panel's rendering with no adapter. See
+// docs/brainstorm/go-migration-notes/sonnet-2.md for the coordination note
+// — this file may be ahead of a server that doesn't exist on `main` yet;
+// `portfolio.example.ts` is the fixture this was written and eyeballed
+// against until then.
+
+export interface PortfolioBlocker {
+  task_id: string
+  title: string
+  reason: string
+}
+
+export interface PortfolioSpend {
+  available: boolean
+  total_cost_usd?: number
+}
+
+export interface PortfolioLastEvent {
+  event_type: string
+  ts: string
+  task_id: string
+}
+
+export interface PortfolioProject {
+  project_id: string
+  project_name: string
+  root: string
+  available: boolean
+  reason?: string
+
+  total: number
+  done: number
+  in_progress: number
+  blocked: number
+  // The real server (#201) folds "todo" into "backlog" on purpose
+  // (graph.Summary's own convention) and never emits a separate `todo`
+  // field — this type used to declare one as required, backed by
+  // nothing but this file's own example fixture. Caught by opus's
+  // review: `tsc` validates PortfolioPage against the fixture, not
+  // against the server, so a field only the fixture agreed with can
+  // hide behind a green build indefinitely.
+  backlog: number
+  percent_done: number
+
+  velocity_per_day: number
+  eta_days: number | null
+  eta_date: string | null
+  confidence: "high" | "low" | "none"
+
+  // Capped to 3 by the server, same as the executive summary — a
+  // portfolio row is a headline, not the full blocker list.
+  blockers: PortfolioBlocker[]
+
+  spend: PortfolioSpend
+  last_event: PortfolioLastEvent | null
+}
+
+export interface PortfolioUnavailableProject {
+  root: string
+  reason: string
+}
+
+export interface Portfolio {
+  generated_at: string
+  projects: PortfolioProject[]
+  unavailable: PortfolioUnavailableProject[]
+}
