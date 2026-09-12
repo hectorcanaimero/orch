@@ -246,6 +246,9 @@ var knownKeys = map[string]bool{
 	"presentation.status_labels.*": true,
 	"publish.interval_s":           true, "publish.to": true,
 	"publish.dir": true, "publish.git_branch": true,
+	"tunnel.enabled": true, "tunnel.provider": true, "tunnel.command": true,
+	"tunnel.args": true, "tunnel.url_regex": true,
+	"tunnel.url_parse_timeout_s": true, "tunnel.stop_timeout_s": true,
 }
 
 // droppedKeys explains the keys a pre-Go config is most likely to carry, so
@@ -254,7 +257,7 @@ var droppedKeys = map[string]string{
 	"findings":            "the findings feature was removed",
 	"dashboard.board_url": "the ExcaliDash board embed was removed",
 	"dashboard.kanban":    "the Kanban defaults moved into the SPA",
-	"dashboard.tunnel":    "only pinggy and cloudflared remain; configure them under `tunnel`",
+	"dashboard.tunnel":    "only autossh and bore remain; configure them under `tunnel`",
 	"dashboard.server":    "host and port are CLI flags",
 	"providers":           "provider settings moved to model_router.yaml",
 }
