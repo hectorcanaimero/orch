@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,6 +28,22 @@ var githubConclusionMap = map[string]CIState{
 
 var githubInProgressStates = map[string]bool{
 	"in_progress": true, "queued": true, "waiting": true, "requested": true, "pending": true,
+	// gh reports a check that has not started as EXPECTED, which Python's
+	// list does not name. Grouped with the rest of "not finished yet"
+	// rather than falling through to the conclusion map, where an unknown
+	// key already means pending — same answer, said on purpose.
+	"expected": true,
+}
+
+// normalizeCheckState lowercases gh's UPPERCASE `state` so the two maps
+// above — which are Python's vocabulary, lowercase, and are GitHub's own —
+// can be looked up with it.
+//
+// The maps are not rewritten in uppercase because they are the ported
+// tables: `_CI_STATE_MAP` in orchestrator/vcs/github.py is the reference,
+// and a reader comparing the two files should see the same keys.
+func normalizeCheckState(state string) string {
+	return strings.ToLower(strings.TrimSpace(state))
 }
 
 // GitHubProvider drives PR creation, CI polling, and merges through the
@@ -56,31 +73,54 @@ func (p *GitHubProvider) CreatePR(head, base, title, body string) (string, error
 	return url, nil
 }
 
-// githubChecksRow is one entry of `gh pr checks --json state,conclusion`.
+// githubChecksRow is one entry of `gh pr checks --json name,state,bucket`.
+//
+// There is NO `conclusion` field, and asking for one is a usage error that
+// makes gh exit non-zero — which is how this went unnoticed: both binaries
+// asked for `state,conclusion`, gh refused the whole command, and the
+// refusal was swallowed into "pending". See CIStatus.
+//
+// `state` is UPPERCASE (`SUCCESS`, `NEUTRAL`, `IN_PROGRESS`) — it carries the
+// check's conclusion once it has one and its status before that, which is why
+// one field answers both questions the maps below ask. `bucket` is gh's own
+// lowercase normalisation (`pass`, `fail`, `pending`, `skipping`, `cancel`);
+// captured but not mapped on, because the vocabulary this package ports is
+// GitHub's own and `bucket` is gh's editorial summary of it.
+//
+// Captured from gh 2.100.0 — testdata/gh/2.100.0/.
 type githubChecksRow struct {
-	State      string `json:"state"`
-	Conclusion string `json:"conclusion"`
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Bucket string `json:"bucket"`
 }
 
 func (p *GitHubProvider) CIStatus(prURL string) (CIState, error) {
 	if err := checkBinary("gh"); err != nil {
 		return "", err
 	}
-	out, err := run("gh", nil, "pr", "checks", prURL, "--json", "state,conclusion")
+	// `state` only. `conclusion` is not a field gh offers, and asking for it
+	// fails the whole command — see githubChecksRow.
+	out, err := run("gh", nil, "pr", "checks", prURL, "--json", "name,state,bucket")
 	if err != nil {
-		return CIPending, nil
+		// Reported, not swallowed. Python returns "pending" here and so did
+		// this, which is exactly what hid a command that could never succeed:
+		// a run whose CI never resolves looks the same as one still waiting.
+		// The poller logs this and carries on to the next task (cipoll.go),
+		// so surfacing it costs nothing and buys the operator the one line
+		// that says why nothing is finishing.
+		return CIPending, fmt.Errorf("gh pr checks %s: %w", prURL, err)
 	}
 
 	var checks []githubChecksRow
 	if err := json.Unmarshal([]byte(out), &checks); err != nil {
-		return CIPending, nil
+		return CIPending, fmt.Errorf("parsing gh pr checks output for %s: %w", prURL, err)
 	}
 	if len(checks) == 0 {
 		return CIPending, nil
 	}
 
 	for _, c := range checks {
-		if githubInProgressStates[c.State] {
+		if githubInProgressStates[normalizeCheckState(c.State)] {
 			return CIPending, nil
 		}
 	}
@@ -88,7 +128,7 @@ func (p *GitHubProvider) CIStatus(prURL string) (CIState, error) {
 	sawFailure := false
 	allSuccess := true
 	for _, c := range checks {
-		mapped, ok := githubConclusionMap[c.Conclusion]
+		mapped, ok := githubConclusionMap[normalizeCheckState(c.State)]
 		if !ok {
 			mapped = CIPending
 		}
