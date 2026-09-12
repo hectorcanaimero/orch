@@ -1655,6 +1655,24 @@ def create_app(
             for row in (per_phase[k] for k in sorted(per_phase))
         ]
 
+        # Bug 22 of the Go port: `dashboard.show_spend_to_stakeholder` (off by
+        # default, "spend is sensitive") only gated the /api/budget/summary
+        # route. This payload — the one the stakeholder page actually renders —
+        # carried the rounded total, the daily series and the spend sentence
+        # of the executive summary unconditionally, so a stakeholder saw spend
+        # with the flag off. The flag now governs every spend figure here; the
+        # keys stay (the SPA's shape is stable) and read null / empty.
+        import yaml
+        try:
+            _raw_cfg = yaml.safe_load(
+                paths.config_yaml.read_text(encoding="utf-8")
+            ) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            _raw_cfg = {}
+        _dashboard_cfg = _raw_cfg.get("dashboard") or {}
+        show_spend = bool(_dashboard_cfg.get("show_spend_to_stakeholder", False))
+        spend_rounded = round_up_to_step(total, 0.50) if show_spend else None
+
         # ---- spend by day (last 14 days) ------------------------------------
         # Grouped daily totals — safe to show because we never break down by model.
         cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=14)).date()
@@ -1672,7 +1690,7 @@ def create_app(
         spend_by_day = [
             {"date": d, "cost": round(v, 4)}
             for d, v in sorted(daily.items())
-        ]
+        ] if show_spend else []
 
         # ---- executive summary (computed, no LLM) ---------------------------
         # G-4: single source of truth — metrics.executive_summary(). Language
@@ -1685,14 +1703,7 @@ def create_app(
                 body = t.comments[0].get("body", "").strip()
                 if body:
                     blocked_reasons.append(f"• {t.title}: {body[:120]}")
-        import yaml
-        try:
-            _raw_cfg = yaml.safe_load(
-                paths.config_yaml.read_text(encoding="utf-8")
-            ) or {}
-        except (OSError, ValueError, yaml.YAMLError):
-            _raw_cfg = {}
-        _summary_lang = (_raw_cfg.get("dashboard") or {}).get("summary_language") or "es"
+        _summary_lang = _dashboard_cfg.get("summary_language") or "es"
         exec_summary = executive_summary(
             done=getattr(summ, "done", 0),
             total=getattr(summ, "total", 0),
@@ -1700,7 +1711,7 @@ def create_app(
             blocked=getattr(summ, "blocked", 0),
             blocked_reasons=blocked_reasons,
             eta_hours=eta_h,
-            total_spend_usd=round_up_to_step(total, 0.50),
+            total_spend_usd=spend_rounded,
             language=_summary_lang,
         )["text"]
 
@@ -1708,7 +1719,7 @@ def create_app(
             "project_id": view["project_id"],
             "summary": summ.as_dict(),
             "milestones": milestones_from_phases(tasks),
-            "spend_rounded_usd": round_up_to_step(total, 0.50),
+            "spend_rounded_usd": spend_rounded,
             "eta_hours": eta_h,
             "refresh_interval_s": app_state.config.kanban.refresh_interval_s or 30,
             # New fields (Sprint E-7):
