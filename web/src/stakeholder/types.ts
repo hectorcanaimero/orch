@@ -1,10 +1,10 @@
-// Mirrors G6.1's real schema 1 draft (internal/publish), as shared by
-// orch-sonnet — not yet the committed JSON Schema, so field additions are
-// still possible, but names/shapes below match their draft exactly. See
-// docs/brainstorm/go-migration-notes/sonnet-2.md for the coordination
-// note and the one flagged issue (Milestone's duplicate "done" key in
-// their example — resolved here by treating `done` as the count only and
-// deriving completeness client-side, pending their rename).
+// Mirrors the committed schema 1 (docs/SNAPSHOT-SCHEMA.md, PR #177) —
+// internal/publish/snapshot.Build's real, shipped shape. Earlier drafts of
+// this file worked around a duplicate "done" key (int count + bool flag)
+// in orch-sonnet's pre-commit example by deriving completeness
+// client-side; the committed schema resolved that itself with a separate
+// `complete` boolean field, so this file now just reads it. See
+// docs/brainstorm/go-migration-notes/sonnet-2.md for that earlier note.
 
 export interface StakeholderSummary {
   total: number
@@ -26,6 +26,7 @@ export interface StakeholderMilestone {
   blocked: number
   backlog: number
   percent_done: number
+  complete: boolean
 }
 
 export interface StakeholderBlocker {
@@ -41,8 +42,12 @@ export interface StakeholderBudgetDay {
 
 export interface StakeholderBudget {
   enabled: boolean
-  spend_usd: number
-  spend_by_day: StakeholderBudgetDay[]
+  // Absent from the document entirely when `enabled` is false — the
+  // snapshot builder omits them at the source, not just at render time
+  // (docs/SNAPSHOT-SCHEMA.md's `budget` section), so these are optional
+  // rather than nullable.
+  spend_usd?: number
+  spend_by_day?: StakeholderBudgetDay[]
 }
 
 export interface StakeholderExecutiveSummary {
@@ -62,10 +67,3 @@ export interface StakeholderSnapshot {
   executive_summary: StakeholderExecutiveSummary
 }
 
-/** A milestone (phase) is done when every task in it is — never trust a
- * `done` boolean sitting next to a `done` count field in the same object,
- * since a JSON object can't hold two same-named keys without one
- * silently winning during parse. */
-export function isMilestoneComplete(m: StakeholderMilestone): boolean {
-  return m.total > 0 && m.done >= m.total
-}
