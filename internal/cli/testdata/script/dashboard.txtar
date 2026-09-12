@@ -54,3 +54,41 @@ stderr 'tunnel.enabled'
 # ---- and it is named in the help -------------------------------------------
 exec orch dashboard --help
 stdout '--tunnel'
+
+# ---- --tunnel refuses under any profile but operator ------------------------
+# A tunnel publishes a URL to the internet. Raising one from a dashboard whose
+# own gate says the operator is not present is not a thing to do quietly, so
+# the flag refuses rather than asking anybody to notice afterwards.
+cp tunnel-config.yaml proj/.orchestrator/config.yaml
+! exec orch dashboard --project-root proj --project-id proj --tunnel --profile stakeholder --token test-token-stakeholder
+stderr 'needs the operator profile'
+
+# ---- a lock left by a dead process is swept at boot ------------------------
+# Without the sweep, a tunnel whose process died without releasing its lock
+# would refuse every start until somebody deleted a file by hand. The refusal
+# below is the PROFILE one — the sweep happens before it, which is what makes
+# this observable: the files are gone even though the command failed.
+mkdir proj/.orchestrator/state/proj/tunnel
+cp stale-pid proj/.orchestrator/state/proj/tunnel/pid
+cp stale-lock proj/.orchestrator/state/proj/tunnel/lock
+exists proj/.orchestrator/state/proj/tunnel/lock
+! exec orch dashboard --project-root proj --project-id proj --tunnel --profile stakeholder --token test-token-stakeholder
+! exists proj/.orchestrator/state/proj/tunnel/lock
+! exists proj/.orchestrator/state/proj/tunnel/pid
+
+-- tunnel-config.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+budgets_preset: conservative
+tunnel:
+  enabled: true
+  provider: autossh
+  command: autossh
+  args: ["-M", "0"]
+
+-- stale-pid --
+2147483646
+
+-- stale-lock --
+{"pid": 2147483646, "provider": "autossh"}
