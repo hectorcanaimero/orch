@@ -419,3 +419,28 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   stakeholder`) is an explicit placeholder — commented as such in
   `vite.stakeholder.config.ts` — pending the real path their embed.FS
   will expect.
+
+- **`orch doctor` (G4.5's missing other half) — found while wiring G7.2's
+  release smoke test, not while working on doctor itself.** CLAUDE.md's
+  "(existe)" tag next to `doctor/` was true of the *package*
+  (`internal/doctor`, the seven `Check*` functions) and silently false of
+  the *command* — `internal/cli` never imported `internal/doctor` at all,
+  so `orch doctor` returned cobra's "unknown command" until this PR. The
+  gap only surfaced because G7.2's smoke test tries to run it against a
+  real installed binary; every existing Go test exercises `internal/doctor`
+  directly, never through a `doctor` subcommand, since there wasn't one.
+  Wired as `internal/cli/doctor.go`, deliberately narrower than Python's
+  `build_doctor_report` — see the `doctor` row in `docs/CLI.md` for
+  exactly what's not ported and why (both pieces already have a Go home
+  under `validate` or nowhere at all). Tolerant like `validate`: a config
+  or router load failure becomes its own `error`-status check rather than
+  a CLI error that exits before any check runs, since a broken project is
+  the normal case this command exists for.
+
+  `docs/CLI.md`'s row and `internal/cli/testdata/script/doctor.txtar`'s
+  assertions deliberately avoid `backend.*` checks by name — which
+  provider CLIs happen to be installed varies by machine (a dev laptop
+  with `codex` vs. a bare CI runner), so asserting on their presence/
+  absence would be a test of the environment, not the command. `mcp.config`
+  is the one check asserted on by name: a freshly copied fixture never
+  ships a `.mcp.json`, so that result is the same everywhere.
