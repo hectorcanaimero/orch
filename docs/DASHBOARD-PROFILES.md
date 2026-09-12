@@ -209,7 +209,7 @@ A glob over a working directory matches things that are not projects. Each one
 becomes a row rather than a reason to refuse to start:
 
 ```
-[warn] /home/u/projects/notes: no tasks.json — not an orch project
+[warn] /path/to/projects/notes: no tasks.json — not an orch project
 Orch portfolio dashboard running on http://127.0.0.1:7420
   2 project(s): billing-api, data-lake
   1 unavailable (listed above, and on the page)
