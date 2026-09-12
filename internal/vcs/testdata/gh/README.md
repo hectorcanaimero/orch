@@ -27,8 +27,21 @@ being pinned, and it is `gh`'s to change.
 | `pr-checks-all-pass.json` | `gh pr checks 209 --json name,state,bucket,event,workflow` — nine checks, every `state` is `SUCCESS` |
 | `pr-checks-with-neutral.json` | the same for #208 — eight `SUCCESS` and one `NEUTRAL`, which is what proves the conclusion map is reached |
 | `pr-checks-conclusion-rejected.txt` | what `gh pr checks 209 --json state,conclusion` actually prints, and the field list it offers instead |
+| `issue-list.json` | `gh issue list --state all --limit 3 --json number,title,body,labels,state,url,createdAt` — three real issues of this repository |
 
-The last one is the evidence, not a fixture: it is the exact refusal that both
+`issue-list.json` is captured from **closed** issues, and says `"state":
+"CLOSED"` three times — not because `orch sync issues` reads closed issues by
+default (it reads open ones), but because this repository has none open: all 37
+of its issues are closed, and a capture of what is actually there beats an
+open-state payload edited by hand into looking real. What the fixture is for is
+the *shape* — the label objects (`id`, `name`, `description`, `color`), the
+UPPERCASE `state`, a multi-paragraph markdown `body` with fenced code in it —
+and that shape does not depend on whether an issue is open. The mapping tests
+exercise state filtering through `gh`'s own `--state` flag, which is where it
+happens: the filtering is server-side, so there is nothing client-side for a
+fixture to prove.
+
+The `pr-checks-conclusion-rejected.txt` entry is the evidence, not a fixture: it is the exact refusal that both
 binaries have been turning into "pending" since the feature was written.
 
 ## Regenerating
@@ -38,7 +51,13 @@ gh pr checks <a merged PR> --json name,state,bucket,event,workflow \
   > 2.100.0/pr-checks-all-pass.json
 ```
 
-Capture against a **merged** PR of this repository, so the states are settled
-and the file does not change under the test. If `gh` gains or renames a field,
+```bash
+gh issue list --state all --limit 3 \
+  --json number,title,body,labels,state,url,createdAt \
+  > 2.100.0/issue-list.json
+```
+
+Capture against **settled** objects of this repository — a merged PR, closed
+issues — so the states do not change under the test. If `gh` gains or renames a field,
 add a directory for the new version rather than editing these — the point of
 the path is that a reader can tell which CLI produced what.

@@ -49,6 +49,7 @@ type Config struct {
 	Publish              Publish       `yaml:"publish"`
 	Tunnel               Tunnel        `yaml:"tunnel"`
 	Telemetry            Telemetry     `yaml:"telemetry"`
+	Sync                 Sync          `yaml:"sync"`
 }
 
 // Concurrency caps in-flight dispatches. `global_max` is the hard ceiling
@@ -224,6 +225,24 @@ type Publish struct {
 	Dir string `yaml:"dir"`
 	// GitBranch is the branch pushed for `to: git` — typically gh-pages.
 	GitBranch string `yaml:"git_branch"`
+}
+
+// DefaultSyncIssuesLabel is the label `orch sync issues` reads when neither
+// --label nor `sync.issues_label` says otherwise.
+//
+// Namespaced on purpose: `orch:task` is a label a human adds to say "this
+// issue is work for orch", and the prefix keeps it from colliding with the
+// `bug` / `enhancement` labels a repo already uses for its own triage.
+const DefaultSyncIssuesLabel = "orch:task"
+
+// Sync configures `orch sync`, which brings work in from a tracker.
+//
+// New in Go: Python has no `sync` verb, so this key is not a port and no
+// Python config file has ever contained it.
+type Sync struct {
+	// IssuesLabel is the GitHub issue label `orch sync issues` ingests
+	// when --label is not passed.
+	IssuesLabel string `yaml:"issues_label"`
 }
 
 // Tunnel configures the dashboard's optional public-URL tunnel (Sprint

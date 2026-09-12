@@ -307,6 +307,24 @@ telemetry:
                    # collector exists — see internal/telemetry's own TODO)
 ```
 
+### `sync` — new (G8.7)
+
+Which GitHub issues `orch sync issues` ingests. **Go only** — Python has no
+`sync` verb, so no Python config has ever carried this key.
+
+```yaml
+sync:
+  issues_label: orch:task   # the label a human puts on "this is work for orch"
+```
+
+`--label` overrides it per run. The label is namespaced on purpose: a tracker
+already uses `bug` and `enhancement` for its own triage, and orch must not
+claim one of those.
+
+`auto-reported` is **refused** here and on the flag, with the reason printed:
+that is the label orch puts on issues it *files itself*, so ingesting it would
+turn orch's own bug reports into tasks for orch, and every run would add more.
+
 ### Misc
 
 ```yaml
