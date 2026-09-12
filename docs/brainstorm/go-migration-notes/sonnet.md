@@ -148,3 +148,57 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   by re-reading the code. New tests pin the key order via
   `encoding/json`'s token-by-token `Decoder` (`Unmarshal` into a map would
   discard the very thing under test).
+
+- **G3.5: `scripts/parity.sh` grows a real workflow check, and a `parity`
+  CI job runs it.** Before this, the script was a local-only, exit-0 gate
+  over the committed `testdata/parity-project` fixture, diffing five
+  read-only `--json` commands as text — nothing in CI ever ran it. Two
+  additions:
+
+  1. **`compare_tree`**, a second comparison mode alongside the existing
+     text-based `compare`: it diffs a whole directory tree, for commands
+     that *write* files rather than print JSON. Wired to a real workflow —
+     `orch init` (blank project, same name on both sides) then `orch
+     atomize --apply` (a real spec) — each binary scaffolding its own
+     project rather than sharing a copy of one fixture, so a bug that
+     leaks an absolute path into a written file would show up as a real
+     diff instead of being masked by both sides using the same temp dir.
+     This is the exact recorrido that found the three `internal/model`
+     bugs above, run by hand before either the function or the CI job
+     existed — walking it manually first, rather than writing the harness
+     on faith, is what caught them before they could hide behind a "the
+     harness must be right" assumption.
+
+  2. **Explicit, commented exclusions — never silent normalization** for
+     the parts of the recorrido that cannot be compared today: `orch
+     graph` (Graphviz DOT vs Python's HTML+SVG, no shared format), `orch
+     run` with `ORCH_FAKE_PROVIDER` (Go-only env var — Python's dispatch
+     loop has no fake-provider mode, so there is no deterministic way to
+     run it in CI without a real coding CLI), `orch run --dry-run`
+     (registered on Python, not yet on Go — `docs/CLI.md`'s `run` row
+     already lists it under flags deliberately not implemented), and
+     `model_router.yaml`'s stub header comment (different wording between
+     the two binaries, cosmetic — `compare_tree` diffs that one file with
+     comments and blank lines stripped instead of skipping it outright, so
+     a real route-entry difference still fails loudly). Each has a comment
+     in `scripts/parity.sh` explaining why, not a normalization step that
+     would make the difference invisible instead of unclaimed.
+
+  Also excluded, for reasons that are about the comparison mechanics
+  rather than a real divergence: `.orchestrator/state/` (Python's `atomize
+  --apply` best-effort syncs to SQLite, a gap already documented above;
+  Go genuinely does not write this directory, so there is nothing to
+  normalize) and `tasks.json.bak-<timestamp>` (the name is never going to
+  match between two runs a moment apart, and its content is a copy of a
+  file already compared elsewhere in the same check).
+
+  Sanity-checked both directions: reverted the `internal/model` fix
+  locally and confirmed `compare_tree` fails loudly on the exact tasks.json
+  difference it exists to catch, then restored the fix and confirmed green
+  again — the same "seen it fail" standard applied to a shell script, not
+  just to a Go test.
+
+  The new `parity` job in `.github/workflows/go.yml` mirrors `go-test`'s
+  pnpm/node setup (for `make build`'s `web` dependency) plus a Python 3.12
+  venv (`pip install -e ".[dev]"`), then runs `make build && make parity`
+  — the first time this repo's CI has ever run the Python package at all.

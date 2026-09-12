@@ -28,11 +28,13 @@ lint:
 		go vet ./...; \
 	fi
 
-# Compares the Go and Python binaries' --json output on
-# testdata/parity-project (see its README.md). Needs `make build` first and
-# a Python venv at .venv (python3 -m venv .venv && .venv/bin/pip install
-# -e ".[dev]") — scripts/parity.sh explains how to point it elsewhere.
-# Currently fails: internal/cli's status/tasks commands don't exist yet.
+# G3.5's CI gate: the same real workflow (status/tasks/events/validate
+# --json, then init -> atomize --apply) run through both binaries and
+# diffed — see scripts/parity.sh's own header for what's compared, what's
+# deliberately excluded, and why. Needs `make build` first and a Python
+# venv at .venv (python3 -m venv .venv && .venv/bin/pip install -e
+# ".[dev]") — scripts/parity.sh explains how to point it elsewhere. Also
+# runs in CI as the `parity` job in .github/workflows/go.yml.
 parity:
 	scripts/parity.sh
 
