@@ -556,3 +556,32 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   all for that project, because none of its cases matched: nothing ready,
   nothing blocked, tasks present. Both are now fixed, and neither would have
   shown up in a test I wrote from the code.
+- **The dashboard served comments from the wrong store (bug 24, second half).**
+  Reported by opus-2 while looking at `internal/project` for G6.6, and it was
+  my code. `internal/dashboard/view.go` publishes `comments` from
+  `model.Task` — that is, from tasks.json — but since F-12 the comments a task
+  accumulates live in `tasks_runtime.comments_json`, appended by every
+  `Transition`. A scaffolded tasks.json has none, so **any project orch had
+  actually run showed an empty comments array**, with the notes sitting in the
+  database the same request had already opened.
+
+  Confirmed before fixing rather than argued, on a real project: `orch task set
+  --id F0.T1 --status in-progress` writes
+  `[{"at":…,"author":"operator","body":"manual set via orch task set"}]` into
+  `comments_json`, and `/api/task/F0.T1` answered `"comments": []` next to a
+  correctly hydrated `"status": "in-progress"`. The status was right because
+  `Hydrate` overlaid it; the comments were wrong because it overlaid nothing
+  else.
+
+  Fixed in `Hydrate`, not in the handler: every caller that hydrates gets the
+  real comments, and there is still one definition of "what this task actually
+  looks like now". Nothing can be lost that way — `Bootstrap` seeds
+  `comments_json` FROM the file, so a runtime row's comments start as the
+  file's and only grow.
+
+  Python has the same hole for the same reason (`_load_tasks_hydrated`
+  replaces `status` and nothing else). Annotated there, fixed here.
+
+  The general shape is the one this lane keeps finding: **a field that moved
+  stores, and a reader nobody moved with it.** Same family as the four writers
+  that landed without their readers.

@@ -528,3 +528,33 @@ func TestReadEndpointsAreGated(t *testing.T) {
 		}
 	}
 }
+
+// The task detail serves the comments the DATABASE holds, not the empty array
+// tasks.json carries. Since F-12 every `Transition` appends a note to
+// `tasks_runtime.comments_json`, and a scaffolded tasks.json has none — so
+// before this, a project orch had actually run showed no comments at all,
+// with the notes sitting in the database the same request had opened.
+func TestTaskDetailServesTheDatabasesComments(t *testing.T) {
+	note := `{"at":"2026-09-12T03:27:34Z","author":"operator","body":"manual set via orch task set"}`
+	s := newReadServer(t, &fakeState{tasks: []state.TaskRuntime{{
+		ID: "T-1", Status: model.StatusInProgress,
+		Comments: []json.RawMessage{json.RawMessage(note)},
+	}}})
+
+	var got taskPayload
+	decode(t, get(t, s, "/api/task/T-1"), &got)
+	if len(got.Comments) != 1 {
+		t.Fatalf("comments = %v, want the one the database holds", got.Comments)
+	}
+	if !strings.Contains(string(got.Comments[0]), "manual set via orch task set") {
+		t.Errorf("comment = %s", got.Comments[0])
+	}
+
+	// A task with no runtime row still reports an empty array rather than
+	// null — the SPA maps over it.
+	var other taskPayload
+	decode(t, get(t, s, "/api/task/T-2"), &other)
+	if other.Comments == nil {
+		t.Error("comments = null for a task with no row; the SPA maps over it")
+	}
+}

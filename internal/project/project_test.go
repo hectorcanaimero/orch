@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -137,5 +138,57 @@ func TestLoadReportsAMissingFile(t *testing.T) {
 		filepath.Join(t.TempDir(), "nope.json"))
 	if err == nil {
 		t.Error("a missing tasks.json must be an error, not an empty project")
+	}
+}
+
+// Comments live in the database, not in the file. Since F-12 every
+// `Transition` appends one to `tasks_runtime.comments_json`, while tasks.json
+// keeps whatever it was seeded with — nothing, for a scaffolded project.
+//
+// Overlaying only the status meant the dashboard's task detail served an empty
+// `comments` array for a project orch had actually run, with the notes sitting
+// in the database the same request had already opened. Reported by opus-2 as
+// the second half of bug 24.
+func TestHydrateOverlaysCommentsNotJustStatus(t *testing.T) {
+	note := json.RawMessage(`{"at":"2026-09-12T03:27:34Z","author":"operator","body":"manual set"}`)
+	f := &fakeReader{rows: []state.TaskRuntime{
+		{ID: "A", Status: model.StatusInProgress, Comments: []json.RawMessage{note}},
+	}}
+	in := tasks("A", "todo")
+
+	got, err := Hydrate(context.Background(), f, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Status != model.StatusInProgress {
+		t.Errorf("status = %q", got[0].Status)
+	}
+	if len(got[0].Comments) != 1 {
+		t.Fatalf("comments = %v, want the one the database holds", got[0].Comments)
+	}
+	if string(got[0].Comments[0]) != string(note) {
+		t.Errorf("comment = %s, want it passed through verbatim", got[0].Comments[0])
+	}
+	// The caller's slice is still theirs.
+	if len(in[0].Comments) != 0 {
+		t.Errorf("input mutated: %v", in[0].Comments)
+	}
+}
+
+// A task with no runtime row keeps the file's comments. That is the state
+// before `Bootstrap` has seeded the project, and the file is then the only
+// thing that knows the task exists at all.
+func TestHydrateKeepsTheFilesCommentsWithNoRow(t *testing.T) {
+	note := json.RawMessage(`{"body":"from tasks.json"}`)
+	in := []model.Task{{ID: "A", Status: model.StatusTodo, Comments: []json.RawMessage{note}}}
+
+	got, err := Hydrate(context.Background(), &fakeReader{rows: []state.TaskRuntime{
+		{ID: "OTHER", Status: model.StatusDone},
+	}}, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[0].Comments) != 1 || string(got[0].Comments[0]) != string(note) {
+		t.Errorf("comments = %v, want the file's kept", got[0].Comments)
 	}
 }
