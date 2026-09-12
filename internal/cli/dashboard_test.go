@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -59,13 +58,17 @@ func TestBannerIsSilentWhenTheListenerNeverOpened(t *testing.T) {
 	cmd.SetErr(&out)
 	printDashboardBanner(cmd, server, cfg, config.Paths{Root: t.TempDir(), ID: "demo"})
 
-	if got := out.String(); strings.Contains(got, "running on") {
-		t.Errorf("the banner announced a server that never bound:\n%s", got)
-	}
-	// Silent, not "partly printed": the reason is already on its way to the
-	// caller as Serve's error, and saying it twice in two shapes is worse
-	// than saying it once.
-	if got := strings.TrimSpace(out.String()); got != "" {
-		t.Errorf("the banner printed %q; Serve's error is the one report", got)
+	// Exactly empty, compared as bytes: the banner writes through Fprintf and
+	// emits nothing at all when the guard fires, so there is no trailing
+	// newline or blank line to allow for. Trimming first would let a stray
+	// "\n" — the shape a half-written banner actually has — read as silence,
+	// which is the one difference this test exists to catch.
+	//
+	// Silent, and not "printed something harmless": the reason is already on
+	// its way to the caller as Serve's error, and saying the same failure
+	// twice in two shapes is worse than saying it once.
+	if out.Len() != 0 {
+		t.Errorf("the banner wrote %q for a server that never bound; "+
+			"Serve's error is the one report", out.String())
 	}
 }
