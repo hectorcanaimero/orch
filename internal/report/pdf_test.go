@@ -347,3 +347,67 @@ func TestTruncateCutsAtRuneBoundaries(t *testing.T) {
 		t.Error("truncate shortened a string that already fit")
 	}
 }
+
+// A phase with no name in tasks.json's `phases[]` is still a row: the number
+// is what the task's own `phase` field carries, and "Phase 3" beats a blank
+// line in a table somebody is scanning.
+func TestAMilestoneWithNoNameFallsBackToItsNumber(t *testing.T) {
+	s := demoSnapshot(0)
+	s.Milestones = []snapshot.Milestone{
+		{Phase: 3, Name: "", Total: 4, Done: 2, PercentDone: 50},
+	}
+	b := render(t, s, time.Time{})
+	if !containsText(b, "Phase 3") {
+		t.Error("a nameless milestone is not identified at all")
+	}
+}
+
+// More blockers than the page lists are summarised. Five is the cap because
+// past that the reader is being handed a backlog rather than a warning.
+func TestMoreBlockersThanFitAreSummarised(t *testing.T) {
+	s := demoSnapshot(2)
+	s.Blockers = nil
+	for i := 1; i <= 9; i++ {
+		s.Blockers = append(s.Blockers, snapshot.Blocker{
+			Phase: i, Title: fmt.Sprintf("Bloqueo %d", i),
+			Reason: "Esperando una decisión.",
+		})
+	}
+
+	b := render(t, s, time.Time{})
+	if n := pageCount(t, b); n != 1 {
+		t.Errorf("nine blockers produced %d pages", n)
+	}
+	if !containsText(b, "+4 more") {
+		t.Error("the list does not say what it left out")
+	}
+	if !containsText(b, "Bloqueo 5") {
+		t.Error("the fifth blocker is missing")
+	}
+	if containsText(b, "Bloqueo 6") {
+		t.Error("the sixth blocker was printed past the cap")
+	}
+}
+
+// truncate's own boundary: a limit of one or zero has no room for the ellipsis
+// that marks the cut, so it returns what fits rather than a string longer than
+// the limit it was given.
+func TestTruncateAtTinyLimits(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"Facturación", 0, ""},
+		{"Facturación", 1, "F"},
+		{"Facturación", 2, "F…"},
+		{"Fa", 2, "Fa"},
+	} {
+		if got := truncate(tc.in, tc.max); got != tc.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
+		}
+		if r := []rune(truncate(tc.in, tc.max)); len(r) > tc.max {
+			t.Errorf("truncate(%q, %d) returned %d runes", tc.in, tc.max, len(r))
+		}
+	}
+}

@@ -57,9 +57,18 @@ func newReportPDFCmd(flags *projectFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Discarded like every other command's: the process is exiting
-			// and the handle is read-only here.
-			defer func() { _ = closeDB() }()
+			// Reported rather than discarded, unlike the read-only commands:
+			// this one WRITES a file, and a database handle that fails to
+			// close is the kind of thing worth knowing about next to an
+			// artefact somebody is about to email. It does not fail the
+			// command — the PDF on disk is already correct — so it goes to
+			// stderr and the exit code stays 0.
+			defer func() {
+				if cerr := closeDB(); cerr != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+						"[warn] closing the database: %v\n", cerr)
+				}
+			}()
 
 			snap, err := buildStakeholderSnapshot(ctx, paths, cfg, backend, time.Now())
 			if err != nil {

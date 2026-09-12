@@ -20,7 +20,11 @@ func TestManualCheckDumpUncompressed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("close %s: %v", dest, cerr)
+		}
+	}()
 	if err := PDF(f, demoSnapshot(8), Options{
 		Compress: false,
 		Now:      time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC),
