@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"net"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,42 @@ func TestValidateChecksTokenHashNotToken(t *testing.T) {
 	c.TokenHash = HashToken("whatever-was-in-the-database")
 	if err := c.Validate(); err != nil {
 		t.Errorf("TokenHash set from the database, empty Token: %v", err)
+	}
+}
+
+// TestAddrBracketsAnIPv6Literal is the case `fmt.Sprintf("%s:%d")` got wrong.
+//
+// It produced ":::7420" for `--host ::`, which net.Listen refuses with "too
+// many colons in address". Unreachable while every host anyone passed was v4;
+// `--allow-remote` (G8.5) is what made binding `::` something an operator can
+// ask for, so the bug became reachable at the same moment.
+//
+// The v4 and empty cases are here because JoinHostPort must not change them:
+// an empty host is how "every interface" is spelled today, and rewriting it
+// would move a listener nobody asked to move.
+func TestAddrBracketsAnIPv6Literal(t *testing.T) {
+	cases := []struct {
+		host string
+		port int
+		want string
+	}{
+		{"127.0.0.1", 7420, "127.0.0.1:7420"},
+		{"0.0.0.0", 7420, "0.0.0.0:7420"},
+		{"", 7420, ":7420"},
+		{"localhost", 7420, "localhost:7420"},
+		{"::", 7420, "[::]:7420"},
+		{"::1", 7420, "[::1]:7420"},
+		{"fe80::1", 0, "[fe80::1]:0"},
+	}
+	for _, tc := range cases {
+		got := Config{Host: tc.host, Port: tc.port}.Addr()
+		if got != tc.want {
+			t.Errorf("Config{Host: %q, Port: %d}.Addr() = %q, want %q",
+				tc.host, tc.port, got, tc.want)
+		}
+		// The point is not the string, it is that a listener accepts it.
+		if _, _, err := net.SplitHostPort(got); err != nil {
+			t.Errorf("Addr() = %q, which net cannot parse: %v", got, err)
+		}
 	}
 }

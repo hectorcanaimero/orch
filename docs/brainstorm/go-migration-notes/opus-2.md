@@ -593,3 +593,176 @@ question for Python.
   diffs `events F2.T3 --json` against Python. Raised with orch-98 as its own
   decision. Whoever adds the second run-level event should settle it first —
   one invisible row is a gap, two is a pattern.
+
+## G8.5 — the portfolio view
+
+- **It is a front door, not a second dashboard, and that is the whole design.**
+  `/p/<project_id>/…` hands the request to that project's own `*Server` with
+  the prefix stripped — `http.StripPrefix(prefix, proj.Server.Handler())` — so
+  each project keeps its own profile, its own rotated token and its own
+  stakeholder allow-list, and this package contains **no second copy of the
+  access model** to drift from the first.
+
+  The alternative was re-registering each project's routes on the portfolio's
+  own mux. It looks equivalent and is not: those handlers are the *ungated*
+  ones, and `registerRoutes` is where `gated` is applied. Verified rather than
+  reasoned about — a build with the routes re-registered returns 200 where the
+  test demands 401:
+
+  ```
+  /p/gated/api/whoami = 200, want 401 ({"profile":"stakeholder"})
+  ```
+
+  Worth recording because the first version of that test did **not** catch it.
+  It compared `proj.Server.Handler()` against `proj.Server.mux`, which are the
+  same object, so the "bypass" it was written against was not a bypass at all.
+  The test only became real when the counterfactual was the one an author would
+  actually write.
+
+- **"Operator only" and "authenticated" are not the same claim, and the docs
+  had to say which one this is.** `NewPortfolio` refuses a non-operator
+  profile, and `/api/portfolio` is ungated — exactly like a single-project
+  operator dashboard, where the operator profile never gates anything. The
+  boundary is the listener on `127.0.0.1`.
+
+  That leaves a real asymmetry: a project whose own routes demand a token still
+  contributes counters to a portfolio row that does not. Stated in
+  `docs/DASHBOARD-PROFILES.md` rather than left for someone to discover, and it
+  is the reason `--profile stakeholder` is refused instead of being made to
+  work — a stakeholder portfolio would show every project's numbers to a token
+  holder scoped to one of them.
+
+- **`--token` and `--tunnel` are refused, not ignored.** A `--token` would
+  imply a shared portfolio token exists; there is none, and each project's is
+  resolved against its own row. A tunnel is configured per project — its
+  config, its state file, its URL — and there is no single project to take one
+  from. Same family as the run flags that are *not registered* until they do
+  something (`--budgets-preset`, `--dry-run`): a flag that is accepted and
+  quietly does nothing is the failure mode this port keeps finding.
+
+- **Degrading is per section, not per project.** A row whose counters read fine
+  keeps them even when the event log, the velocity query or the spend table
+  fails; only a failure to load the project's view at all makes the row
+  `available: false`. Dropping the summary because a later read failed would be
+  throwing away the answer to keep the question tidy. Seen failing: a build
+  that zeroed the row on any error fails with *"a project whose counters read
+  fine reports unavailable"*.
+
+- **`graph.Summary` folds backlog and todo on purpose, and the portfolio
+  inherits that.** The first draft of the payload had a `todo` counter, which
+  would have been a number that exists nowhere else in the product —
+  `Summarize`'s own comment says two adjacent numbers that always move together
+  read as one number badly. Agreeing the payload with sonnet-2 *before* writing
+  it is what caught it: she checked `/api/sprint`'s real shape and pushed back
+  on nesting, and the field list got compared against what already exists
+  rather than against what seemed tidy.
+
+- **The 30-second write timeout reaches through the front door, and the SSE
+  stream still survives it.** A project's `/api/events/stream` now runs under
+  the *portfolio's* `http.Server`, not its own, so the portfolio sets the same
+  four timeouts — different limits would make one endpoint behave differently
+  depending on which door it came through. The stream clears its own deadline
+  with an `http.ResponseController`, which acts on the underlying connection
+  and is unaffected by the `StripPrefix` in between (that wraps the handler,
+  not the ResponseWriter). Checked by streaming through `/p/<id>/` against a
+  real listener and reading the headers back, not by assuming.
+
+- **A struct conversion instead of a field-by-field literal, on purpose.**
+  `UnavailableProject` (the caller's type) and `unavailableRow` (the wire type)
+  are identical today. staticcheck suggested the conversion; the reason to take
+  the suggestion is not the lint: with a literal, the day the wire row grows a
+  field it is silently zero for every unavailable project, and with the
+  conversion the build stops until somebody decides what the caller's type
+  should say about it.
+
+- **A boundary that matters has to be typed, not documented.** The first cut of
+  the portfolio wrote "the listener is the boundary" in
+  `docs/DASHBOARD-PROFILES.md` and left it there. orch-98 pushed back: a single
+  operator dashboard already carries that risk, but N projects — every one's
+  counters, blockers and spend on one unauthenticated route — multiply it, and
+  a note in a file the operator may never open is not a decision.
+
+  `--allow-remote` is the answer rather than an outright refusal, because
+  running this on a box reached over a network is an ordinary case: it is where
+  several projects live, and closing the door would push an operator to
+  something worse. The flag makes the exposure something they typed, and the
+  banner names what they exposed — "exposed" in the abstract is easy to wave
+  past, a list of your own project names is not.
+
+  Two details that turned out to be the load-bearing ones:
+
+  - **Refused before anything is opened**, not merely before `Serve`. A first
+    version checked after `openPortfolio` so the message could count the
+    projects. That makes the refusal depend on N databases opening first, and a
+    refused command should touch nothing. It names the glob instead — which is
+    what the operator typed and can edit.
+  - **`hostIsLoopback` cannot be `host != "127.0.0.1"`.** `0.0.0.0` and `::`
+    parse as valid IPs and are *not* loopback — binding every interface is the
+    exact case the gate exists for — while `::1` and the whole `127.0.0.0/8`
+    range are. A hostname that is not `localhost` is assumed reachable rather
+    than resolved: a DNS lookup would make a security decision depend on what a
+    resolver happened to answer. Seen failing: the naive predicate reports
+    `hostIsLoopback("::") = true`.
+
+- **`cmd.Flags().Changed` had leaked into a function that is not a command.**
+  `runPortfolio` took its flags as a struct and then consulted
+  `cmd.Flags().Changed("host")` to decide whether to apply them, so a test
+  calling it directly got the default host no matter what it passed — the first
+  version of the exposure test passed while the gate was never reached. The
+  dance exists in the single-project path because config.yaml may hold a value
+  an unset flag must not overwrite; a portfolio has no single config.yaml, so
+  the flag values are already the answer.
+
+  The empty-host fallback that replaced it is not cosmetic: `hostIsLoopback("")`
+  says true while an empty `Host` makes `Addr()` `":port"`, which binds every
+  interface. The predicate and the bind have to agree, or the gate is checking
+  something the listener does not do.
+
+- **A route that does not exist answered 200 with HTML, and a whole feature
+  gate was built on its 404.** `/api/portfolio` is registered only under
+  `--portfolio`; on a single-project dashboard it fell through to the SPA at
+  `"/"`. G8.6's page asks "is this process a portfolio?" by reading a 404, so
+  it got a page of HTML as a truthy payload, showed the Portfolio nav item on
+  every single-project dashboard, and then indexed a string.
+
+  Found by orch-opus reviewing this PR **against the other one**, in a seam
+  neither PR owns: each half was right about itself. Worth naming as a class —
+  *a client's negative case tested against a server that never returns it* —
+  because both sides pass their own tests and the bug lives only where they
+  meet. The cheap fix is on the server: register the route and refuse it.
+
+  The refusal is **ungated**, which makes it the second exception to "every
+  data route goes through `gated`" after the SPA. It carries no data; it is
+  the absence of a feature. Gating it would make a stakeholder dashboard answer
+  401 for something that does not exist in that process — the same unusable
+  answer as the 200, by another route.
+
+- **Two sections sharing one `else`, and a test that only looked at one of
+  them.** `portfolioRow` nested the blocker lookup inside the `else` of the
+  velocity read, so a failed `CountDoneLastNDays` silently took the blocker
+  reasons with it: the row went on saying "3 blocked" and listed none, and an
+  operator could not tell "no reasons recorded" from "a query failed". Against
+  this function's own stated rule, in the same file that states it.
+
+  `TestPartialReadKeepsTheCounters` did not see it because it asserted
+  `VelocityPerDay == 0` and nothing about the blockers. The replacement asserts
+  the **pair** — the count and the reasons — because the count alone is what
+  made the old behaviour look right.
+
+- **`project_name` was the id a second time.** Both fields were `paths.ID`, so
+  a project's "name" was its directory's base name and the payload carried one
+  value under two keys — an invitation for the page to render the wrong one.
+  It now comes from `tasks.json`'s `meta.project`, falling back to the id when
+  the file names none. Visible immediately on a real copy: a directory renamed
+  to `billing-api` whose tasks.json still says `e2e` now reports
+  `project_id: "billing-api"`, `project_name: "e2e"`, which is the honest
+  answer and the reason the two keys exist.
+
+- **`Config.Addr()` could not spell an IPv6 host.** `fmt.Sprintf("%s:%d")`
+  produces `:::7420` for `--host ::`, which `net.Listen` rejects with "too many
+  colons in address". Pre-existing and unreachable while every host anyone
+  passed was v4 — `--allow-remote` is what made binding `::` something an
+  operator can ask for, so the same commit that opened the door fixes the step
+  behind it. `net.JoinHostPort` now, with a table that checks every case is
+  still parseable by `net.SplitHostPort` rather than only that the string looks
+  right.

@@ -35,6 +35,10 @@ var errNoBackend = errors.New("dashboard: no state backend")
 var errNoTunnelManager = errors.New("dashboard: tunnel enabled but no manager")
 
 type projectView struct {
+	// ProjectName is tasks.json's `meta.project`, empty when the file names
+	// none. The portfolio row needs a human name to show beside the id; every
+	// other consumer ignores it.
+	ProjectName      string
 	Tasks            []model.Task
 	Summary          graph.Summary
 	Parallelizable   map[string]bool
@@ -63,6 +67,7 @@ func (s *Server) loadView(ctx context.Context) (projectView, error) {
 		return v, fmt.Errorf("reading the event log: %w", err)
 	}
 
+	v.ProjectName = f.Meta.Project
 	v.Tasks = tasks
 	v.Summary = graph.Summarize(tasks)
 	v.DownstreamImpact = graph.DownstreamImpact(tasks)

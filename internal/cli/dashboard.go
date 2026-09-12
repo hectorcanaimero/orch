@@ -26,11 +26,13 @@ import (
 // killing the process mid-response.
 func newDashboardCmd(flags *projectFlags) *cobra.Command {
 	var (
-		host       string
-		port       int
-		profile    string
-		token      string
-		withTunnel bool
+		host        string
+		port        int
+		profile     string
+		token       string
+		withTunnel  bool
+		portfolio   string
+		allowRemote bool
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +46,28 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
+
+			// The portfolio is a different process shape — N projects, no
+			// single `paths` — so it forks before any of the single-project
+			// resolution below. It is not a mode of this command's wiring
+			// with an `if` through every step; it is its own function.
+			if portfolio != "" {
+				return runPortfolio(cmd, portfolio, portfolioFlags{
+					host: host, port: port, profile: profile,
+					withTunnel: withTunnel, token: token,
+					allowRemote: allowRemote,
+				})
+			}
+			// Registered on this command but meaningful only with
+			// --portfolio, so passing it alone is refused rather than
+			// silently doing nothing. A single-project dashboard has its own
+			// answer to remote binding — its profile and its token — and
+			// pretending this flag participates in that would be a third
+			// story about the same question.
+			if allowRemote {
+				return fmt.Errorf("--allow-remote only applies with --portfolio; " +
+					"a single project's exposure is decided by its profile and token")
+			}
 
 			paths, cfg, err := loadProjectConfig(flags)
 			if err != nil {
@@ -149,6 +173,12 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		"Shared token a stakeholder session must present (default: config.yaml)")
 	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
 		"Also start the configured tunnel, and stop it on exit")
+	cmd.Flags().StringVar(&portfolio, "portfolio", "",
+		"Serve every orch project matching this glob from one process "+
+			"(operator only). Quote it, or the shell expands it first.")
+	cmd.Flags().BoolVar(&allowRemote, "allow-remote", false,
+		"With --portfolio: allow a non-loopback --host, exposing every "+
+			"project's counters on an unauthenticated /api/portfolio")
 	cmd.AddCommand(newDashboardTokenCmd(flags))
 	return cmd
 }
