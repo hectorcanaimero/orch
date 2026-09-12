@@ -17,7 +17,7 @@ func cfg(profile Profile, token string) Config {
 }
 
 func TestDecide(t *testing.T) {
-	const secret = "s3cret-token"
+	const testToken = "test-token-stakeholder"
 
 	cases := []struct {
 		name    string
@@ -35,30 +35,30 @@ func TestDecide(t *testing.T) {
 			because: "the operator is assumed to be on localhost; this is the default profile and it has never had auth",
 		},
 		{
-			name: "operator ignores a configured token", cfg: cfg(ProfileOperator, secret),
+			name: "operator ignores a configured token", cfg: cfg(ProfileOperator, testToken),
 			path: "/api/tasks", route: "api_tasks", want: Allow,
 			because: "a token left in config must not start gating an operator dashboard",
 		},
 
 		// --- stakeholder: token first, then the allow-list -----------------
 		{
-			name: "stakeholder with no token", cfg: cfg(ProfileStakeholder, secret),
+			name: "stakeholder with no token", cfg: cfg(ProfileStakeholder, testToken),
 			path: "/api/tasks", route: "api_tasks", want: Unauthorized,
 		},
 		{
-			name: "stakeholder with the wrong token", cfg: cfg(ProfileStakeholder, secret),
+			name: "stakeholder with the wrong token", cfg: cfg(ProfileStakeholder, testToken),
 			path: "/api/tasks", route: "api_tasks", token: "nope", want: Unauthorized,
 		},
 		{
 			name: "stakeholder with the right token, route not allowed",
-			cfg:  cfg(ProfileStakeholder, secret),
-			path: "/api/tasks", route: "api_tasks", token: secret, want: Forbidden,
+			cfg:  cfg(ProfileStakeholder, testToken),
+			path: "/api/tasks", route: "api_tasks", token: testToken, want: Forbidden,
 			because: "authentication before authorisation: an anonymous caller gets 401 and never learns from a 403 which routes exist",
 		},
 		{
 			name: "stakeholder with the right token, route allowed",
-			cfg:  cfg(ProfileStakeholder, secret),
-			path: "/api/whoami", route: "api_whoami", token: secret, want: Allow,
+			cfg:  cfg(ProfileStakeholder, testToken),
+			path: "/api/whoami", route: "api_whoami", token: testToken, want: Allow,
 		},
 		{
 			name: "stakeholder, server configured with no token at all",
@@ -69,27 +69,27 @@ func TestDecide(t *testing.T) {
 
 		// --- the one exception --------------------------------------------
 		{
-			name: "capabilities needs no token", cfg: cfg(ProfileStakeholder, secret),
+			name: "capabilities needs no token", cfg: cfg(ProfileStakeholder, testToken),
 			path: "/api/tunnel/capabilities", route: "api_tunnel_capabilities", want: Allow,
 			because: "the SPA decides whether to draw the tunnel panel before it has asked anyone for a token",
 		},
 
 		// --- both: only /stakeholder/* is gated ---------------------------
 		{
-			name: "both leaves the operator surface open", cfg: cfg(ProfileBoth, secret),
+			name: "both leaves the operator surface open", cfg: cfg(ProfileBoth, testToken),
 			path: "/api/tasks", route: "api_tasks", want: Allow,
 		},
 		{
-			name: "both gates the stakeholder prefix", cfg: cfg(ProfileBoth, secret),
+			name: "both gates the stakeholder prefix", cfg: cfg(ProfileBoth, testToken),
 			path: "/stakeholder/summary", route: "stakeholder_summary_json", want: Unauthorized,
 		},
 		{
-			name: "both gates the prefix itself", cfg: cfg(ProfileBoth, secret),
+			name: "both gates the prefix itself", cfg: cfg(ProfileBoth, testToken),
 			path: "/stakeholder", route: "stakeholder_summary_json", want: Unauthorized,
 		},
 		{
 			name: "both does not gate a path that merely starts with the word",
-			cfg:  cfg(ProfileBoth, secret),
+			cfg:  cfg(ProfileBoth, testToken),
 			path: "/stakeholders-report", route: "api_tasks", want: Allow,
 			because: "a prefix match without the boundary would gate any path beginning with those letters",
 		},
