@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // scaffoldProject writes the two files resolveAndValidate and the portfolio
@@ -48,7 +51,7 @@ func TestOpenPortfolioSkipsWhatIsNotAProject(t *testing.T) {
 	}
 
 	projects, unavailable, closeAll, err := openPortfolio(
-		context.Background(), filepath.Join(dir, "*"), http.NotFoundHandler())
+		context.Background(), filepath.Join(dir, "*"), http.NotFoundHandler(), nil)
 	if err != nil {
 		t.Fatalf("openPortfolio: %v", err)
 	}
@@ -84,7 +87,7 @@ func TestOpenPortfolioReportsADuplicateID(t *testing.T) {
 	scaffoldProject(t, filepath.Join(dir, "b", "billing"), "spec_root: specs\n")
 
 	projects, unavailable, closeAll, err := openPortfolio(
-		context.Background(), filepath.Join(dir, "*", "billing"), http.NotFoundHandler())
+		context.Background(), filepath.Join(dir, "*", "billing"), http.NotFoundHandler(), nil)
 	if err != nil {
 		t.Fatalf("openPortfolio: %v", err)
 	}
@@ -114,7 +117,7 @@ func TestOpenPortfolioReportsAMisconfiguredProject(t *testing.T) {
 		"dashboard:\n  profile: stakeholder\n  token: \"\"\n")
 
 	projects, unavailable, closeAll, err := openPortfolio(
-		context.Background(), filepath.Join(dir, "*"), http.NotFoundHandler())
+		context.Background(), filepath.Join(dir, "*"), http.NotFoundHandler(), nil)
 	if err != nil {
 		t.Fatalf("openPortfolio: %v", err)
 	}
@@ -133,7 +136,7 @@ func TestOpenPortfolioReportsAMisconfiguredProject(t *testing.T) {
 
 func TestOpenPortfolioRefusesAGlobThatMatchesNothing(t *testing.T) {
 	_, _, _, err := openPortfolio(
-		context.Background(), filepath.Join(t.TempDir(), "nothing-here-*"), http.NotFoundHandler())
+		context.Background(), filepath.Join(t.TempDir(), "nothing-here-*"), http.NotFoundHandler(), nil)
 	if err == nil {
 		t.Fatal("a glob matching nothing was accepted")
 	}
@@ -143,4 +146,80 @@ func TestOpenPortfolioRefusesAGlobThatMatchesNothing(t *testing.T) {
 	if !strings.Contains(err.Error(), "quote it") {
 		t.Errorf("error = %q; it does not mention quoting", err)
 	}
+}
+
+// TestPortfolioRefusesFlagsItCannotHonour covers the three that are refused
+// rather than ignored.
+//
+// Each is a flag whose single-project meaning has no portfolio equivalent, and
+// accepting one silently would be the exact failure this port keeps finding: a
+// flag that promises a behaviour nothing implements. They are checked before
+// any I/O, so this test opens nothing.
+func TestPortfolioRefusesFlagsItCannotHonour(t *testing.T) {
+	cases := []struct {
+		name  string
+		flags portfolioFlags
+		want  string
+	}{
+		{
+			// A stakeholder portfolio would show every project's counters to
+			// a token holder scoped to one of them.
+			name:  "a stakeholder profile",
+			flags: portfolioFlags{profile: "stakeholder"},
+			want:  "operator-only",
+		},
+		{
+			name:  "both is not operator either",
+			flags: portfolioFlags{profile: "both"},
+			want:  "operator-only",
+		},
+		{
+			// Accepting one would suggest a shared portfolio token exists.
+			name:  "a token",
+			flags: portfolioFlags{token: "test-token-stakeholder"},
+			want:  "each project keeps its own token",
+		},
+		{
+			name:  "a tunnel",
+			flags: portfolioFlags{withTunnel: true},
+			want:  "configured per project",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A glob that would match nothing, so a case that wrongly got
+			// past the checks fails on the glob instead of quietly passing.
+			err := runPortfolio(newPortfolioTestCmd(t), filepath.Join(t.TempDir(), "*"), tc.flags)
+			if err == nil {
+				t.Fatal("the flag was accepted")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q; it does not explain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An explicit `--profile operator` is the one profile value that IS honoured:
+// it says what the portfolio already is, so refusing it would be pedantry.
+func TestPortfolioAcceptsAnExplicitOperatorProfile(t *testing.T) {
+	err := runPortfolio(newPortfolioTestCmd(t), filepath.Join(t.TempDir(), "*"),
+		portfolioFlags{profile: "operator"})
+	if err == nil {
+		t.Fatal("expected the empty-glob error, got none")
+	}
+	// It got past the flag checks and failed on the glob, which is the
+	// distinction: a refused profile never reaches the filesystem.
+	if !strings.Contains(err.Error(), "matched no directories") {
+		t.Errorf("error = %q; want the glob error, not a profile refusal", err)
+	}
+}
+
+func newPortfolioTestCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "dashboard"}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetContext(context.Background())
+	return cmd
 }

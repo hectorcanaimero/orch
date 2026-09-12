@@ -29,9 +29,12 @@ import (
 //
 // Returns a close func for the backends that did open, so a caller that fails
 // afterwards does not leak file handles.
-func openPortfolio(ctx context.Context, pattern string, static http.Handler) (
+func openPortfolio(ctx context.Context, pattern string, static http.Handler, warn warnFunc) (
 	[]dashboard.PortfolioProject, []dashboard.UnavailableProject, func(), error,
 ) {
+	if warn == nil {
+		warn = func(string, ...any) {}
+	}
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		// The only error Glob returns is a malformed pattern, which is a typo
@@ -54,9 +57,15 @@ func openPortfolio(ctx context.Context, pattern string, static http.Handler) (
 		unavailable []dashboard.UnavailableProject
 		closers     []func() error
 	)
+	// Reported, not dropped. These run at shutdown, when the exit code is
+	// already decided and nothing a caller could act on is left — but a
+	// SQLite handle that would not close can mean a WAL checkpoint did not
+	// land, and an operator who never hears about it has no way to know.
 	closeAll := func() {
 		for _, c := range closers {
-			_ = c()
+			if err := c(); err != nil {
+				warn("closing a project's state backend: %v", err)
+			}
 		}
 	}
 
@@ -69,7 +78,7 @@ func openPortfolio(ctx context.Context, pattern string, static http.Handler) (
 			continue
 		}
 
-		proj, closer, reason := openPortfolioProject(ctx, root, static)
+		proj, closer, reason := openPortfolioProject(ctx, root, static, warn)
 		if reason != "" {
 			unavailable = append(unavailable, dashboard.UnavailableProject{Root: root, Reason: reason})
 			continue
@@ -84,7 +93,7 @@ func openPortfolio(ctx context.Context, pattern string, static http.Handler) (
 				Reason: fmt.Sprintf("project id %q is already taken by %s — rename one "+
 					"directory, or set a different id in that project", proj.ID, first),
 			})
-			_ = closer()
+			closeNow(closer, warn, root)
 			continue
 		}
 		seen[proj.ID] = root
@@ -108,7 +117,7 @@ func openPortfolio(ctx context.Context, pattern string, static http.Handler) (
 // profile and its own token. That is what makes `/p/<id>/…` apply that
 // project's access model rather than the portfolio's: a project configured as
 // `stakeholder` still demands its own token, resolved against its own row.
-func openPortfolioProject(ctx context.Context, root string, static http.Handler) (
+func openPortfolioProject(ctx context.Context, root string, static http.Handler, warn warnFunc) (
 	dashboard.PortfolioProject, func() error, string,
 ) {
 	// An explicit root, always: ResolvePaths selects the state layout from
@@ -142,7 +151,7 @@ func openPortfolioProject(ctx context.Context, root string, static http.Handler)
 	// The same resolution `orch dashboard` does, per project: the database
 	// wins whenever this project has rotated a token (G8.2/F3.3).
 	if err := resolveTokenHash(ctx, backend, &dashCfg); err != nil {
-		_ = closeDB()
+		closeNow(closeDB, warn, root)
 		return dashboard.PortfolioProject{}, nil, fmt.Sprintf("stakeholder token: %v", err)
 	}
 	// A stakeholder project with no token is refused by Validate, and that
@@ -150,7 +159,7 @@ func openPortfolioProject(ctx context.Context, root string, static http.Handler)
 	// process: one misconfigured project in a glob of ten is exactly the case
 	// the unavailable list is for.
 	if err := dashCfg.Validate(); err != nil {
-		_ = closeDB()
+		closeNow(closeDB, warn, root)
 		return dashboard.PortfolioProject{}, nil, err.Error()
 	}
 
@@ -160,10 +169,30 @@ func openPortfolioProject(ctx context.Context, root string, static http.Handler)
 		State:  backend,
 	})
 	if err != nil {
-		_ = closeDB()
+		closeNow(closeDB, warn, root)
 		return dashboard.PortfolioProject{}, nil, err.Error()
 	}
 	return dashboard.PortfolioProject{ID: paths.ID, Server: server}, closeDB, ""
+}
+
+// warnFunc is where a portfolio's non-fatal problems go — stderr in the
+// command, a no-op in a test that is not asserting on them.
+type warnFunc func(format string, args ...any)
+
+// closeNow shuts a backend the caller has decided not to keep, reporting a
+// failure rather than swallowing it.
+//
+// The project is already being abandoned, so this changes nothing about what
+// is served; it exists because "the database would not close" is a fact about
+// the operator's disk, and the reason this project is unavailable may well be
+// the same one.
+func closeNow(closeDB func() error, warn warnFunc, root string) {
+	if closeDB == nil {
+		return
+	}
+	if err := closeDB(); err != nil {
+		warn("%s: closing the state backend after a failed open: %v", root, err)
+	}
 }
 
 // portfolioFlags are the dashboard flags the portfolio form honours.
@@ -205,7 +234,10 @@ func runPortfolio(cmd *cobra.Command, pattern string, flags portfolioFlags) erro
 	}
 	static := dashboard.SPAHandler(spa)
 
-	projects, unavailable, closeAll, err := openPortfolio(ctx, pattern, static)
+	warn := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] "+format+"\n", args...)
+	}
+	projects, unavailable, closeAll, err := openPortfolio(ctx, pattern, static, warn)
 	if err != nil {
 		return err
 	}
@@ -237,7 +269,7 @@ func runPortfolio(cmd *cobra.Command, pattern string, flags portfolioFlags) erro
 	// whose glob quietly dropped three projects needs to know at startup, not
 	// by counting cards.
 	for _, u := range unavailable {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s: %s\n", u.Root, u.Reason)
+		warn("%s: %s", u.Root, u.Reason)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

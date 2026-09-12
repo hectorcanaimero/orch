@@ -14,6 +14,14 @@ import (
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
+// testToken is the token the gated project expects.
+//
+// The same spelling every other test in this package uses. Not a
+// leetspeak-looking string: rule 5 makes anything that reads like a
+// credential blocking even when it is invented, and a reviewer should not
+// have to decide whether a fixture is real.
+const testToken = "test-token-stakeholder"
+
 // errBoom is the failure the fakes raise — the same shape readroutes_test
 // uses, because "the database would not answer" is the only read failure
 // these paths have to survive.
@@ -216,7 +224,7 @@ func TestEachProjectKeepsItsOwnAccessModel(t *testing.T) {
 	p := newPortfolio(t, PortfolioOptions{
 		Projects: []PortfolioProject{
 			{ID: "open", Server: portfolioServer(t, "open", ProfileOperator, "", &fakeState{})},
-			{ID: "gated", Server: portfolioServer(t, "gated", ProfileStakeholder, "s3cr3t", &fakeState{})},
+			{ID: "gated", Server: portfolioServer(t, "gated", ProfileStakeholder, testToken, &fakeState{})},
 		},
 	})
 
@@ -228,11 +236,11 @@ func TestEachProjectKeepsItsOwnAccessModel(t *testing.T) {
 	}{
 		{"operator project, no token", "/p/open/api/whoami", "", http.StatusOK},
 		{"stakeholder project, no token", "/p/gated/api/whoami", "", http.StatusUnauthorized},
-		{"stakeholder project, wrong token", "/p/gated/api/whoami", "nope", http.StatusUnauthorized},
-		{"stakeholder project, right token", "/p/gated/api/whoami", "s3cr3t", http.StatusOK},
+		{"stakeholder project, wrong token", "/p/gated/api/whoami", "not-the-token", http.StatusUnauthorized},
+		{"stakeholder project, right token", "/p/gated/api/whoami", testToken, http.StatusOK},
 		// The token is valid and the route is still not on that project's
 		// allow-list: 403, not 200. The portfolio must not widen it.
-		{"stakeholder project, route not allowed", "/p/gated/api/metrics", "s3cr3t", http.StatusForbidden},
+		{"stakeholder project, route not allowed", "/p/gated/api/metrics", testToken, http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -292,11 +300,11 @@ func TestNewPortfolioRefusals(t *testing.T) {
 			// The one that matters: a stakeholder portfolio would show every
 			// project's counters to a token holder scoped to one of them.
 			name: "a stakeholder profile",
-			opts: PortfolioOptions{Config: cfg(ProfileStakeholder, "t"), Projects: []PortfolioProject{{ID: "a", Server: server("a")}}},
+			opts: PortfolioOptions{Config: cfg(ProfileStakeholder, testToken), Projects: []PortfolioProject{{ID: "a", Server: server("a")}}},
 		},
 		{
 			name: "both is not operator either",
-			opts: PortfolioOptions{Config: cfg(ProfileBoth, "t"), Projects: []PortfolioProject{{ID: "a", Server: server("a")}}},
+			opts: PortfolioOptions{Config: cfg(ProfileBoth, testToken), Projects: []PortfolioProject{{ID: "a", Server: server("a")}}},
 		},
 		{
 			// Two directories can resolve to one id, and the second
