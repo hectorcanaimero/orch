@@ -221,3 +221,42 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `test_scaffolded_project_dry_runs_clean` and
   `test_spec_ref_resolves_where_the_prompt_looks`, and Go's
   `init.txtar`, which scaffolds and then runs `orch validate` on the result.
+
+- **The dashboard's access model is a decorator, not middleware.** The port
+  that would have been faithful is the one that reproduces bug #97.
+
+  Python wraps the whole app and works out, per request, whether the path would
+  have reached a data route — matching prefixes, consulting the resolved route
+  name, special-casing the SPA mount. That classification is where #97 lived:
+  the gate covered the shell and `/assets/*`, a browser asked for the bundle
+  with no token, got 401, and the page rendered blank with a **200 already on
+  the HTML**.
+
+  Go decorates the handlers that need gating and leaves the static handler
+  undecorated. Public is the default for what the SPA serves, so there is
+  nothing to classify — and an API route registered without `gated` is a
+  visible omission at the registration site rather than an invisible hole in a
+  prefix list in another file.
+
+  What settled it was sonnet-2 running a real `pnpm build`: Vite copies
+  `web/public` to the **root** of dist, so `favicon.svg`, `manifest.json` and
+  the PWA icons sit beside `index.html`, nowhere near `/assets/`. Any
+  allow-list of static paths is a list somebody has to keep in step with
+  whatever `web/public` holds. Their first proposal — "only `/api/` needs
+  auth" — had the opposite hole: `/logs/stream` is not under `/api/` and
+  streams log content.
+
+- **Half of `DEFAULT_STAKEHOLDER_ROUTES` names no endpoint.** After G5.2(a),
+  `api_docs_list`, `api_docs_content` and `stakeholder_summary_json` are on the
+  stakeholder allow-list and nothing serves them — the first two are pending on
+  the `publish/` lane, the third is that lane. Not an error: **the list is
+  policy, not inventory**, and it says what a stakeholder may see when it
+  exists. Worth knowing before someone reads it as a route table.
+
+- **`internal/dashboard/manualcheck_test.go` is checklist rule 29 written down
+  as code.** It starts the real server with the real embedded SPA and makes ten
+  real requests, skipped unless `ORCH_MANUAL_CHECK=1`. The point is that "I ran
+  it and looked" stops being a claim in a PR body and becomes something the
+  next person can re-run. It is what proved #97 is shut: the shell, the hashed
+  bundle and the root-level public files all answer 200 with no token while
+  `/api/config/status` answers 401 in the same server.
