@@ -9,6 +9,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/project"
 )
 
 // newGraphCmd ports the `orch graph` subcommand (orchestrator/orch.py's
@@ -26,22 +27,40 @@ import (
 // {path} ({n} nodes)" shape. `--open` is dropped along with the browser
 // launch it triggered — nothing to open once the output is DOT text.
 //
-// Unlike Python (which goes through the full `build_status_snapshot`
-// aggregator just to reuse its `--only` filtering and reads the DB via
-// Bootstrap), DOT is a pure function of tasks.json's shape — id, phase,
-// dependencies — with no runtime status in it, so this filters tasks.json
-// directly and never opens a Backend.
+// `--only` is filtered here rather than through Python's
+// `build_status_snapshot` aggregator, which Python reuses for its glob and
+// nothing else. The database, though, is opened for the same reason Python
+// opens it: a node's FILL is its current status, and since F-12 that lives in
+// `tasks_runtime`, not in tasks.json — whose `status` field is frozen at
+// whatever the file was written with. Rendering the file's copy painted a
+// finished project as if nothing had started, and the shipped parity fixture
+// (three tasks done, one in progress, one blocked, all `todo` in the file)
+// said so in every run. A task with no runtime row keeps the file's status,
+// which is the honest answer before `Bootstrap` has seeded anything.
 func newGraphCmd(flags *projectFlags) *cobra.Command {
 	var out, only string
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Render the project DAG as Graphviz DOT",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := resolveAndValidate(flags)
+			paths, cfg, err := loadProjectConfig(flags)
 			if err != nil {
 				return withExitCode(1, err)
 			}
-			tasks := loadDAG(paths)
+			backend, closeDB, err := openBackend(cmd.Context(), paths, cfg)
+			if err != nil {
+				return withExitCode(1, err)
+			}
+			defer func() { _ = closeDB() }()
+
+			// Reported, not swallowed: a database that answers with an error
+			// is not a project where nothing has happened, and rendering the
+			// file's frozen statuses as if it were is the exact confusion
+			// this command just stopped producing.
+			tasks, err := project.Hydrate(cmd.Context(), backend, loadDAG(paths))
+			if err != nil {
+				return withExitCode(1, err)
+			}
 
 			if only != "" {
 				filtered := make([]model.Task, 0, len(tasks))

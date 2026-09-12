@@ -8,8 +8,17 @@
 
 exec orch graph --project-root proj --project-id parity-project
 stdout '^digraph orch \{'
-stdout '"F0\.T1" \[label="F0\.T1\\nScaffold FastAPI project layout"\]'
-stdout '"F2\.T3" \[label="F2\.T3\\nAdd DELETE /items/\{id\} \+ 404 handling"\]'
+stdout '"F0\.T1" \[label="F0\.T1\\nScaffold FastAPI project layout", style="rounded,filled", fillcolor="#dcf5e5", color="#15803d"\]'
+stdout '"F2\.T3" \[label="F2\.T3\\nAdd DELETE /items/\{id\} \+ 404 handling", style="rounded,filled", fillcolor="#fde2e2", color="#b91c1c"\]'
+
+# A node's colour is its CURRENT status, from tasks_runtime — not the copy
+# tasks.json was written with, which F-12 froze. Every task in the fixture's
+# file says `todo`; its database says three are done, one is in progress and
+# one is blocked, and that is what the graph has to show. Asserting the
+# uncoloured form here is what hid the bug: the DOT was right about the shape
+# and wrong about the state, in a command whose whole output is a picture of
+# the state.
+stdout '"F2\.T2" \[label="[^"]*", style="rounded,filled", fillcolor="#fdeed3", color="#b45309"\]'
 
 exec orch graph --only 'F0*' --project-root proj --project-id parity-project
 stdout '"F0\.T1"'
