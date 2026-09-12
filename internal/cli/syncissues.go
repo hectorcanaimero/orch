@@ -161,7 +161,7 @@ func newSyncIssuesCmd(flags *projectFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			paths, cfg, err := loadProjectConfig(flags)
 			if err != nil {
-				return err
+				return fmt.Errorf("reading the project: %w", err)
 			}
 
 			if label == "" {
@@ -193,7 +193,8 @@ func newSyncIssuesCmd(flags *projectFlags) *cobra.Command {
 			// answer.
 			rtr, err := router.Load(paths.RouterYAML())
 			if err != nil {
-				return withExitCode(2, err)
+				return withExitCode(2, fmt.Errorf(
+					"checking --model against %s: %w", paths.RouterYAML(), err))
 			}
 			if err := checkSyncModel(modelName, rtr.Keys()); err != nil {
 				return withExitCode(2, err)
@@ -208,7 +209,7 @@ func newSyncIssuesCmd(flags *projectFlags) *cobra.Command {
 				Label: label, State: state, Limit: limit, Dir: paths.Root,
 			})
 			if err != nil {
-				return err
+				return fmt.Errorf("listing issues for project %s: %w", paths.ID, err)
 			}
 
 			plan := planSync(issues, tasksFile.Tasks, modelName)
@@ -224,7 +225,12 @@ func newSyncIssuesCmd(flags *projectFlags) *cobra.Command {
 			tasksFile.Tasks = append(tasksFile.Tasks, plan.Add...)
 			backupPath, err := atomize.Apply(paths.TasksJSON(), tasksFile, true)
 			if err != nil {
-				return err
+				// Named here because atomize.Apply's own errors are prefixed
+				// `atomize:`, and nobody running `orch sync issues` typed
+				// that word — the prefix would read as the wrong command
+				// having failed.
+				return fmt.Errorf("writing %d task(s) to %s: %w",
+					len(plan.Add), paths.TasksJSON(), err)
 			}
 			out := cmd.OutOrStdout()
 			if _, err := fmt.Fprintf(out, "\nWrote %d task(s) to %s\n",

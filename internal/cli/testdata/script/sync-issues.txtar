@@ -101,6 +101,22 @@ env FAKE_GH_EXIT=0
 ! exec orch sync issues --model claude-sonnet-4-6 --project-root proj --project-id proj
 stderr 'router add-missing'
 
+# ---- config.yaml can empty the label out, and that path says which key ------
+# `sync.issues_label: ""` decodes OVER the factory default and wins, so this
+# is reachable rather than theoretical. The message names the key and the file
+# it is in, because that is where the emptiness came from — not the flag.
+cp no-label-config.yaml syncproj/.orchestrator/config.yaml
+! exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stderr 'no issue label to sync'
+stderr 'sync\.issues_label'
+stderr 'syncproj/\.orchestrator/config\.yaml'
+! stdout 'Wrote'
+
+# --label still works against that config: the flag is the override, not a
+# second thing that has to agree with it.
+exec orch sync issues --label bug --model claude-sonnet-4-6 --dry-run --project-root syncproj --project-id syncproj
+stdout 'labelled "bug"'
+
 ! exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj extra-arg
 stderr 'accepts 0 arg|unknown command'
 
@@ -114,6 +130,10 @@ if [ "${FAKE_GH_EXIT:-0}" != "0" ]; then
   exit "$FAKE_GH_EXIT"
 fi
 cat "$FAKE_ISSUES"
+-- no-label-config.yaml --
+# Everything else stays at its default; this file exists to empty out one key.
+sync:
+  issues_label: ""
 -- router.yaml --
 claude-sonnet-4-6:
   backend: claude
