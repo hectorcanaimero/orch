@@ -930,8 +930,11 @@ func TestPythonWrittenDatabaseIsReadableAndWritable(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if applied != 0 {
-		t.Fatalf("applied %d migrations to a Python database", applied)
+	// 1, not 0: 006 (Go-only, no Python counterpart) still applies on top
+	// of a v0.11.0 (schema 5) fixture — see migrate_test.go's
+	// TestOpenPythonWrittenDatabaseAppliesOnlyGoOnlyMigrations.
+	if applied != 1 {
+		t.Fatalf("applied %d migrations to a Python database, want 1", applied)
 	}
 
 	b := NewSQLite(db, "billing-api", "/tmp/billing-api")

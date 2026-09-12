@@ -1,0 +1,39 @@
+# orch dashboard token rotate / show — G8.2 (F3.3), through the real CLI.
+#
+# $WORK/proj is the shipped parity fixture, copied in by the harness. It has
+# never had a token rotated and no dashboard.token in its config.yaml, so
+# `show` starts at "source: none".
+
+exec orch dashboard token show --project-root proj --project-id proj
+stdout 'source: none'
+
+# ---- the subcommands describe themselves -----------------------------------
+exec orch dashboard token --help
+stdout 'rotate'
+stdout 'show'
+
+# ---- rotate without --yes asks first, and a decline writes nothing --------
+stdin decline.txt
+! exec orch dashboard token rotate --project-root proj --project-id proj
+stdout 'This invalidates the current stakeholder token'
+stdout 'Aborted\. No changes written\.'
+
+exec orch dashboard token show --project-root proj --project-id proj
+stdout 'source: none'
+
+# ---- --yes rotates without a prompt, and prints the token exactly once ----
+exec orch dashboard token rotate --project-root proj --project-id proj --yes
+stdout 'New stakeholder token \(shown once'
+stdout 'orch dashboard --profile stakeholder'
+
+# ---- show now reports the database as the source, never the token itself --
+exec orch dashboard token show --project-root proj --project-id proj
+stdout 'source: database'
+stdout 'rotated_at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z'
+
+# ---- rotating again replaces the row rather than erroring on it -----------
+exec orch dashboard token rotate --project-root proj --project-id proj --yes
+stdout 'New stakeholder token \(shown once'
+
+-- decline.txt --
+n

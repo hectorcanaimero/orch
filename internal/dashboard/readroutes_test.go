@@ -48,6 +48,15 @@ type fakeState struct {
 	// budget summary's "today" and the metrics page's "all of history" are
 	// told apart.
 	lastSince time.Time
+
+	// stakeholderTokenHash/stakeholderTokenOK/stakeholderTokenErr back
+	// StakeholderToken (G8.2/F3.3) — zero value (ok=false, err=nil) is "no
+	// row for this project", the common case in these tests, which makes
+	// the access-gate tests fall through to Config.Token/fallbackTokenHash
+	// exactly like a project that has never rotated one.
+	stakeholderTokenHash string
+	stakeholderTokenOK   bool
+	stakeholderTokenErr  error
 }
 
 func (f *fakeState) Tasks(context.Context, state.TaskFilter) ([]state.TaskRuntime, error) {
@@ -165,6 +174,10 @@ func (f *fakeState) LastEventByTask(_ context.Context, taskIDs []string) (map[st
 	return f.lastEvents, nil
 }
 
+func (f *fakeState) StakeholderToken(context.Context) (string, time.Time, bool, error) {
+	return f.stakeholderTokenHash, time.Time{}, f.stakeholderTokenOK, f.stakeholderTokenErr
+}
+
 const testTasksJSON = `{
   "meta": {"project": "demo"},
   "tasks": [
@@ -206,6 +219,44 @@ func newGatedServer(t *testing.T, st StateReader) *Server {
 		t.Fatalf("New: %v", err)
 	}
 	return s
+}
+
+// The database wins over config.yaml/--token whenever this project has a
+// row (G8.2/F3.3): a rotated token invalidates the old one immediately, on
+// an already-running dashboard, with no restart — expectedTokenHash resolves
+// fresh on every gated request rather than once at startup.
+func TestGatedRouteUsesDatabaseTokenOverConfig(t *testing.T) {
+	dbHash := HashToken("token-from-the-database")
+	s := newGatedServer(t, &fakeState{stakeholderTokenHash: dbHash, stakeholderTokenOK: true})
+
+	// The config-file token ("test-token-stakeholder", baked into
+	// newGatedServer) no longer works once the database has a row.
+	if resp := get(t, s, "/api/whoami?token=test-token-stakeholder"); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old config token once the database has a row: status = %d, want 401", resp.StatusCode)
+	}
+	// The database's token does.
+	if resp := get(t, s, "/api/whoami?token=token-from-the-database"); resp.StatusCode != http.StatusOK {
+		t.Errorf("database token: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// A database read error falls back to config.yaml/--token rather than
+// refusing every request — a transient hiccup should not be worse than the
+// server this project had before G8.2.
+// A database read error fails closed — 401, not a fallback to
+// config.yaml/--token. Opus's review of this PR: "no puedo saber si rotó"
+// (err != nil) is not the same state as "this project never rotated"
+// (ok=false, err=nil), and falling back on the former would resurrect a
+// token an operator deliberately rotated away the moment the database that
+// would have told them so becomes unreachable — precisely what rotating
+// exists to prevent. Asserted by what it does NOT do (rule 25): the
+// config-file token must NOT still work here.
+func TestGatedRouteFailsClosedOnDatabaseError(t *testing.T) {
+	s := newGatedServer(t, &fakeState{stakeholderTokenErr: errors.New("database is locked")})
+
+	if resp := get(t, s, "/api/whoami?token=test-token-stakeholder"); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("config token after a database read error: status = %d, want 401 (fail closed)", resp.StatusCode)
+	}
 }
 
 func decode[T any](t *testing.T, resp *http.Response, into *T) {

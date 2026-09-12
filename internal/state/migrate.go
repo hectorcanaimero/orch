@@ -10,11 +10,16 @@ import (
 	"strings"
 )
 
-// The migrations are byte-for-byte copies of
-// `orchestrator/state/sqlite_migrations/` (ADR-G3). An orch.db written by the
-// Python implementation must open here with nothing pending, and one written
-// here must open there — so these files are append-only. Superseding a
-// migration means adding 006, never editing 001.
+// Migrations 001-005 are byte-for-byte copies of
+// `orchestrator/state/sqlite_migrations/` (ADR-G3), written while that tree
+// was still live: an orch.db written by the Python implementation had to
+// open here with nothing pending, and one written here had to open there.
+// The Python line froze at v0.11.0-py (ADR-G0) before 006 existed, so that
+// mirror ends at 005 — 006 onward is Go-only, with no Python counterpart to
+// keep in step, and TestEmbeddedMigrationsMatchThePythonTree only compares
+// the five that predate the freeze. Either way these files are append-only:
+// superseding a migration means adding the next number, never editing an
+// earlier one.
 //
 //go:embed migrations/*.sql
 var migrationsFS embed.FS

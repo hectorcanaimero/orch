@@ -44,15 +44,20 @@ func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
 			t.Errorf("migration %s is empty", m.name)
 		}
 	}
-	if got, want := ms[len(ms)-1].version, 5; got != want {
-		t.Errorf("highest migration is %d, want %d — bump this when 006 ships", got, want)
+	if got, want := ms[len(ms)-1].version, 6; got != want {
+		t.Errorf("highest migration is %d, want %d — bump this when 007 ships", got, want)
 	}
 }
 
-// The migrations are copied byte for byte from the Python tree (ADR-G3). If
-// somebody edits one here instead of adding a new file, a database that
-// round-trips between the two implementations diverges.
+// Migrations 001-005 are copied byte for byte from the Python tree (ADR-G3).
+// If somebody edits one here instead of adding a new file, a database that
+// round-trips between the two implementations diverges. 006 onward has no
+// Python counterpart — the Python line froze at v0.11.0-py (ADR-G0) before
+// 006 existed — so this only checks the five that predate the freeze; see
+// migrate.go's own comment.
 func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
+	const lastMigrationSharedWithPython = 5
+
 	ms, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations: %v", err)
@@ -62,6 +67,9 @@ func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
 		t.Skip("the Python tree is gone; the embedded copies are now the only source")
 	}
 	for _, m := range ms {
+		if m.version > lastMigrationSharedWithPython {
+			continue
+		}
 		// #nosec G304 -- m.name comes from our own embedded migrations, and
 		// pythonDir is a constant relative path inside the repo.
 		want, err := os.ReadFile(filepath.Join(pythonDir, m.name))
@@ -85,15 +93,15 @@ func TestOpenFreshAppliesEveryMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if applied != 5 {
-		t.Errorf("applied %d migrations on a fresh DB, want 5", applied)
+	if applied != 6 {
+		t.Errorf("applied %d migrations on a fresh DB, want 6", applied)
 	}
 	v, err := db.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 5 {
-		t.Errorf("user_version = %d, want 5", v)
+	if v != 6 {
+		t.Errorf("user_version = %d, want 6", v)
 	}
 }
 
@@ -123,7 +131,12 @@ func TestOpenIsIdempotent(t *testing.T) {
 }
 
 // The claim ADR-G3 makes to users: swap the binary, keep your database.
-func TestOpenPythonWrittenDatabaseAppliesNothing(t *testing.T) {
+// That claim was never "the schema stops moving" — it is "nothing Python
+// wrote is lost or misread." A v0.11.0 database is frozen at user_version 5
+// (Python never gets a 006); opening it here still applies every Go-only
+// migration past that point, the same as it would for a database Go itself
+// wrote at an older version of this binary.
+func TestOpenPythonWrittenDatabaseAppliesOnlyGoOnlyMigrations(t *testing.T) {
 	ctx := context.Background()
 
 	path := copyPythonFixture(t)
@@ -134,16 +147,15 @@ func TestOpenPythonWrittenDatabaseAppliesNothing(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if applied != 0 {
-		t.Errorf("applied %d migrations to a v0.11.0 database, want 0 — "+
-			"the schemas have diverged", applied)
+	if applied != 1 {
+		t.Errorf("applied %d migrations to a v0.11.0 (schema 5) database, want 1 (006, Go-only)", applied)
 	}
 	v, err := db.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 5 {
-		t.Errorf("user_version = %d, want 5", v)
+	if v != 6 {
+		t.Errorf("user_version = %d, want 6", v)
 	}
 }
 

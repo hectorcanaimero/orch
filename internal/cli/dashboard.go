@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/dashboard"
+	"github.com/hectorcanaimero/orch/internal/state"
 	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
 
@@ -66,14 +68,6 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			if cmd.Flags().Changed("port") {
 				dashCfg.Port = port
 			}
-			if err := dashCfg.Validate(); err != nil {
-				return err
-			}
-
-			spa, err := dashboard.SPA()
-			if err != nil {
-				return fmt.Errorf("reading the embedded SPA: %w", err)
-			}
 
 			backend, closeDB, err := openBackend(ctx, paths, cfg)
 			if err != nil {
@@ -83,6 +77,27 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			// the database is read-only here, and a close error at that point
 			// changes nothing a caller could act on.
 			defer func() { _ = closeDB() }()
+
+			// Resolved BEFORE Validate() so a project whose token lives only
+			// in the database (never in config.yaml/--token) validates
+			// correctly — the database wins whenever this project has a row
+			// (G8.2/F3.3), regardless of --token; see resolveTokenHash's own
+			// comment for why. This is a one-time snapshot for the startup
+			// check and the banner below; the running server re-resolves it
+			// live on every gated request instead (internal/dashboard's
+			// expectedTokenHash), so `orch dashboard token rotate` against an
+			// already-running dashboard needs no restart to take effect.
+			if err := resolveTokenHash(ctx, backend, &dashCfg); err != nil {
+				return fmt.Errorf("resolving the stakeholder token: %w", err)
+			}
+			if err := dashCfg.Validate(); err != nil {
+				return err
+			}
+
+			spa, err := dashboard.SPA()
+			if err != nil {
+				return fmt.Errorf("reading the embedded SPA: %w", err)
+			}
 
 			tunnelOpts, stopTunnel, err := setUpTunnel(cmd, cfg, paths, dashCfg, withTunnel)
 			if err != nil {
@@ -134,7 +149,34 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		"Shared token a stakeholder session must present (default: config.yaml)")
 	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
 		"Also start the configured tunnel, and stop it on exit")
+	cmd.AddCommand(newDashboardTokenCmd(flags))
 	return cmd
+}
+
+// resolveTokenHash sets dashCfg.TokenHash/TokenSource from whichever source
+// currently has one for this project.
+//
+// The database wins unconditionally whenever a row exists — even over an
+// explicit --token, which is the one place this port's usual "the flag wins"
+// rule (see the flag-override block above) does not apply. `orch dashboard
+// token rotate` exists so an operator can invalidate a token without editing
+// YAML; a stale --token left in a shell alias or a saved command silently
+// resurrecting the old one after a rotation would defeat that.
+func resolveTokenHash(ctx context.Context, backend state.Backend, dashCfg *dashboard.Config) error {
+	hash, _, ok, err := backend.StakeholderToken(ctx)
+	if err != nil {
+		return err
+	}
+	if ok {
+		dashCfg.TokenHash = hash
+		dashCfg.TokenSource = "database"
+		return nil
+	}
+	if dashCfg.Token != "" {
+		dashCfg.TokenHash = dashboard.HashToken(dashCfg.Token)
+		dashCfg.TokenSource = "config.yaml"
+	}
+	return nil
 }
 
 // printDashboardBanner is what the operator reads before clicking.
@@ -164,8 +206,8 @@ func printDashboardBanner(cmd *cobra.Command, server *dashboard.Server, cfg dash
 	say("State dir: %s", paths.StateDir())
 	say("Profile: %s", string(cfg.Profile))
 	if cfg.Profile != dashboard.ProfileOperator {
-		if cfg.Token != "" {
-			say("Token auth: ENABLED")
+		if cfg.TokenHash != "" {
+			say("Token auth: ENABLED (source: %s)", cfg.TokenSource)
 		} else {
 			// Unreachable via this command — Validate refuses a stakeholder
 			// profile with no token — but `both` reaches it, where the
