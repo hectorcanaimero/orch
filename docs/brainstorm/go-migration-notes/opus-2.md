@@ -841,10 +841,16 @@ question for Python.
   `int(round2(done/total*100))`, which truncates after rounding to two
   decimals: 66.666 became 66 where Python's `round()` gives 67.
   `roundDecimals(_, 0)` formats with `strconv.FormatFloat(..., 'f', 0, _)`,
-  which rounds half to even exactly as CPython does. The kind of thing a golden
-  catches and a hand-written expectation does not, which is why the test pins
-  a phase that is one of two done (50%, no rounding) **and** the helper choice
-  is explained where it is made.
+  which rounds half to even exactly as CPython does.
+
+  **And the first test for it could not have caught it.** It pinned a phase
+  that is one of two done — 50%, which needs no rounding at all, so truncating
+  and rounding give the same answer. Gemini blocked the PR on exactly that
+  (rule 24), and it was right: the gap was written down in this file's own
+  first draft ("50%, no rounding") and then not closed. Noticing a hole and
+  describing it is not the same as testing it. The cases now are 2 of 3 (66.666
+  → 67, where truncation gives 66) and 1 of 8 (12.5 → 12, which separates half
+  to even from half up), both seen red against the truncating form.
 
 - **The measurement, across three PRs, on the same page and binary:**
 

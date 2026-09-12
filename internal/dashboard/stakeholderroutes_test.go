@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"path/filepath"
+
+	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
@@ -213,5 +217,82 @@ func TestStakeholderSummaryReportsAFailedRead(t *testing.T) {
 	rec, _ := getSummary(t, s, "")
 	if rec.Code == http.StatusOK {
 		t.Fatalf("a broken backend answered 200: %s", rec.Body.String())
+	}
+}
+
+// TestPhasePercentRoundsTheWayPythonRounds is the case the 50% assertion
+// above cannot make: a phase that is 2 of 3 done is 66.666…%, and the answer
+// separates rounding from truncation.
+//
+// `int(x)` on the raw quotient, or on a `round2`'d one, gives **66**;
+// CPython's `round()` gives 67, and `roundDecimals(_, 0)` matches it because
+// `strconv.FormatFloat(..., 'f', 0, _)` rounds half to even. The first version
+// of this route had the truncating form and the 50% test could not have caught
+// it — 50 needs no rounding at all.
+//
+// The half case is here too, and it is the one that tells "round half up" from
+// "round half to even": 1 of 8 is 12.5%, and Python answers 12, not 13.
+func TestPhasePercentRoundsTheWayPythonRounds(t *testing.T) {
+	cases := []struct {
+		name  string
+		tasks []struct {
+			id     string
+			status string
+		}
+		want int
+	}{
+		{"two of three is 67, not 66", []struct {
+			id     string
+			status string
+		}{{"T-1", "done"}, {"T-2", "done"}, {"T-3", "todo"}}, 67},
+		{"one of three is 33", []struct {
+			id     string
+			status string
+		}{{"T-1", "done"}, {"T-2", "todo"}, {"T-3", "todo"}}, 33},
+		// 12.5 rounds to 12 under half-to-even, which is what Python does
+		// and what "round half up" would get wrong.
+		{"one of eight is 12, not 13", []struct {
+			id     string
+			status string
+		}{
+			{"T-1", "done"}, {"T-2", "todo"}, {"T-3", "todo"}, {"T-4", "todo"},
+			{"T-5", "todo"}, {"T-6", "todo"}, {"T-7", "todo"}, {"T-8", "todo"},
+		}, 12},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Every task in phase 0, so the phase's percentage is the whole
+			// fraction rather than a mix.
+			tasksJSON := `{"meta":{"project":"demo","phases":[{"id":0,"name":"F0"}]},"tasks":[`
+			runtime := make([]state.TaskRuntime, 0, len(tc.tasks))
+			for i, task := range tc.tasks {
+				if i > 0 {
+					tasksJSON += ","
+				}
+				tasksJSON += `{"id":"` + task.id + `","phase":0,"title":"t","model":"claude/sonnet",` +
+					`"status":"todo","dependencies":[],"estimateHours":1.0}`
+				runtime = append(runtime, state.TaskRuntime{ID: task.id, Status: model.Status(task.status)})
+			}
+			tasksJSON += `]}`
+
+			root := writeProject(t, "spec_root: specs\n", tasksJSON)
+			s, err := New(cfg(ProfileOperator, ""), Options{
+				Static: spaHandler(t),
+				State:  &fakeState{tasks: runtime},
+				Paths:  config.Paths{Root: root, ID: "demo", ConfigYAML: filepath.Join(root, "config.yaml")},
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			_, body := getSummary(t, s, "")
+			if len(body.PhasesTimeline) != 1 {
+				t.Fatalf("phases_timeline = %+v, want one phase", body.PhasesTimeline)
+			}
+			if got := body.PhasesTimeline[0].PctDone; got != tc.want {
+				t.Errorf("pct_done = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
