@@ -605,11 +605,7 @@ func (b *SQLite) Events(ctx context.Context, taskID string, n int) ([]Event, err
 			&e.Backend, &e.TS, &extra); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
 		}
-		if extra != "" {
-			if err := json.Unmarshal([]byte(extra), &e.Extra); err != nil {
-				e.Extra = nil
-			}
-		}
+		e.Extra = decodeExtra(extra)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {

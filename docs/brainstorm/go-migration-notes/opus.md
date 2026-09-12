@@ -510,3 +510,16 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   The assertion that matters moved to `internal/state`, against a real
   database, where the key actually lives. Same family as the three complicit
   tests in rule 23; this one I caught in my own work rather than in Python's.
+
+- **A corrupt `extra_json` now says so instead of vanishing.** All four event
+  readers in `internal/state` had the same three lines: try to parse the
+  extra, and on failure set it to nil. That loses the distinction between "this
+  event had no extra" and "this event's extra was unreadable", which is
+  exactly the information somebody debugging a broken row needs.
+
+  One shared `decodeExtra` now, and on a parse failure it preserves the
+  unparsed text under `malformed_extra_json` rather than returning nil. The
+  event still ships — the row is evidence something happened and the extra is
+  decoration — but the damage is visible in the log view instead of being
+  indistinguishable from an empty object. A deliberate one-key divergence from
+  Python, on a path only a corrupt row reaches.

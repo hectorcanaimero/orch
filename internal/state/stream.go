@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -40,6 +39,9 @@ func (b *SQLite) EventsSince(ctx context.Context, afterID int64, limit int) ([]E
 	if err != nil {
 		return nil, fmt.Errorf("query events after %d: %w", afterID, err)
 	}
+	// Close's error is discarded because `rows.Err()` below is what reports a
+	// failed iteration; a Close that fails after a complete read has nothing
+	// left to tell a caller. Same form as every other reader in this package.
 	defer func() { _ = rows.Close() }()
 
 	var out []Event
@@ -52,11 +54,7 @@ func (b *SQLite) EventsSince(ctx context.Context, afterID int64, limit int) ([]E
 			&e.Backend, &e.TS, &extra); err != nil {
 			return nil, fmt.Errorf("scan event row: %w", err)
 		}
-		if extra != "" {
-			if err := json.Unmarshal([]byte(extra), &e.Extra); err != nil {
-				e.Extra = nil
-			}
-		}
+		e.Extra = decodeExtra(extra)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {

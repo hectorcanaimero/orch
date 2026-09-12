@@ -125,6 +125,11 @@ func openStream(t *testing.T, srv *httptest.Server, path string) (*frameReader, 
 	}
 	return newFrameReader(t, bufio.NewReader(resp.Body)), func() {
 		cancel()
+		// The body is being read by the frameReader's goroutine, so a close
+		// here races it and reports "use of closed connection" as often as
+		// nil. Cancelling the request is what actually ends the stream; this
+		// only releases the connection, and its error says nothing a test
+		// could act on.
 		_ = resp.Body.Close()
 	}
 }

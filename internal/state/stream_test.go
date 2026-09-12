@@ -141,7 +141,11 @@ func TestEventsSinceIsScopedToItsProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if cerr := db.Close(); cerr != nil {
+			t.Errorf("close the database: %v", cerr)
+		}
+	})
 
 	a := NewSQLite(db, "alpha", "/tmp/alpha")
 	z := NewSQLite(db, "zulu", "/tmp/zulu")
@@ -174,5 +178,26 @@ func TestEventsSinceIsScopedToItsProject(t *testing.T) {
 	}
 	if id != 0 {
 		t.Errorf("zulu's latest id is %d; alpha's rows are not zulu's", id)
+	}
+}
+
+// A row whose extra_json is corrupt keeps its event and says so. Dropping the
+// event would hide the thing the operator needs; dropping the extra silently
+// would leave a reader unable to tell "no extra" from "unreadable extra".
+func TestDecodeExtraKeepsTheEventAndNamesTheDamage(t *testing.T) {
+	if got := decodeExtra(""); got != nil {
+		t.Errorf("an empty extra decoded to %v, want nil", got)
+	}
+	if got := decodeExtra(`{"pid":42}`); got == nil || got["pid"] != float64(42) {
+		t.Errorf("a good extra decoded to %v", got)
+	}
+
+	const broken = `{"pid": 42`
+	got := decodeExtra(broken)
+	if got == nil {
+		t.Fatal("a corrupt extra decoded to nil; it is indistinguishable from an absent one")
+	}
+	if got["malformed_extra_json"] != broken {
+		t.Errorf("got %v, want the unparsed text preserved", got)
 	}
 }

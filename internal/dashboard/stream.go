@@ -123,7 +123,9 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !wrote && time.Since(lastWrite) >= streamHeartbeat {
-			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+			// Same as a frame: a failed write here is the client leaving, and
+			// the stream ends.
+			if _, werr := fmt.Fprint(w, ": keepalive\n\n"); werr != nil {
 				return
 			}
 			wrote = true
@@ -155,7 +157,12 @@ func writeSSE(w http.ResponseWriter, name string, payload any) error {
 	body := bytes.TrimRight(buf.Bytes(), "\n")
 
 	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, body); err != nil {
-		return err
+		// Almost always the client having gone away mid-frame, which is how a
+		// stream normally ends — the caller returns on it rather than logging
+		// an error for a browser closing a tab. Wrapped so the one case that
+		// is NOT that (a broken pipe to a proxy, a full buffer) arrives with
+		// its context intact.
+		return fmt.Errorf("writing an SSE frame: %w", err)
 	}
 	return nil
 }

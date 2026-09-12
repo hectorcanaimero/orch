@@ -185,3 +185,26 @@ func (o OrphanRows) Total() int {
 	}
 	return n
 }
+
+// decodeExtra turns an event row's `extra_json` into a map.
+//
+// A row whose extra does not parse keeps the EVENT and loses the structure:
+// the row is evidence that something happened, and `extra` is decoration on
+// top of it. Dropping the whole event because its decoration is corrupt would
+// hide the thing the operator needs.
+//
+// What it does not do is lose it silently. The unparsed text is preserved
+// under `malformed_extra_json`, so a log view shows the broken value instead
+// of an empty object, and nothing downstream has to guess whether the extra
+// was absent or unreadable. Python drops it without trace; this is a
+// deliberate, one-key divergence on a path that only a corrupt row reaches.
+func decodeExtra(raw string) map[string]any {
+	if raw == "" {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]any{"malformed_extra_json": raw}
+	}
+	return out
+}
