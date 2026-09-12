@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/providers"
 	"github.com/hectorcanaimero/orch/internal/state"
+	"github.com/hectorcanaimero/orch/internal/vcs"
+	"github.com/hectorcanaimero/orch/internal/worktree"
 )
 
 // newRunCmd ports `orch run` (orchestrator/orch.py's main loop). The loop
@@ -27,10 +31,12 @@ import (
 // the PR that makes them do something. `docs/CLI.md` records the gap.
 func newRunCmd(flags *projectFlags) *cobra.Command {
 	var (
-		mode      string
-		maxTasks  int
-		only      string
-		taskLocks bool
+		mode         string
+		maxTasks     int
+		only         string
+		taskLocks    bool
+		worktreeMode bool
+		noPush       bool
 	)
 
 	cmd := &cobra.Command{
@@ -97,6 +103,9 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				TimeoutMultiplier: cfg.DefaultTimeoutMult,
 				Cfg:               cfg,
 				UseTaskLocks:      taskLocks,
+				WorktreeMode:      worktreeMode || cfg.Dispatch.WorktreeMode,
+				BaseBranch:        cfg.Dispatch.BaseBranch,
+				AutoPR:            cfg.VCS.AutoPR,
 				Only:              only,
 				MaxTasks:          maxTasks,
 				StateDir:          paths.StateDir(),
@@ -107,11 +116,50 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 			if engine.Mode(mode) == engine.ModeSemi {
 				scheduler.Gate = engine.TerminalGate{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
 			}
+			// Worktree isolation, and the auto-PR + CI chain that rides on
+			// it. All three are off unless the project asked: a project with
+			// worktree_mode off runs exactly as it did before, in its own
+			// root.
+			var wtManager engine.WorktreeManager
+			if worktreeMode || cfg.Dispatch.WorktreeMode {
+				wtManager = engine.NewWorktreeManager(worktree.NewManager(paths.Root, !noPush))
+				scheduler.Worktree = wtManager
+			}
+
+			var provider vcs.Provider
+			if cfg.VCS.AutoPR {
+				if wtManager == nil {
+					// Python's main() builds the provider only when BOTH are
+					// on, for the good reason that there is no branch to open
+					// a PR from without a worktree.
+					return withExitCode(1, errors.New(
+						"vcs.auto_pr needs dispatch.worktree_mode: there is no branch to open a PR from"))
+				}
+				provider = vcs.NewProvider(vcs.Config{
+					Provider: cfg.VCS.Provider,
+					Host:     cfg.VCS.Host,
+				})
+				scheduler.VCS = provider
+				scheduler.CIRecorder = backend
+			}
+
 			runner := engine.NewRunner(scheduler)
 			// Resume: the same backend answers which dispatches a previous
 			// run left behind, so a crashed orch's rows do not hold tasks
 			// in-progress forever.
 			runner.Dispatches = backend
+
+			// The CI poller only has something to watch when a PR can exist.
+			if provider != nil {
+				runner.CI = &engine.CIPoller{
+					Provider:     provider,
+					Backend:      backend,
+					Worktree:     wtManager,
+					PollInterval: time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
+					MaxRetries:   cfg.VCS.CIMaxRetries,
+					AutoMerge:    cfg.GitHub.AutoMerge,
+				}
+			}
 			// One gate, shared: the scheduler asks it per dispatch and the
 			// loop asks it whether every provider is capped. Building two
 			// would read the same window twice and let them disagree inside
@@ -142,6 +190,10 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 		"Only dispatch tasks whose id matches this glob (dependencies still resolve across the whole DAG)")
 	cmd.Flags().BoolVar(&taskLocks, "task-locks", false,
 		"Take a per-task lock, so several orch instances can share one project")
+	cmd.Flags().BoolVar(&worktreeMode, "worktree-mode", false,
+		"Give each task its own git worktree and branch (also settable as dispatch.worktree_mode)")
+	cmd.Flags().BoolVar(&noPush, "no-push", false,
+		"Skip pushing task branches — for a project with no remote")
 
 	return cmd
 }

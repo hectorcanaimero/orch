@@ -1,0 +1,108 @@
+# `orch run` end to end with worktree mode and auto-PR on: dispatch into a
+# per-task worktree, commit, push to a real (local, bare) remote, open a PR
+# through a FAKE `gh`, poll CI, and merge.
+#
+# Everything external is faked in a way that still exercises the real code:
+# git is real and the remote is a real bare repo, so push either works or it
+# does not; `gh` is a shell script on PATH answering the exact four
+# subcommands internal/vcs shells out to. The coding CLI is the usual
+# ORCH_FAKE_PROVIDER.
+
+[!exec:git] skip
+[!exec:sh] skip
+
+# The fake must be executable and must come first: a REAL gh is installed on
+# some machines, and an archive file is not executable by default — without
+# the chmod the real one wins and answers "not logged in".
+chmod 0755 $WORK/bin/gh
+env PATH=$WORK/bin:$PATH
+env ORCH_FAKE_PROVIDER=$WORK/fake
+env GH_STATE=$WORK/gh-state
+mkdir $WORK/gh-state
+
+# A real bare repo to push into, and a project that is a real git repo.
+exec git init --bare --initial-branch=main $WORK/remote.git
+cd $WORK/wtproj
+exec git init --initial-branch=main .
+exec git config user.email orch@example.com
+exec git config user.name orch
+exec git config commit.gpgsign false
+exec git add -A
+exec git commit -q -m 'initial'
+exec git remote add origin $WORK/remote.git
+exec git push -q -u origin main
+
+# CI is green, so the second run's poll finishes the task.
+cp $WORK/gh-green $WORK/gh-state/checks
+
+# First run: dispatch into a worktree, commit, push, open the PR. The task is
+# NOT done afterwards — it is under review, and the CI poller decides.
+exec orch run --project-root $WORK/wtproj
+grep 'pr create' $WORK/gh-state/calls
+grep '\-\-head orch/T-1' $WORK/gh-state/calls
+grep '\-\-base main' $WORK/gh-state/calls
+
+# The branch really reached the remote: the push is real git against a real
+# bare repo, so a broken push could not be mistaken for a working one.
+cd $WORK
+exec git --git-dir=$WORK/remote.git branch --list
+stdout 'orch/T-1'
+
+# in-progress, not done and not todo — the dashboard has to show a task that
+# is under review as under review.
+exec orch tasks --project-root $WORK/wtproj --json
+stdout '"status":"in-progress"'
+! stdout '"status":"done"'
+
+# Second run: nothing new to dispatch, but the poller asks about the open PR
+# and a green answer finishes the task.
+exec orch run --project-root $WORK/wtproj
+grep 'pr checks' $WORK/gh-state/calls
+exec orch tasks --project-root $WORK/wtproj --json
+stdout '"status":"done"'
+
+-- wtproj/tasks.json --
+{"tasks":[{"id":"T-1","phase":1,"title":"do the thing","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"specs/a.md#T1","reason":"because"}]}
+-- wtproj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 2
+  per_provider:
+    claude: 2
+dispatch:
+  worktree_mode: true
+  base_branch: main
+vcs:
+  provider: github
+  auto_pr: true
+  ci_poll_interval_s: 0
+  ci_max_retries: 1
+-- wtproj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+-- wtproj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- wtproj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- fake/claude/_default.out --
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0,"usage":{"input_tokens":1,"output_tokens":1}}
+-- gh-green --
+[{"state":"completed","conclusion":"success"}]
+-- bin/gh --
+#!/bin/sh
+# A fake `gh`, answering exactly the subcommands internal/vcs shells out to.
+# Every invocation is appended to $GH_STATE/calls so the script can assert on
+# what orch actually asked for.
+echo "$@" >> "$GH_STATE/calls"
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "pr create")   echo "https://github.com/o/r/pull/1"; exit 0 ;;
+  "pr checks")   cat "$GH_STATE/checks"; exit 0 ;;
+  "pr merge")    echo "merged"; exit 0 ;;
+  "pr view")     echo '{"statusCheckRollup":[]}'; exit 0 ;;
+  *)             exit 1 ;;
+esac

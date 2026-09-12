@@ -31,6 +31,8 @@ const (
 	EventBudgetPause = "budget_pause"
 	// EventReconciled marks a dispatch row whose process was gone.
 	EventReconciled = "reconciled"
+	// EventPRCreated marks a pull request opened for a finished task.
+	EventPRCreated = "pr_created"
 )
 
 // RecordStart writes the `dispatch` event and the in-flight row, in that

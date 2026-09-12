@@ -171,6 +171,13 @@ func (p *CIPoller) ciSucceeded(ctx context.Context, s *Scheduler, row state.Task
 	if err := s.Queue.MarkDone(row.ID); err != nil {
 		s.logger().Error("mark done failed", "task", row.ID, "err", err)
 	}
+	// And in the database. The queue is this run's view; the row is what
+	// `orch status` and the dashboard show afterwards, and a task whose CI
+	// went green while the queue alone learned about it would read as
+	// in-progress forever.
+	if err := s.Backend.Transition(ctx, row.ID, model.StatusDone, "CI passed"); err != nil {
+		s.logger().Error("recording done failed", "task", row.ID, "err", err)
+	}
 	p.emit(ctx, s, EventCISuccess, row, map[string]any{"pr_url": row.PRURL})
 
 	if !p.AutoMerge {

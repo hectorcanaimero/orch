@@ -13,6 +13,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/providers"
+	"github.com/hectorcanaimero/orch/internal/vcs"
 )
 
 // ---- A recording backend, so the events can be asserted without SQL -------
@@ -494,16 +495,29 @@ func TestSubAgentGuardTrustsTheWrapperOnError(t *testing.T) {
 // ---- The worktree Caller contract ---------------------------------------
 
 type recordingWorktree struct {
-	mu       sync.Mutex
-	calls    []string
-	pushErr  error
-	removeAt int
+	mu        sync.Mutex
+	calls     []string
+	pushErr   error
+	createErr error
+	dir       string
 }
 
 func (w *recordingWorktree) record(name string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.calls = append(w.calls, name)
+}
+
+// callList snapshots what has been called so far.
+//
+// Every assertion goes through this rather than locking around the
+// comparison: holding the lock across anything that reaches the scheduler
+// deadlocks, because reaping calls straight back into record(). That is how
+// this suite hung for six minutes once.
+func (w *recordingWorktree) callList() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.calls...)
 }
 
 func (w *recordingWorktree) CommitPending(context.Context, string) error {
@@ -522,6 +536,29 @@ func (w *recordingWorktree) RemoveAll(context.Context) error {
 	w.record("remove_all")
 	return nil
 }
+func (w *recordingWorktree) Create(_ context.Context, taskID, _ string) (string, error) {
+	w.record("create")
+	if w.createErr != nil {
+		return "", w.createErr
+	}
+	// A real Manager hands back a directory that exists, and the child is
+	// spawned with it as its working directory — so the double has to make
+	// it too, or every dispatch fails on a missing cwd.
+	path := filepath.Join(w.dir, taskID)
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+func (w *recordingWorktree) Recreate(_ context.Context, taskID string) (string, error) {
+	w.record("recreate")
+	path := filepath.Join(w.dir, taskID)
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+func (w *recordingWorktree) BranchName(taskID string) string { return "orch/" + taskID }
 
 func TestWorktreeCallerContract(t *testing.T) {
 	tests := []struct {
@@ -566,9 +603,7 @@ func TestWorktreeCallerContract(t *testing.T) {
 
 			f.runOnce(t)
 
-			wt.mu.Lock()
-			got := append([]string(nil), wt.calls...)
-			wt.mu.Unlock()
+			got := wt.callList()
 			if !equalStrings(got, tt.wantCalls) {
 				t.Errorf("calls = %v, want %v", got, tt.wantCalls)
 			}
@@ -599,19 +634,15 @@ func TestRemoveAllRunsAfterTheDrain(t *testing.T) {
 		t.Fatalf("DrainWait: %v", err)
 	}
 
-	wt.mu.Lock()
-	duringDrain := append([]string(nil), wt.calls...)
-	wt.mu.Unlock()
-	for _, c := range duringDrain {
+	for _, c := range wt.callList() {
 		if c == "remove_all" {
 			t.Fatal("RemoveAll ran during the drain")
 		}
 	}
 
 	f.s.CleanupWorktrees(context.Background())
-	wt.mu.Lock()
-	defer wt.mu.Unlock()
-	if last := wt.calls[len(wt.calls)-1]; last != "remove_all" {
+	calls := wt.callList()
+	if last := calls[len(calls)-1]; last != "remove_all" {
 		t.Errorf("last call = %q, want remove_all after the drain", last)
 	}
 }
@@ -779,4 +810,244 @@ func TestRetryQueueOwnsItsTaskUntilTheBackoffExpires(t *testing.T) {
 	if _, err := f.s.DrainWait(context.Background(), 30*time.Second); err != nil {
 		t.Fatalf("DrainWait: %v", err)
 	}
+}
+
+// ---- Auto-PR -------------------------------------------------------------
+
+type recordingPR struct {
+	mu    sync.Mutex
+	saved map[string]string
+	err   error
+}
+
+func (r *recordingPR) SetTaskPR(_ context.Context, taskID, prURL string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	if r.saved == nil {
+		r.saved = map[string]string{}
+	}
+	r.saved[taskID] = prURL
+	return nil
+}
+
+func (r *recordingPR) get(taskID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.saved[taskID]
+}
+
+// prFixture is a finished, successful task with worktree mode and auto-PR on.
+func prFixture(t *testing.T) (*reapFixture, *recordingWorktree, *fakeVCS, *recordingPR) {
+	t.Helper()
+	f := newReapFixture(t,
+		[]model.Task{{
+			ID: "C-1", Phase: 1, Title: "Wire the webhook", Model: "claude/opus",
+			Status: model.StatusTodo, EstimateHours: 1, SpecRef: "specs/f1.md#T1",
+			Reason: "the webhook is unhandled",
+		}},
+		map[string]fakeResponse{"C-1": okResponse()},
+		SchedulerOptions{AutoPR: true, WorktreeMode: true, BaseBranch: "main"})
+
+	wt := &recordingWorktree{dir: t.TempDir()}
+	v := &fakeVCS{status: map[string]vcs.CIState{}, createdPR: "https://github.com/o/r/pull/7"}
+	pr := &recordingPR{}
+	f.s.Worktree = wt
+	f.s.VCS = v
+	f.s.CIRecorder = pr
+	return f, wt, v, pr
+}
+
+// TestSuccessfulPushOpensAPRAndWaitsForCI. A task under review is NOT done:
+// marking it done here would finish work whose tests have not run.
+func TestSuccessfulPushOpensAPRAndWaitsForCI(t *testing.T) {
+	f, wt, v, pr := prFixture(t)
+
+	f.runOnce(t)
+
+	if got := pr.get("C-1"); got != "https://github.com/o/r/pull/7" {
+		t.Errorf("recorded PR = %q, want the created one", got)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusInProgress {
+		t.Errorf("status = %q, want it still in-progress while CI runs", got)
+	}
+	if got := f.backend.eventTypes("C-1"); !contains(got, EventPRCreated) {
+		t.Errorf("events = %v, want a pr_created", got)
+	}
+	// The PR is opened from the task's own branch, into the base.
+	if got := v.prHead; got != "orch/C-1" {
+		t.Errorf("PR head = %q, want the task's branch", got)
+	}
+	if got := v.prBase; got != "main" {
+		t.Errorf("PR base = %q, want main", got)
+	}
+	// Python's body shape: the task id, its spec, then its reason.
+	for _, want := range []string{"`C-1`", "specs/f1.md#T1", "the webhook is unhandled"} {
+		if !strings.Contains(v.prBody, want) {
+			t.Errorf("PR body is missing %q:\n%s", want, v.prBody)
+		}
+	}
+	// And the ordering still holds around it.
+	if got := wt.callList(); !equalStrings(got, []string{"create", "commit", "push", "remove"}) {
+		t.Errorf("worktree calls = %v", got)
+	}
+}
+
+// TestNoPRWithoutASuccessfulPush: a PR opened from a branch that never
+// reached the remote cannot be reviewed, and the task would wait on CI that
+// will never run.
+func TestNoPRWithoutASuccessfulPush(t *testing.T) {
+	f, _, v, pr := prFixture(t)
+	f.s.Worktree.(*recordingWorktree).pushErr = errors.New("remote hung up")
+
+	f.runOnce(t)
+
+	if v.created != 0 {
+		t.Errorf("opened %d PRs after a failed push", v.created)
+	}
+	if got := pr.get("C-1"); got != "" {
+		t.Errorf("recorded a PR after a failed push: %q", got)
+	}
+	// The work is committed locally, so the task is done rather than stuck.
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+		t.Errorf("status = %q, want done", got)
+	}
+}
+
+// TestPRFailuresFinishTheTaskNormally. Every one of these leaves no recorded
+// PR URL, so nothing would ever poll it — a task that thought it was waiting
+// on CI would wait forever.
+func TestPRFailuresFinishTheTaskNormally(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(v *fakeVCS, pr *recordingPR)
+	}{
+		{
+			name:    "the CLI errors",
+			prepare: func(v *fakeVCS, _ *recordingPR) { v.createErr = errors.New("gh: not authenticated") },
+		},
+		{
+			// Python's None: the CLI ran and produced no PR.
+			name:    "the CLI produces no PR",
+			prepare: func(v *fakeVCS, _ *recordingPR) { v.createdPR = "" },
+		},
+		{
+			name:    "the URL cannot be recorded",
+			prepare: func(_ *fakeVCS, pr *recordingPR) { pr.err = errors.New("database is locked") },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, _, v, pr := prFixture(t)
+			tt.prepare(v, pr)
+
+			f.runOnce(t)
+
+			if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+				t.Errorf("status = %q, want done — a task nothing will poll must not wait on CI", got)
+			}
+		})
+	}
+}
+
+func TestNoPRWhenAutoPRIsOff(t *testing.T) {
+	f, _, v, _ := prFixture(t)
+	f.s.Opts.AutoPR = false
+
+	f.runOnce(t)
+
+	if v.created != 0 {
+		t.Errorf("opened %d PRs with auto_pr off", v.created)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+		t.Errorf("status = %q, want done", got)
+	}
+}
+
+// ---- Worktree creation on dispatch --------------------------------------
+
+// TestTheChildRunsInsideItsWorktree: the whole point of worktree mode is that
+// one agent cannot edit another's files.
+func TestTheChildRunsInsideItsWorktree(t *testing.T) {
+	f, wt, _, _ := prFixture(t)
+
+	if _, err := f.s.Refill(context.Background()); err != nil {
+		t.Fatalf("Refill: %v", err)
+	}
+	var entry *InFlight
+	for _, e := range f.s.InFlight() {
+		entry = e
+	}
+	if entry == nil {
+		t.Fatal("nothing dispatched")
+	}
+	want := filepath.Join(wt.dir, "C-1")
+	if entry.Dispatch.Cwd != want {
+		t.Errorf("the child's cwd = %q, want its worktree %q", entry.Dispatch.Cwd, want)
+	}
+	if entry.Dispatch.Req.Cwd != want {
+		t.Errorf("the provider's cwd = %q, want its worktree", entry.Dispatch.Req.Cwd)
+	}
+
+	if _, err := f.s.DrainWait(context.Background(), 30*time.Second); err != nil {
+		t.Fatalf("DrainWait: %v", err)
+	}
+}
+
+// TestWorktreeCreationFailureBlocksTheTask: dispatching into the project root
+// instead would let the agent edit files another task owns, which is the
+// thing worktree mode exists to prevent.
+func TestWorktreeCreationFailureBlocksTheTask(t *testing.T) {
+	f, wt, _, _ := prFixture(t)
+	wt.createErr = errors.New("branch already checked out")
+
+	started, err := f.s.Refill(context.Background())
+	if err != nil {
+		t.Fatalf("Refill: %v", err)
+	}
+	if started != 0 {
+		t.Fatalf("started %d dispatches with no worktree", started)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want blocked", got)
+	}
+	if got := f.s.Sems.Global.Current(); got != 0 {
+		t.Errorf("global slots held after a failed worktree create: %d", got)
+	}
+}
+
+// TestNoWorktreeWhenModeIsOff: a project that never asked runs in its own
+// root, exactly as it did before F-2.
+func TestNoWorktreeWhenModeIsOff(t *testing.T) {
+	f, wt, _, _ := prFixture(t)
+	f.s.Opts.WorktreeMode = false
+
+	if _, err := f.s.Refill(context.Background()); err != nil {
+		t.Fatalf("Refill: %v", err)
+	}
+	for _, e := range f.s.InFlight() {
+		if e.Dispatch.Cwd != f.s.Opts.Cwd {
+			t.Errorf("cwd = %q, want the project root", e.Dispatch.Cwd)
+		}
+	}
+	if contains(wt.callList(), "create") {
+		t.Error("a worktree was created with the mode off")
+	}
+
+	if _, err := f.s.DrainWait(context.Background(), 30*time.Second); err != nil {
+		t.Fatalf("DrainWait: %v", err)
+	}
+}
+
+// contains reports whether hay holds needle.
+func contains(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }

@@ -27,9 +27,27 @@ type fakeVCS struct {
 	mergeErr  error
 	// merged records every MergePR call, so "did not merge" is assertable.
 	merged []string
+
+	// The CreatePR side, for the auto-PR tests.
+	createdPR string
+	createErr error
+	created   int
+	prHead    string
+	prBase    string
+	prTitle   string
+	prBody    string
 }
 
-func (v *fakeVCS) CreatePR(_, _, _, _ string) (string, error) { return "", nil }
+func (v *fakeVCS) CreatePR(head, base, title, body string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.created++
+	v.prHead, v.prBase, v.prTitle, v.prBody = head, base, title, body
+	if v.createErr != nil {
+		return "", v.createErr
+	}
+	return v.createdPR, nil
+}
 
 func (v *fakeVCS) CIStatus(prURL string) (vcs.CIState, error) {
 	v.mu.Lock()
