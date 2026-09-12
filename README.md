@@ -4,12 +4,6 @@
 
 # orch
 
-> **orch is being rewritten in Go as a single binary.** The `python-legacy`
-> branch and the `v0.11.0-py` tag are the last Python version — everything
-> below still describes it, and it still works. Background and the running
-> list of what the rewrite has to carry over:
-> [`docs/brainstorm/go-migration-notes.md`](docs/brainstorm/go-migration-notes.md).
-
 **Run AI agents as a team. Show clients a live dashboard — not a Slack thread.**
 
 orch is a local task orchestrator for freelancers and agencies building with AI.
@@ -39,12 +33,45 @@ can't track. Status updates live in Slack threads that get lost. orch fixes that
 ## Quick start
 
 ```bash
-pipx install orch
+curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
 cd my-project
 orch init
 orch run
 orch dashboard --profile stakeholder --tunnel
 ```
+
+`orch` is a single Go binary — no Python, no venv, no `pip`. See
+[Install](#install) below for Homebrew and manual-download alternatives,
+and the [manual](docs/MANUAL.en.md) for the full walkthrough.
+
+---
+
+## Install
+
+**Script** (Linux/macOS, `amd64`/`arm64`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+```
+
+Downloads the matching tarball from the latest GitHub Release, verifies
+its checksum, and installs to `~/.local/bin` (`INSTALL_DIR=...` to
+override).
+
+**Homebrew**:
+
+```bash
+brew install hectorcanaimero/orch/orch
+```
+
+**Manual**: grab a tarball from the
+[Releases page](https://github.com/hectorcanaimero/orch/releases) and put
+`orch` on your `PATH` yourself.
+
+Verify either way with `orch --version`. See
+[`docs/RELEASING.md`](docs/RELEASING.md) for the tag scheme and how
+releases are built, and [`docs/MANUAL.en.md`](docs/MANUAL.en.md) for the
+full CLI walkthrough.
 
 ---
 
@@ -58,13 +85,13 @@ builders in that space actually reach for today.
 | | [Multica](https://github.com/multica-ai/multica) | [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) | [Agetor](https://github.com/alamops/agetor) | [Claude Squad](https://github.com/smtg-ai/claude-squad) | **orch** |
 |---|:---:|:---:|:---:|:---:|:---:|
 | GitHub stars | 49.6k | 28.1k | 65 | 8.5k | **1** |
-| Stack | Go + Next.js + Postgres | Rust | TypeScript (Electrobun) | Go | Python |
+| Stack | Go + Next.js + Postgres | Rust | TypeScript (Electrobun) | Go | Go |
 | License | Apache-2.0 + commercial | Apache-2.0 | MIT | AGPL-3.0 | MIT |
-| CLIs/agents supported | 26 | 10+ | 5 | ~6 | 5 |
+| CLIs/agents supported | 26 | 10+ | 5 | ~6 | 1 🚧 (claude; codex/opencode/gemini/agy mid-port) |
 | Desktop app | ✅ Electron | ❌ | ✅ macOS | ❌ (TUI) | ❌ |
 | Mobile app | ✅ iOS | ❌ | ❌ | ❌ | ❌ |
 | Cloud-hosted option | ✅ multica.ai | ❌ (shut down w/ Bloop) | ❌ | ❌ | ❌ |
-| Single binary | ❌ | ❌ | ❌ | ✅ | ❌ 🚧 (coming with the Go rewrite) |
+| Single binary | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Read-only stakeholder view | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Per-provider budget guardrail (blocks dispatch) | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
@@ -119,7 +146,10 @@ Optional overrides drop in as their own files at the project root: `budgets.yaml
 
 ## What your client sees
 
-`orch dashboard --profile stakeholder --tunnel` publishes a read-only URL. Send it once; the numbers update themselves. The client gets:
+`orch dashboard --profile stakeholder --tunnel` publishes a read-only URL,
+tunneled out so it's reachable outside your machine (provider/command
+configured under `dashboard.tunnel` in `config.yaml`). Send it once; the
+numbers update themselves. The client gets:
 
 ![The stakeholder view — executive summary, phase timeline, ETA and blockers](docs/media/stakeholder.png)
 
@@ -150,6 +180,27 @@ The client never sees a log line, a prompt, a diff, or a per-model cost breakdow
 
 - [English manual](docs/MANUAL.en.md)
 - [Manual en español](docs/MANUAL.es.md)
+- [Manual em português](docs/MANUAL.pt.md)
+- [CLI reference (flags, parity with Python)](docs/CLI.md)
 - [Dashboard / stakeholder guide](docs/DELIVERING-TO-STAKEHOLDERS.md)
+- [Release process / tag scheme](docs/RELEASING.md)
 - [Developer notes](docs/README-dev.md)
 - [Roadmap (living doc)](docs/brainstorm/next-sprints.md)
+
+---
+
+## Python legacy
+
+`orch` was originally a Python CLI + FastAPI dashboard; it's being
+rewritten as a single Go binary (this README, and everything above,
+describes the Go version). The last Python release is frozen on the
+`python-legacy` branch, tagged **`v0.11.0-py`** — no new features land on
+that line, only the Go binary moves forward.
+
+```bash
+pipx install git+https://github.com/hectorcanaimero/orch.git@v0.11.0-py
+```
+
+Its own manual is preserved at that tag. See
+[`docs/RELEASING.md`](docs/RELEASING.md) for why the two lines share one
+tag namespace, split by a `-py` suffix.
