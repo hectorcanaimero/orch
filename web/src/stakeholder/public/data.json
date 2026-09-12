@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-12T18:30:00Z",
+  "project_name": "Example Project",
+  "refresh_interval_s": 30,
+  "summary": {
+    "total": 42,
+    "done": 10,
+    "in_progress": 3,
+    "blocked": 2,
+    "backlog": 27,
+    "percent_done": 23.8,
+    "estimate_hours_total": 120.5,
+    "eta_hours": 64.2
+  },
+  "milestones": [
+    {
+      "phase": 0,
+      "name": "F0 \u2014 Foundation",
+      "total": 5,
+      "done": 5,
+      "in_progress": 0,
+      "blocked": 0,
+      "backlog": 0,
+      "percent_done": 100.0
+    },
+    {
+      "phase": 1,
+      "name": "F1 \u2014 Core",
+      "total": 12,
+      "done": 5,
+      "in_progress": 3,
+      "blocked": 1,
+      "backlog": 3,
+      "percent_done": 41.7
+    }
+  ],
+  "blockers": [
+    {
+      "phase": 2,
+      "title": "Wire the router",
+      "reason": "A configured budget limit was reached."
+    }
+  ],
+  "budget": {
+    "enabled": true,
+    "spend_usd": 12.5,
+    "spend_by_day": [
+      {
+        "date": "2026-09-11",
+        "cost_usd": 1.1
+      },
+      {
+        "date": "2026-09-12",
+        "cost_usd": 1.25
+      }
+    ]
+  },
+  "executive_summary": {
+    "text": "23.8% complete, on track for the current milestone.",
+    "language": "en"
+  }
+}

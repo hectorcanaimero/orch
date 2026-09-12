@@ -367,3 +367,55 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   helper that logs via `slog.Warn` rather than a scattered `_ =` at
   every call site, so the fix reads as one deliberate policy rather
   than ten silent patches.
+
+- **`web/stakeholder.html` (G6.2) — new capability, no Python
+  equivalent (Python's static export is `/stakeholder/summary` JSON
+  consumed live by the operator SPA, never a standalone offline
+  bundle).** Two design decisions worth recording:
+
+  1. **A second, separate vite config, not a second entry in the
+     existing one.** Vite's `base` (the prefix every emitted asset URL
+     gets) is a whole-build setting, not per-entry. The operator
+     dashboard is mounted at `/` by a real server (`base: '/'`); this
+     bundle is read straight off disk — a static host, or literally
+     `file://` — with `data.json` sitting next to it, so every asset
+     reference has to be relative (`base: './'`) or it resolves against
+     whatever origin happens to be hosting it. Those two values can't
+     coexist in one `build.rollupOptions.input` multi-page config, so
+     `vite.stakeholder.config.ts` is its own file with its own
+     `publicDir` (so the dev-only example `data.json` never leaks into
+     the operator SPA's build) and its own `pnpm build:stakeholder`
+     script. Verified for real: built, served with `python3 -m
+     http.server`, confirmed the HTML/JS/`data.json` all load with the
+     emitted relative paths.
+  2. **`fetch('./data.json')` is blocked by the browser under literal
+     `file://`, not just theoretically.** Chrome (and most browsers)
+     refuse a `file://` page's `fetch()` of a sibling local file as a
+     cross-origin request — this bundle has no server to make same-origin
+     mean anything under `file://`. The brief says "renders opening the
+     file, no network," which reads as "no API/login dependency," not
+     necessarily "must work via a bare double-click with zero HTTP
+     server" — `orch publish`'s other destinations (`to: git` → gh-pages,
+     `to: cloud`) already imply real HTTP hosting. Rather than guess,
+     `App.tsx` handles both: it tries the fetch, and on a `TypeError`
+     specifically while `location.protocol === 'file:'`, shows an
+     actionable message ("serve this folder over HTTP instead") instead
+     of a bare fetch failure. No environment-detection hack for the
+     common case (HTTP hosting), just a better error for the
+     `file://`-without-a-server one.
+
+  **`internal/publish` (G6.1) doesn't exist yet — schema coordinated
+  with orch-sonnet directly rather than guessed.** Their draft schema 1
+  has a real bug worth a heads-up rather than a silent workaround: the
+  milestone object's example has two keys both named `"done"` — an
+  `int` count and later a `bool` completeness flag. A JSON object can't
+  hold two same-named keys without one silently winning at parse time
+  (every parser checked — JS, Python, Go — keeps the last one), so as
+  drafted the count would vanish and every milestone would just read
+  `done: true`. Flagged to orch-sonnet before they commit the real
+  generator; `types.ts`'s `isMilestoneComplete()` sidesteps it for now
+  by deriving completeness from `done >= total` rather than trusting
+  either literal `done` key. `build.outDir` (`internal/publish/dist/
+  stakeholder`) is an explicit placeholder — commented as such in
+  `vite.stakeholder.config.ts` — pending the real path their embed.FS
+  will expect.
