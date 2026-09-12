@@ -526,3 +526,105 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   worktree that's also being edited directly in the same turn, and a
   ping to another session goes through this session's own `SendMessage`
   call, not delegated to a fork.
+
+- **G8.2 (F3.3): migration 006 is the first Go-only schema change since
+  the Python freeze — documented as a deliberate break from the
+  "byte-for-byte copy" invariant, not silently allowed to happen.**
+  `internal/state/migrate.go`'s own header comment used to say migrations
+  001-005 "must" round-trip between Go and Python, written while
+  `orchestrator/state/sqlite_migrations/` was still a live tree. It has
+  been frozen since `v0.11.0-py` (ADR-G0) — no new features land there —
+  so a Go-only feature needing a new table (the stakeholder token, moved
+  out of config.yaml so `orch dashboard token rotate` can change it
+  without a YAML edit or a restart) has nowhere to put a Python-side
+  mirror, and shouldn't invent one for a line that gets no more code
+  changes. Resolution: `006_stakeholder_tokens.sql` exists only under
+  `internal/state/migrations/`, `migrate.go`'s comment now says the mirror
+  ends at 005, and `TestEmbeddedMigrationsMatchThePythonTree` only
+  compares migrations `<= 5` against the Python tree instead of every
+  embedded one. Confirmed harmless in the direction that matters: opening
+  `testdata/orch-py-0.11.0.db` (a real Python-written, schema-5 database)
+  through Go's `Open` still applies exactly one migration (006) and lands
+  on `user_version = 6` — verified via
+  `TestOpenPythonWrittenDatabaseAppliesOnlyGoOnlyMigrations` (renamed from
+  `...AppliesNothing`, whose old name and assertions were the thing this
+  entry is about) — the "swap the binary, keep your database" claim ADR-G3
+  makes was never "the schema stops moving," only "nothing Python wrote is
+  lost or misread." Every other test hardcoding "0 migrations applied to
+  the Python/v0.11.0 fixture" across `internal/state` and
+  `internal/budget` needed the same `0 → 1` update; a repo-wide grep for
+  that assumption before landing 007 would have caught this faster than
+  finding each one by running the suite.
+
+  **Design questions asked and answered before writing any code, not
+  guessed at**: orch-98 confirmed the token moves to SQLite but the
+  dashboard stays one-project-per-process (no multi-project routing in
+  this PR, only the storage groundwork for a future `--portfolio`);
+  stores a SHA-256 hash, never plaintext, with the middleware comparing
+  hashes; the database wins over `--token`/`dashboard.token`
+  unconditionally when a row exists (not just "wins over config.yaml but
+  loses to an explicit flag," which is every other flag's rule in this
+  codebase but deliberately not this one — a stale `--token` in a saved
+  command must not resurrect a rotated-away token); and `orch dashboard
+  token rotate`/`show` were needed in this same PR because nobody opens
+  `sqlite3` by hand to manage a row.
+
+  **Kept `decide()` pure per opus's review of the plan** (owns
+  `internal/dashboard/access.go`, consulted before touching it): it now
+  takes `expectedHash` as an explicit fourth argument instead of reading
+  a live value off `Config` or looking it up itself, so the
+  profile × path × route × token × hash table test stays a table with no
+  server, database, or clock. The live part — resolving that hash fresh
+  from the database on every gated request, which is what makes rotation
+  not need a restart — lives in `Server.expectedTokenHash` (server.go),
+  one level up from `decide`, with a precomputed `fallbackTokenHash` for
+  when the database has no row yet and a nil-`state`-safe fallback for
+  the handful of existing tests that build a server with no `StateReader`
+  at all (routes that never otherwise touch state, like `/api/whoami`,
+  are still gated, so they now reach this path too — a case that didn't
+  exist before this PR).
+
+  **`orch dashboard token rotate` bootstraps the project before writing**
+  (`backend.Bootstrap(ctx, loadDAG(paths))`, same one-time idempotent seed
+  `status`/`run`/`task set` already do) because `stakeholder_tokens` has a
+  foreign key onto `projects`, and `orch dashboard` itself never
+  bootstraps — a brand-new project's very first rotation would otherwise
+  fail on that FK with no obvious cause.
+
+  **Two real findings from review, both fixed before merging, not after:**
+
+  Gemini flagged `StakeholderToken` silently discarding `ParseTS`'s
+  `ok` bool on `rotated_at` (rule 19) — `t, _ := ParseTS(rotatedAtRaw)`.
+  That row is written only by `SetStakeholderToken` in a format
+  `ParseTS` always accepts, so this could only fire on external
+  corruption, but "can't happen" is exactly the case rule 19 exists for:
+  fixed to return an error instead of a silent zero `time.Time`, with a
+  test that corrupts the column by hand and checks for the error —
+  seen red against the un-fixed code first.
+
+  Opus's review of the plan (they own `access.go`) caught a real bug in
+  `Server.expectedTokenHash` I'd written and not seen: it collapsed a
+  database READ ERROR into the same `ok = false` path as "this project
+  never rotated a token," falling back to config.yaml/--token either
+  way. Those are not the same state — "never rotated" means the
+  config/flag fallback is correct, but "the database couldn't answer"
+  says nothing about whether a row exists, and falling back on it would
+  resurrect a token an operator just rotated away, at precisely the
+  moment (a leaked token) rotating exists to defend against, with a
+  transient DB error as the trigger. Same shape as the unknown-profile
+  hole from #184: a degradation that looks like robustness. Fixed to
+  fail closed (`return ""`, decide()'s own sentinel for "no token" →
+  401) on a read error specifically, with `TestGatedRouteFailsClosedOnDatabaseError`
+  (renamed from a test that asserted the old, wrong 200) proving it by
+  what it does NOT allow (rule 25).
+
+  **Known, accepted gap, written down rather than silently true:** the
+  SSE event stream (G5.4, `stream.go`) resolves `expectedTokenHash` once
+  when a client connects and holds that connection open for hours, so a
+  token rotated while a stream is open keeps working on that stream
+  until it reconnects — every other gated route re-resolves per request,
+  but a long-lived stream doesn't re-check mid-flight. Not fixed here;
+  flagged by opus and orch-98 as acceptable for a local, single-operator
+  dashboard, but real enough to write down before someone assumes
+  "resolves fresh on every request" means every consumer of that method,
+  everywhere.
