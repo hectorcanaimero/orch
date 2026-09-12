@@ -190,7 +190,20 @@ func printDashboardBanner(cmd *cobra.Command, server *dashboard.Server, cfg dash
 		_, _ = fmt.Fprintf(out, format+"\n", args...)
 	}
 
+	// Ready closes on a FAILED listen too — otherwise a waiter would block
+	// forever on a server that is never coming up — so arriving here is not
+	// the same as being up. The bound address is what tells the two apart:
+	// it is set only after the listener exists. Without this the operator
+	// gets "Orch dashboard running on http://" with nothing after the
+	// slashes, and then the real error underneath it.
+	//
+	// Nothing is printed instead. Serve is already returning the reason to
+	// the caller, which prints it and exits non-zero; a second line here
+	// would be the same failure said twice.
 	addr := server.BoundAddr()
+	if addr == "" {
+		return
+	}
 	say("Orch dashboard running on http://%s", addr)
 	// Bound to every interface: the address above is not one anybody can
 	// click, so spell out the two that are.

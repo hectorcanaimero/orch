@@ -50,7 +50,7 @@ export function LoginPage() {
                 autoComplete="off"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="e.g. s3cr3t-token"
+                placeholder="the token from `orch dashboard --token`"
                 autoFocus
               />
             </div>
