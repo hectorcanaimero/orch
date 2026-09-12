@@ -55,6 +55,26 @@ export interface StakeholderExecutiveSummary {
   language: string
 }
 
+/**
+ * White-label block (G8.4). Absent from the document entirely unless the
+ * operator configured `presentation.branding` — so every field is optional,
+ * and so is the block itself. A snapshot without it must render exactly as it
+ * rendered before this existed.
+ */
+export interface StakeholderBranding {
+  /** What the client reads. Replaces `project_name` in the header. */
+  name?: string
+  /**
+   * Always a `data:` URI, never a path: the document has to stand alone, and
+   * a viewer holding this JSON cannot reach the operator's filesystem. PNG or
+   * JPEG only — see docs/SNAPSHOT-SCHEMA.md for why the PDF decides that.
+   */
+  logo?: string
+  /** `#rgb` or `#rrggbb`, already validated by `config.Load`. */
+  accent_color?: string
+  footer?: string
+}
+
 export interface StakeholderSnapshot {
   schema: number
   generated_at: string
@@ -65,5 +85,6 @@ export interface StakeholderSnapshot {
   blockers: StakeholderBlocker[]
   budget: StakeholderBudget
   executive_summary: StakeholderExecutiveSummary
+  branding?: StakeholderBranding
 }
 

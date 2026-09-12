@@ -13,8 +13,10 @@
 package report
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,13 +54,22 @@ const maxMilestones = 8
 func PDF(w io.Writer, s snapshot.Snapshot, opts Options) error {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetCompression(opts.Compress)
+	// A PDF embeds a creation date, and fpdf defaults it to the wall clock —
+	// which makes two renders of the same document differ in bytes for a
+	// reason that has nothing to do with the document. Dating it from the
+	// SNAPSHOT makes the artefact reproducible: the same snapshot yields the
+	// same file, so a report can be diffed, cached or checksummed, and a
+	// change in it means a change in the project rather than in the minute it
+	// was printed.
+	pdf.SetCreationDate(creationDate(s, opts.Now))
 	// Nothing but the core fonts: no file to ship, nothing to download, and
 	// no font path to resolve at runtime on a machine we have never seen.
 	pdf.SetMargins(marginX, marginTop, marginX)
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddPage()
 
-	writeHeader(pdf, s)
+	accent := accentRGB(s)
+	writeHeader(pdf, s, accent)
 	writeSummary(pdf, s)
 	writeExecutiveSummary(pdf, s)
 	writeMilestones(pdf, s)
@@ -72,20 +83,130 @@ func PDF(w io.Writer, s snapshot.Snapshot, opts Options) error {
 	return nil
 }
 
-func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
+// creationDate is the snapshot's own timestamp, the caller's clock, or the
+// zero time — in that order, so the most stable available answer wins.
+func creationDate(s snapshot.Snapshot, now time.Time) time.Time {
+	if t, err := time.Parse(time.RFC3339, s.GeneratedAt); err == nil {
+		return t.UTC()
+	}
+	if !now.IsZero() {
+		return now.UTC()
+	}
+	return time.Time{}
+}
+
+// logoBox is how much room the header gives a logo, in millimetres. Height is
+// what is fixed: a wide logo gets more width and a tall one is scaled down, so
+// a client's mark is never stretched to fit a box we chose.
+const (
+	logoH    = 12.0
+	logoMaxW = 45.0
+)
+
+func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot, accent [3]int) {
+	// The branded name wins over the project's own: `meta.project` is what
+	// the operator calls it, and this is what the client should read.
 	name := s.ProjectName
+	if s.Branding != nil && s.Branding.Name != "" {
+		name = s.Branding.Name
+	}
 	if name == "" {
 		name = "(unnamed project)"
 	}
+
+	textX := marginX
+	if s.Branding != nil {
+		if w := drawLogo(pdf, s.Branding.Logo); w > 0 {
+			textX = marginX + w + 5
+		}
+	}
+
+	pdf.SetXY(textX, marginTop)
 	pdf.SetFont("Helvetica", "B", 20)
-	pdf.CellFormat(contentW, 10, latin1(name), "", 1, "L", false, 0, "")
+	pdf.SetTextColor(accent[0], accent[1], accent[2])
+	pdf.CellFormat(pageW-marginX-textX, 10, latin1(name), "", 1, "L", false, 0, "")
+	pdf.SetTextColor(0, 0, 0)
+	pdf.SetX(textX)
 
 	pdf.SetFont("Helvetica", "", 10)
 	pdf.SetTextColor(110, 110, 110)
 	pdf.CellFormat(contentW, 6, latin1("Progress report · generated "+
 		humanTime(s.GeneratedAt)), "", 1, "L", false, 0, "")
 	pdf.SetTextColor(0, 0, 0)
-	pdf.Ln(4)
+	pdf.SetX(marginX)
+	pdf.SetY(marginTop + 16)
+}
+
+// drawLogo places the client's mark and returns the width it used, or 0 when
+// there is none to place.
+//
+// A logo that cannot be decoded is SKIPPED rather than fatal: the report is
+// still the document somebody needs, and `ResolveLogo` already refused every
+// form this could take at config time — reaching here means a snapshot was
+// hand-edited, which is not a reason to withhold the page.
+func drawLogo(pdf *fpdf.Fpdf, dataURI string) float64 {
+	raw, format, ok := snapshot.DecodeLogo(dataURI)
+	if !ok {
+		return 0
+	}
+
+	const name = "branding-logo"
+	info := pdf.RegisterImageOptionsReader(name, fpdf.ImageOptions{
+		ImageType: format, ReadDpi: false,
+	}, bytes.NewReader(raw))
+	if pdf.Err() || info == nil || info.Height() == 0 {
+		// Clear the error so one unreadable image does not fail the whole
+		// document — fpdf latches an error and refuses to Output afterwards,
+		// so skipping the logo means clearing it as well as not drawing.
+		pdf.ClearError()
+		return 0
+	}
+
+	w := logoH * info.Width() / info.Height()
+	if w > logoMaxW {
+		w = logoMaxW
+	}
+	pdf.ImageOptions(name, marginX, marginTop, w, logoH,
+		false, fpdf.ImageOptions{ImageType: format}, 0, "")
+	return w
+}
+
+// accentRGB is the branded colour, or near-black when there is none.
+//
+// Parsed here rather than trusted: `config.validateBranding` has already
+// refused anything that is not `#rgb` or `#rrggbb`, but this package also
+// renders snapshots it did not build — a published `data.json` somebody hands
+// it — so an unparseable colour falls back rather than painting garbage.
+func accentRGB(s snapshot.Snapshot) [3]int {
+	const r, g, b = 17, 17, 17
+	if s.Branding == nil {
+		return [3]int{r, g, b}
+	}
+	parsed, ok := parseHexColor(s.Branding.AccentColor)
+	if !ok {
+		return [3]int{r, g, b}
+	}
+	return parsed
+}
+
+func parseHexColor(s string) ([3]int, bool) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "#")
+	if len(s) == 3 {
+		// #abc is #aabbcc: each digit doubled, which is what CSS does.
+		s = string([]byte{s[0], s[0], s[1], s[1], s[2], s[2]})
+	}
+	if len(s) != 6 {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i := 0; i < 3; i++ {
+		v, err := strconv.ParseInt(s[i*2:i*2+2], 16, 32)
+		if err != nil {
+			return [3]int{}, false
+		}
+		out[i] = int(v)
+	}
+	return out, true
 }
 
 // writeSummary is the four figures somebody reads first.
@@ -257,6 +378,11 @@ func writeFooter(pdf *fpdf.Fpdf, s snapshot.Snapshot, now time.Time) {
 	line := "Snapshot taken " + humanTime(s.GeneratedAt) + "."
 	if age, ok := ageOf(s.GeneratedAt, now); ok {
 		line += " " + age
+	}
+	// The agency's line goes FIRST: it is what the client's eye lands on at
+	// the bottom of the page, and the freshness note is ours.
+	if s.Branding != nil && s.Branding.Footer != "" {
+		line = s.Branding.Footer + " · " + line
 	}
 	pdf.MultiCell(contentW, 4, latin1(line), "", "L", false)
 	pdf.SetTextColor(0, 0, 0)

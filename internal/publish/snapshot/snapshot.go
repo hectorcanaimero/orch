@@ -65,6 +65,10 @@ type Input struct {
 	// intent of a flag that already exists — see
 	// docs/brainstorm/go-migration-notes/sonnet.md.
 	ShowSpend bool
+	// Branding is the white-label block, already resolved: the logo is a
+	// data URI by the time it arrives, because reading a file is the
+	// caller's job and this package shapes what it is given.
+	Branding Branding
 	// Now is injected rather than read from the clock so a snapshot is
 	// reproducible in a test.
 	Now time.Time
@@ -81,6 +85,11 @@ type Snapshot struct {
 	Blockers         []Blocker        `json:"blockers"`
 	Budget           Budget           `json:"budget"`
 	ExecutiveSummary ExecutiveSummary `json:"executive_summary"`
+	// Branding is omitted entirely when nothing is configured, which is what
+	// keeps a snapshot without it byte-identical to one built before the
+	// field existed. See docs/SNAPSHOT-SCHEMA.md for why this is additive
+	// rather than a schema bump.
+	Branding *Branding `json:"branding,omitempty"`
 }
 
 // Summary is the header bar — the same seven figures
@@ -199,7 +208,20 @@ func Build(in Input) Snapshot {
 			Text:     executiveSummary(lang, summary, eta, totalSpendForSummary, blockers),
 			Language: lang,
 		},
+		Branding: brandingOrNil(in.Branding),
 	}
+}
+
+// brandingOrNil keeps the field absent rather than present-and-empty.
+//
+// `omitempty` on a struct does not omit it — only a nil pointer does — so an
+// unbranded project would otherwise grow `"branding":{}` and stop being
+// byte-identical to what it produced yesterday.
+func brandingOrNil(b Branding) *Branding {
+	if b.Empty() {
+		return nil
+	}
+	return &b
 }
 
 // buildMilestones reshapes graph.PhaseCounts (aggregate, id-free already)

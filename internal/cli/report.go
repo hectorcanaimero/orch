@@ -147,6 +147,20 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		name = paths.ID
 	}
 
+	// The logo is read HERE, not in the snapshot package: reading a file is a
+	// caller's job, and the document's own rule is that it must stand alone —
+	// by the time it reaches Build it is a data URI or nothing.
+	branding := snapshot.Branding{
+		Name:        cfg.Presentation.Branding.Name,
+		AccentColor: cfg.Presentation.Branding.AccentColor,
+		Footer:      cfg.Presentation.Branding.Footer,
+	}
+	logo, err := snapshot.ResolveLogo(cfg.Presentation.Branding.Logo)
+	if err != nil {
+		return snapshot.Snapshot{}, err
+	}
+	branding.Logo = logo
+
 	return snapshot.Build(snapshot.Input{
 		Tasks:       tasks,
 		Phases:      f.Phases,
@@ -158,6 +172,7 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		// leaves spend out when it is off, and `internal/report` renders
 		// whatever the snapshot carries — one decision, one place.
 		ShowSpend: cfg.Dashboard.ShowSpendToStakeholder,
+		Branding:  branding,
 		Now:       now,
 	}), nil
 }

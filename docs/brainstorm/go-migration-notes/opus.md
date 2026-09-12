@@ -650,3 +650,50 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   Same family as the unknown profile in #184: a degradation that reads as
   robustness. The tell is a branch where an ERROR and an ABSENCE are handled
   by the same line.
+
+- **An optional field under a frozen schema, and what made it legal.** G8.4's
+  `branding` is the first optional field in a schema-1 snapshot, and the
+  schema doc itself warns against "growing an optional field forever". The
+  warning is about INCOMPATIBLE changes: this key is absent unless configured,
+  a schema-1 viewer that ignores unknown keys renders exactly what it rendered
+  before, and nothing existing moved. Bumping to `schema: 2` would have told
+  every deployed viewer to refuse a document it can read perfectly.
+
+  The property is tested rather than claimed: with no branding, `Build`
+  produces **byte-identical** output to what it produced before the field
+  existed. That is also why the field is a POINTER — `omitempty` does not omit
+  a struct, so a value type would have grown `"branding":{}` on every
+  unbranded document and quietly broken the same property.
+
+- **`TestNoOperatorFields` promised something a deny-list cannot deliver.** The
+  schema doc said "a new field this package emits must be added to that list
+  on purpose before the test can pass again". It could not: the list catches
+  key names already known to be operator-only, so a field nobody thought to
+  forbid passed in silence. Added `TestEveryEmittedKeyIsInTheSchema`, an
+  allow-list over every key name the document emits, and saw it fail by
+  adding a fake `operator_db_path`. The doc now says what is true.
+
+  The general form, and it is the third time this lane has hit it: **a
+  deny-list tests the failures you already imagined.** An allow-list tests the
+  ones you did not.
+
+- **A PDF embeds a creation date, so "the same document" was never the same
+  bytes.** fpdf defaults it to the wall clock, which made two renders of one
+  snapshot differ for a reason that has nothing to do with the snapshot — and
+  quietly made the byte-identity criterion untestable. The date now comes from
+  the snapshot's own `generated_at`, so a report is reproducible: the same
+  snapshot yields the same file, and a change in it means a change in the
+  project rather than in the minute it was printed.
+
+  Worth remembering for any generated artefact: if it embeds a timestamp,
+  "identical output" is a claim you cannot make until you decide where that
+  timestamp comes from.
+
+- **PNG and JPEG only, decided by the weakest surface.** `fpdf` draws raster
+  images, so an SVG logo would appear on the web and be silently missing from
+  the printed page. A white-label feature whose logo reaches two surfaces out
+  of three is worse than one that says which formats work — so the config
+  refuses an SVG, naming the reason. The format is also typed by its MAGIC
+  BYTES rather than its extension, so a PNG named `.jpg` works and a text file
+  named `.png` is caught at startup instead of as a broken image three
+  surfaces later.

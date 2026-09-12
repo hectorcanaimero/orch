@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -186,11 +187,39 @@ func validate(cfg *Config) error {
 			cfg.Dashboard.Profile)
 	}
 
+	if err := validateBranding(&cfg.Presentation.Branding); err != nil {
+		return err
+	}
+
 	if cfg.SpecRoot == "" {
 		cfg.SpecRoot = "specs"
 	}
 	if cfg.Dispatch.BaseBranch == "" {
 		cfg.Dispatch.BaseBranch = "main"
+	}
+	return nil
+}
+
+// accentColorPattern is `#rgb` or `#rrggbb`, the two spellings CSS and a PDF
+// renderer both understand without a colour library.
+var accentColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// validateBranding rejects what cannot be honoured and normalises the rest.
+//
+// A bad colour is an ERROR rather than a value quietly dropped, and that is
+// the whole reason this function exists: branding is invisible when it does
+// not apply. An operator who wrote `accent_color: blue` and saw no blue would
+// go looking at the SPA, the PDF and their browser cache before suspecting the
+// spelling — so the config says so at startup instead.
+func validateBranding(b *Branding) error {
+	b.Name = strings.TrimSpace(b.Name)
+	b.Logo = strings.TrimSpace(b.Logo)
+	b.Footer = strings.TrimSpace(b.Footer)
+	b.AccentColor = strings.TrimSpace(b.AccentColor)
+
+	if b.AccentColor != "" && !accentColorPattern.MatchString(b.AccentColor) {
+		return fmt.Errorf("presentation.branding.accent_color: %q is not a "+
+			"hex colour (#rgb or #rrggbb)", b.AccentColor)
 	}
 	return nil
 }
@@ -244,7 +273,10 @@ var knownKeys = map[string]bool{
 	"notifications.slack_webhook": true, "notifications.discord_webhook": true,
 	"notifications.timeout_s":      true,
 	"presentation.status_labels.*": true,
-	"publish.interval_s":           true, "publish.to": true,
+	"presentation.branding.name":   true, "presentation.branding.logo": true,
+	"presentation.branding.accent_color": true,
+	"presentation.branding.footer":       true,
+	"publish.interval_s":                 true, "publish.to": true,
 	"publish.dir": true, "publish.git_branch": true,
 	"tunnel.enabled": true, "tunnel.provider": true, "tunnel.command": true,
 	"tunnel.args": true, "tunnel.url_regex": true,

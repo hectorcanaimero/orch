@@ -92,12 +92,28 @@ export default function App() {
     }
   }, [])
 
+  // Absent unless the operator configured it; every branch below treats that
+  // as "render exactly what we rendered before this feature existed".
+  const branding = state.status === "ready" ? state.data.branding : undefined
+
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {state.status === "ready" ? state.data.project_name : "Project Snapshot"}
+        <div className="flex items-center gap-3">
+          {branding?.logo ? (
+            // The logo is a data: URI by the time it reaches here — the
+            // builder embeds it, so nothing on this page fetches anything.
+            <img
+              src={branding.logo}
+              alt=""
+              className="h-10 w-auto max-w-[180px] object-contain"
+            />
+          ) : null}
+          <h1
+            className="text-2xl font-semibold tracking-tight"
+            style={branding?.accent_color ? { color: branding.accent_color } : undefined}
+          >
+            {headerTitle(state)}
           </h1>
         </div>
         {state.status === "ready" ? <Freshness generatedAt={state.data.generated_at} /> : null}
@@ -132,6 +148,12 @@ export default function App() {
             <BlockersCard blockers={state.data.blockers} />
           </div>
         </>
+      ) : null}
+
+      {branding?.footer ? (
+        <footer className="border-t pt-4 text-xs text-muted-foreground">
+          {branding.footer}
+        </footer>
       ) : null}
     </div>
   )
@@ -263,6 +285,15 @@ function BlockersCard({ blockers }: { blockers: StakeholderSnapshot["blockers"] 
       </CardContent>
     </Card>
   )
+}
+
+/**
+ * The client-facing name: the brand when there is one, the project's own name
+ * otherwise, and a neutral placeholder before the document has loaded.
+ */
+function headerTitle(state: LoadState): string {
+  if (state.status !== "ready") return "Project Snapshot"
+  return state.data.branding?.name?.trim() || state.data.project_name
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {
