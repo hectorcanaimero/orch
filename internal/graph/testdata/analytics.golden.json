@@ -1,0 +1,425 @@
+{
+  "chain": {
+    "critical_path": [
+      "A",
+      "B",
+      "C"
+    ],
+    "downstream_impact": {
+      "A": 2,
+      "B": 1,
+      "C": 0
+    },
+    "orphans": [],
+    "parallelizable": [
+      "B"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 1,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 3
+      }
+    ],
+    "summary": {
+      "backlog": 2,
+      "blocked": 0,
+      "done": 1,
+      "estimate_hours_total": 6.0,
+      "in_progress": 0,
+      "percent_done": 33.3,
+      "total": 3
+    }
+  },
+  "cycle": {
+    "critical_path": [
+      "C"
+    ],
+    "downstream_impact": {
+      "A": 1,
+      "B": 1,
+      "C": 0
+    },
+    "orphans": [],
+    "parallelizable": [
+      "C"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 3
+      }
+    ],
+    "summary": {
+      "backlog": 3,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 9.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 3
+    }
+  },
+  "done-in-the-middle": {
+    "critical_path": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "downstream_impact": {
+      "A": 2,
+      "B": 2,
+      "C": 1,
+      "D": 0
+    },
+    "orphans": [],
+    "parallelizable": [
+      "C"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 2,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 4
+      }
+    ],
+    "summary": {
+      "backlog": 2,
+      "blocked": 0,
+      "done": 2,
+      "estimate_hours_total": 0.0,
+      "in_progress": 0,
+      "percent_done": 50.0,
+      "total": 4
+    }
+  },
+  "empty": {
+    "critical_path": [],
+    "downstream_impact": {},
+    "orphans": [],
+    "parallelizable": [],
+    "phase_counts": [],
+    "summary": {
+      "backlog": 0,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 0.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 0
+    }
+  },
+  "mixed-statuses": {
+    "critical_path": [
+      "p1-wip"
+    ],
+    "downstream_impact": {
+      "p0-blocked": 1,
+      "p0-done": 1,
+      "p1-backlog": 0,
+      "p1-todo": 0,
+      "p1-wip": 0,
+      "p5-todo": 0
+    },
+    "orphans": [],
+    "parallelizable": [
+      "p1-todo",
+      "p5-todo"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 1,
+        "done": 1,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 2
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 1,
+        "phase": 1,
+        "total": 3
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 5,
+        "total": 1
+      }
+    ],
+    "summary": {
+      "backlog": 3,
+      "blocked": 1,
+      "done": 1,
+      "estimate_hours_total": 7.0,
+      "in_progress": 1,
+      "percent_done": 16.7,
+      "total": 6
+    }
+  },
+  "orphan-dep": {
+    "critical_path": [
+      "B"
+    ],
+    "downstream_impact": {
+      "A": 0,
+      "B": 0
+    },
+    "orphans": [
+      {
+        "missing_dep_id": "GHOST",
+        "task_id": "A"
+      }
+    ],
+    "parallelizable": [
+      "B"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 2
+      }
+    ],
+    "summary": {
+      "backlog": 2,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 5.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 2
+    }
+  },
+  "parallelizable": {
+    "critical_path": [
+      "dep",
+      "not-ready-dep-open",
+      "ready-todo"
+    ],
+    "downstream_impact": {
+      "dep": 5,
+      "not-ready-blocked": 0,
+      "not-ready-dep-open": 0,
+      "not-ready-done": 0,
+      "not-ready-wip": 0,
+      "ready-backlog": 0,
+      "ready-todo": 1
+    },
+    "orphans": [],
+    "parallelizable": [
+      "ready-backlog",
+      "ready-todo"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 1,
+        "done": 2,
+        "in_progress": 1,
+        "phase": 0,
+        "total": 5
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 1,
+        "total": 1
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 2,
+        "total": 1
+      }
+    ],
+    "summary": {
+      "backlog": 3,
+      "blocked": 1,
+      "done": 2,
+      "estimate_hours_total": 0.0,
+      "in_progress": 1,
+      "percent_done": 28.6,
+      "total": 7
+    }
+  },
+  "parity-project": {
+    "critical_path": [
+      "F0.T1",
+      "F0.T2",
+      "F1.T1",
+      "F1.T2"
+    ],
+    "downstream_impact": {
+      "": 0,
+      "BAD.MISSING": 0,
+      "BAD.ROUTE": 0,
+      "BAD.SELF": 0,
+      "CYC.A": 2,
+      "CYC.B": 2,
+      "CYC.C": 2,
+      "F0.T1": 5,
+      "F0.T2": 3,
+      "F1.T1": 2,
+      "F1.T2": 0
+    },
+    "orphans": [
+      {
+        "missing_dep_id": "NOPE.T9",
+        "task_id": "BAD.MISSING"
+      }
+    ],
+    "parallelizable": [
+      "F0.T1",
+      ""
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 2
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 1,
+        "total": 4
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 2,
+        "total": 4
+      },
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 3,
+        "total": 1
+      }
+    ],
+    "summary": {
+      "backlog": 11,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 5.9,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 11
+    }
+  },
+  "single-unestimated": {
+    "critical_path": [
+      "A"
+    ],
+    "downstream_impact": {
+      "A": 0
+    },
+    "orphans": [],
+    "parallelizable": [
+      "A"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 1
+      }
+    ],
+    "summary": {
+      "backlog": 1,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 0.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 1
+    }
+  },
+  "tie": {
+    "critical_path": [
+      "right",
+      "root"
+    ],
+    "downstream_impact": {
+      "left": 0,
+      "right": 0,
+      "root": 2
+    },
+    "orphans": [],
+    "parallelizable": [
+      "root"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 3
+      }
+    ],
+    "summary": {
+      "backlog": 3,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 5.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 3
+    }
+  },
+  "tie-reversed": {
+    "critical_path": [
+      "left",
+      "root"
+    ],
+    "downstream_impact": {
+      "left": 0,
+      "right": 0,
+      "root": 2
+    },
+    "orphans": [],
+    "parallelizable": [
+      "root"
+    ],
+    "phase_counts": [
+      {
+        "blocked": 0,
+        "done": 0,
+        "in_progress": 0,
+        "phase": 0,
+        "total": 3
+      }
+    ],
+    "summary": {
+      "backlog": 3,
+      "blocked": 0,
+      "done": 0,
+      "estimate_hours_total": 5.0,
+      "in_progress": 0,
+      "percent_done": 0.0,
+      "total": 3
+    }
+  }
+}

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/project"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
@@ -181,18 +181,19 @@ type statusRow struct {
 // that's a different consumer's convention; Python's row order comes from
 // iterating tasks.json directly.
 func buildStatusRows(ctx context.Context, backend state.Backend, projectID string, tasks []model.Task, rtr router.Router, costByTask map[string]float64) ([]statusRow, error) {
-	rows := make([]statusRow, 0, len(tasks))
-	for _, t := range tasks {
+	// One query for every task's live status, not one per task. `project` is
+	// where that overlay lives now: the dashboard needs the same answer, and
+	// two copies of "which status is the real one" is exactly the kind of
+	// near-duplicate that drifts. A task with no row keeps tasks.json's own
+	// status, which is what the per-task form did with ErrTaskNotFound.
+	hydrated, err := project.Hydrate(ctx, backend, tasks)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]statusRow, 0, len(hydrated))
+	for _, t := range hydrated {
 		status := t.Status
-		rt, err := backend.Task(ctx, t.ID)
-		switch {
-		case err == nil:
-			status = rt.Status
-		case errors.Is(err, state.ErrTaskNotFound):
-			// tasks.json's own status stands until Bootstrap seeds a row.
-		default:
-			return nil, fmt.Errorf("read task %q: %w", t.ID, err)
-		}
 
 		lastEvent, lastEventHuman, err := lastEventFor(ctx, backend, t.ID, projectID)
 		if err != nil {
