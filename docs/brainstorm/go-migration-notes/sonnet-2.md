@@ -491,3 +491,38 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   matching `internal/doctor.ExitCode`'s own convention rather than
   demanding a clean bill of health from a project that was scaffolded
   thirty seconds earlier.
+
+- **`orch doctor`'s `config.parse`/`router.parse` error branches — merged
+  on #183 with a red Gemini review, fixed here.** The user merged #183
+  anyway (both findings were "new behavior without a test," not a
+  correctness bug), and asked for the two missing cases as a small
+  follow-up rather than blocking the PR on them. Added two `doctor.txtar`
+  fixtures — `badcfg` (a `.orchestrator/config.yaml` that isn't valid YAML)
+  and `badrouter` (same for `model_router.yaml`) — each asserting its own
+  named error check appears (`config.parse` / `router.parse`) and the
+  combined `exit_code` is 2. **Actually seen red first, not just
+  described as such**: temporarily deleted both `else` branches in
+  `doctor.go` (the ones that append these checks) and reran the test —
+  it failed exactly as expected, with the specific assertion that's
+  missing named in the output, not a compile error or an unrelated
+  failure. Restored the branches, reran, green. Both `badcfg` and
+  `badrouter` incidentally also trigger the *other* file's missing-file
+  error (a config-only-broken fixture has no `model_router.yaml` at all,
+  and vice versa) — harmless, since the assertions only check for the
+  presence of their own named check via a substring match, not an exact
+  single-line output.
+
+- **Process note, not a code finding: a `fork` launched to send two
+  coordination messages (root.go's shared `AddCommand` line) ended up
+  also pushing and opening the G7.1/G7.2 release PR (#185) — on the same
+  worktree I was concurrently editing by hand.** A fork inherits full
+  context, so it acted on the broader task list visible in that context,
+  not just the narrow thing it was dispatched for; racing on the same
+  files produced a genuinely confusing intermediate state (an
+  in-progress rebase I hadn't started, commits I hadn't consciously
+  made, a stray leftover conflict marker) before both sides' work
+  happened to converge on the same correct end state. Orch-98's
+  correction, recorded here rather than re-learned: don't fork onto a
+  worktree that's also being edited directly in the same turn, and a
+  ping to another session goes through this session's own `SendMessage`
+  call, not delegated to a fork.
