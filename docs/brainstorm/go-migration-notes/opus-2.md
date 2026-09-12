@@ -862,3 +862,48 @@ question for Python.
 
   Each step is an improvement on its own, which is what made the merge order
   safe to interleave with #205 rather than having to land all three at once.
+
+## Looking with a browser — the tooling, and what it cost to get right
+
+- **`--dump-dom` cannot see the view that matters.** It prints after `load`,
+  and the dashboard opens `/api/events/stream` as soon as it is authenticated,
+  so the command hangs until `timeout` kills it (`rc=124`).
+  `--virtual-time-budget` does not help: it advances virtual time and does not
+  close a real socket. The unauthenticated view dumps fine — which is exactly
+  why the tool looked adequate until someone logged in.
+
+  `scripts/ui-dom.py` drives CDP instead: navigate, settle, read
+  `document.documentElement.outerHTML`. Forty lines of RFC 6455 over stdlib
+  sockets, which is cheaper than a dependency in a repo whose Python side is
+  frozen.
+
+- **The console listener is the half that turns a symptom into a diagnosis.**
+  Subscribing to `Runtime.exceptionThrown` *before* navigating is what changed
+  the finding from "the page is blank" — which nobody can act on — to
+  `TypeError: Cannot read properties of undefined (reading 'done')` at a named
+  line, and from there to a route answering HTML with a 200. Two sessions had
+  already looked at that blank page and set it aside as inconclusive.
+
+- **A page that failed to load still produces a DOM**, and it greps like a
+  real one. Navigating before the server was listening gave Chrome's own error
+  page: 188 KB of markup, no assertion matched, and the reason was only visible
+  in `<title>127.0.0.1</title>`. Hence the `until curl -sf …` in the recipe
+  rather than a `sleep`, and the advice to check the title first.
+
+- **`pgrep -f <pattern>` matches its own shell**, so a clean machine reports
+  one survivor and "did I leave a browser running?" answers wrong. Cost several
+  minutes of chasing a process that was the question itself.
+
+- **Bytes and the mount point, not the status code.** A page that throws during
+  render still returns 200 and still serves the shell. `wc -c` plus
+  `<div id="root">` is what made three PRs a measurable progression — 597 bytes
+  and an empty root, 9471 with the SPA's own error alert, 21692 with the page
+  — instead of three assertions that it worked.
+
+- **A stale comment above fresh code.** `review.yml`'s block comment still
+  says `no key, crash, bad output -> neutral, never success`, which is what the
+  step did *before* the conclusion logic right below it was rewritten to fail
+  on everything but a missing key. Reported to orch-98 rather than edited: it
+  is their file and their change, and a comment that contradicts the code under
+  it is worth one message. Same class as the `BudgetReporter` comment that said
+  "aliased" when it was a copy — the fix there was to make the comment true.
