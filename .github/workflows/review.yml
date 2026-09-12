@@ -280,6 +280,23 @@ jobs:
       # non-deterministic (the same commit passed on the next attempt), so it
       # earns exactly one retry. Exit 1 means the answer was off-schema, which
       # a retry would reproduce, so it does not.
+      # Keep what the reviewer actually returned. An unreadable verdict is
+      # only diagnosable from the raw text, and a rerun replaces the log that
+      # held it (#206: the failed run's log was gone by the time anyone
+      # looked). Uploaded before parsing so a parser crash cannot lose it.
+      - name: Keep the raw reviewer output
+        if: steps.key.outputs.present == 'true'
+        env:
+          RAW: ${{ steps.gemini.outputs.summary }}
+        run: printf '%s' "${RAW:-}" > reviewer-raw.txt
+      - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          name: reviewer-raw-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: reviewer-raw.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Parse the verdict
         id: parse
         if: steps.key.outputs.present == 'true'
@@ -392,11 +409,15 @@ jobs:
             TITLE="Skipped — no API key"
             SUMMARY="GEMINI_API_KEY is not set on this repository. Set it with \`gh secret set GEMINI_API_KEY\` — see docs/CI-REVIEW.md. The review did not run; this is not a pass."
           elif [ "$GEMINI_OUTCOME" != "success" ]; then
-            CONCLUSION=neutral
+            # failure, not neutral: a neutral check leaves the PR "clean and
+            # mergeable" in the checks summary, and #206 nearly merged on a
+            # verdict nobody had read. Only "no API key" stays neutral — that
+            # one is a repository setting, not a review outcome.
+            CONCLUSION=failure
             TITLE="Reviewer failed"
             SUMMARY="The Gemini CLI step did not complete. ${GEMINI_ERROR:-See the run log.} The review did not run; this is not a pass."
           elif [ "$PARSE_OUTCOME" != "success" ] && [ "$RETRY_PARSE_OUTCOME" != "success" ]; then
-            CONCLUSION=neutral
+            CONCLUSION=failure
             if [ "${RETRYABLE:-false}" = "true" ]; then
               TITLE="Reviewer returned nothing"
               SUMMARY="The reviewer ran twice and produced an empty response both times — it did not answer, rather than answering badly. See the run log. This is not a pass."
