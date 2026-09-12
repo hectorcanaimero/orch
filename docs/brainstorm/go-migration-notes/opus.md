@@ -788,3 +788,49 @@ Go. Cada uno verificado ejecutando, no leyendo.
 la enuncia al revés, que es como se revisa: si el diff lee `.Status` o
 `.Comments`, sigue el slice hasta su carga y comprueba que hay un `Hydrate` en
 medio.
+
+## Dos cosas que solo se ven mirando la pantalla
+
+- **Bug del port (sin número) — el banner anunciaba un servidor que nunca
+  arrancó.** `Server.Ready()` se cierra también cuando el `net.Listen` falla —
+  si no, un waiter se quedaría colgado para siempre esperando a un servidor que
+  no va a venir — así que la goroutine del banner corre igual. Con el puerto
+  ocupado el operador veía:
+
+  ```
+  Orch dashboard running on http://
+  Project: alpha (/…/alpha)
+  …
+  listen on 127.0.0.1:7431: bind: address already in use
+  ```
+
+  Una URL vacía y, debajo, la razón real. Mío, de #184; #201 lo heredó al
+  copiar la forma para el portfolio.
+
+  Lo interesante es el **test**. El primero que escribí fue un txtar que
+  arrancaba `orch dashboard` con un host irresoluble y afirmaba
+  `! stdout 'running on'`. Pasaba. Lo quité el arreglo y **seguía pasando**,
+  cinco veces seguidas: dentro del proceso de testscript la goroutine del
+  banner pierde la carrera contra el retorno de `Serve`, así que la línea no
+  llega a imprimirse ni con el bug puesto. Un test que no puede fallar no
+  cubre nada — es la forma del bug 24 y del `statusAttrs` otra vez, pero desde
+  el lado del tiempo en vez del de los datos. El test definitivo llama a
+  `printDashboardBanner` directamente sobre un `Server` cuyo `Serve` ya falló:
+  determinista, y en rojo sin la guarda.
+
+  Regla práctica que me llevo: **cuando lo que arreglas es una carrera,
+  comprueba que el test falla sin el arreglo _repetidamente_**, no una vez. Una
+  sola pasada verde es indistinguible de una carrera que salió del otro lado.
+
+- **La SPA pide un token que un dashboard `operator` no tiene.** Reproducido
+  sobre `main` (binario y SPA de main, chromium headless, perfil operator):
+  `/api/whoami` responde `{"profile":"operator"}` — el servidor no exige nada —
+  y la página renderiza el formulario de login. `ProtectedRoute` mira
+  `useAuth().isAuthenticated`, que es `Boolean(localStorage.orch_token)` y no
+  consulta el perfil en ningún momento. Con `?token=cualquier-cosa` el root
+  queda **vacío** (613 bytes, 25 s de virtual time), que no sé si es la SPA o
+  un artefacto de `--dump-dom`; lo primero sí está claro.
+
+  No es de ninguna PR en vuelo: está en `main` y lleva ahí desde G5.x. Lo dejo
+  anotado con el comando exacto para que quien lleve `web/` lo reproduzca en
+  vez de discutirlo.

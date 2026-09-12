@@ -35,7 +35,7 @@ function getServerSnapshot(): string | null {
  * the address bar with `history.replaceState`.
  *
  * This is how the "send the client one URL" flow actually works: the operator
- * shares `https://<tunnel>/?token=s3cr3t`, the browser loads the shell (which
+ * shares `https://<tunnel>/?token=<the-token>`, the browser loads the shell (which
  * the server serves without a token — see `_is_public_shell` in
  * `orchestrator/dashboard/middleware.py`), and this runs before the first
  * render so the app boots authenticated instead of bouncing to /login.
