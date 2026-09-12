@@ -444,3 +444,50 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   absence would be a test of the environment, not the command. `mcp.config`
   is the one check asserted on by name: a freshly copied fixture never
   ships a `.mcp.json`, so that result is the same everywhere.
+
+- **G7.1/G7.2 (goreleaser + release CI) — the tag collision was the real
+  find, not the goreleaser config itself.** `.github/workflows/release.yml`
+  (the Python wheel) has always triggered on a bare `tags: v*` — harmless
+  while the only tags matching it were Python releases, but the instant a
+  plain `v0.12.0` Go-release tag gets pushed, that same push ALSO fires
+  the wheel workflow, which would try to build a Python wheel and attach
+  it to what should be a Go binary release. Existing tags confirm the
+  history: `v0.5.0`…`v0.10.1` (pre-freeze Python), then `v0.11.0-py` (the
+  freeze). Raised with orch-98 before writing `.goreleaser.yaml` rather
+  than guessing at a fix to a workflow outside this lane; resolved as a
+  suffix split (`v*-py` stays Python's, bare `v*` is Go's from `v0.12.0`
+  on) rather than a prefix — "one product, one series," continuing
+  Python's own pre-freeze numbering instead of resetting to `v1.0.0`. See
+  `docs/RELEASING.md` for the full scheme and why the tag glob alone
+  (`v[0-9]*` on the Go side) does NOT exclude `-py` tags by itself — `*`
+  matches the suffix too — so `release-go.yml`'s job also checks
+  `!endsWith(github.ref, '-py')` at runtime; that check is the real guard.
+
+  **`goreleaser`'s `brews` config key is deprecated in v2.18.1 with no
+  documented replacement for a plain CLI-tool Homebrew formula** (only
+  `homebrew_casks`, for GUI apps, is new) — checked its own JSON schema to
+  confirm `brews` is still the only key that does what's needed; `goreleaser
+  check` fails on it (exit 2, "uses deprecated properties") but `goreleaser
+  release --snapshot --clean` builds and writes a correct formula anyway,
+  verified end to end against a real 4-binary build. Accepted rather than
+  worked around: CI's dry-run job runs the real `release` command, not
+  `check`, so this never gates a PR — noted here so a future goreleaser
+  upgrade that actually removes `brews` doesn't come as a surprise.
+
+  **Not created by this PR, and said so explicitly rather than silently
+  assumed**: `github.com/hectorcanaimero/homebrew-orch` (goreleaser pushes
+  a commit to it, doesn't create the repo) and the `HOMEBREW_TAP_GITHUB_TOKEN`
+  secret it needs — creating a new public repo under the maintainer's own
+  GitHub account is a real, visible action outside what a PR should do
+  unilaterally. `docs/RELEASING.md` has the one-time `gh repo create`
+  command for whoever does this before the first real `v*` tag.
+
+  **`orch doctor` not existing as a CLI command** (found while wiring this
+  PR's own G7.2 smoke test) turned out big enough to need its own PR,
+  landed ahead of this one — see that PR's own entry in this file rather
+  than duplicating it here. `release-go.yml`'s `smoke-install` job treats
+  exit 1 (warnings only, e.g. no `.mcp.json` on a bare scratch project) as
+  a pass and only fails on exit ≥2 (a real `error`-status check) —
+  matching `internal/doctor.ExitCode`'s own convention rather than
+  demanding a clean bill of health from a project that was scaffolded
+  thirty seconds earlier.
