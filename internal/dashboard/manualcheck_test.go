@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/state"
 )
 
 // A real server, the real embedded SPA, real HTTP requests. Not a unit test —
@@ -121,5 +125,90 @@ func TestManualCheckRealSPA(t *testing.T) {
 		}
 		t.Logf("%s %-36s %d  %s", mark, tc.path, resp.StatusCode,
 			strings.ReplaceAll(strings.TrimSpace(string(body))[:min(60, len(strings.TrimSpace(string(body))))], "\n", " "))
+	}
+}
+
+// The b3 endpoints against a REAL database, not a fake: the two reads they
+// added are SQL, and a fake would be testing the fake. Skipped unless
+// ORCH_MANUAL_CHECK=1, like the SPA check above, and it prints the payloads so
+// "I ran it and read it" is something the next person can re-run.
+func TestManualCheckSprintAndMilestones(t *testing.T) {
+	if os.Getenv("ORCH_MANUAL_CHECK") == "" {
+		t.Skip("set ORCH_MANUAL_CHECK=1")
+	}
+	ctx := context.Background()
+
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "config.yaml"),
+		[]byte("spec_root: specs\nstate:\n  backend: sqlite\nbudgets_preset: conservative\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(root, "tasks.json"), []byte(`{
+	  "meta": {"project": "manual-check"},
+	  "tasks": [
+	    {"id":"T-1","phase":0,"title":"Scaffold","model":"claude/sonnet","status":"todo","estimateHours":1.0},
+	    {"id":"T-2","phase":0,"title":"Database","model":"claude/sonnet","status":"todo","dependencies":["T-1"],"estimateHours":2.0},
+	    {"id":"T-3","phase":1,"title":"API","model":"claude/sonnet","status":"todo","dependencies":["T-2"],"estimateHours":4.0}
+	  ]
+	}`), 0o600)
+
+	db, _, err := state.Open(ctx, filepath.Join(root, "orch.db"))
+	if err != nil {
+		t.Fatalf("open the database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	backend := state.NewSQLite(db, "manual-check", root)
+	f, err := model.LoadTasksFile(filepath.Join(root, "tasks.json"))
+	if err != nil {
+		t.Fatalf("load tasks.json: %v", err)
+	}
+	if err := backend.Bootstrap(ctx, f.Tasks); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	// T-1 finished; T-3 blocked, with a reason on its last event.
+	if err := backend.Transition(ctx, "T-1", model.StatusDone, state.Note{}); err != nil {
+		t.Fatalf("finish T-1: %v", err)
+	}
+	if err := backend.Transition(ctx, "T-3", model.StatusBlocked, state.Note{}); err != nil {
+		t.Fatalf("block T-3: %v", err)
+	}
+	if err := backend.AppendEvent(ctx, "run-1", state.Event{
+		EventType: "block", TaskID: "T-3", Backend: "claude",
+		TS:    time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Extra: map[string]any{"reason": "waiting on T-2", "pid": 1},
+	}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	c := cfg(ProfileOperator, "")
+	c.Port = 0
+	s, err := New(c, Options{Static: spaHandler(t), State: backend, Paths: pathsFor(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.Serve(runCtx) }()
+	defer func() {
+		cancel()
+		if err := <-serveErr; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	}()
+	<-s.Ready()
+	if s.BoundAddr() == "" {
+		t.Fatalf("the listener never came up: %v", <-serveErr)
+	}
+
+	for _, path := range []string{"/api/sprint", "/api/milestones"} {
+		resp, rerr := http.Get("http://" + s.BoundAddr() + path) // #nosec G107 -- the loopback listener this test started
+		if rerr != nil {
+			t.Fatalf("GET %s: %v", path, rerr)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		t.Logf("%s %d\n%s", path, resp.StatusCode, string(body))
 	}
 }
