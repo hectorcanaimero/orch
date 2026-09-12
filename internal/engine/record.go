@@ -34,6 +34,12 @@ const (
 	EventReconciled = "reconciled"
 	// EventPRCreated marks a pull request opened for a finished task.
 	EventPRCreated = "pr_created"
+
+	// EventSprintDone marks the run whose queue emptied (F4.7). Run-level,
+	// so its task_id is empty; the counts ride in `extra`. Go only —
+	// Python declares no such type, which internal/state's
+	// goOnlyEventTypes explains.
+	EventSprintDone = "sprint_done"
 )
 
 // RecordStart writes the `dispatch` event and the in-flight row, in that

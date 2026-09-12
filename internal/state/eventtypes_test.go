@@ -46,8 +46,18 @@ func TestEventTypesMatchPython(t *testing.T) {
 		}
 	}
 	for name := range eventTypes {
-		if !want[name] {
+		if !want[name] && !goOnlyEventTypes[name] {
 			extra = append(extra, name)
+		}
+	}
+	// A name in the carve-out that Python has since declared is no longer
+	// Go-only, and leaving it in the list would hide the day the two agree.
+	for name := range goOnlyEventTypes {
+		if want[name] {
+			t.Errorf("%q is in goOnlyEventTypes but Python now declares it; drop the carve-out", name)
+		}
+		if !eventTypes[name] {
+			t.Errorf("%q is carved out of the comparison but Go does not accept it", name)
 		}
 	}
 	sort.Strings(missing)
@@ -59,6 +69,31 @@ func TestEventTypesMatchPython(t *testing.T) {
 	if len(extra) > 0 {
 		t.Errorf("Go accepts these and Python does not declare them: %v", extra)
 	}
+}
+
+// goOnlyEventTypes are types the Go binary emits and Python does not declare.
+//
+// The comparison above exists because a type ONE binary emits and the OTHER
+// rejects leaves a run history with a hole in it (bug 9). The direction is
+// what makes this carve-out safe rather than a hole of its own: Python's
+// validator refuses an unknown type only on WRITE, and `iter_events` filters
+// on project, run, task and id — never on the type — so a row Go wrote reads
+// back in Python intact, in `orch events` and in the dashboard alike. Checked
+// by reading `sqlite_backend.iter_events`'s WHERE clause, not assumed.
+//
+// The list is explicit, and each entry has to earn its place here rather than
+// be discovered as drift:
+//
+//   - `sprint_done` (F4.7) — emitted once when a run's queue empties. It is a
+//     Go-side plan item; the Python line is frozen, so adding it to
+//     `EVENT_TYPES` there would be a new feature in a codebase that is not
+//     taking any.
+//
+// Same shape as `TestGoTreeMatchesPython`'s four-entry `goOnly` allowlist for
+// the `expo-mobile` template: a deliberate Go-only addition, named, with the
+// reason next to it.
+var goOnlyEventTypes = map[string]bool{
+	"sprint_done": true,
 }
 
 // The four names the plan's FR-STATE-7 listed are not event types.
