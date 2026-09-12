@@ -41,29 +41,15 @@ func staticFS() fs.FS {
 	}
 }
 
-// spaHandler is a stand-in for what spa.go will expose: serve the file when it
-// exists, fall back to the shell on GET/HEAD when it does not.
+// spaHandler is the REAL handler over a fake build tree.
+//
+// It used to be a hand-written stand-in for what spa.go would expose one day.
+// Now that `SPAHandler` exists, keeping the copy would mean every test about
+// the static surface — the #97 regression test among them — was asserting
+// against a lookalike rather than against the thing `orch dashboard` serves.
 func spaHandler(t *testing.T) http.Handler {
 	t.Helper()
-	files := staticFS()
-	fileServer := http.FileServer(http.FS(files))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" {
-			name = "index.html"
-		}
-		if _, err := fs.Stat(files, name); err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		body, _ := fs.ReadFile(files, "index.html")
-		_, _ = w.Write(body)
-	})
+	return SPAHandler(staticFS())
 }
 
 func newTestServer(t *testing.T, c Config, projectRoot string) *Server {

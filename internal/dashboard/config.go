@@ -70,6 +70,20 @@ func FromConfig(cfg config.Config) (Config, error) {
 // request including its own token form, which is a server nobody can use — and
 // the operator finds out from a blank page rather than from startup.
 func (c Config) Validate() error {
+	// The profile first, and here rather than only in FromConfig: a caller
+	// that sets it directly — `orch dashboard --profile stakholder` — would
+	// otherwise skip the one check that catches a typo, and an unknown
+	// profile is not inert. `decide` reads anything it does not recognise as
+	// "no stakeholder context", which means ALLOW EVERYTHING. A misspelled
+	// flag meant to restrict access would open it, and the symptom is a page
+	// that works.
+	switch c.Profile {
+	case ProfileOperator, ProfileStakeholder, ProfileBoth:
+	default:
+		return fmt.Errorf(
+			"dashboard profile %q is not one of %s, %s, %s",
+			c.Profile, ProfileOperator, ProfileStakeholder, ProfileBoth)
+	}
 	if c.Profile == ProfileStakeholder && c.Token == "" {
 		return fmt.Errorf(
 			"dashboard.profile is %q but dashboard.token is empty — every "+

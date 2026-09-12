@@ -411,3 +411,32 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   far past estimate the finished work ran. They answer different questions and
   can disagree by a lot on the same project. Worth knowing before someone
   "unifies" them.
+
+- **A test that HANGS is a test that found something.** `orch dashboard
+  --profile stakholder` — the deliberate typo in the testscript — did not
+  error. It started the server and served, and the txtar sat there until the
+  400-second timeout killed it.
+
+  The hole: `FromConfig` validates the profile it reads from config.yaml, and
+  the command then overwrote it with the flag's value and only called
+  `Validate`, which checked the token and the port and not the profile. An
+  unknown profile is not inert — `decide` reads anything it does not recognise
+  as "no stakeholder context", which is **allow everything**. So a misspelled
+  flag meant to RESTRICT access opens it, and the symptom is a page that works.
+
+  Fixed in `Validate` rather than in the command, so it covers every
+  construction path rather than the one that happened to be wrong. The comment
+  in `FromConfig` already said exactly this about the config.yaml spelling; I
+  wrote that comment and then left the flag path open two PRs later, which is
+  its own lesson about where a rule belongs: **validate where the value is
+  used, not where it is first read.**
+
+- **Two different fixtures are called `parity-project`.**
+  `internal/graph/testdata/parity-project` is deliberately broken — a
+  self-dependency, a cycle, a missing dep, a task with no id — so the
+  validators have every error kind to report.
+  `testdata/parity-project` at the repo ROOT is a real, healthy project, the
+  one `scripts/parity.sh` and every CLI testscript use (the harness copies it
+  into `$WORK/proj` for every script, which is why an `orch init proj` at the
+  top of a new txtar fails with a conflict). They are not interchangeable and
+  the names do not say so.
