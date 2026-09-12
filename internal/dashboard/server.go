@@ -342,19 +342,32 @@ func (s *Server) registerRoutes() {
 	for _, r := range s.routes() {
 		s.mux.Handle(r.pattern, s.gated(r))
 	}
-	// `/api/portfolio` exists only under `orch dashboard --portfolio`. Without
-	// this it would fall through to the SPA at "/" and answer **200 with
-	// HTML**, which is not a refusal any client can act on: the portfolio
-	// page's own "is this process a portfolio?" check reads a 404, and a page
-	// of HTML parsed as a payload gives it a truthy value and then a
-	// TypeError. Found by orch-opus reviewing G8.5 against the G8.6 client.
+	// Anything under the data prefixes that no route above claimed answers
+	// **404 with JSON**, instead of falling through to the SPA at "/".
 	//
-	// Ungated, deliberately, and it is the second exception to "every data
-	// route goes through `gated`" after the SPA. It carries no data — it is
-	// the ABSENCE of a feature — and gating it would make a stakeholder
-	// dashboard answer 401 for something that does not exist in this process,
-	// which is the same unusable answer as the 200 by another route.
-	s.mux.HandleFunc("GET /api/portfolio", handlePortfolioDisabled)
+	// This is a rule, not a patch, because the same bug has now been found
+	// three times: a path the Go port has not implemented answered 200 with
+	// the SPA's HTML, and every client that fetched it got a page of markup
+	// where it expected data. `/api/portfolio` (G8.5) crashed the portfolio
+	// page's feature check; `/stakeholder/summary` crashes the landing page
+	// with `Cannot read properties of undefined (reading 'done')`, because
+	// axios hands the HTML string through and `if (!data)` finds a non-empty
+	// string truthy. `/api/tunnel/logs` is the third, waiting for a consumer.
+	//
+	// A 404 is what every one of those clients already handles. The SPA's own
+	// error branches exist and are unreachable while the server answers 200.
+	//
+	// Ungated, deliberately — the second exception to "every data route goes
+	// through `gated`" after the SPA itself. It carries no data: it is the
+	// statement that a route does not exist here. Gating it would make a
+	// stakeholder dashboard answer 401 for something that exists nowhere,
+	// which is as unusable an answer as the 200 was, one status code along.
+	//
+	// `http.ServeMux` resolves by specificity, so every real route above
+	// still wins over these two prefixes.
+	for _, prefix := range notFoundPrefixes {
+		s.mux.HandleFunc(prefix, handleAPINotFound)
+	}
 	// Last, and ungated. `http.ServeMux` resolves by pattern specificity, not
 	// registration order, so "/api/whoami" wins over "/" wherever this line
 	// sits — but keeping it last is how a reader sees that everything above

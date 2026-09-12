@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -215,23 +214,4 @@ func capBlockers(rows []blockerRow) []blockerRow {
 		return rows[:portfolioBlockerLimit]
 	}
 	return rows
-}
-
-// portfolioDisabledPayload is what a single-project dashboard answers on
-// `/api/portfolio`.
-//
-// The **404 is the contract** — the page's "is this process a portfolio?"
-// check reads the status, not the body. The body is for whoever curls the
-// route and needs to know it is a mode they did not start rather than a
-// version that lacks the feature. Wording agreed with orch-98.
-type portfolioDisabledPayload struct {
-	Error string `json:"error"`
-	Hint  string `json:"hint"`
-}
-
-func handlePortfolioDisabled(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusNotFound, portfolioDisabledPayload{
-		Error: "portfolio mode is off",
-		Hint:  "start orch dashboard with --portfolio '<glob>' to serve several projects",
-	})
 }

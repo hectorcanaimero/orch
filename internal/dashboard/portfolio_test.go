@@ -338,8 +338,10 @@ func TestNewPortfolioRefusals(t *testing.T) {
 // that is not about the portfolio at all: it is about the dashboard that is
 // NOT one.
 //
-// `/api/portfolio` is registered only under `--portfolio`, so without this it
-// falls through to the SPA at "/" and answers **200 with HTML**. The page's
+// `/api/portfolio` is registered only under `--portfolio`, so without the
+// prefix rule it falls through to the SPA at "/" and answers **200 with
+// HTML**. Since the rule landed this is one case of it rather than a handler
+// of its own — the same 404 any unimplemented data route gets. The page's
 // "is this process a portfolio?" check reads a 404; a page of HTML parsed as
 // a payload is truthy, so the nav item appears on every single-project
 // dashboard and the page then indexes a string. Found by orch-opus reviewing
@@ -357,12 +359,17 @@ func TestSingleProjectDashboardRefusesPortfolio(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
 		t.Errorf("Content-Type = %q; HTML here is what the bug looked like", ct)
 	}
-	var body portfolioDisabledPayload
+	var body apiNotFoundPayload
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the refusal: %v\n%s", err, rec.Body.String())
 	}
-	if body.Error == "" || body.Hint == "" {
-		t.Errorf("the refusal says nothing actionable: %+v", body)
+	if body.Error == "" {
+		t.Errorf("the refusal says nothing: %+v", body)
+	}
+	// The path is echoed so a reader of a log or a curl knows which route
+	// was missing, not merely that one was.
+	if body.Path != "/api/portfolio" {
+		t.Errorf("path = %q, want the path that was asked for", body.Path)
 	}
 }
 

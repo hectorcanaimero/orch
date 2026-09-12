@@ -766,3 +766,43 @@ question for Python.
   behind it. `net.JoinHostPort` now, with a table that checks every case is
   still parseable by `net.SplitHostPort` rather than only that the string looks
   right.
+
+## The 404 rule — a class, not three patches
+
+- **Three times is a rule.** A path the Go port had not implemented answered
+  **200 with the SPA's HTML**, because `"/"` takes whatever no route claimed.
+  Every client that fetched one got a page of markup where it expected data:
+
+  - `/api/portfolio` broke the portfolio page's "is this a portfolio?" check
+    (found by orch-opus reviewing G8.5 against G8.6);
+  - `/stakeholder/summary` **crashes the landing page** — axios hands the HTML
+    string through, `if (!data) return null` finds a non-empty string truthy,
+    and `data.summary.done` throws `Cannot read properties of undefined
+    (reading 'done')`. Python serves that route (`server.py:1731`); the Go
+    port never wired it;
+  - `/api/tunnel/logs`, the third, waiting for a consumer.
+
+  Found by sweeping all fifteen paths the SPA fetches against the running Go
+  binary — eleven JSON, two 404, two HTML — which is a two-minute check nobody
+  had run.
+
+- **The measurement that made the case.** With the rule, the landing page goes
+  from 597 bytes and an empty root to 9471 bytes and the SPA's own
+  `Failed to load summary` alert. That branch was written all along and was
+  unreachable while the server answered 200. *A client's error handling cannot
+  run if the server never produces the error* — the same shape as the seam
+  between two PRs, one level down.
+
+- **Prefixes, not `"/"`.** `/api/` and `/stakeholder/` are the data prefixes:
+  everything under them is fetched by code, never typed by a person, so the
+  answer has to be machine-readable. Registering the rule at `"/"` would 404 the
+  app itself, so there is a test that a hard refresh on `/kanban` still reaches
+  the SPA — checking the belief about `http.ServeMux` specificity rather than
+  restating it, because a prefix that shadowed real routes is a worse failure
+  than the one being fixed.
+
+- **Ungated, and it is the second exception after the SPA.** A 404 carries no
+  data: it is the statement that a route exists nowhere. Gating it would make a
+  stakeholder dashboard answer 401 for something that exists nowhere, which is
+  the same unusable answer as the 200 was, one status code along — and would
+  break the same client check in a new place.
