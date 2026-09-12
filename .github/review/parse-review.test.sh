@@ -92,7 +92,7 @@ rejects "truncated JSON"             '{"verdict":"approve","blocking":[],"summar
 rejects "verdict outside the enum"   '{"verdict":"lgtm","blocking":[],"minor":[],"summary":"ok"}'
 rejects "empty summary"              '{"verdict":"approve","blocking":[],"minor":[],"summary":"  "}'
 rejects "finding missing rule"       '{"verdict":"request_changes","blocking":[{"file":"a.go","why":"bad"}],"minor":[],"summary":"x"}'
-rejects "finding missing file"       '{"verdict":"request_changes","blocking":[{"rule":"r","why":"bad"}],"minor":[],"summary":"x"}'
+rejects "finding missing why"        '{"verdict":"request_changes","blocking":[{"file":"a.go","rule":"r"}],"minor":[],"summary":"x"}'
 rejects "blocking is not a list"     '{"verdict":"approve","blocking":"none","minor":[],"summary":"x"}'
 rejects "top level is a list"        '[{"verdict":"approve"}]'
 
@@ -114,6 +114,17 @@ rejects "the CLI envelope with an empty response" "$ENVELOPE_EMPTY" 2
 # reviewed. Retryable, like an empty response — not a schema violation.
 TOOL_CALL='‹call:glob{pattern:"web/**/*test*"}›'
 rejects "a tool-call attempt instead of a verdict" "$TOOL_CALL" 2
+
+# A finding with no `file` (#207: a "Conventional commit" finding about the PR
+# title). Valid JSON, a real verdict, and it must parse; the finding renders
+# against "(PR)" instead of failing the whole review.
+NO_FILE='{"verdict": "comment", "blocking": [], "minor": [{"rule": "Conventional commit", "why": "The PR title starts with ci(review):"}, {"file": ".github/workflows/review.yml", "rule": "New behaviour has a test", "why": "cannot verify from the diff"}], "summary": "Fine, two minors."}'
+printf '%s' "$NO_FILE" > "$TMP/raw.txt"
+if python3 "$PARSE" --raw "$TMP/raw.txt" --out "$TMP/out.json" --comment "$TMP/c.md" >/dev/null 2>"$TMP/err" && grep -qF -- '`(PR)` — **Conventional commit**' "$TMP/c.md"; then
+  echo "ok   a finding without a file parses and renders against (PR)"; PASS=$((PASS + 1))
+else
+  echo "FAIL a finding without a file should parse: $(cat "$TMP/err")"; FAIL=$((FAIL + 1))
+fi
 ENVELOPE_TOOL_CALL='{"session_id":"0e2a9d39","response":"‹call:glob{pattern:\"web/**/*test*\"}›","stats":{}}'
 rejects "the CLI envelope wrapping a tool-call attempt" "$ENVELOPE_TOOL_CALL" 2
 
