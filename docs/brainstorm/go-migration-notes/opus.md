@@ -339,3 +339,40 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `strconv.FormatFloat(v, 'f', 3, 64)` parsed back is the correct form, and it
   is what `project.round3` and `dashboard.round1` do. Worth knowing before the
   next port reaches for the multiply.
+
+- **A recorded cost of zero means "nobody billed", not "free".** The rule is
+  the whole of `pricing.py` and it is easy to port backwards. The backends
+  that genuinely cost nothing to call (a local codex, opencode) are the same
+  ones that report no cost at all, so the two are indistinguishable in the
+  row — and taking the zero literally would show a project running entirely on
+  those backends as having cost nothing. The port keeps Python's reading: above
+  zero is the truth and is never second-guessed; anything else — zero, missing,
+  NEGATIVE — is estimated from tokens against the price table.
+
+- **Two names for the same fallback, and they are not the same.**
+  `metrics_by_model` groups a spend row with no model under `"unknown"`;
+  `total_cost` prices the same row as `"default"`. Both land on the default
+  price row unless a project's `pricing.yaml` defines a model literally called
+  `unknown`, at which point the table and the total disagree by that row.
+  Ported as-is rather than unified: unifying it would change one of the two
+  numbers, and which one is not obvious.
+
+- **The embedded `pricing.yaml` is a copied data file, which means it drifts.**
+  Same shape as the template tree in #145. The guard is the same: the Go test
+  compares against a golden generated from the table PYTHON actually loads
+  (`internal/pricing/testdata/make-pricing-golden.py`), not against the file it
+  was copied from. A model added to Python's table and not to Go's fails the
+  test.
+
+- **`int(used / budget * 100)` truncates, and the threshold comparison rides
+  on it.** 999 tokens of 1000 is 99%, not 100, so a `threshold_pct: 100` fires
+  exactly at the budget and not a token earlier. Worth pinning: the natural Go
+  spelling with `math.Round` moves that boundary and nothing else in the system
+  would notice.
+
+- **"An hour ago" is not "today".** My own test bug, caught by the clock rather
+  than by review: `/api/budget/summary` reads two different windows — a 5h
+  rolling one for tokens and midnight UTC for the USD column — and a row dated
+  `now - 1h` falls outside the second one for the whole first hour of every UTC
+  day. A test that only fails between 00:00 and 01:00 UTC is the kind that gets
+  re-run until it passes. Rows in these tests are dated `now`.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -21,9 +22,15 @@ import (
 type fakeState struct {
 	tasks     []state.TaskRuntime
 	events    []state.Event
+	spends    []state.Spend
 	tasksErr  error
 	eventsErr error
+	spendErr  error
 	lastN     int
+	// lastSince records the window the handler asked for, which is how the
+	// budget summary's "today" and the metrics page's "all of history" are
+	// told apart.
+	lastSince time.Time
 }
 
 func (f *fakeState) Tasks(context.Context, state.TaskFilter) ([]state.TaskRuntime, error) {
@@ -39,6 +46,41 @@ func (f *fakeState) AllEvents(_ context.Context, n int) ([]state.Event, error) {
 		return f.events[len(f.events)-n:], nil
 	}
 	return f.events, nil
+}
+
+func (f *fakeState) AllSpend(_ context.Context, since time.Time) ([]state.Spend, error) {
+	f.lastSince = since
+	if f.spendErr != nil {
+		return nil, f.spendErr
+	}
+	out := make([]state.Spend, 0, len(f.spends))
+	for _, s := range f.spends {
+		ts, ok := state.ParseTS(s.TS)
+		if !ok || ts.Before(since) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// SpendSince is what budget.Gate calls, one provider at a time.
+func (f *fakeState) SpendSince(_ context.Context, backend string, since time.Time) ([]state.Spend, error) {
+	if f.spendErr != nil {
+		return nil, f.spendErr
+	}
+	out := make([]state.Spend, 0, len(f.spends))
+	for _, s := range f.spends {
+		if s.Backend != backend {
+			continue
+		}
+		ts, ok := state.ParseTS(s.TS)
+		if !ok || ts.Before(since) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 const testTasksJSON = `{

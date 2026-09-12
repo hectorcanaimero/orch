@@ -1,0 +1,245 @@
+{
+  "days-newest-first": {
+    "by_day": [
+      {
+        "cost_usd": 0.1,
+        "date": "2026-09-03",
+        "tasks_total": 2,
+        "tokens_in": 20,
+        "tokens_out": 20
+      },
+      {
+        "cost_usd": 0.05,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 10,
+        "tokens_out": 10
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 0.15,
+        "model": "gpt-5",
+        "tasks_total": 3,
+        "tokens_in": 30,
+        "tokens_out": 30
+      }
+    ],
+    "total_cost_usd": 0.15
+  },
+  "empty": {
+    "by_day": [],
+    "by_model": [],
+    "total_cost_usd": 0.0
+  },
+  "empty-model-name": {
+    "by_day": [
+      {
+        "cost_usd": 1.0,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 0
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 1.0,
+        "model": "unknown",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 0
+      }
+    ],
+    "total_cost_usd": 1.0
+  },
+  "negative-tokens": {
+    "by_day": [
+      {
+        "cost_usd": 15.0,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": -5000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 15.0,
+        "model": "claude-sonnet-4-6",
+        "tasks_total": 1,
+        "tokens_in": -5000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "total_cost_usd": 15.0
+  },
+  "recorded-cost-wins": {
+    "by_day": [
+      {
+        "cost_usd": 0.99,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 1000,
+        "tokens_out": 500
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 0.99,
+        "model": "claude-sonnet-4-6",
+        "tasks_total": 1,
+        "tokens_in": 1000,
+        "tokens_out": 500
+      }
+    ],
+    "total_cost_usd": 0.99
+  },
+  "retries-count-one-task": {
+    "by_day": [
+      {
+        "cost_usd": 0.03,
+        "date": "2026-09-01",
+        "tasks_total": 2,
+        "tokens_in": 300,
+        "tokens_out": 300
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 0.03,
+        "model": "gpt-5",
+        "tasks_total": 2,
+        "tokens_in": 300,
+        "tokens_out": 300
+      }
+    ],
+    "total_cost_usd": 0.03
+  },
+  "sorted-by-cost": {
+    "by_day": [
+      {
+        "cost_usd": 18.3,
+        "date": "2026-09-01",
+        "tasks_total": 3,
+        "tokens_in": 3000000,
+        "tokens_out": 0
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 15.0,
+        "model": "claude-opus-4-7",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 0
+      },
+      {
+        "cost_usd": 2.5,
+        "model": "gpt-5",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 0
+      },
+      {
+        "cost_usd": 0.8,
+        "model": "claude-haiku-4-5",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 0
+      }
+    ],
+    "total_cost_usd": 18.3
+  },
+  "tie-breaks-on-name": {
+    "by_day": [
+      {
+        "cost_usd": 0.0,
+        "date": "2026-09-01",
+        "tasks_total": 2,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 0.0,
+        "model": "alpha",
+        "tasks_total": 1,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
+      {
+        "cost_usd": 0.0,
+        "model": "zeta",
+        "tasks_total": 1,
+        "tokens_in": 0,
+        "tokens_out": 0
+      }
+    ],
+    "total_cost_usd": 0.0
+  },
+  "undated-row": {
+    "by_day": [
+      {
+        "cost_usd": 0.25,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 10,
+        "tokens_out": 10
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 0.5,
+        "model": "gpt-5",
+        "tasks_total": 1,
+        "tokens_in": 20,
+        "tokens_out": 20
+      }
+    ],
+    "total_cost_usd": 0.5
+  },
+  "unpriced-model": {
+    "by_day": [
+      {
+        "cost_usd": 5.0,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 5.0,
+        "model": "a-model-nobody-priced",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "total_cost_usd": 5.0
+  },
+  "zero-cost-is-estimated": {
+    "by_day": [
+      {
+        "cost_usd": 18.0,
+        "date": "2026-09-01",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "by_model": [
+      {
+        "cost_usd": 18.0,
+        "model": "claude-sonnet-4-6",
+        "tasks_total": 1,
+        "tokens_in": 1000000,
+        "tokens_out": 1000000
+      }
+    ],
+    "total_cost_usd": 18.0
+  }
+}

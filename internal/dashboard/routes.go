@@ -22,7 +22,8 @@ func (s *Server) routes() []route {
 		{pattern: "GET /api/whoami", name: "api_whoami", handler: s.handleWhoami},
 		{pattern: "GET /api/config/status", name: "api_config_status", handler: s.handleConfigStatus},
 	}
-	return append(out, s.readRoutes()...)
+	out = append(out, s.readRoutes()...)
+	return append(out, s.metricRoutes()...)
 }
 
 // whoamiPayload is `/api/whoami`'s body.
