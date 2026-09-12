@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/dashboard"
+	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
 
 // newDashboardCmd ports `orch dashboard` (the `run` function in
@@ -21,10 +24,11 @@ import (
 // killing the process mid-response.
 func newDashboardCmd(flags *projectFlags) *cobra.Command {
 	var (
-		host    string
-		port    int
-		profile string
-		token   string
+		host       string
+		port       int
+		profile    string
+		token      string
+		withTunnel bool
 	)
 
 	cmd := &cobra.Command{
@@ -80,10 +84,17 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			// changes nothing a caller could act on.
 			defer func() { _ = closeDB() }()
 
+			tunnelOpts, stopTunnel, err := setUpTunnel(cmd, cfg, paths, dashCfg, withTunnel)
+			if err != nil {
+				return err
+			}
+			defer stopTunnel()
+
 			server, err := dashboard.New(dashCfg, dashboard.Options{
 				Paths:  paths,
 				Static: dashboard.SPAHandler(spa),
 				State:  backend,
+				Tunnel: tunnelOpts,
 			})
 			if err != nil {
 				return err
@@ -121,6 +132,8 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			dashboard.ProfileOperator, dashboard.ProfileStakeholder, dashboard.ProfileBoth))
 	cmd.Flags().StringVar(&token, "token", "",
 		"Shared token a stakeholder session must present (default: config.yaml)")
+	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
+		"Also start the configured tunnel, and stop it on exit")
 	return cmd
 }
 
@@ -187,3 +200,88 @@ func firstNonLoopbackIP() string {
 	}
 	return ""
 }
+
+// setUpTunnel wires the tunnel half of the server, and starts it when asked.
+//
+// Returns the options the server needs and a stop func the caller defers. The
+// stop func is always non-nil, so the defer at the call site needs no guard —
+// a nil check there is the kind of thing that gets deleted in a refactor and
+// panics in a shutdown path nobody tests.
+//
+// # Why --tunnel starts it and the dashboard does not
+//
+// Python's dashboard exposes start/stop as POST routes and the SPA drives
+// them. G5.5 made the operator SPA read-only, so those routes have no
+// consumer and are not ported (see internal/dashboard/tunnelroutes.go). That
+// leaves the operator with no way to raise a tunnel at all — hence the flag.
+// It is also the safer shape: the lever is on the command line, where the
+// person holding it is the person who started the process.
+func setUpTunnel(cmd *cobra.Command, cfg config.Config, paths config.Paths,
+	dashCfg dashboard.Config, start bool) (dashboard.TunnelOptions, func(), error) {
+	noop := func() {}
+
+	if !cfg.Tunnel.Enabled {
+		if start {
+			return dashboard.TunnelOptions{}, noop, errors.New(
+				"--tunnel needs `tunnel.enabled: true` in config.yaml")
+		}
+		return dashboard.TunnelOptions{}, noop, nil
+	}
+
+	mgr := tunnel.NewManager(paths.StateDir(), nil, tunnelLogLines)
+	mcfg := tunnel.ManagerConfig{
+		Provider:         cfg.Tunnel.Provider,
+		Command:          cfg.Tunnel.Command,
+		Args:             cfg.Tunnel.Args,
+		URLRegex:         cfg.Tunnel.URLRegex,
+		URLParseTimeoutS: cfg.Tunnel.URLParseTimeoutS,
+		StopTimeout:      time.Duration(cfg.Tunnel.StopTimeoutS * float64(time.Second)),
+	}
+	// A lock left by a process that died without releasing it would refuse
+	// every start until somebody deleted a file by hand. Swept once at boot,
+	// which is the only moment it is safe to assume nothing of ours holds it.
+	mgr.SweepStaleLock(&mcfg)
+
+	opts := dashboard.TunnelOptions{
+		Enabled:  true,
+		Provider: cfg.Tunnel.Provider,
+		Command:  cfg.Tunnel.Command,
+		Manager:  mgr,
+	}
+	if !start {
+		return opts, noop, nil
+	}
+
+	// The tunnel publishes a URL to the internet. Raising one from a
+	// stakeholder-profile dashboard would publish a surface whose own gate
+	// says the operator is not present, so the flag refuses rather than
+	// asking the operator to notice.
+	if dashCfg.Profile != dashboard.ProfileOperator {
+		return dashboard.TunnelOptions{}, noop, fmt.Errorf(
+			"--tunnel needs the %s profile; this dashboard is running as %s",
+			dashboard.ProfileOperator, dashCfg.Profile)
+	}
+
+	state, err := mgr.Start(mcfg)
+	if err != nil {
+		return dashboard.TunnelOptions{}, noop, fmt.Errorf("starting the tunnel: %w", err)
+	}
+	if state.URL != nil {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Tunnel (%s): %s\n", cfg.Tunnel.Provider, *state.URL)
+	} else {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"Tunnel (%s): started, no URL yet — /api/tunnel/status has it when it arrives\n",
+			cfg.Tunnel.Provider)
+	}
+
+	return opts, func() {
+		if _, err := mgr.Stop(); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] stopping the tunnel: %v\n", err)
+		}
+	}, nil
+}
+
+// tunnelLogLines is how much of the provider's output the manager keeps. The
+// buffer exists so `/api/tunnel/logs` can replay a tail; that route is not
+// ported, so this only bounds memory for a long-lived process.
+const tunnelLogLines = 200

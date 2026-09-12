@@ -14,6 +14,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/state"
+	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
 
 // Server is the dashboard's HTTP surface.
@@ -42,6 +43,10 @@ type Server struct {
 	boundAddr string
 	// static is the SPA handler, mounted at "/" and deliberately NOT gated.
 	static http.Handler
+	// tunnel is what the two tunnel routes need: whether it is configured,
+	// and the manager when it is. Zero value = not configured, which is what
+	// every project that has never set one up has.
+	tunnel tunnelDeps
 }
 
 // StateReader is the slice of the state backend the dashboard reads.
@@ -80,6 +85,18 @@ type StateReader interface {
 	LastEventByTask(ctx context.Context, taskIDs []string) (map[string]state.Event, error)
 }
 
+// TunnelOptions is the tunnel half of Options, kept as its own type so a
+// caller that has no tunnel says so by leaving one field alone rather than by
+// leaving four.
+type TunnelOptions struct {
+	Enabled  bool
+	Provider string
+	// Command is the binary the provider spawns, looked up on PATH when the
+	// capabilities route is asked and every other gate has passed.
+	Command string
+	Manager *tunnel.Manager
+}
+
 // Options are what New needs beyond the config.
 type Options struct {
 	// Paths locates the project this dashboard reports on.
@@ -89,8 +106,11 @@ type Options struct {
 	// while every API route worked — a failure that looks like a broken
 	// build rather than a missing argument.
 	Static http.Handler
-	// State is the backend the read endpoints query. May be nil until (b).
+	// State is the backend the read endpoints query.
 	State StateReader
+	// Tunnel is optional: the zero value means "no tunnel configured", and
+	// `/api/tunnel/status` then answers 404 rather than pretending idle.
+	Tunnel TunnelOptions
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -115,7 +135,13 @@ func New(cfg Config, opts Options) (*Server, error) {
 		log:    log,
 		state:  opts.State,
 		static: opts.Static,
-		ready:  make(chan struct{}),
+		tunnel: tunnelDeps{
+			Enabled:  opts.Tunnel.Enabled,
+			Provider: opts.Tunnel.Provider,
+			Command:  opts.Tunnel.Command,
+			Manager:  opts.Tunnel.Manager,
+		},
+		ready: make(chan struct{}),
 	}
 	s.registerRoutes()
 	s.http = &http.Server{
