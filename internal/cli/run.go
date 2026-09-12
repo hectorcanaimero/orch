@@ -13,6 +13,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/engine"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/notify"
 	"github.com/hectorcanaimero/orch/internal/providers"
 	"github.com/hectorcanaimero/orch/internal/state"
 	"github.com/hectorcanaimero/orch/internal/vcs"
@@ -113,6 +114,14 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				RunID:             runID,
 			})
 			scheduler.Backend = engine.NewStateRecorder(backend)
+			// Built unconditionally: with no webhook configured it is a
+			// working no-op, so the engine never has to ask whether the
+			// operator wanted notifications.
+			scheduler.Notify = notify.New(
+				cfg.Notifications.SlackWebhook,
+				cfg.Notifications.DiscordWebhook,
+				float64(cfg.Notifications.TimeoutS),
+			)
 			if engine.Mode(mode) == engine.ModeSemi {
 				scheduler.Gate = engine.TerminalGate{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
 			}

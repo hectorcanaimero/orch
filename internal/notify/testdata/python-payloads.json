@@ -1,0 +1,52 @@
+[
+  {
+    "path": "/slack/hook",
+    "content_type": "application/json",
+    "body": "{\"text\": \":no_entry: orch: task `F1.T3` blocked \\u2014 spec ambiguous: two readings of the acceptance criteria\"}"
+  },
+  {
+    "path": "/discord/hook",
+    "content_type": "application/json",
+    "body": "{\"content\": \":no_entry: orch: task `F1.T3` blocked \\u2014 spec ambiguous: two readings of the acceptance criteria\"}"
+  },
+  {
+    "path": "/slack/hook",
+    "content_type": "application/json",
+    "body": "{\"text\": \":warning: orch: task `F1.T3` blocked after 3 CI attempt(s) (https://github.com/o/r/pull/42)\"}"
+  },
+  {
+    "path": "/discord/hook",
+    "content_type": "application/json",
+    "body": "{\"content\": \":warning: orch: task `F1.T3` blocked after 3 CI attempt(s) (https://github.com/o/r/pull/42)\"}"
+  },
+  {
+    "path": "/slack/hook",
+    "content_type": "application/json",
+    "body": "{\"text\": \"orch: notifier test\"}"
+  },
+  {
+    "path": "/discord/hook",
+    "content_type": "application/json",
+    "body": "{\"content\": \"orch: notifier test\"}"
+  },
+  {
+    "path": "/slack/hook",
+    "content_type": "application/json",
+    "body": "{\"text\": \"a custom message\"}"
+  },
+  {
+    "path": "/discord/hook",
+    "content_type": "application/json",
+    "body": "{\"content\": \"a custom message\"}"
+  },
+  {
+    "path": "/slack/hook",
+    "content_type": "application/json",
+    "body": "{\"text\": \":no_entry: orch: task `F2.T1` blocked \\u2014 unknown\"}"
+  },
+  {
+    "path": "/discord/hook",
+    "content_type": "application/json",
+    "body": "{\"content\": \":no_entry: orch: task `F2.T1` blocked \\u2014 unknown\"}"
+  }
+]

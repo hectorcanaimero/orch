@@ -165,6 +165,11 @@ A non-operator profile with an empty token is refused at startup: it would
 
 ### `notifications`
 
+A side channel, not a record: the event log is still the source of truth for
+what happened. Both channels are off by default, and a notifier with neither
+configured costs nothing — `orch run` builds one either way rather than
+branching on whether you wanted it.
+
 ```yaml
 notifications:
   slack_webhook: ""      # empty disables the channel
@@ -172,8 +177,33 @@ notifications:
   timeout_s: 5
 ```
 
-Failures are silent by design — a broken webhook never reaches the dispatch
-loop.
+| Key | Default | What it does |
+|---|---|---|
+| `slack_webhook` | `""` (off) | Incoming-webhook URL. Posted as `{"text": ...}` |
+| `discord_webhook` | `""` (off) | Webhook URL. Posted as `{"content": ...}` |
+| `timeout_s` | `5` | Per-POST timeout. A webhook that does not answer is given up on, never waited out |
+
+**A webhook URL is a credential.** Anyone holding it can post to your channel,
+so it belongs in a config file you do not commit — and orch never writes one to
+a log line, not even truncated, which is why a failed POST logs
+`channel=text` rather than the URL.
+
+Only the two things an operator would otherwise have to go looking for are
+announced:
+
+| When | Message |
+|---|---|
+| a task is blocked | `:no_entry: orch: task ``F1.T3`` blocked — <first line of the reason>` |
+| a task is blocked after CI kept failing | `:warning: orch: task ``F1.T3`` blocked after 3 CI attempt(s) (<pr url>)` |
+
+Not successes, and not retries: a task that will try again has not given up,
+and a message per attempt is how a team mutes the channel — after which the
+blocks go unseen too. The reason is cut to its first line and 200 characters;
+the full text is in `orch events` and in the task's log.
+
+Failures are silent by design — a 500, a 404, a refused connection or a hang
+is logged once and the dispatch loop carries on. A broken webhook never
+reaches it.
 
 ### `presentation`
 

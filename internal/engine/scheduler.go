@@ -102,6 +102,10 @@ type Scheduler struct {
 	Gate Gate
 	// Budget is consulted before the semaphores. Nil disables the check.
 	Budget BudgetGate
+	// Notify announces blocked tasks on the operator's webhooks. The zero
+	// value is a working no-op, so this is never nil-checked at the call
+	// sites — which is the point: a side channel must not become a branch.
+	Notify Notifier
 	// Backend records dispatches, outcomes and events. Nil skips recording,
 	// which is how the concurrency tests run without a database.
 	Backend RecordBackend
@@ -146,6 +150,18 @@ type Scheduler struct {
 	spentUSD map[string]float64
 	// now is the clock, injectable so the backoff tests do not wait.
 	now func() time.Time
+}
+
+// Notifier is the side channel the engine announces bad news on. An
+// interface so the engine does not depend on internal/notify's transport, and
+// so a test can assert that a block was announced without standing up an HTTP
+// server.
+//
+// No method returns an error, and that is the contract, not an oversight: a
+// broken webhook must never be able to reach the dispatch loop.
+type Notifier interface {
+	Blocked(ctx context.Context, taskID, reason string)
+	CIBlocked(ctx context.Context, taskID, prURL string, attempts int)
 }
 
 // PRRecorder writes a task's pull request URL. Separate from RecordBackend

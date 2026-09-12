@@ -569,3 +569,43 @@ func TestCIAttemptFallsBackWhenTheIncrementFails(t *testing.T) {
 	}
 	t.Error("no ci_failure_retry event")
 }
+
+// TestCIBlockedIsAnnounced: a task blocked by CI is the other thing the
+// operator wants pushed to them rather than discovered.
+func TestCIBlockedIsAnnounced(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/9", 1))
+	f.vcs.status["https://github.com/o/r/pull/9"] = vcs.CIFailure
+	f.poller.MaxRetries = 1 // already used
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	got := n.ciBlockedList()
+	if len(got) != 1 {
+		t.Fatalf("announced %d CI blocks, want 1: %v", len(got), got)
+	}
+	// The PR and the attempt count are what make the message actionable.
+	for _, want := range []string{"C-1", "https://github.com/o/r/pull/9", "x1"} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("the announcement is missing %q: %q", want, got[0])
+		}
+	}
+}
+
+// TestCIRetryIsNotAnnounced: a CI failure that re-dispatches has not given up.
+func TestCIRetryIsNotAnnounced(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/9", 0))
+	f.vcs.status["https://github.com/o/r/pull/9"] = vcs.CIFailure
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if got := n.ciBlockedList(); len(got) != 0 {
+		t.Errorf("announced %v for a CI failure that will retry", got)
+	}
+}
