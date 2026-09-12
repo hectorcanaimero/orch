@@ -328,3 +328,42 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   PR touching the same struct, different fields — Dispatch/VCS/GitHub
   predate both of us) to land on non-overlapping struct positions with
   no rebase conflict expected.
+
+- **Gemini's PR #169 review found one real bug beyond what
+  `go test -race` already had:** compiling the URL/reconnect regexes
+  happened lazily, inside the reader goroutine, so a bad `URLRegex`
+  override spawned a real, unmonitored child process with no reader ever
+  attached to reap it — a genuine leak, caught while writing the
+  rule-8 coverage test for that path rather than by the test itself
+  failing (the first draft of the test passed; the leak was only visible
+  by reasoning about what `Stop()` would do afterward: signal a process
+  whose `readerDone` channel was already closed by the early-return
+  path, so `Stop` believed it had reaped a child it never called
+  `.Wait()` on). Fixed by moving both `regexp.Compile` calls into
+  `Start()` itself, before spawning — which also happens to match
+  `manager.py` more closely than the original port did: Python's
+  `re.compile` runs in `start()`'s own call stack via
+  `_start_reader_thread`, so a bad pattern there fails `start()`
+  synchronously, before anything is ever spawned, not asynchronously
+  inside a thread nobody is watching yet.
+  `TestStartBadURLRegexFailsBeforeSpawning` pins the corrected contract.
+  The other two rule-8 findings (`Start` on an unknown provider, on a
+  spawn failure) were coverage gaps only — both paths were already
+  correct, just untested — verified by seeing `go test -race` genuinely
+  fail on the very first run (the double-`Wait()` race, in this same
+  PR's first draft) as the calibration that this reviewer's rule-8/22
+  findings are worth taking seriously rather than dismissed as
+  reviewer-being-pedantic.
+
+  Also fixed: a 32-hex placeholder in a redaction test that read as a
+  real credential shape (swapped for a `strings.Repeat("deadbeef", 4)`
+  placeholder — same length, obviously not a real token); three
+  `time.Sleep`-in-a-polling-loop instances, replaced with a
+  `stateChanged` notification channel (`nil` in production, a test-only
+  hook) so a test blocks on an actual state-write event instead of
+  guessing a poll interval; and two bare `_ = ...` error discards
+  (`os.Remove` on a stale lock file, `writeStateLocked`'s ~10 call
+  sites) — the latter consolidated behind a `writeStateBestEffort`
+  helper that logs via `slog.Warn` rather than a scattered `_ =` at
+  every call site, so the fix reads as one deliberate policy rather
+  than ten silent patches.
