@@ -42,6 +42,16 @@ type Config struct {
 	TokenSource string
 	// StakeholderRoutes is the allow-list, by route name or path prefix.
 	StakeholderRoutes []string
+	// ShowSpendToStakeholder gates every spend figure in
+	// `/stakeholder/summary` — the total, the daily series, and the spend
+	// sentence of the executive summary. Off by default ("spend is
+	// sensitive", per the key's own comment in Python). Bug 22 of this port
+	// was that the flag governed only `/api/budget/summary` while the page a
+	// client actually opens carried spend regardless.
+	ShowSpendToStakeholder bool
+	// SummaryLanguage picks the executive summary's wording, "es" or "en".
+	// Empty means "es", matching config's own default.
+	SummaryLanguage string
 	// Host and Port are where the server listens.
 	Host string
 	Port int
@@ -73,11 +83,13 @@ func FromConfig(cfg config.Config) (Config, error) {
 	}
 
 	out := Config{
-		Profile:           profile,
-		Token:             strings.TrimSpace(cfg.Dashboard.Token),
-		StakeholderRoutes: DefaultStakeholderRoutes,
-		Host:              DefaultHost,
-		Port:              DefaultPort,
+		Profile:                profile,
+		Token:                  strings.TrimSpace(cfg.Dashboard.Token),
+		StakeholderRoutes:      DefaultStakeholderRoutes,
+		ShowSpendToStakeholder: cfg.Dashboard.ShowSpendToStakeholder,
+		SummaryLanguage:        cfg.Dashboard.SummaryLanguage,
+		Host:                   DefaultHost,
+		Port:                   DefaultPort,
 	}
 	return out, nil
 }

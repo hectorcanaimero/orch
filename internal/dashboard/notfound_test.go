@@ -14,17 +14,18 @@ import (
 // Each of these answered **200 with the SPA's HTML** before the prefix rule,
 // because the path had no handler and `"/"` takes everything left over. A
 // client fetching JSON then parses a page of markup: `/api/portfolio` broke
-// the portfolio page's feature check, and `/stakeholder/summary` crashes the
+// the portfolio page's feature check, and `/stakeholder/summary` crashed the
 // landing page outright with `Cannot read properties of undefined (reading
 // 'done')` — axios passes the HTML string through and `if (!data)` finds a
-// non-empty string truthy.
+// non-empty string truthy. `/stakeholder/summary` is served since the route
+// landed, so the prefix case below stands in for it.
 func TestUnimplementedDataRoutesAre404(t *testing.T) {
 	s := portfolioServer(t, "demo", ProfileOperator, "", &fakeState{})
 
 	for _, path := range []string{
-		"/api/portfolio",       // only under --portfolio (G8.5)
-		"/stakeholder/summary", // Python serves it; the Go port has not wired it
-		"/api/tunnel/logs",     // no consumer since the tunnel page was trimmed
+		"/api/portfolio",             // only under --portfolio (G8.5)
+		"/stakeholder/anything-else", // the prefix itself, not one named route
+		"/api/tunnel/logs",           // no consumer since the tunnel page was trimmed
 		"/api/a-route-nobody-wrote",
 		"/stakeholder/anything",
 	} {

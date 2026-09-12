@@ -38,7 +38,10 @@ type projectView struct {
 	// ProjectName is tasks.json's `meta.project`, empty when the file names
 	// none. The portfolio row needs a human name to show beside the id; every
 	// other consumer ignores it.
-	ProjectName      string
+	ProjectName string
+	// Phases is tasks.json's `meta.phases`, which is where a phase's NAME
+	// comes from — the ids are on the tasks, the names only here.
+	Phases           []model.Phase
 	Tasks            []model.Task
 	Summary          graph.Summary
 	Parallelizable   map[string]bool
@@ -68,6 +71,7 @@ func (s *Server) loadView(ctx context.Context) (projectView, error) {
 	}
 
 	v.ProjectName = f.Meta.Project
+	v.Phases = f.Phases
 	v.Tasks = tasks
 	v.Summary = graph.Summarize(tasks)
 	v.DownstreamImpact = graph.DownstreamImpact(tasks)
