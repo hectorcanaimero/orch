@@ -165,6 +165,15 @@ These apply to files under `cmd/` and `internal/`.
     wrote. A hand-written sample tests the parser; the shipped file also tests
     that what we ship still parses.
 
+    The other half of the same rule: **one good fixture, reused everywhere,
+    hides the branches it cannot reach.** `internal/explain`'s shared task set
+    contains a blocked task, and the renderer's "suggest a command" switch
+    tests `blocked` before it tests "something is ready" — so the ready arm was
+    unreachable by every test in the file, and the fixture was perfectly
+    correct the whole time (#192). Nothing is wrong with the fixture; what is
+    wrong is a suite where every case comes from it. When a branch needs a
+    project of its own, give it one.
+
 29. **Run what you built and read its output once, before opening the
     PR.** A green suite says nothing about output no test reads. Not a
     normalisation that hid a difference — rule 23's case — but a line nobody
