@@ -108,7 +108,23 @@ func newNotifyDigestCmd(flags *projectFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closeDB() }()
+			// Reported, not dropped. A failed Close on a SQLite handle can
+			// mean a WAL checkpoint did not land, which is worth a line on
+			// stderr — and it must not change the exit code, because the
+			// digest the operator asked for has already been printed by
+			// then. `orch run` handles its backend the same way; the bare
+			// `_ =` other read-only commands use is the weaker half of the
+			// house pattern, not the one to copy.
+			defer func() {
+				cerr := closeDB()
+				if cerr == nil {
+					return
+				}
+				// Nothing useful to do if even the report cannot be
+				// written, and the digest has already been delivered.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+					"closing the state backend: %v\n", cerr)
+			}()
 
 			text, err := digestText(ctx, backend, paths, cfg, language)
 			if err != nil {

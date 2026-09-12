@@ -181,3 +181,81 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return out
 }
+
+// TestNotifyTestPostsTheMessageAndExitsZero is the success path: a webhook
+// that accepts. The exit code is the machine-readable half of this command,
+// so "1 when it fails" is only half a contract — an operator wiring a webhook
+// needs 0 when it works, and needs the message that lands in the channel to
+// be the one they can recognise.
+func TestNotifyTestPostsTheMessageAndExitsZero(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			// Python's default, word for word. It has to be tellable from a
+			// real alert by whoever is looking at the channel.
+			name: "the default message",
+			args: []string{"notify", "test"},
+			want: "orch: notifier test — if you see this, the webhook works.",
+		},
+		{
+			name: "a custom message",
+			args: []string{"notify", "test", "--message", "ping from the deploy box"},
+			want: "ping from the deploy box",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu     sync.Mutex
+				bodies []string
+			)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				var payload struct {
+					Text string `json:"text"`
+				}
+				_ = json.Unmarshal(raw, &payload)
+				mu.Lock()
+				bodies = append(bodies, payload.Text)
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			root, common := newTestProject(t)
+			writeWebhookConfig(t, root, srv.URL)
+
+			if got := cli.Run("v-test", append(tc.args, common...)); got != 0 {
+				t.Fatalf("exit = %d, want 0", got)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(bodies) != 1 {
+				t.Fatalf("the webhook received %d POSTs, want exactly 1", len(bodies))
+			}
+			if bodies[0] != tc.want {
+				t.Errorf("posted %q, want %q", bodies[0], tc.want)
+			}
+		})
+	}
+}
+
+// A channel that rejects is exit 1, not exit 0 with a shrug. The whole point
+// of the command is finding out before a run depends on it, so a 500 from
+// Slack has to be as loud as no webhook at all.
+func TestNotifyTestFailsWhenTheChannelRejects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	root, common := newTestProject(t)
+	writeWebhookConfig(t, root, srv.URL)
+
+	if got := cli.Run("v-test", append([]string{"notify", "test"}, common...)); got != 1 {
+		t.Errorf("exit = %d, want 1 — a rejected message is a failed test", got)
+	}
+}
