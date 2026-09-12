@@ -1,0 +1,106 @@
+name: Release Go binary
+
+# Go binary tags only (see docs/RELEASING.md). `v[0-9]*` alone would also
+# match `v0.11.0-py` (the frozen Python line's own tag shape, built by
+# release.yml instead) — the `if:` guard below on the actual job is the
+# real protection; the glob just keeps this workflow from listening to
+# unrelated tags entirely (a `foo-bar` tag, say).
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:  # allow a manual re-run from the Actions tab
+
+permissions:
+  contents: write  # create the GitHub release and upload assets
+
+jobs:
+  goreleaser:
+    # Belt-and-suspenders against release.yml's own trigger: a `-py` tag
+    # must never reach goreleaser, glob match or not.
+    if: ${{ !endsWith(github.ref, '-py') }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # goreleaser needs full history + tags for its changelog/version logic
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # `make web` (goreleaser's own before-hook) needs these — same setup
+      # go.yml's go-test/parity jobs use.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Record the tag
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A PAT scoped to hectorcanaimero/homebrew-orch — the default
+          # GITHUB_TOKEN above only has write access to THIS repo, and
+          # the brews pipe pushes a commit to that separate one. Until
+          # both that repo and this secret exist, this step fails at the
+          # Homebrew-push stage specifically (binaries/checksums/release
+          # still publish fine before it) — see docs/RELEASING.md.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------
+  # G7.2 — prove the shipped artifact actually works, not just that it
+  # built. A bare runner with no Go toolchain, installing exactly the way
+  # an end user would (scripts/install.sh's own logic), then a real
+  # init -> validate -> doctor pass against a scratch project.
+  # ---------------------------------------------------------------------
+  smoke-install:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4  # only for scripts/install.sh itself
+
+      - name: Install the just-published release
+        run: |
+          set -euo pipefail
+          bash scripts/install.sh "${{ needs.goreleaser.outputs.tag }}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: orch init
+        # A path argument scaffolds directly; bare `orch init` with none
+        # asks an interactive series of questions instead, which would
+        # just hang waiting for stdin on a runner.
+        run: orch init /tmp/smoke-project --template python-api
+
+      - name: orch validate
+        run: orch validate --project-root /tmp/smoke-project
+
+      - name: orch doctor
+        # Exit 1 (warnings only — e.g. no .mcp.json, or codex/opencode
+        # genuinely absent from this runner) is a legitimate result for a
+        # freshly scaffolded scratch project, not a smoke-test failure;
+        # only exit >=2 (a real "error"-status check, per
+        # internal/doctor.ExitCode) fails this step. See
+        # docs/brainstorm/go-migration-notes/sonnet-2.md for why `orch
+        # doctor` didn't exist as a command until #183.
+        run: |
+          set +e
+          orch doctor --project-root /tmp/smoke-project
+          code=$?
+          set -e
+          if [ "$code" -ge 2 ]; then
+            exit "$code"
+          fi
