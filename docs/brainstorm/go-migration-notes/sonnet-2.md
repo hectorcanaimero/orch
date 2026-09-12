@@ -801,3 +801,38 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   `/api/whoami` with the typed value before saving it?), not the
   access-gate bug this PR exists to fix — written down so it doesn't
   get rediscovered as if it were new.
+
+  **The bug this PR's own fix uncovered, found by opus-2 running the
+  real binary via CDP once the wall no longer blocked every path in:**
+  the landing page (`StakeholderSummaryPage`, mounted at `/`) fetches
+  `/stakeholder/summary`, which the Go dashboard doesn't implement yet
+  (Python's does — `server.py:1731`). Same class of bug as
+  `PortfolioShapeError` — the request falls through to the SPA's own
+  catch-all and axios resolves 200 with the HTML shell as `data` — but
+  here nothing checked the shape before touching it, so `summary.done`
+  threw a bare `TypeError` and every path that got past the (now-fixed)
+  wall landed on a blank, crashed page. Preexisting — opus-2 reproduced
+  it identically on `main` with `?token=` before even looking at this
+  branch — but invisible until now because nobody could reach it through
+  the wall this PR removes. This is also what my own "empty #root, 613
+  bytes" `--dump-dom` result almost certainly was, not a virtual-time
+  artifact as first guessed: opus-2's CDP session caught the actual
+  `Runtime.exceptionThrown` `--dump-dom` has no way to surface.
+
+  Fixed the same way `PortfolioShapeError` fixes `/api/portfolio`:
+  `StakeholderSummaryShapeError` (useStakeholderSummary.ts) rejects when
+  the body isn't `typeof data.summary === "object"`, and
+  `isStakeholderSummaryUnavailable` (checked by both the retry policy and
+  `StakeholderSummaryPage`) treats it exactly like a real 404 — a named
+  "Summary not available" state instead of the generic error alert,
+  since this is the common case today, not a rare one. orch-98's
+  instruction, followed literally: a visible state, not an exception,
+  with a test — three new ones (real payload passes through; HTML-shell
+  and missing-`summary` bodies both reject with the shape error) plus
+  three render tests (shape error and real 404 both show the named
+  state; an unrelated error still shows the generic alert). opus-2 is
+  separately making every unimplemented `/api/*` and `/stakeholder/*`
+  route answer a real 404 instead of falling through, which will replace
+  today's shape-error path with the 404 path `isStakeholderSummaryUnavailable`
+  already handles identically — no client-side change needed when that
+  lands.
