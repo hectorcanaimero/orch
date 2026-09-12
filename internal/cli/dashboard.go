@@ -31,6 +31,7 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		profile    string
 		token      string
 		withTunnel bool
+		portfolio  string
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +45,17 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
+
+			// The portfolio is a different process shape — N projects, no
+			// single `paths` — so it forks before any of the single-project
+			// resolution below. It is not a mode of this command's wiring
+			// with an `if` through every step; it is its own function.
+			if portfolio != "" {
+				return runPortfolio(cmd, portfolio, portfolioFlags{
+					host: host, port: port, profile: profile,
+					withTunnel: withTunnel, token: token,
+				})
+			}
 
 			paths, cfg, err := loadProjectConfig(flags)
 			if err != nil {
@@ -149,6 +161,9 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		"Shared token a stakeholder session must present (default: config.yaml)")
 	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
 		"Also start the configured tunnel, and stop it on exit")
+	cmd.Flags().StringVar(&portfolio, "portfolio", "",
+		"Serve every orch project matching this glob from one process "+
+			"(operator only). Quote it, or the shell expands it first.")
 	cmd.AddCommand(newDashboardTokenCmd(flags))
 	return cmd
 }

@@ -593,3 +593,84 @@ question for Python.
   diffs `events F2.T3 --json` against Python. Raised with orch-98 as its own
   decision. Whoever adds the second run-level event should settle it first —
   one invisible row is a gap, two is a pattern.
+
+## G8.5 — the portfolio view
+
+- **It is a front door, not a second dashboard, and that is the whole design.**
+  `/p/<project_id>/…` hands the request to that project's own `*Server` with
+  the prefix stripped — `http.StripPrefix(prefix, proj.Server.Handler())` — so
+  each project keeps its own profile, its own rotated token and its own
+  stakeholder allow-list, and this package contains **no second copy of the
+  access model** to drift from the first.
+
+  The alternative was re-registering each project's routes on the portfolio's
+  own mux. It looks equivalent and is not: those handlers are the *ungated*
+  ones, and `registerRoutes` is where `gated` is applied. Verified rather than
+  reasoned about — a build with the routes re-registered returns 200 where the
+  test demands 401:
+
+  ```
+  /p/gated/api/whoami = 200, want 401 ({"profile":"stakeholder"})
+  ```
+
+  Worth recording because the first version of that test did **not** catch it.
+  It compared `proj.Server.Handler()` against `proj.Server.mux`, which are the
+  same object, so the "bypass" it was written against was not a bypass at all.
+  The test only became real when the counterfactual was the one an author would
+  actually write.
+
+- **"Operator only" and "authenticated" are not the same claim, and the docs
+  had to say which one this is.** `NewPortfolio` refuses a non-operator
+  profile, and `/api/portfolio` is ungated — exactly like a single-project
+  operator dashboard, where the operator profile never gates anything. The
+  boundary is the listener on `127.0.0.1`.
+
+  That leaves a real asymmetry: a project whose own routes demand a token still
+  contributes counters to a portfolio row that does not. Stated in
+  `docs/DASHBOARD-PROFILES.md` rather than left for someone to discover, and it
+  is the reason `--profile stakeholder` is refused instead of being made to
+  work — a stakeholder portfolio would show every project's numbers to a token
+  holder scoped to one of them.
+
+- **`--token` and `--tunnel` are refused, not ignored.** A `--token` would
+  imply a shared portfolio token exists; there is none, and each project's is
+  resolved against its own row. A tunnel is configured per project — its
+  config, its state file, its URL — and there is no single project to take one
+  from. Same family as the run flags that are *not registered* until they do
+  something (`--budgets-preset`, `--dry-run`): a flag that is accepted and
+  quietly does nothing is the failure mode this port keeps finding.
+
+- **Degrading is per section, not per project.** A row whose counters read fine
+  keeps them even when the event log, the velocity query or the spend table
+  fails; only a failure to load the project's view at all makes the row
+  `available: false`. Dropping the summary because a later read failed would be
+  throwing away the answer to keep the question tidy. Seen failing: a build
+  that zeroed the row on any error fails with *"a project whose counters read
+  fine reports unavailable"*.
+
+- **`graph.Summary` folds backlog and todo on purpose, and the portfolio
+  inherits that.** The first draft of the payload had a `todo` counter, which
+  would have been a number that exists nowhere else in the product —
+  `Summarize`'s own comment says two adjacent numbers that always move together
+  read as one number badly. Agreeing the payload with sonnet-2 *before* writing
+  it is what caught it: she checked `/api/sprint`'s real shape and pushed back
+  on nesting, and the field list got compared against what already exists
+  rather than against what seemed tidy.
+
+- **The 30-second write timeout reaches through the front door, and the SSE
+  stream still survives it.** A project's `/api/events/stream` now runs under
+  the *portfolio's* `http.Server`, not its own, so the portfolio sets the same
+  four timeouts — different limits would make one endpoint behave differently
+  depending on which door it came through. The stream clears its own deadline
+  with an `http.ResponseController`, which acts on the underlying connection
+  and is unaffected by the `StripPrefix` in between (that wraps the handler,
+  not the ResponseWriter). Checked by streaming through `/p/<id>/` against a
+  real listener and reading the headers back, not by assuming.
+
+- **A struct conversion instead of a field-by-field literal, on purpose.**
+  `UnavailableProject` (the caller's type) and `unavailableRow` (the wire type)
+  are identical today. staticcheck suggested the conversion; the reason to take
+  the suggestion is not the lint: with a literal, the day the wire row grows a
+  field it is silently zero for every unavailable project, and with the
+  conversion the build stops until somebody decides what the caller's type
+  should say about it.

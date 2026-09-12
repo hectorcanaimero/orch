@@ -162,6 +162,69 @@ What the stakeholder never sees, in either the HTML or the JSON:
 
 ---
 
+## The portfolio view — one process, N projects (G8.5)
+
+```bash
+orch dashboard --portfolio '~/projects/*'
+```
+
+One process opens every orch project the glob matches and serves:
+
+| Path | What it is |
+|---|---|
+| `/api/portfolio` | one row per project: counters, velocity, ETA, blocked count and the first three blockers, spend, and the newest event |
+| `/p/<project_id>/…` | **that project's own dashboard**, unchanged |
+| `/` | the SPA |
+
+**Quote the glob.** The shell expands `~/projects/*` before orch sees it;
+quoting is what hands the pattern to orch. A pattern that matches nothing is an
+error that says so.
+
+### Each project keeps its own access model
+
+`/p/<project_id>/…` is not a copy of the project's routes — it *is* that
+project's server, with the prefix stripped. So a project configured
+`profile: stakeholder` still demands its own token on its own routes, resolved
+against its own row, and a route missing from that project's allow-list is
+still a 403. One process, N independent gates.
+
+### `--portfolio` is operator-only, and that means one specific thing
+
+It refuses a non-operator `--profile`, and **nothing on `/api/portfolio` is
+token-gated**. The boundary is the listener, bound to `127.0.0.1` by default —
+the same boundary a single-project operator dashboard has today. "Operator
+only" here means *there is no stakeholder portfolio*, not *authenticated*.
+
+The asymmetry is real and worth stating: a project whose own routes require a
+token still contributes counters to a portfolio row that does not. If that
+matters for your setup, do not bind the portfolio beyond localhost.
+
+`--token` and `--tunnel` are refused with `--portfolio` rather than ignored: a
+token would suggest a shared one exists, and a tunnel is configured per project
+— there is no single project here to take one from.
+
+### One broken project does not blank the page
+
+A glob over a working directory matches things that are not projects. Each one
+becomes a row rather than a reason to refuse to start:
+
+```
+[warn] /home/u/projects/notes: no tasks.json — not an orch project
+Orch portfolio dashboard running on http://127.0.0.1:7420
+  2 project(s): billing-api, data-lake
+  1 unavailable (listed above, and on the page)
+```
+
+A project that opens but whose database will not answer is listed too, with
+`available: false` and the reason — the counters it *did* produce are kept, so
+a failing event log does not throw away the summary.
+
+Two directories that resolve to the same project id (the id is the directory's
+base name) collide under `/p/`. The second is reported, naming the first, since
+renaming one is the only fix and only you can make it.
+
+---
+
 ## Publishing via ephemeral tunnel (Pinggy via autossh)
 
 Sprint E-5 ships a built-in tunnel manager for the "throw a quick link at
