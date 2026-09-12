@@ -157,6 +157,7 @@ jobs:
           fi
 
       - name: Build the review prompt
+        id: prompt
         if: steps.key.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -167,23 +168,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 200 KB of diff is already more than a reviewable PR. Truncating is
-          # better than blowing the context window and getting a confident
-          # review of the first half.
-          MAX_DIFF_BYTES=200000
+          # The whole prompt reaches the reviewer action as ONE environment
+          # string (its `prompt` input becomes INPUT_PROMPT), and Linux caps a
+          # single argv/environ string at 128 KiB (MAX_ARG_STRLEN). Run
+          # 34660387091 (#163, a 142 KB diff) died with "Argument list too
+          # long" — and, because the prompt travelled through GITHUB_ENV, so
+          # did every later step, including the one that publishes the
+          # check. So the cap is on the PROMPT, not the diff, and the diff
+          # gets whatever is left after the checklist and the PR header.
+          # Truncating is better than blowing the limit and getting no review
+          # at all — or a confident review of the first half.
+          MAX_PROMPT_BYTES=120000
           gh pr diff "$PR" --repo "$REPO" > full.diff
           DIFF_BYTES=$(wc -c < full.diff)
-          if [ "$DIFF_BYTES" -gt "$MAX_DIFF_BYTES" ]; then
-            head -c "$MAX_DIFF_BYTES" full.diff > pr.diff
-            printf '\n\n[diff truncated at %s bytes of %s]\n' "$MAX_DIFF_BYTES" "$DIFF_BYTES" >> pr.diff
-          else
-            cp full.diff pr.diff
-          fi
 
           gh pr view "$PR" --repo "$REPO" --json files \
             --jq '.files[] | "\(.path) (+\(.additions)/-\(.deletions))"' > files.txt
 
-          {
+          build_head() {
             echo "You are reviewing a pull request for the orch repository."
             echo "Apply the checklist below to the diff below. Nothing else."
             echo
@@ -213,20 +215,32 @@ jobs:
             cat files.txt
             echo
             echo "=== DIFF ==="
-            cat pr.diff
-          } > prompt.txt
+          }
+          build_head > head.txt
 
-          echo "prompt is $(wc -c < prompt.txt) bytes"
+          # 200 bytes of slack for the truncation notice and the delimiter.
+          BUDGET=$(( MAX_PROMPT_BYTES - $(wc -c < head.txt) - 200 ))
+          if [ "$DIFF_BYTES" -gt "$BUDGET" ]; then
+            head -c "$BUDGET" full.diff > pr.diff
+            printf '\n\n[diff truncated at %s bytes of %s]\n' "$BUDGET" "$DIFF_BYTES" >> pr.diff
+          else
+            cp full.diff pr.diff
+          fi
 
-          # Hand it to the action through the environment. The delimiter is
-          # random because the diff is untrusted input and a fixed one could
-          # be closed early by a line inside the patch.
+          cat head.txt pr.diff > prompt.txt
+          echo "prompt is $(wc -c < prompt.txt) bytes (diff $DIFF_BYTES, budget $BUDGET)"
+
+          # Hand it to the action as a step OUTPUT, not through GITHUB_ENV:
+          # an output only reaches the steps that reference it, so a prompt
+          # near the limit cannot take the publish step down with it. The
+          # delimiter is random because the diff is untrusted input and a
+          # fixed one could be closed early by a line inside the patch.
           DELIM="EOF_$(openssl rand -hex 12)"
           {
-            echo "REVIEW_PROMPT<<$DELIM"
+            echo "prompt<<$DELIM"
             cat prompt.txt
             echo "$DELIM"
-          } >> "$GITHUB_ENV"
+          } >> "$GITHUB_OUTPUT"
 
       # Pinned to a commit SHA: this step is the one that receives the API key.
       - name: Run the reviewer
@@ -248,7 +262,7 @@ jobs:
           # that goes stale. Override with the GEMINI_REVIEW_MODEL repo
           # variable to pin one. See docs/CI-REVIEW.md.
           gemini_model: ${{ vars.GEMINI_REVIEW_MODEL }}
-          prompt: ${{ env.REVIEW_PROMPT }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
           settings: |-
             {
               "model": { "maxSessionTurns": 3 },
@@ -299,7 +313,7 @@ jobs:
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_model: ${{ vars.GEMINI_REVIEW_MODEL }}
-          prompt: ${{ env.REVIEW_PROMPT }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
           settings: |-
             {
               "model": { "maxSessionTurns": 3 },
