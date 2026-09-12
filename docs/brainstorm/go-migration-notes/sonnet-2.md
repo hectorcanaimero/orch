@@ -724,3 +724,80 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   that promise. Fixed by reading `useWhoami` in the page too, tested by
   asserting the exact `{enabled: false}` / `{enabled: true}` call opus's
   finding said was missing.
+
+- **Bug 26 (Python line, shared — one compiled `web/` bundle serves both
+  dashboards): `ProtectedRoute` showed a login wall to an operator whose
+  server needed no token at all.** Found by opus running headless
+  chromium against a real Go binary while reviewing #203. The old gate
+  was `useAuth().isAuthenticated`, defined as
+  `Boolean(localStorage.orch_token)` — it never asked the server
+  anything, so a fresh browser with nothing saved (the normal case for
+  an operator on their own machine) was bounced to the token form for a
+  server that was never going to reject it.
+
+  **Confirmed shared with Python before touching anything**, per
+  orch-98's standing rule for a `web/` bug found on the Go side: built a
+  throwaway venv (`python3 -m venv`; this box's system Python is
+  externally-managed and refuses a bare `pip install`), installed
+  `fastapi<0.116`+`uvicorn[standard]`, ran `scripts/build-spa.sh` to
+  populate `orchestrator/spa/` (a plain `pnpm build` alone only refreshes
+  `internal/dashboard/dist/build/`, which only the Go binary's
+  `go:embed` reads), and reproduced byte-for-byte: the same 2287-byte
+  DOM with the same login form, against Python's own
+  `orchestrator.orch dashboard`, on a project with
+  `dashboard.profile: operator` and `/api/whoami` answering `200
+  {"profile":"operator"}`. Numbered as a Python-line bug, not a porting
+  regression — and fixed once, in the shared bundle, rather than twice.
+
+  **Fix**: `ProtectedRoute` now gates on `useWhoami()` succeeding
+  instead of on anything being saved locally — the same request
+  `apiClient`'s interceptor already attaches whatever token exists to,
+  so one check covers both real "let them in" cases (operator needing
+  none, stakeholder with a valid saved one) without duplicating that
+  logic. A loading skeleton covers the one request's round trip; any
+  failure (401, or anything else once `useWhoami`'s own retries are
+  exhausted) shows the form. Deliberately NOT reusing AppLayout's
+  fail-open reading of the same hook ("assume operator" when whoami
+  hasn't answered) — that default is safe there because nothing
+  AppLayout gates on is actually protected by it (worst case: an
+  operator briefly sees a nav item meant for later), but this component
+  IS the actual access boundary, where an ambiguous answer must not
+  render protected content. Removed `useAuth().isAuthenticated` (the
+  only caller was the code just deleted) rather than leaving a
+  now-misleading field nothing reads.
+
+  **Verification limits, disclosed rather than glossed over**: `curl
+  /api/whoami` confirms the server side; the four new
+  `ProtectedRoute.test.tsx` cases (loading, operator success,
+  stakeholder-with-saved-token success, failure→redirect) confirm the
+  component logic, with rule-24 red/green actually run. Re-running the
+  SAME headless-chromium `--dump-dom` reproduction against the fixed
+  binary was NOT conclusive either way — it came back with an empty
+  `#root` (613 bytes) regardless of `--virtual-time-budget` (tried 8s,
+  20s, and none at all), the same symptom opus already flagged as
+  probably a `--dump-dom`-vs-async-React-Query timing artifact rather
+  than a real bug, in their own "not conclusive" note about a `?token=`
+  case earlier in this same review. Did not chase it further with
+  `--dump-dom`; a real Playwright session with `waitForSelector` is what
+  opus's own message says would be needed to conclude anything about
+  this tool's output, and this PR doesn't have one. opus-2 independently
+  hit a related but distinct `--dump-dom` limitation reproducing the
+  `?token=` path: the SSE stream a stakeholder session opens
+  (`useEventStream` → `/api/events/stream`) never closes, so the page's
+  own `load` event never fires and `--dump-dom` hangs until `timeout`
+  kills it — confirms this tool needs CDP or a cut stream to render an
+  authenticated view at all, not just a timing tweak.
+
+  **Acknowledged, deliberately not fixed here**: `LoginPage`'s
+  `setToken` accepts any non-empty string with no server round trip —
+  under `operator`, where the server ignores whatever token is sent, the
+  literal effect (found by opus-2 reading the code, not by running it)
+  was that the wall admitted anyone who typed a single character while
+  blocking the honest operator who typed nothing. This PR's fix removes
+  the practical exposure (an operator is never routed to `/login` in the
+  first place once whoami succeeds with none), but the form itself still
+  has no real validation if someone lands on it by hand. Out of scope
+  here — it's a `LoginPage` design question (does submitting call
+  `/api/whoami` with the typed value before saving it?), not the
+  access-gate bug this PR exists to fix — written down so it doesn't
+  get rediscovered as if it were new.
