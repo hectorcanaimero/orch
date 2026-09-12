@@ -806,3 +806,59 @@ question for Python.
   stakeholder dashboard answer 401 for something that exists nowhere, which is
   the same unusable answer as the 200 was, one status code along — and would
   break the same client check in a new place.
+
+## `/stakeholder/summary` — the allow-list named a route nothing served
+
+- **The name shipped without the route, and that is the whole shape of it.**
+  `stakeholder_summary_json` has been in `DefaultStakeholderRoutes` since the
+  allow-list was ported (#165), with a comment calling it "the summary the
+  whole profile exists for". Nothing ever registered it. So the stakeholder
+  profile advertised a page, the server answered it with the SPA's HTML at 200,
+  and the page crashed on the markup.
+
+  A third variety of the family already in this file: a writer with no reader,
+  a constructor with no caller, a guard no path reaches — and now **a name with
+  no thing behind it**. All four pass every test that exists, because what is
+  missing is the other end of a pair nobody looked at together.
+
+- **The port is the payload, not the computation.** `snapshot.Build` already
+  computes every figure; this route maps its output onto the key names the SPA
+  reads. Serving the snapshot's own shape would have swapped one crash for
+  another — the page destructures `project_id`, `spend_rounded_usd`,
+  `phases_timeline`, `exec_summary`, and the snapshot emits `project_name`,
+  `budget`, `milestones` with different field names, `executive_summary.text`.
+
+  One compiled `web/` bundle serves both dashboards, so one JSON shape is the
+  architecture and not a detail — confirmed with sonnet-2, who owns the page,
+  before the mapping was written rather than after it broke.
+
+- **One figure is computed here and it is worth naming.**
+  `phases_timeline[].estimate_hours` is a per-phase sum the snapshot does not
+  carry (it totals the project). It is a sum over tasks already loaded, not a
+  second definition of anything — every other number in the payload is mapped.
+
+- **`int(x)` is not `round(x)`.** The phase percentage first read
+  `int(round2(done/total*100))`, which truncates after rounding to two
+  decimals: 66.666 became 66 where Python's `round()` gives 67.
+  `roundDecimals(_, 0)` formats with `strconv.FormatFloat(..., 'f', 0, _)`,
+  which rounds half to even exactly as CPython does.
+
+  **And the first test for it could not have caught it.** It pinned a phase
+  that is one of two done — 50%, which needs no rounding at all, so truncating
+  and rounding give the same answer. Gemini blocked the PR on exactly that
+  (rule 24), and it was right: the gap was written down in this file's own
+  first draft ("50%, no rounding") and then not closed. Noticing a hole and
+  describing it is not the same as testing it. The cases now are 2 of 3 (66.666
+  → 67, where truncation gives 66) and 1 of 8 (12.5 → 12, which separates half
+  to even from half up), both seen red against the truncating form.
+
+- **The measurement, across three PRs, on the same page and binary:**
+
+  | | bytes | `#root` | what the operator sees |
+  |---|---|---|---|
+  | before #206 | 597 | empty | blank page, `TypeError` in console |
+  | #206 (the 404 rule) | 9471 | mounted | the SPA's own "Failed to load summary" |
+  | this | 21692 | mounted | the summary, zero exceptions |
+
+  Each step is an improvement on its own, which is what made the merge order
+  safe to interleave with #205 rather than having to land all three at once.

@@ -49,3 +49,18 @@ func roundUpToStep(value, step float64) float64 {
 	}
 	return math.Ceil(value/step) * step
 }
+
+// RoundUpToStep is `round_up_to_step` for a caller outside this package.
+//
+// Exported as a thin wrapper rather than by moving the function: the rounding
+// rule belongs to the stakeholder payload, and the dashboard's own
+// `/stakeholder/summary` needs the same figure the executive summary quotes.
+// A second `math.Ceil(x/0.5)*0.5` somewhere else would be a second definition
+// of "what a client is told it cost", which is the kind of duplication that
+// drifts by a rounding step and is never noticed.
+func RoundUpToStep(value, step float64) float64 { return roundUpToStep(value, step) }
+
+// SpendStep is the step that rounding uses ($0.50), exposed with it so a
+// caller cannot pass a different one by accident and produce a figure the
+// executive summary disagrees with.
+const SpendStep = 0.50

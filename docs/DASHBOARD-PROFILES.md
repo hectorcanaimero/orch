@@ -203,6 +203,26 @@ matters for your setup, do not bind the portfolio beyond localhost.
 token would suggest a shared one exists, and a tunnel is configured per project
 — there is no single project here to take one from.
 
+### `/stakeholder/summary`
+
+The one route the stakeholder profile exists for, and the landing page of both
+profiles. It is on the default allow-list as `stakeholder_summary_json`, so a
+stakeholder session reaches it with its token and nothing else does without
+one.
+
+Its body is Python's, field for field — one compiled `web/` bundle serves both
+dashboards, so one JSON shape is the architecture rather than a detail. Every
+figure comes from `publish/snapshot.Build`, the same function `orch publish`
+and `orch report pdf` use, so the executive sentence and the cards cannot
+quote different numbers.
+
+`show_spend_to_stakeholder` (off by default) governs **every** spend figure
+here: the total, the daily series, and the spend sentence of the summary. With
+it off, `spend_rounded_usd` is `null` rather than `0` — "nothing was spent" and
+"you may not see it" are different claims — and `spend_by_day` is an empty
+list. With it on, the total is rounded **up** to the nearest $0.50, which is
+the same step the summary sentence quotes, so the card and the sentence agree.
+
 ### Unimplemented data routes are 404, never the SPA
 
 Any path under `/api/` or `/stakeholder/` that no route claims answers **404
