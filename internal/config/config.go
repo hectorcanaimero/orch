@@ -47,6 +47,7 @@ type Config struct {
 	Notifications        Notifications `yaml:"notifications"`
 	Presentation         Presentation  `yaml:"presentation"`
 	Publish              Publish       `yaml:"publish"`
+	Tunnel               Tunnel        `yaml:"tunnel"`
 }
 
 // Concurrency caps in-flight dispatches. `global_max` is the hard ceiling
@@ -130,8 +131,10 @@ type State struct {
 }
 
 // Dashboard is the subset of the Python dashboard config the Go tree keeps.
-// Kanban defaults and the multi-provider tunnel block are dropped; a config
-// carrying them loads fine and they are ignored.
+// Kanban defaults are dropped; a config carrying them loads fine and they
+// are ignored. The legacy nested `dashboard.tunnel` block is dropped too
+// (see droppedKeys in load.go) — it moved to the top-level Tunnel type
+// below (G5.6).
 type Dashboard struct {
 	Profile                string `yaml:"profile"`
 	Token                  string `yaml:"token"`
@@ -187,4 +190,24 @@ type Publish struct {
 	Dir string `yaml:"dir"`
 	// GitBranch is the branch pushed for `to: git` — typically gh-pages.
 	GitBranch string `yaml:"git_branch"`
+}
+
+// Tunnel configures the dashboard's optional public-URL tunnel (Sprint
+// E-5; G5.6 in the Go tree — internal/tunnel). Field-for-field the same
+// shape as orchestrator/dashboard/tunnel/manager.py's TunnelManagerConfig,
+// plus Enabled (which Python threads through DashboardConfig.tunnel
+// separately). Provider is one of tunnel.KnownProviders() — "autossh" or
+// "bore"; there is no "cloudflared" (see droppedKeys's fixed comment
+// below and docs/brainstorm/go-migration-notes/sonnet-2.md — an earlier
+// plan text and one Go comment both named it, and neither was ever
+// backed by a real provider).
+type Tunnel struct {
+	Enabled  bool     `yaml:"enabled"`
+	Provider string   `yaml:"provider"`
+	Command  string   `yaml:"command"`
+	Args     []string `yaml:"args"`
+	// URLRegex overrides the provider's own default pattern when set.
+	URLRegex         string  `yaml:"url_regex"`
+	URLParseTimeoutS int     `yaml:"url_parse_timeout_s"`
+	StopTimeoutS     float64 `yaml:"stop_timeout_s"`
 }

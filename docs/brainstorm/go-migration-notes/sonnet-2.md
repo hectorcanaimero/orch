@@ -249,3 +249,121 @@ Append-only. One entry per finding, newest last. Format and numbering follow `do
   200, log showed `SPA mounted at / → .../orchestrator/spa (packaged)`,
   and the process exited cleanly with no leftover `uvicorn`/`orch`
   process after the timeout fired.
+
+- **`internal/tunnel` (G5.6) — the "cloudflared" bug had three sites, not
+  one, all downstream of the same source.** Before writing anything,
+  read `orchestrator/dashboard/tunnel/{manager,providers,deps}.py`
+  end-to-end: the real `PROVIDERS` registry has exactly two entries,
+  `autossh` (Pinggy, over SSH) and `bore`. No `cloudflared` anywhere.
+  orch-98 traced the origin: `docs/DASHBOARD-PROFILES.md` documents
+  cloudflared as a tunnel an operator mounts by hand, OUTSIDE orch,
+  which got miscopied into the "Orch en Go" plan text as if it were a
+  manager provider, which got copied again into
+  `internal/config/load.go`'s `droppedKeys["dashboard.tunnel"]` message
+  and `docs/CONFIG.md`'s ignored-keys table (both said "pinggy and
+  cloudflared remain"). Python never had this bug — the string only
+  ever existed in Go. Fixed both to say "autossh and bore" in this PR
+  (own commit; internal/config isn't this lane's package, but it's a
+  one-line string with no behavior attached, and orch-98 confirmed the
+  fix in-band rather than routing it through a separate PR). Ported
+  exactly the two real providers — no `cloudflared` ProviderSpec added,
+  new-in-Go or otherwise: adding a provider with no real tunnel binary
+  to test against would be a feature invented for this migration, which
+  the migration rule doesn't sanction just because a stale doc handed us
+  the name.
+
+- **Go's `exec.Cmd.Wait()` cannot be called twice or from two
+  goroutines — Python's `subprocess.Popen.wait()` can, and
+  `TunnelManager` relies on exactly that.** Python's `stop()` (caller's
+  thread) and `_on_child_exit()` (the reader thread) both call
+  `proc.wait(...)`, safely, because CPython's Popen serializes that
+  internally (`_waitpid_lock`). A literal port — `Stop()` calling
+  `proc.Wait()` itself AND the reader goroutine's `onChildExit` also
+  calling it — is a data race `go test -race` catches immediately (it
+  did, on the very first run: two goroutines racing inside
+  `os/exec.(*Cmd).awaitGoroutines`). Redesigned so `onChildExit` (run
+  once, by the reader goroutine, when stdout hits EOF) is the ONLY
+  caller of `proc.Wait()` in the package; `Stop()` signals the process
+  and waits on `readerDone` — a channel `onChildExit` closes — instead
+  of reaping it directly. A `stopRequested` bool takes over the job
+  Python's two-sided `state.update()` calls did implicitly (a manual
+  stop bumps `restart_count`; a crash outside `Stop()` does not) — set
+  by `Stop()` before signaling, read and cleared by `onChildExit`, since
+  the single physical reaper needs an explicit signal for what Python
+  got for free from two racing writers agreeing by construction.
+
+- **`SweepStaleLock(cfg=nil)` does NOT mean "adopt any live pid" —
+  written into a test first, caught by the test failing, not by reading
+  closely enough the first time.** `manager.py`'s `sweep_stale_lock`
+  computes `adopted = True` when `cfg is None` and the pid is alive, but
+  the ADOPTION branch is gated on `adopted and cfg is not None` — so
+  `cfg=None` always falls through to `_release_lock_files()` regardless
+  of `adopted`, live pid or not. The computed `adopted` value is
+  genuinely never read again on that path; it appears to exist only so
+  the alive-check runs the same way whether or not a command is being
+  verified. Go's `SweepStaleLock` ports this exactly, including the
+  apparently-pointless computation, on the theory that a Python method
+  this deliberately structured (a named boolean computed, then gated
+  behind a second condition that makes half its branches unreachable) is
+  more likely to be a deliberate no-op left in place than an accident —
+  matching this lane's standing rule that code with a written reason
+  outranks a plan, a doc, or a guess.
+  `TestSweepStaleLockWithNilConfigAlwaysCleansUpRegardlessOfLiveness`
+  pins the behavior actually observed rather than the one a first read
+  suggests.
+
+- **The Go binary warned "unknown key" on any real project with a
+  `tunnel:` block, from whenever `internal/config` first shipped until
+  this PR.** `Config` had no `Tunnel` field and `knownKeys` had no
+  `tunnel.*` entries — a project migrated to the Go binary before G5.6
+  landed would see a spurious warning on every run for a config block
+  that has always been valid. Added `config.Tunnel` (field-for-field the
+  same shape as `TunnelManagerConfig`) and the seven `tunnel.*`
+  `knownKeys` entries in this PR's own commit; verified with a grep that
+  `internal/tunnel.ManagerConfig` construction (wherever G5.2's HTTP
+  layer ends up building one from `config.Tunnel`) will read every field
+  the allowlist admits — the same "declared but never read" shape as
+  bugs 11 and 13 opus-2 flagged while coordinating this same file.
+  Coordinated the `internal/config` edit with opus-2 first (concurrent
+  PR touching the same struct, different fields — Dispatch/VCS/GitHub
+  predate both of us) to land on non-overlapping struct positions with
+  no rebase conflict expected.
+
+- **Gemini's PR #169 review found one real bug beyond what
+  `go test -race` already had:** compiling the URL/reconnect regexes
+  happened lazily, inside the reader goroutine, so a bad `URLRegex`
+  override spawned a real, unmonitored child process with no reader ever
+  attached to reap it — a genuine leak, caught while writing the
+  rule-8 coverage test for that path rather than by the test itself
+  failing (the first draft of the test passed; the leak was only visible
+  by reasoning about what `Stop()` would do afterward: signal a process
+  whose `readerDone` channel was already closed by the early-return
+  path, so `Stop` believed it had reaped a child it never called
+  `.Wait()` on). Fixed by moving both `regexp.Compile` calls into
+  `Start()` itself, before spawning — which also happens to match
+  `manager.py` more closely than the original port did: Python's
+  `re.compile` runs in `start()`'s own call stack via
+  `_start_reader_thread`, so a bad pattern there fails `start()`
+  synchronously, before anything is ever spawned, not asynchronously
+  inside a thread nobody is watching yet.
+  `TestStartBadURLRegexFailsBeforeSpawning` pins the corrected contract.
+  The other two rule-8 findings (`Start` on an unknown provider, on a
+  spawn failure) were coverage gaps only — both paths were already
+  correct, just untested — verified by seeing `go test -race` genuinely
+  fail on the very first run (the double-`Wait()` race, in this same
+  PR's first draft) as the calibration that this reviewer's rule-8/22
+  findings are worth taking seriously rather than dismissed as
+  reviewer-being-pedantic.
+
+  Also fixed: a 32-hex placeholder in a redaction test that read as a
+  real credential shape (swapped for a `strings.Repeat("deadbeef", 4)`
+  placeholder — same length, obviously not a real token); three
+  `time.Sleep`-in-a-polling-loop instances, replaced with a
+  `stateChanged` notification channel (`nil` in production, a test-only
+  hook) so a test blocks on an actual state-write event instead of
+  guessing a poll interval; and two bare `_ = ...` error discards
+  (`os.Remove` on a stale lock file, `writeStateLocked`'s ~10 call
+  sites) — the latter consolidated behind a `writeStateBestEffort`
+  helper that logs via `slog.Warn` rather than a scattered `_ =` at
+  every call site, so the fix reads as one deliberate policy rather
+  than ten silent patches.

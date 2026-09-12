@@ -206,6 +206,22 @@ publish:
   git_branch: gh-pages   # branch pushed for `to: git`
 ```
 
+### `tunnel` — new (G5.6)
+
+The dashboard's optional public-URL tunnel (Sprint E-5). Two providers only —
+`autossh` (Pinggy, over SSH) and `bore` (bore.pub); there is no `cloudflared`.
+
+```yaml
+tunnel:
+  enabled: false
+  provider: autossh       # autossh | bore
+  command: autossh        # binary on PATH
+  args: []                # empty means "the provider's own defaults"
+  url_regex: ""           # empty means "the provider's own pattern"
+  url_parse_timeout_s: 30
+  stop_timeout_s: 5
+```
+
 ### Misc
 
 ```yaml
@@ -226,7 +242,7 @@ compatibility contract.
 | `findings.*` | The findings feature was removed |
 | `dashboard.board_url` | The ExcaliDash embed was removed |
 | `dashboard.kanban` | Kanban defaults moved into the SPA |
-| `dashboard.tunnel` | Only pinggy and cloudflared remain |
+| `dashboard.tunnel` | Only autossh and bore remain — configure under `tunnel` |
 | `dashboard.server` | Host and port are CLI flags |
 
 Anything else unrecognised gets a generic warning naming the path. That is
