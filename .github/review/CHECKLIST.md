@@ -70,9 +70,14 @@ These apply to files under `cmd/` and `internal/`.
 
 ### Package dependencies
 
-11. **`internal/model` imports nothing from `internal/`.** It is the leaf:
-    `Task`, `Finding`, the DAG, the domain types. A model file importing
-    `state`, `engine` or `config` is blocking.
+11. **`internal/model` imports nothing from `internal/` except `pyfmt`.**
+    It is the leaf: `Task`, `Finding`, the DAG, the domain types. A model
+    file importing `state`, `engine` or `config` is blocking. `pyfmt` is
+    the one exception, and not really an exception at all — it is another
+    leaf (rule 14: imports nothing from `internal/` itself), so importing
+    it doesn't create a path back into anything model-adjacent. It exists
+    so Python's float/repr formatting has one implementation; duplicating
+    it inside `model` instead would be worse than the import.
 12. **`internal/engine` never imports `internal/cli` or
     `internal/dashboard`.** The engine is driven by them, not the reverse.
     Blocking.
