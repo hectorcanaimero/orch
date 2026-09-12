@@ -75,6 +75,9 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Discarded like every other command's: the process is exiting,
+			// the database is read-only here, and a close error at that point
+			// changes nothing a caller could act on.
 			defer func() { _ = closeDB() }()
 
 			server, err := dashboard.New(dashCfg, dashboard.Options{
