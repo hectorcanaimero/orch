@@ -170,6 +170,7 @@ func Run(opts Options) (Result, error) {
 	w.softCopyShared(".gitignore", "gitignore.tmpl")
 	w.agents()
 	w.workflow()
+	w.mcpConfig()
 	if opts.SDD {
 		w.mkdir(filepath.Join("openspec", "changes"))
 		w.mkdir(filepath.Join("openspec", "specs"))

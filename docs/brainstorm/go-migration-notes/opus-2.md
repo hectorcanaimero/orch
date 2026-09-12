@@ -249,3 +249,133 @@ question for Python.
   the reader's attention, and the other rots. Caught by grepping the file
   before committing rather than after. The lesson generalises past YAML —
   **before adding a section, check whether the thing already has one.**
+
+## G6.4 — the MCP server
+
+- **Bug 21 — the dispatch prompt's "Completed dependencies (context)" block is
+  always empty.** Found building `orch_context`, which answers the same
+  question the prompt's dep block does, so the first version reused
+  `prompt.LastComment` — and it returned `""` for a dependency that had just
+  reported a summary through the MCP tool.
+
+  `prompt_builder._read_dep_last_comment` reads the entry's **`text`** key:
+
+  ```python
+  text = str(last.get("text", "")) if isinstance(last, dict) else str(last)
+  ```
+
+  Nothing in `orchestrator/` writes a `text` key into a task comment. Every
+  writer is in `state/sqlite_backend.py` and every one of its three call sites
+  writes `{"author", "body", "at"}`:
+
+  ```python
+  comments.append({"author": author, "body": note or status, "at": ts})
+  ```
+
+  `rg '"text"' orchestrator/ --glob '*.py'` finds the key in exactly three
+  places: `prompt_builder.py`'s reader, Slack's webhook payload, and
+  `test_prompt_builder.py`'s own fixtures. So the block renders the id and the
+  title with an empty comment for every dependency, on every dispatch. An
+  agent is told which tasks came before it and never what they concluded —
+  which is the entire reason the block exists (FR-P-3).
+
+  **The test is complicit, again.** `test_prompt_builder.py` builds its deps
+  with `comments=[{"author": "agent", "ts": "2026-01-01", "text": text}]` —
+  a shape no writer produces, including the `ts`/`at` mismatch. Three tests
+  (truncation at 500 chars, "most recent entry wins", the rendered block) all
+  pass against a comment shape that never reaches the renderer in production.
+  Checklist rule 21's lesson outside `internal/providers`: the fixture was
+  written from the reader's docstring instead of captured from the writer.
+
+  **There is a second layer, and it survives fixing the key.** Since F-12 the
+  comments live in `tasks_runtime.comments_json`, and the prompt's deps come
+  from `tasks.json` — where `project.Hydrate` overlays `Status` and nothing
+  else. So even with `body` spelled correctly, `dep.Comments` is whatever the
+  file held when it was last written, which for a project orch has been
+  running is an empty list. Both halves have to move for the block to carry
+  anything.
+
+  **Not fixed here.** `internal/prompt` is a byte-for-byte port with goldens
+  rendered by Python (G2.3); changing what the block renders changes those
+  goldens, and it is G6.6's own subject matter — the prompt is being rewritten
+  there to offer MCP first. `internal/mcp` reads `body` from the runtime row
+  instead, with the reasoning at `lastComment` in `readtools.go`, because a
+  tool whose whole purpose is telling an agent what its dependencies reported
+  cannot ship the empty string while waiting.
+
+  Found the way the last four were: by running the thing and reading one line
+  of its output.
+
+- **An illegal transition is a tool error, not a protocol error, and the
+  difference is the whole feature.** The SDK makes both easy: a handler that
+  returns a non-nil `error` becomes `IsError` with the error text as content,
+  which is the protocol-level shape. That loses the structured payload — and
+  the payload is the point, because the caller is a model that can retry.
+  `orch_set_status` returns `(result{IsError: true}, out, nil)` instead, so
+  `structuredContent` still carries `{code, message, from, valid_transitions}`
+  alongside the human-readable text. A refusal an agent can act on:
+
+  ```
+  F0.T1 cannot move from done to in-progress (valid from here: todo, done)
+  ```
+
+  `state.Transition`'s own error already names the legal destinations, but as
+  prose inside an error string. The list of fields is the same facts without
+  the English.
+
+- **`invalid_status` deliberately leaves `valid_transitions` empty.** The first
+  version filled it with all five statuses, which is wrong in the way that
+  matters: the field means "legal from `from`", and nothing was looked up yet,
+  so there is no `from`. A list that means two different things depending on
+  the sibling `code` is how a client ends up offering `done` from `backlog`.
+  `ParseStatus`'s own message enumerates the five; the structured field stays
+  relative to a task or stays absent.
+
+- **A long-lived server goes stale in a way a per-invocation CLI cannot.**
+  `orch task-status` calls `Bootstrap` every time it runs, so a task added to
+  tasks.json a minute ago is writable. `orch mcp` runs for the length of an
+  agent session: bootstrapping only at startup would make that task
+  permanently "unknown task" to the agent dispatched for it. `currentStatus`
+  seeds on the miss path only — one read in the common case, and `Bootstrap`
+  never overwrites a runtime status.
+
+- **`.mcp.json` is soft even under `--force`, unlike `AGENTS.md`.** Both are
+  hand-edited, but `AGENTS.md` is orch's file and `.mcp.json` is shared: a
+  project that already has one is very likely listing other servers in it, and
+  replacing it disconnects them silently. `orch doctor`'s `mcp.config` check is
+  how an older project finds out it has none — its remediation points at
+  `docs/MCP.md` rather than at `orch init --force`, which would need to get
+  past the conflict gate and would overwrite `tasks.json` on the way.
+
+- **`scripts/parity.sh` needed a fourth exclusion and it is a real one.**
+  Python's `run_init_cli` has no MCP server to point at, so `.mcp.json` is Go
+  only — verified by removing the `-x` and watching both tree checks fail with
+  `Only in …/workflow-go/parity-workflow: .mcp.json`. An intended divergence
+  documented in `docs/CLI.md`'s `init` row, not a normalisation hiding a
+  difference: the file's content is pinned by `internal/scaffold`'s own tests.
+
+- **The SDK is the official one and its floor matches ours.**
+  `gh api repos/modelcontextprotocol/go-sdk` reports
+  `"The official Go SDK for Model Context Protocol servers and clients.
+  Maintained in collaboration with Google."`, not a fork, not archived. v1.7.0
+  declares `go 1.25.0` — the same floor `modernc.org/sqlite` already forces, so
+  it costs nothing. It pulls four new indirect modules
+  (`google/jsonschema-go`, `segmentio/encoding`, `yosida95/uritemplate`,
+  `golang.org/x/oauth2`); none is a runtime endpoint, and the stdio transport
+  opens no sockets.
+
+- **Tested through a real session, not by calling the handlers.** The handlers
+  are the easy part. What had to be proved is that the seven are reachable *as
+  tools*: schemas inferable, arguments surviving JSON-RPC, a refusal arriving
+  with its payload intact. `mcp.NewInMemoryTransports()` gives a real client
+  and a real server in one process, and the test decodes
+  `structuredContent` off the wire rather than reading the Go value the
+  handler returned — which is how the `[]json.RawMessage` comment field was
+  caught inferring a schema of `string`.
+
+  Then the binary itself, over a pipe, driven by a hand-written JSON-RPC
+  client with no SDK on the other side: `initialize`, `tools/list`, the
+  `start → finish` cycle, the refusal, and `orch_context` on the task whose
+  dependency had just finished. Closing stdin exits 0 with an empty stderr.
+  Rule 29 is not satisfied by the in-process test — it was the printed
+  transcript that showed `last_comment` empty.

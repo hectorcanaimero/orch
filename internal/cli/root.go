@@ -90,6 +90,7 @@ func newRootCmd(version string) *cobra.Command {
 	root.AddCommand(newInstallSkillsCmd(flags))
 	root.AddCommand(newAtomizeCmd(flags))
 	root.AddCommand(newRunCmd(flags))
+	root.AddCommand(newMCPCmd(flags))
 	return root
 }
 

@@ -144,6 +144,7 @@ func TestScaffoldWritesTheLayout(t *testing.T) {
 		".orchestrator/model_router.yaml",
 		".orchestrator/state/.gitkeep",
 		".github/workflows/orch-ci.yml",
+		".mcp.json",
 	} {
 		if _, err := os.Stat(filepath.Join(res.Root, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("missing %s", rel)
@@ -622,5 +623,58 @@ func TestANestedKeyIsNotAppended(t *testing.T) {
 	body := replaceOrAppend("concurrency:\n  global_max: 4\n", reStateBackend, "", "file", false)
 	if strings.Contains(body, "backend") {
 		t.Errorf("a nested key was appended:\n%s", body)
+	}
+}
+
+// `.mcp.json` is what points an MCP-capable agent at `orch mcp` (G6.4). Two
+// properties, and the second is the one that matters: it names the server the
+// binary actually serves, and it never replaces a file that is already there.
+func TestMCPConfigNamesTheServer(t *testing.T) {
+	res := scaffolded(t, "python-api")
+
+	var cfg struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, res, ".mcp.json")), &cfg); err != nil {
+		t.Fatalf("parse .mcp.json: %v", err)
+	}
+	server, ok := cfg.MCPServers["orch"]
+	if !ok {
+		t.Fatalf("no `orch` server in .mcp.json: %+v", cfg.MCPServers)
+	}
+	if server.Command != "orch" {
+		t.Errorf("command = %q; want orch", server.Command)
+	}
+	if len(server.Args) != 1 || server.Args[0] != "mcp" {
+		t.Errorf("args = %v; want [mcp]", server.Args)
+	}
+}
+
+// Soft even under --force. A project's `.mcp.json` is shared with every other
+// MCP server it uses; overwriting it would silently disconnect them.
+func TestMCPConfigIsNeverOverwritten(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const theirs = `{"mcpServers":{"something-else":{"command":"other"}}}`
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(theirs), 0o600); err != nil {
+		t.Fatalf("seed .mcp.json: %v", err)
+	}
+
+	for _, force := range []bool{false, true} {
+		if _, err := Run(Options{Root: root, Template: "python-api", Force: force, Now: fixedNow}); err != nil {
+			t.Fatalf("Run(force=%v): %v", force, err)
+		}
+		got, err := os.ReadFile(filepath.Join(root, ".mcp.json")) // #nosec G304 -- a temp dir this test created
+		if err != nil {
+			t.Fatalf("read .mcp.json back: %v", err)
+		}
+		if string(got) != theirs {
+			t.Fatalf("force=%v replaced the project's own .mcp.json:\n%s", force, got)
+		}
 	}
 }

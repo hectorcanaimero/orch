@@ -68,7 +68,7 @@ internal/
   vcs/               — github/gitlab (existe)
   dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: spa.go embebe web/ — G5.1; servidor, modelo de acceso y endpoints — G5.2, en curso)
   publish/           — snapshot del stakeholder: export estático, watch, destino git/cloud
-  mcp/               — servidor MCP stdio (tools orch_*) para agentes
+  mcp/               — servidor MCP stdio (tools orch_*) para agentes (existe: las siete tools sobre state.Backend, G6.4; docs/MCP.md)
   skills/            — instalación de skills (`orch install-skills`) (existe)
   templates/         — plantillas de proyecto (embebidas; #145)
   scaffold/          — `orch init`: batch, wizard, confirm gate (el paquete no se llama `init` porque ese nombre exige alias en cada import)
