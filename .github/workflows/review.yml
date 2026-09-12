@@ -188,6 +188,11 @@ jobs:
           build_head() {
             echo "You are reviewing a pull request for the orch repository."
             echo "Apply the checklist below to the diff below. Nothing else."
+            echo "You have NO tools: do not call, invoke or request any tool,"
+            echo "and do not ask to read or search files. Judge from the diff"
+            echo "alone. If a rule cannot be checked from the diff (a test you"
+            echo "cannot see, a file that is not in it), say so as a minor"
+            echo "finding instead of trying to look it up."
             echo
             echo "Respond with a single JSON object and NOTHING ELSE — no prose"
             echo "before it, no prose after it, no markdown fence. Schema:"
