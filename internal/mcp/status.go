@@ -233,10 +233,17 @@ func (s *server) currentStatus(ctx context.Context, taskID string) (state.TaskRu
 
 	tasks, loadErr := project.Load(ctx, s.opts.Backend, s.opts.TasksJSON)
 	if loadErr != nil {
-		// A tasks.json that cannot be read is not this call's problem to
-		// report — the task is still unknown, which is the answer the
-		// caller needs, and the original error is the accurate one.
-		return state.TaskRuntime{}, err
+		if s.opts.TasksJSON == "" {
+			// No manifest to consult, so nothing was learned: the task is
+			// unknown and that is the whole story.
+			return state.TaskRuntime{}, err
+		}
+		// A configured tasks.json that cannot be read is a broken project,
+		// not an unknown task. Reporting the miss and dropping this would
+		// send an agent looking for a typo in an id while the project's
+		// manifest is the thing that is wrong.
+		return state.TaskRuntime{}, fmt.Errorf("read %s while looking up %q: %w",
+			s.opts.TasksJSON, taskID, loadErr)
 	}
 	if _, ok := findTask(tasks, taskID); !ok {
 		return state.TaskRuntime{}, err

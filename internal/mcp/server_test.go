@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -678,5 +679,47 @@ func TestBudgetReportsTheShippedPreset(t *testing.T) {
 	// rather than as a row that merely exists.
 	if got := out.Providers["claude"]; got.TokenBudget != 800000 || got.WindowHours != 5 || got.ThresholdPct != 60 {
 		t.Errorf("claude = %+v; want the conservative preset's 800000/5h/60%%", got)
+	}
+}
+
+// A write to a task the database does not have sends `currentStatus` to
+// tasks.json, which is where a task added since the last run would be. If
+// that file cannot be read, the project is broken — and saying "unknown task
+// id" sends the agent looking for a typo in an id instead.
+func TestAnUnreadableTasksFileIsReportedAsItself(t *testing.T) {
+	root, backend := newTestProject(t)
+	broken := filepath.Join(root, "tasks.json")
+	if err := os.WriteFile(broken, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("corrupt tasks.json: %v", err)
+	}
+	cs := connect(t, Options{
+		Backend: backend, TasksJSON: broken, ProjectID: "proj",
+		ProjectRoot: root, Version: "v-test",
+	})
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "orch_set_status",
+		Arguments: map[string]any{"task_id": "F9.T9", "status": "done"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a write against a broken project succeeded")
+	}
+	text, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v; want text", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "tasks.json") {
+		t.Errorf("error text = %q; it must name the file that could not be read", text.Text)
+	}
+	// And a task the database DOES have is still writable — a malformed
+	// manifest must not take the whole server down with it, since the
+	// database is the source of truth for status.
+	var out setStatusOut
+	call(t, cs, "orch_set_status", map[string]any{"task_id": "F0.T1", "status": "in-progress"}, &out)
+	if !out.OK {
+		t.Errorf("a known task became unwritable: %+v", out)
 	}
 }
