@@ -39,6 +39,10 @@ MARKER = "<!-- orch:gemini-review -->"
 TOOL_CALL_RE = re.compile(r"^\s*[‹<]call:[A-Za-z_]+")
 
 
+# Where a finding points when it is about the PR rather than a file.
+PR_LEVEL = "(PR)"
+
+
 class EmptyReview(ValueError):
     """The reviewer ran but produced no text. Distinct from a malformed
     verdict, because the fix is different: an empty response is worth
@@ -141,11 +145,17 @@ def normalise_findings(value, bucket: str) -> list[dict]:
     for i, item in enumerate(value):
         if not isinstance(item, dict):
             raise ValueError(f"`{bucket}[{i}]` must be an object")
-        for required in ("file", "rule", "why"):
+        for required in ("rule", "why"):
             if not str(item.get(required, "")).strip():
                 raise ValueError(f"`{bucket}[{i}]` is missing `{required}`")
+        # `file` is optional: a finding about the PR itself (its title, its
+        # body, a missing test the reviewer cannot place) has no file, and the
+        # reviewer omits the key rather than inventing one. #207's verdict was
+        # valid JSON that failed here on a "Conventional commit" finding about
+        # the title — the third "unreadable verdict" of the day, and the first
+        # one whose raw text survived to be read.
         entry = {
-            "file": str(item["file"]).strip(),
+            "file": str(item.get("file") or "").strip() or PR_LEVEL,
             "rule": str(item["rule"]).strip(),
             "why": str(item["why"]).strip(),
         }
