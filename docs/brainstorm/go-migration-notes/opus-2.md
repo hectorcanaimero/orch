@@ -215,3 +215,37 @@ question for Python.
   installed on this machine but not authenticated, so its real output cannot
   be captured. Flagged rather than guessed: inventing the casing is exactly
   the fixture that passes while the real CLI breaks.
+
+## G6.7 — internal/notify
+
+- **Nothing wrong with `notifications.py` either.** Second clean port in a row,
+  which is worth recording as carefully as the bugs: best-effort sends, an
+  empty URL disabling a channel, a notifier with no channels being a working
+  no-op, and the reason cut to its first line all had reasons that survived
+  reading.
+
+- **What capturing the payloads settled that reading would not have.** The
+  fixtures were recorded off the wire — a local `http.server` standing in for
+  Slack and Discord while Python's `Notifier` posted to it — and two details
+  came out of it:
+
+  1. `notify_blocked` sends only the reason's **first line**. A multi-line
+     block reason loses everything after the newline, which is easy to port as
+     "the whole reason, truncated" and then never notice.
+  2. An absent reason renders as the literal `unknown`, not as an empty tail.
+
+  A third is a difference rather than a finding, and is why the test compares
+  the decoded message rather than the raw body: Python's `json.dumps` defaults
+  put a space after the colon and escape non-ASCII (`\u2014` where Go writes a
+  literal em dash). Both are the same JSON to both services, so pinning the
+  bytes would pin `json.dumps`'s defaults rather than anything a human sees.
+  The message text is the contract and is compared byte for byte; the envelope
+  is not.
+
+- **Nearly wrote the documentation form of bug 4.** `docs/CONFIG.md` already
+  had a `### notifications` section, and the first draft of this PR appended a
+  second, top-level one. Two sections describing one config block is the same
+  failure as two `dashboard:` keys in one YAML file: both are present, one wins
+  the reader's attention, and the other rots. Caught by grepping the file
+  before committing rather than after. The lesson generalises past YAML —
+  **before adding a section, check whether the thing already has one.**

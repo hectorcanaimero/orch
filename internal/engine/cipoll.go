@@ -211,6 +211,9 @@ func (p *CIPoller) ciFailed(ctx context.Context, s *Scheduler, row state.TaskRun
 		p.emit(ctx, s, EventCIBlocked, row, map[string]any{
 			"pr_url": row.PRURL, "attempts": row.CIAttempts,
 		})
+		if s.Notify != nil {
+			s.Notify.CIBlocked(ctx, row.ID, row.PRURL, row.CIAttempts)
+		}
 		return
 	}
 

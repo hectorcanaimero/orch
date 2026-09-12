@@ -351,6 +351,12 @@ func (s *Scheduler) blockTask(ctx context.Context, entry *InFlight, reason strin
 	if err := s.transition(ctx, entry.Task.ID, model.StatusBlocked, reason); err != nil {
 		s.logger().Error("recording blocked failed", "task", entry.Task.ID, "err", err)
 	}
+	// Last, and after the state is already written: the webhook is a nudge,
+	// and a slow one must not sit between a task being blocked and the
+	// database knowing it.
+	if s.Notify != nil {
+		s.Notify.Blocked(ctx, entry.Task.ID, reason)
+	}
 	return nil
 }
 

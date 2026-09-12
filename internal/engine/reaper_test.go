@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1050,4 +1051,101 @@ func contains(hay []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// ---- The notification side channel --------------------------------------
+
+// recordingNotifier captures what the engine announced, so the two call sites
+// can be asserted without an HTTP server.
+type recordingNotifier struct {
+	mu       sync.Mutex
+	blocked  []string
+	ciBlocks []string
+}
+
+func (n *recordingNotifier) Blocked(_ context.Context, taskID, reason string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.blocked = append(n.blocked, taskID+": "+reason)
+}
+
+func (n *recordingNotifier) CIBlocked(_ context.Context, taskID, prURL string, attempts int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.ciBlocks = append(n.ciBlocks, fmt.Sprintf("%s: %s x%d", taskID, prURL, attempts))
+}
+
+func (n *recordingNotifier) blockedList() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.blocked...)
+}
+
+func (n *recordingNotifier) ciBlockedList() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.ciBlocks...)
+}
+
+// TestABlockedTaskIsAnnounced: the whole reason the side channel exists is
+// that an operator should not have to watch the dashboard to learn a task
+// gave up.
+func TestABlockedTaskIsAnnounced(t *testing.T) {
+	f := newReapFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": failResponse("authentication_error: bad key")},
+		SchedulerOptions{Cfg: config.Config{Retry: config.Retry{MaxAttempts: 1}}})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	f.runOnce(t)
+
+	got := n.blockedList()
+	if len(got) != 1 {
+		t.Fatalf("announced %d blocks, want 1: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "C-1") {
+		t.Errorf("the announcement does not name the task: %q", got[0])
+	}
+	if !strings.Contains(got[0], "authentication_error") {
+		t.Errorf("the announcement does not carry the reason: %q", got[0])
+	}
+}
+
+// TestASuccessIsNotAnnounced: the channel is for bad news. Announcing every
+// finished task is how a team mutes the channel, and then the blocks go
+// unseen too.
+func TestASuccessIsNotAnnounced(t *testing.T) {
+	f := newReapFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": okResponse()},
+		SchedulerOptions{})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	f.runOnce(t)
+
+	if got := n.blockedList(); len(got) != 0 {
+		t.Errorf("announced %v for a successful task", got)
+	}
+}
+
+// TestARetriedTaskIsNotAnnounced: a task that will try again has not given
+// up, and a message per attempt is noise.
+func TestARetriedTaskIsNotAnnounced(t *testing.T) {
+	f := newReapFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": failResponse("503 service unavailable")},
+		SchedulerOptions{})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	f.runOnce(t)
+
+	if len(f.s.RetryQueue()) != 1 {
+		t.Fatal("expected the task to be queued for retry")
+	}
+	if got := n.blockedList(); len(got) != 0 {
+		t.Errorf("announced %v for a task that will retry", got)
+	}
 }
