@@ -59,6 +59,18 @@ func checkBinary(binary string) error {
 // make that call after seeing a *runError, at whatever granularity suits
 // their own polling frequency (see the package doc comment).
 func run(binary string, extraEnv []string, args ...string) (string, error) {
+	return runIn("", binary, extraEnv, args...)
+}
+
+// runIn is run with an explicit working directory.
+//
+// It matters for the repository-scoped gh subcommands: gh decides WHICH
+// repository it is talking about from the git remote of its working
+// directory. Left as the process cwd, `orch sync issues --project-root
+// ~/other-project` run from inside the orch checkout would read orch's
+// issues and write them into the other project — a wrong answer that looks
+// entirely successful. An empty dir keeps exec's default (the process cwd).
+func runIn(dir, binary string, extraEnv []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
@@ -66,6 +78,7 @@ func run(binary string, extraEnv []string, args ...string) (string, error) {
 	// names; args are subcommands and caller-supplied PR/task text, not
 	// arbitrary input.
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Environ(), extraEnv...)
 	}

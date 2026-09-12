@@ -85,6 +85,7 @@ func Defaults() Config {
 			"skipped":     "Omitido",
 		}},
 		Publish: Publish{IntervalS: 60, To: "dir", Dir: "public", GitBranch: "gh-pages"},
+		Sync:    Sync{IssuesLabel: DefaultSyncIssuesLabel},
 	}
 }
 
@@ -278,7 +279,8 @@ var knownKeys = map[string]bool{
 	"presentation.branding.footer":       true,
 	"publish.interval_s":                 true, "publish.to": true,
 	"publish.dir": true, "publish.git_branch": true,
-	"tunnel.enabled": true, "tunnel.provider": true, "tunnel.command": true,
+	"sync.issues_label": true,
+	"tunnel.enabled":    true, "tunnel.provider": true, "tunnel.command": true,
 	"tunnel.args": true, "tunnel.url_regex": true,
 	"tunnel.url_parse_timeout_s": true, "tunnel.stop_timeout_s": true,
 	"telemetry.enabled": true, "telemetry.endpoint": true,

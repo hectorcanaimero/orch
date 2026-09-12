@@ -1,0 +1,184 @@
+# orch sync issues — GitHub issues in, tasks.json out, through the real CLI.
+#
+# `gh` here is a shell stub that replays a captured payload; the payload
+# itself is the real one internal/vcs/testdata/gh/2.100.0/issue-list.json
+# holds, trimmed to two issues so the expectations below fit on a page. The
+# command never writes to GitHub — `sync` is one-directional by design.
+
+exec cp -r proj syncproj
+cp router.yaml syncproj/.orchestrator/model_router.yaml
+cp empty-tasks.json syncproj/tasks.json
+exec chmod 755 $WORK/bin/gh
+env PATH=$WORK/bin:$PATH
+env FAKE_ISSUES=$WORK/issues.json
+
+# ---- --model is required, and the error hands over the names to copy -------
+! exec orch sync issues --project-root syncproj --project-id syncproj
+stderr '--model is required'
+stderr 'claude-sonnet-4-6'
+stderr 'gpt-5-codex'
+
+# ---- a model the router cannot resolve fails BEFORE anything is written ----
+# This is bug 14 in reverse: a task pointing at an unrouted model makes the
+# next `orch validate` fail in a block. The sync refuses instead.
+! exec orch sync issues --model gpt-9-imaginary --project-root syncproj --project-id syncproj
+stderr 'gpt-9-imaginary'
+stderr 'model_router\.yaml'
+exec bash -c '! ls syncproj/tasks.json.bak-* 2>/dev/null'
+grep '"tasks": \[\]' syncproj/tasks.json
+
+# ---- the loop label is refused, with the reason -----------------------------
+# `auto-reported` is what orch puts on issues it files. The message explains
+# the loop rather than just saying no.
+! exec orch sync issues --label auto-reported --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stderr 'orch itself files'
+stderr 'orch:task'
+grep '"tasks": \[\]' syncproj/tasks.json
+
+# ---- --dry-run prints the plan and writes nothing ---------------------------
+exec orch sync issues --model claude-sonnet-4-6 --dry-run --project-root syncproj --project-id syncproj
+stdout 'Would add 2 task\(s\) from issues labelled "orch:task"'
+stdout 'gh-86'
+stdout 'gh-88'
+! stdout 'Wrote'
+grep '"tasks": \[\]' syncproj/tasks.json
+exec bash -c '! ls syncproj/tasks.json.bak-* 2>/dev/null'
+
+# It asked gh for the right things: the default label, open issues only.
+grep 'issue list --label orch:task --state open' gh.log
+
+# And it asked in the PROJECT's repository, not the shell's. gh reads the git
+# remote of its working directory to decide which repo it is talking about,
+# so a sync run from elsewhere would otherwise ingest the wrong tracker.
+grep 'cwd '$WORK'/syncproj' gh.log
+
+# ---- the real run appends, and backs the old file up ------------------------
+exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stdout 'Adding 2 task\(s\)'
+stdout 'Wrote 2 task\(s\)'
+stdout 'Backup: '
+exec bash -c 'ls syncproj/tasks.json.bak-*'
+
+# The issue URL is the first line of the description, not a specRef: specRef
+# is joined to spec_root and handed to an agent as a file to read.
+grep '"id": "gh-88"' syncproj/tasks.json
+grep '"description": "https://github.com/hectorcanaimero/orch/issues/88' syncproj/tasks.json
+grep '"model": "claude-sonnet-4-6"' syncproj/tasks.json
+grep '"status": "todo"' syncproj/tasks.json
+! grep '"specRef": "https' syncproj/tasks.json
+
+# What was written is a tasks.json orch itself accepts.
+exec orch validate --project-root syncproj --project-id syncproj
+
+# ---- a second sync adds nothing and overwrites nothing ----------------------
+exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stdout 'No new issues labelled "orch:task"'
+stdout 'Leaving 2 task\(s\) already in tasks.json alone'
+! stdout 'Wrote'
+
+# ---- a hand-edited task survives the next sync ------------------------------
+cp edited-tasks.json syncproj/tasks.json
+exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stdout 'Adding 1 task\(s\)'
+stdout 'gh-86'
+stdout 'Leaving 1 task\(s\) already in tasks.json alone: gh-88'
+grep '"title": "edited by a human"' syncproj/tasks.json
+
+# ---- --state and --limit reach gh -------------------------------------------
+exec orch sync issues --model claude-sonnet-4-6 --state all --limit 7 --dry-run --project-root syncproj --project-id syncproj
+grep 'issue list --label orch:task --state all --limit 7' gh.log
+
+# ---- a failing gh is an error, not an empty sync ----------------------------
+# Bug 27's shape: a swallowed failure looks exactly like "nothing new".
+env FAKE_GH_EXIT=1
+! exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj
+stderr 'gh issue list'
+env FAKE_GH_EXIT=0
+
+# ---- a project whose router resolves nothing --------------------------------
+# The parity fixture ships `{}` — an operator there is told how to populate
+# it, not handed an empty list to choose from.
+! exec orch sync issues --model claude-sonnet-4-6 --project-root proj --project-id proj
+stderr 'router add-missing'
+
+! exec orch sync issues --model claude-sonnet-4-6 --project-root syncproj --project-id syncproj extra-arg
+stderr 'accepts 0 arg|unknown command'
+
+-- bin/gh --
+#!/bin/sh
+# Fake `gh` for this script: logs its argv and replays a captured payload.
+printf '%s\n' "gh $*" >>"$WORK/gh.log"
+printf 'cwd %s\n' "$(pwd)" >>"$WORK/gh.log"
+if [ "${FAKE_GH_EXIT:-0}" != "0" ]; then
+  echo "unknown flag" >&2
+  exit "$FAKE_GH_EXIT"
+fi
+cat "$FAKE_ISSUES"
+-- router.yaml --
+claude-sonnet-4-6:
+  backend: claude
+  cli_model: sonnet
+  tier: standard
+gpt-5-codex:
+  backend: codex
+  cli_model: gpt-5-codex
+  tier: premium
+-- empty-tasks.json --
+{
+  "meta": {"project": "syncproj"},
+  "phases": [{"id": 0, "name": "F0"}],
+  "tasks": []
+}
+-- edited-tasks.json --
+{
+  "meta": {"project": "syncproj"},
+  "phases": [{"id": 0, "name": "F0"}],
+  "tasks": [
+    {
+      "id": "gh-88",
+      "phase": 0,
+      "title": "edited by a human",
+      "description": "https://github.com/hectorcanaimero/orch/issues/88",
+      "model": "claude-sonnet-4-6",
+      "status": "todo",
+      "estimateHours": 3,
+      "dependencies": [],
+      "files": []
+    }
+  ]
+}
+-- issues.json --
+[
+  {
+    "body": "**Type**: feature\n**About**: orch\n**Confidence**: high\n**Author**: hector via claude\n**Captured at**: 2026-08-29T23:38:34Z\n**Local id**: `021180476ea9427d8576f417a38fc3b1`\n\n## Evidence\n\n## Context\nThe `agy` CLI has a `--agent` flag that selects which agent persona handles\nthe request. Without it, agy uses a default coordinator agent that DELEGATES\nto sub-agents instead of executing directly.",
+    "createdAt": "2026-08-29T23:38:42Z",
+    "labels": [
+      {
+        "id": "LA_kwDO",
+        "name": "orch:task",
+        "description": "Work for orch",
+        "color": "1d76db"
+      }
+    ],
+    "number": 88,
+    "state": "CLOSED",
+    "title": "AgyBackend should pass --agent executor (or configurable) to avoid delegation behavior",
+    "url": "https://github.com/hectorcanaimero/orch/issues/88"
+  },
+  {
+    "body": "**Type**: bug\n**About**: orch\n**Confidence**: high\n**Author**: hector via claude\n**Captured at**: 2026-08-29T22:47:25Z\n**Local id**: `67b276c0d2774beea81a6a703b6a2d77`\n\n## Evidence",
+    "createdAt": "2026-08-29T22:47:36Z",
+    "labels": [
+      {
+        "id": "LA_kwDO",
+        "name": "orch:task",
+        "description": "Work for orch",
+        "color": "1d76db"
+      }
+    ],
+    "number": 86,
+    "state": "CLOSED",
+    "title": "agy backend with Gemini 3.1 Pro (thinking mode) returns empty response despite SUCCESS status \u2014 output absorbed by thin\u2026",
+    "url": "https://github.com/hectorcanaimero/orch/issues/86"
+  }
+]

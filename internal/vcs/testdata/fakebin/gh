@@ -12,6 +12,9 @@
 #   pr view ...                          FAKE_GH_VIEW_STDOUT / _EXIT
 #   run view ...                         FAKE_GH_RUNVIEW_STDOUT / _EXIT
 #   pr merge ...                         FAKE_GH_MERGE_STDOUT / _EXIT
+#   issue list ...                       FAKE_GH_ISSUES_STDOUT / _EXIT,
+#                                        or FAKE_GH_ISSUES_FILE to serve a
+#                                        captured fixture too big for an env var.
 
 if [ -n "$FAKE_GH_LOG" ]; then
   printf '%s\n' "gh $*" >>"$FAKE_GH_LOG"
@@ -36,6 +39,14 @@ case "$1 $2" in
   "run view")
     printf '%s' "${FAKE_GH_RUNVIEW_STDOUT:-}"
     exit "${FAKE_GH_RUNVIEW_EXIT:-0}"
+    ;;
+  "issue list")
+    if [ -n "$FAKE_GH_ISSUES_FILE" ]; then
+      cat "$FAKE_GH_ISSUES_FILE"
+    else
+      printf '%s' "${FAKE_GH_ISSUES_STDOUT:-}"
+    fi
+    exit "${FAKE_GH_ISSUES_EXIT:-0}"
     ;;
   "pr merge")
     printf '%s' "${FAKE_GH_MERGE_STDOUT:-}"

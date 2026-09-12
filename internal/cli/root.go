@@ -101,6 +101,7 @@ func newRootCmd(version string) (*cobra.Command, *projectFlags) {
 	root.AddCommand(newDashboardCmd(flags))
 	root.AddCommand(newExplainCmd(flags))
 	root.AddCommand(newReportCmd(flags))
+	root.AddCommand(newSyncCmd(flags))
 	return root, flags
 }
 
