@@ -21,9 +21,13 @@ export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
   publicDir: path.resolve(__dirname, './src/stakeholder/public'),
   build: {
-    // Placeholder — internal/publish (G6.1) embeds this bundle via its
-    // own embed.FS; coordinate the final path with orch-sonnet before
-    // this lands for real. See docs/brainstorm/go-migration-notes/sonnet-2.md.
+    // Settled in G6.3, not a placeholder any more: internal/publish/
+    // bundle.go embeds `dist` and roots it at dist/stakeholder, the same
+    // shape internal/dashboard/spa.go uses for the other bundle. go:embed
+    // cannot reach outside its own package directory, which is why this
+    // path points here rather than at a web/dist. `make web` runs BOTH
+    // builds; dist/README.md (one level up, untouched by emptyOutDir)
+    // keeps the package compiling before either has run.
     outDir: '../internal/publish/dist/stakeholder',
     emptyOutDir: true,
     rollupOptions: {

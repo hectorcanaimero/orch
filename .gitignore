@@ -68,10 +68,12 @@ orchestrator/spa/
 
 # web/vite.stakeholder.config.ts's outDir (pnpm build:stakeholder) — not
 # named "build", so the unanchored build/ rule above doesn't catch it.
-# Placeholder until G6.3 wires a real internal/publish embed.FS path;
-# same 778 KB-bundle-in-a-PR hazard the frontend/dist/ note above exists
-# for, so it's ignored the moment it exists rather than after the fact.
-internal/publish/dist/
+# Same 778 KB-bundle-in-a-PR hazard the frontend/dist/ note above exists
+# for. Only the bundle itself is ignored, NOT its parent: G6.3's
+# internal/publish/bundle.go embeds `dist`, and a go:embed pattern
+# matching zero files is a compile error — so dist/README.md stays
+# tracked, exactly as internal/dashboard/dist/README.md does.
+internal/publish/dist/stakeholder/
 
 # Go build output
 bin/
