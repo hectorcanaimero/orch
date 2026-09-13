@@ -6,15 +6,15 @@
 //
 // # Why the files are copied rather than shared
 //
-// `go:embed` cannot reach outside its own package directory, so the tree lives
-// here as well as under `orchestrator/templates/` until the Python tree is
-// deleted. Two copies of the same data is exactly where a fix lands on one
-// side only — and this data has produced two bugs already: the snake_case task
-// keys, and `specRef` values carrying a `specs/` prefix that `spec_root`
-// already supplies (bug 12). So `TestGoTreeMatchesPython` diffs the two file
-// by file and fails on any drift. It reads `../../orchestrator/templates`
-// directly; when Python goes, that test goes with it and this becomes the only
-// copy.
+// `go:embed` cannot reach outside its own package directory, so the tree was
+// copied here from `orchestrator/templates/`. Two copies of the same data is
+// exactly where a fix lands on one side only — and this data has produced two
+// bugs already: the snake_case task keys, and `specRef` values carrying a
+// `specs/` prefix that `spec_root` already supplies (bug 12). So
+// `TestGoTreeMatchesPython` diffs this tree file by file against
+// `testdata/python-frozen/templates`, a copy pinned from the Python tree so the
+// check survives the Python tree's deletion, and fails on any difference that
+// is not declared in `goOnly` or `divergedFromPython`.
 //
 // # The fifth template
 //

@@ -122,9 +122,16 @@ func TestWarnUndersizedPresetsIsOrdered(t *testing.T) {
 // every operator on startup, and this says so before they see it.
 func TestShippedPresetsDoNotWarn(t *testing.T) {
 	for _, preset := range []string{"conservative", "aggressive", "shared"} {
-		cfg, err := LoadConfig("../../orchestrator/budgets.yaml", preset)
+		cfg, err := LoadConfig(shippedBudgetsYAML, preset)
 		if err != nil {
 			t.Fatalf("LoadConfig(%q): %v", preset, err)
+		}
+		// LoadConfig answers a missing file with (nil, nil), and a nil config
+		// warns about nothing — so without this, a moved file would turn the
+		// test into a pass over no presets at all. That is not hypothetical:
+		// it is what this test did with the Python tree removed.
+		if cfg == nil {
+			t.Fatalf("LoadConfig(%q) found no budgets file at %s", preset, shippedBudgetsYAML)
 		}
 		if got := WarnUndersizedPresets(cfg, preset, 200_000); len(got) != 0 {
 			t.Errorf("the shipped %q preset warns about itself:\n%s",

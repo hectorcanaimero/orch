@@ -17,11 +17,20 @@ func writeYAML(t *testing.T, body string) string {
 	return path
 }
 
+// shippedBudgetsYAML is the budgets.yaml this binary writes into a new
+// project: `orch init` embeds it from internal/scaffold/defaults. It used to
+// point at the Python package's copy, byte-identical then (scaffold's
+// TestPackagedDefaultsMatchPython checks that), but that is not the file the
+// Go binary ships, and it disappears with the Python tree.
+var shippedBudgetsYAML = filepath.Join("..", "scaffold", "defaults", "budgets.yaml")
+
 // The file orch ships. Loading it here rather than a hand-written sample means
-// a preset renamed or a field dropped in the packaged YAML fails in Go, not
-// only in whatever Python test happens to cover it.
+// a preset renamed or a field dropped in the packaged YAML fails in Go.
 func TestLoadConfigReadsTheShippedPresets(t *testing.T) {
-	path := filepath.Join("..", "..", "orchestrator", "budgets.yaml")
+	path := shippedBudgetsYAML
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the shipped budgets.yaml is not where this test looks: %v", err)
+	}
 	for _, preset := range []string{"conservative", "aggressive", "shared"} {
 		cfg, err := LoadConfig(path, preset)
 		if err != nil {
