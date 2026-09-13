@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "orch publish y orch-cloud: dónde vive la página del cliente",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "snapshot",
+      "type": "backend",
+      "label": "snapshot.Build",
+      "sublabel": "tasks.json + orch.db",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        150,
+        62
+      ]
+    },
+    {
+      "id": "export",
+      "type": "backend",
+      "label": "publish.Export",
+      "sublabel": "index.html, data.json, assets/",
+      "pos": [
+        300,
+        300
+      ],
+      "size": [
+        210,
+        62
+      ]
+    },
+    {
+      "id": "dir",
+      "type": "external",
+      "label": "Carpeta local",
+      "sublabel": "--to dir, abre en file://",
+      "pos": [
+        320,
+        110
+      ],
+      "size": [
+        170,
+        62
+      ]
+    },
+    {
+      "id": "creds",
+      "type": "security",
+      "label": "~/.orch/credentials",
+      "sublabel": "0600: URL + tokens",
+      "pos": [
+        40,
+        500
+      ],
+      "size": [
+        150,
+        62
+      ]
+    },
+    {
+      "id": "ghpages",
+      "type": "cloud",
+      "label": "Rama gh-pages",
+      "sublabel": "huérfana, reemplazada entera",
+      "pos": [
+        680,
+        110
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "brand": "github"
+    },
+    {
+      "id": "pages",
+      "type": "cloud",
+      "label": "GitHub Pages",
+      "sublabel": "sirve la rama",
+      "pos": [
+        930,
+        110
+      ],
+      "size": [
+        150,
+        62
+      ],
+      "brand": "github"
+    },
+    {
+      "id": "worker",
+      "type": "cloud",
+      "label": "Worker orch-cloud",
+      "sublabel": "cuenta del operador",
+      "pos": [
+        680,
+        300
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "brand": "cloudflare"
+    },
+    {
+      "id": "kv",
+      "type": "database",
+      "label": "KV ORCH",
+      "sublabel": "blobs + tokens solo SHA-256",
+      "pos": [
+        680,
+        500
+      ],
+      "size": [
+        170,
+        62
+      ]
+    },
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "Navegador del cliente",
+      "sublabel": "sin login",
+      "pos": [
+        1170,
+        300
+      ],
+      "size": [
+        160,
+        62
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Máquina del operador",
+      "wraps": [
+        "snapshot",
+        "export",
+        "dir",
+        "creds"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "GitHub",
+      "wraps": [
+        "ghpages",
+        "pages"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "Cuenta Cloudflare del operador",
+      "wraps": [
+        "worker",
+        "kv"
+      ],
+      "pad": 34
+    }
+  ],
+  "connections": [
+    {
+      "from": "snapshot",
+      "to": "export",
+      "label": "sitio estático",
+      "variant": "emphasis"
+    },
+    {
+      "from": "export",
+      "to": "worker",
+      "label": "HTTPS PUT /site",
+      "variant": "emphasis",
+      "labelDy": 40
+    },
+    {
+      "from": "worker",
+      "to": "client",
+      "label": "GET /v/<view_token>/",
+      "variant": "emphasis"
+    },
+    {
+      "from": "export",
+      "to": "dir",
+      "label": "--to dir"
+    },
+    {
+      "from": "export",
+      "to": "ghpages",
+      "label": "--to git, push"
+    },
+    {
+      "from": "ghpages",
+      "to": "pages"
+    },
+    {
+      "from": "pages",
+      "to": "client",
+      "label": "HTTPS"
+    },
+    {
+      "from": "worker",
+      "to": "kv",
+      "label": "lee y escribe",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "from": "creds",
+      "to": "export",
+      "label": "publish token",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Tres destinos, un mismo sitio",
+      "items": [
+        "publish.Export escribe el sitio igual para dir, git y cloud",
+        "--to git clona origin en temporal y nunca toca el checkout",
+        "--watch vuelve a publicar solo si cambia el digest del snapshot"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Secretos",
+      "items": [
+        "Un publish token por proyecto; el admin token queda en la máquina del operador",
+        "El Worker guarda solo SHA-256 de los tokens",
+        "orch cloud rotate emite un view token nuevo; el enlace viejo pasa a 404"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Lo que ve el cliente",
+      "items": [
+        "El enlace no nombra el proyecto: el view token es el único secreto",
+        "Referrer-Policy: no-referrer y noindex en cada respuesta",
+        "KV es eventualmente consistente: hasta un minuto en propagarse"
+      ]
+    }
+  ]
+}

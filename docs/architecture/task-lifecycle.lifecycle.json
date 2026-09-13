@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Ciclo de vida de una tarea en orch",
+    "quality_profile": "showcase",
+    "viewBox": [
+      980,
+      566
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Camino principal"
+    },
+    {
+      "id": "recuperacion",
+      "label": "Recuperación"
+    }
+  ],
+  "states": [
+    {
+      "id": "backlog",
+      "type": "start",
+      "label": "backlog",
+      "sublabel": "creada por orch atomize",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "entrada"
+    },
+    {
+      "id": "todo",
+      "type": "waiting",
+      "label": "todo",
+      "sublabel": "única que se despacha",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "cola"
+    },
+    {
+      "id": "in-progress",
+      "type": "active",
+      "label": "in-progress",
+      "sublabel": "engine dispatch → agente",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "agente"
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "label": "done",
+      "sublabel": "vía orch_set_status",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "final"
+    },
+    {
+      "id": "blocked",
+      "type": "failure",
+      "label": "blocked",
+      "sublabel": "con motivo escrito",
+      "lane": "recuperacion",
+      "col": 0,
+      "tag": "recuperable"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "promote",
+      "from": "backlog",
+      "to": "todo",
+      "variant": "default",
+      "route": "straight"
+    },
+    {
+      "id": "dispatch",
+      "from": "todo",
+      "to": "in-progress",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "finish",
+      "from": "in-progress",
+      "to": "done",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "block",
+      "from": "in-progress",
+      "to": "blocked",
+      "label": "orch_block",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "id": "recover",
+      "from": "blocked",
+      "to": "todo",
+      "label": "orch task set",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "bottom"
+    },
+    {
+      "id": "retry",
+      "from": "in-progress",
+      "to": "todo",
+      "label": "reaper retry",
+      "variant": "dashed",
+      "route": "top-channel",
+      "labelDx": 30,
+      "toSide": "top"
+    },
+    {
+      "id": "reopen",
+      "from": "done",
+      "to": "todo",
+      "label": "reabrir",
+      "variant": "dashed",
+      "route": "top-channel",
+      "channelY": 60,
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Camino principal",
+      "items": [
+        "orch atomize crea tareas en backlog; sólo las que están en todo se despachan",
+        "El engine pasa todo → in-progress al lanzar el agente; orch_set_status o scripts/task-finish.sh la cierran en done"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Recuperación y reapertura",
+      "items": [
+        "orch_block o task-block la dejan en blocked; el operador la devuelve a todo con orch task set o orch reset --requeue",
+        "done → todo es la única reapertura; done → in-progress y done → blocked se rechazan"
+      ]
+    }
+  ]
+}

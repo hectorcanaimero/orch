@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Flujo de datos de un proyecto orch",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      500
+    ]
+  },
+  "stages": [
+    {
+      "label": "Entrada"
+    },
+    {
+      "label": "Planificación"
+    },
+    {
+      "label": "Ejecución"
+    },
+    {
+      "label": "Estado"
+    },
+    {
+      "label": "Salidas"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "specs",
+      "type": "external",
+      "label": "specs/*.md",
+      "sublabel": "spec en markdown",
+      "stage": 0,
+      "row": 0,
+      "tag": "operador"
+    },
+    {
+      "id": "config",
+      "type": "external",
+      "label": "model_router.yaml",
+      "sublabel": "modelo → CLI",
+      "stage": 2,
+      "row": 0,
+      "tag": "config.yaml",
+      "width": 140
+    },
+    {
+      "id": "atomize",
+      "type": "backend",
+      "label": "orch atomize",
+      "sublabel": "diff primero",
+      "stage": 1,
+      "row": 0,
+      "tag": "--apply"
+    },
+    {
+      "id": "tasks",
+      "type": "database",
+      "label": "tasks.json",
+      "sublabel": "DAG estático",
+      "stage": 1,
+      "row": 1,
+      "tag": "entrada"
+    },
+    {
+      "id": "run",
+      "type": "backend",
+      "label": "orch run",
+      "sublabel": "engine",
+      "stage": 2,
+      "row": 1,
+      "tag": "dispatch"
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "CLI de agente",
+      "sublabel": "en un worktree",
+      "stage": 2,
+      "row": 2,
+      "tag": "claude, codex…",
+      "width": 140
+    },
+    {
+      "id": "snapshot",
+      "type": "backend",
+      "label": "snapshot",
+      "sublabel": "Hydrate + Build",
+      "stage": 3,
+      "row": 0,
+      "tag": "schema: 1"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "orch.db",
+      "sublabel": "estado runtime",
+      "stage": 3,
+      "row": 1,
+      "tag": "SQLite"
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "orch mcp",
+      "sublabel": "o scripts/task-*.sh",
+      "stage": 3,
+      "row": 2,
+      "tag": "orch_set_status"
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "pull request",
+      "sublabel": "gh + CI",
+      "stage": 4,
+      "row": 2,
+      "tag": "por tarea",
+      "width": 140
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "orch dashboard",
+      "sublabel": "/api/*, SSE",
+      "stage": 4,
+      "row": 1,
+      "tag": "en vivo",
+      "yOffset": -7,
+      "width": 140
+    },
+    {
+      "id": "publish",
+      "type": "frontend",
+      "label": "página cliente",
+      "sublabel": "publish, report pdf",
+      "stage": 4,
+      "row": 0,
+      "tag": "notify digest",
+      "width": 140
+    }
+  ],
+  "flows": [
+    {
+      "id": "specs-atomize",
+      "from": "specs",
+      "to": "atomize",
+      "label": "parsear",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "atomize-tasks",
+      "from": "atomize",
+      "to": "tasks",
+      "label": "merge",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "id": "tasks-run",
+      "from": "tasks",
+      "to": "run",
+      "label": "DAG",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "config-run",
+      "from": "config",
+      "to": "run",
+      "label": "rutas",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "id": "run-db",
+      "from": "run",
+      "to": "db",
+      "label": "estado",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "run-agent",
+      "from": "run",
+      "to": "agent",
+      "label": "prompt",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelDy": 24
+    },
+    {
+      "id": "agent-mcp",
+      "from": "agent",
+      "to": "mcp",
+      "label": "informa",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "mcp-db",
+      "from": "mcp",
+      "to": "db",
+      "label": "escribe",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "straight",
+      "labelAt": [
+        745,
+        328
+      ]
+    },
+    {
+      "id": "agent-github",
+      "from": "agent",
+      "to": "github",
+      "label": "rama → PR",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel",
+      "classification": "push y PR los hace orch run"
+    },
+    {
+      "id": "github-db",
+      "from": "github",
+      "to": "db",
+      "label": "CI",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "db-snapshot",
+      "from": "db",
+      "to": "snapshot",
+      "label": "hidratar",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "straight"
+    },
+    {
+      "id": "snapshot-publish",
+      "from": "snapshot",
+      "to": "publish",
+      "label": "exportar",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "db-dashboard",
+      "from": "db",
+      "to": "dashboard",
+      "label": "leer",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "orange",
+      "title": "tasks.json es entrada",
+      "items": [
+        "orch atomize lo escribe desde las specs, con backup .bak-<ts>",
+        "Define ids, dependencias y modelo; nunca guarda el estado runtime",
+        "Editar su status a mano no tiene efecto"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "orch.db es la verdad",
+      "items": [
+        "El engine escribe transiciones, dispatches, eventos y gasto",
+        "Los agentes informan por MCP (orch_set_status) o scripts/task-*.sh",
+        "El CIPoller trae el estado de cada PR de vuelta"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Un snapshot, varios consumidores",
+      "items": [
+        "project.Hydrate une tasks.json con orch.db",
+        "Dashboard, orch publish, report pdf y notify digest leen el mismo documento",
+        "Sin ids internos: listo para el cliente"
+      ]
+    }
+  ]
+}
