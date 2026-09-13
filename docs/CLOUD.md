@@ -5,19 +5,53 @@
 service: no sign-up, nobody else holding your clients' data, nothing to pay
 for beyond your own Cloudflare usage (the free tier covers a stakeholder page).
 
-- The Worker lives in its own repository: **`<orch-cloud repository URL — filled in when the Worker lands>`**.
+- The Worker lives in its own repository, <https://github.com/hectorcanaimero/orch-cloud>; every orch binary also carries a built copy, which `orch cloud setup` deploys.
 - The stakeholder link is `https://<your worker>/v/<view token>/`.
 - orch keeps the Worker's URL and tokens in `~/.orch/credentials` (mode `0600`).
 
 ## Operator walkthrough
 
-> The Worker-side commands below are placeholders until the orch-cloud
-> repository is published; the orch side is final.
-
-**1. Deploy the Worker** (once per operator):
+**1. Set up the Worker and log in** (once per operator — needs Node.js 20+,
+because it drives Cloudflare's `wrangler`):
 
 ```bash
-git clone <orch-cloud repository URL> && cd orch-cloud
+orch cloud setup --dry-run           # the steps, with the exact wrangler calls; runs nothing
+orch cloud setup
+```
+
+`orch cloud setup` announces each step before it runs it:
+
+1. finds `npx` on PATH (exit 2 with an install hint if there is none);
+2. `npx --yes wrangler@4.131.1 whoami` — and only when there is no Cloudflare
+   session, `wrangler login --device`, attached to your terminal: open the URL
+   it prints, enter the code, approve. With `CLOUDFLARE_API_TOKEN` set, wrangler
+   uses the token and setup never starts a browser login;
+3. deploys the orch-cloud Worker **built into this orch binary** (so the Worker
+   always speaks the contract version this orch's client speaks) as
+   `orch-cloud` (`--name` to change it). The first deploy creates its KV
+   namespace; there is no id to copy from the dashboard;
+4. generates an admin token and pipes it to `wrangler secret put ADMIN_TOKEN` —
+   never printed, never an argument or an environment variable;
+5. waits (up to a minute) until the Worker accepts it;
+6. saves the Worker URL and the admin token to `~/.orch/credentials` through
+   the same verification as `orch cloud login`.
+
+wrangler is pinned (`wrangler@4.131.1`), so a new wrangler release cannot
+change what setup reads from its output without a PR that looks at it. If
+setup fails after staging the Worker, the error names the temporary directory
+holding `worker.js` and `wrangler.jsonc`, so you can finish by hand.
+
+Running it again redeploys the Worker and issues a **new** admin token (it asks
+first; `--yes` skips the question). Project publish and view tokens already
+stored keep working — the Worker keeps their digests, not the admin token's.
+Setting up a Worker with a different `--name` switches this machine to it and
+drops the stored project tokens, which belong to the old Worker.
+
+**Manual fallback** — the same steps by hand, from a checkout of
+[orch-cloud](https://github.com/hectorcanaimero/orch-cloud):
+
+```bash
+git clone https://github.com/hectorcanaimero/orch-cloud && cd orch-cloud
 npm ci
 npx wrangler login --device          # or CLOUDFLARE_API_TOKEN for a scoped token
 npx wrangler deploy                  # prints https://orch-cloud.<you>.workers.dev
@@ -25,8 +59,8 @@ ADMIN_TOKEN=$(openssl rand -hex 32)
 printf %s "$ADMIN_TOKEN" | npx wrangler secret put ADMIN_TOKEN
 ```
 
-**2. Point orch at it** (once per machine). The token is piped, never typed —
-a prompt would echo it:
+**2. Point another machine at an existing Worker** with `orch cloud login`. The
+token is piped, never typed — a prompt would echo it:
 
 ```bash
 printf %s "$ADMIN_TOKEN" | orch cloud login --url https://orch-cloud.<you>.workers.dev

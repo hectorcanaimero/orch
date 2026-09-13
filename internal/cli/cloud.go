@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/publish"
+	"github.com/hectorcanaimero/orch/internal/publish/cloudworker"
 )
 
 // newCloudCmd is `orch cloud` — the operator's side of an orch-cloud Worker
@@ -27,12 +28,100 @@ func newCloudCmd(flags *projectFlags) *cobra.Command {
 		Long: "orch-cloud is a Cloudflare Worker you deploy to your own account; it serves the\n" +
 			"stakeholder page at https://<worker>/v/<view token>/. These commands store its URL and\n" +
 			"tokens in ~/.orch/credentials (mode 0600). `orch publish --to cloud` uploads the page.\n\n" +
-			"See docs/CLOUD.md for deploying the Worker.",
+			"`orch cloud setup` deploys the Worker and logs in, in one step; see docs/CLOUD.md.",
 	}
+	cmd.AddCommand(newCloudSetupCmd())
 	cmd.AddCommand(newCloudLoginCmd())
 	cmd.AddCommand(newCloudRotateCmd(flags))
 	cmd.AddCommand(newCloudLogoutCmd())
 	cmd.AddCommand(newCloudStatusCmd(flags))
+	return cmd
+}
+
+func newCloudSetupCmd() *cobra.Command {
+	var name string
+	var yes, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Deploy your orch-cloud Worker to Cloudflare and log in to it, in one step",
+		Long: "Takes this machine from no Cloudflare session to a working `orch publish --to cloud`:\n\n" +
+			"  1. finds npx (wrangler, Cloudflare's CLI, runs on Node.js 20+)\n" +
+			"  2. checks for a Cloudflare session and, if there is none, runs wrangler's device\n" +
+			"     login — open the URL it prints, enter the code, approve\n" +
+			"  3. deploys the orch-cloud Worker built into this orch to your account\n" +
+			"  4. generates an admin token and stores it as the Worker's secret\n" +
+			"  5. waits until the Worker accepts it\n" +
+			"  6. saves the Worker URL and the admin token to ~/.orch/credentials (mode 0600)\n\n" +
+			"The admin token is never printed or passed as an argument. Run it again to redeploy\n" +
+			"the Worker; that issues a new admin token and keeps the project tokens stored here valid.\n" +
+			"--dry-run prints the plan and runs nothing.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			if dryRun {
+				plan, err := publish.CloudSetupPlan(name)
+				if err != nil {
+					return withExitCode(2, err)
+				}
+				_, err = fmt.Fprint(out, plan)
+				return err
+			}
+			credPath, err := publish.DefaultCredentialsPath()
+			if err != nil {
+				return err
+			}
+			notice, err := publish.CloudSetupRerunNotice(credPath, name)
+			if err != nil {
+				return err
+			}
+			if notice != "" && !yes {
+				if _, err := fmt.Fprintf(out, "%s\nContinue? [y/N] ", notice); err != nil {
+					return err
+				}
+				reply, err := readLine(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				reply = strings.ToLower(strings.TrimSpace(reply))
+				if reply != "y" && reply != "yes" {
+					if _, err := fmt.Fprintln(out, "Aborted. No changes made."); err != nil {
+						return err
+					}
+					return withSilentExitCode(1)
+				}
+			}
+
+			res, err := publish.SetupCloud(cmd.Context(), publish.CloudSetupOptions{
+				CredentialsPath: credPath,
+				Name:            name,
+				Stdin:           cmd.InOrStdin(),
+				Stdout:          out,
+				Stderr:          cmd.ErrOrStderr(),
+			})
+			var missing *publish.CloudSetupMissingNPX
+			if errors.As(err, &missing) {
+				return withExitCode(2, err)
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(out, "\norch-cloud is ready at %s\n", res.URL); err != nil {
+				return err
+			}
+			if res.DroppedProjects > 0 {
+				if _, err := fmt.Fprintf(out, "dropped the stored tokens of %d project(s): they belonged to the "+
+					"previous Worker\n", res.DroppedProjects); err != nil {
+					return err
+				}
+			}
+			_, err = fmt.Fprintln(out, "Next, in a project: orch publish --to cloud")
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", cloudworker.DefaultName,
+		"Worker name; the Worker is served at https://<name>.<your subdomain>.workers.dev")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation when this machine is already set up")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the steps and run nothing")
 	return cmd
 }
 

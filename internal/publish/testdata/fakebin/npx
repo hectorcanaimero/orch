@@ -1,0 +1,87 @@
+#!/bin/sh
+# Fake `npx` for `orch cloud setup` tests: it plays `npx --yes wrangler@<v>`.
+#
+# Every call appends its argv to $FAKE_WRANGLER_STATE/argv.log. The rest is
+# driven by files in that directory, so a test sets up a scenario by creating
+# them and reads back what setup did:
+#
+#   authed         present = `whoami` reports a session; `login` creates it
+#   whoami-garbage present = `whoami` prints neither marker and exits 1
+#   login-noop     present = `login` says it succeeded but creates no session
+#   url            the URL `deploy` prints (the in-memory Worker's address)
+#   deploy-no-url  present = `deploy` succeeds without printing a URL
+#   secret-stdin   written by `secret put` with exactly what it read on stdin
+#   admin-token    the same, the file the in-memory Worker reads its token from
+#   deployed/      `deploy` copies the staged worker.js and wrangler.jsonc here
+#
+# The output lines are wrangler 4.131.1's, captured against a real account,
+# with the subdomain and ids replaced.
+state="${FAKE_WRANGLER_STATE:?FAKE_WRANGLER_STATE must be set}"
+printf 'argv:' >>"$state/argv.log"
+for a in "$@"; do printf ' [%s]' "$a" >>"$state/argv.log"; done
+printf '\n' >>"$state/argv.log"
+
+# The first two arguments are `--yes wrangler@<version>`; the test checks
+# them in argv.log.
+shift 2
+
+case "$1" in
+whoami)
+  echo " ⛅️ wrangler 4.131.1"
+  if [ -f "$state/whoami-garbage" ]; then
+    echo "✘ [ERROR] A request to the Cloudflare API failed: getaddrinfo ENOTFOUND api.cloudflare.com"
+    exit 1
+  fi
+  if [ -f "$state/authed" ]; then
+    echo "👋 You are logged in with an OAuth Token, associated with the email operator@example.com."
+  else
+    echo "You are not authenticated. Please run \`wrangler login\`."
+  fi
+  ;;
+login)
+  echo "Attempting to login via OAuth Device Authorization Grant..."
+  echo "To authorize Wrangler, please visit:"
+  echo
+  echo "  https://dash.cloudflare.com/oauth2/device/verify"
+  echo
+  echo "and enter the code:"
+  echo
+  echo "  FAKECODE"
+  echo
+  echo "You have 5 minutes to approve this request."
+  [ -f "$state/login-noop" ] || : >"$state/authed"
+  echo "Successfully logged in."
+  ;;
+deploy)
+  mkdir -p "$state/deployed"
+  cp worker.js wrangler.jsonc "$state/deployed/"
+  echo "Total Upload: 13.92 KiB / gzip: 3.98 KiB"
+  echo "The following bindings need to be provisioned:"
+  echo "Binding          Resource"
+  echo "env.ORCH         KV Namespace"
+  echo "Provisioning ORCH (KV Namespace)..."
+  echo "🌀 Creating new KV Namespace \"orch-cloud-orch\"..."
+  echo "✨ ORCH provisioned 🎉"
+  echo "🎉 Resources provisioned, continuing with deployment..."
+  echo "Worker Startup Time: 5 ms"
+  echo "Your Worker has access to the following bindings:"
+  echo "Binding                                          Resource"
+  echo "env.ORCH (00000000000000000000000000000000)      KV Namespace"
+  echo "Uploaded orch-cloud (3.01 sec)"
+  if [ -f "$state/deploy-no-url" ]; then
+    exit 0
+  fi
+  echo "Deployed orch-cloud triggers (2.41 sec)"
+  echo "  $(cat "$state/url")"
+  echo "Current Version ID: 00000000-0000-0000-0000-000000000000"
+  ;;
+secret)
+  cat >"$state/secret-stdin"
+  cp "$state/secret-stdin" "$state/admin-token"
+  echo "✨ Success! Uploaded secret ADMIN_TOKEN"
+  ;;
+*)
+  echo "fake npx: unexpected wrangler command: $*" >&2
+  exit 64
+  ;;
+esac
