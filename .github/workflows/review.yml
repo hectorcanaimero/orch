@@ -202,6 +202,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Full history, so the prompt step can build the diff itself when
+          # GitHub refuses to serve one (see "diff too large" below).
+          fetch-depth: 0
 
       - name: Self-test the output parser
         run: bash .github/review/parse-review.test.sh
@@ -229,6 +232,8 @@ jobs:
           REPO: ${{ github.repository }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -247,7 +252,32 @@ jobs:
           # into a file. Real CLI captures under testdata/ keep theirs (run
           # 34710647527, #215: gemini's untrusted-directory.log is red), and
           # this diff only ever lands in a file, never on a terminal.
-          gh pr diff "$PR" --repo "$REPO" --allow-escape-sequences > full.diff
+          #
+          # Diff too large: GitHub's API answers HTTP 406 for a PR diff over
+          # 20,000 lines (run 34749743670, #221 deleting orchestrator/, ~56k
+          # lines), and the review died here before reading anything. Only
+          # that refusal falls back — any other gh failure still fails the
+          # step. The fallback is git's own diff between the same two commits,
+          # with deleted files listed by name instead of line by line: a
+          # deletion has nothing left to review but its reach, and the lines
+          # that remain are the ones that decide whether it is safe.
+          if ! gh pr diff "$PR" --repo "$REPO" --allow-escape-sequences > full.diff 2> diff.err; then
+            if ! grep -q 'exceeded the maximum number of lines' diff.err; then
+              cat diff.err >&2
+              exit 1
+            fi
+            BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+            {
+              echo "[GitHub refuses to serve diffs over 20000 lines. This diff was built with"
+              echo " git diff $BASE..$HEAD_SHA: every deleted file is listed below by name,"
+              echo " and every other change follows in full.]"
+              echo
+              git diff --name-only --diff-filter=D "$BASE" "$HEAD_SHA" | awk '{print "deleted: " $0}'
+              echo
+              git diff --diff-filter=d "$BASE" "$HEAD_SHA"
+            } > full.diff
+            echo "::notice title=Diff built locally::GitHub refused the PR diff (over 20000 lines); reviewing git diff with deleted files listed by name"
+          fi
           DIFF_BYTES=$(wc -c < full.diff)
 
           gh pr view "$PR" --repo "$REPO" --json files \
