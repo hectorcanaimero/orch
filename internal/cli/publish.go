@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -46,7 +47,7 @@ func newPublishCmd(flags *projectFlags) *cobra.Command {
 			"No login, no API, no server: the page and its data are files. " +
 			"`--to dir` leaves them in a\ndirectory; `--to git` replaces a branch " +
 			"(gh-pages by default) with them and pushes, which is what\nGitHub " +
-			"Pages serves.\n\n" +
+			"Pages serves; `--to cloud` uploads them to your orch-cloud Worker (see `orch cloud`).\n\n" +
 			"Every figure comes from the same builder the PDF and the dashboard's " +
 			"stakeholder route use, so\nthe three cannot disagree.",
 		Args: cobra.NoArgs,
@@ -60,6 +61,17 @@ func newPublishCmd(flags *projectFlags) *cobra.Command {
 			dest, err := resolveDestination(to, cfg.Publish)
 			if err != nil {
 				return err
+			}
+
+			// The cloud destination is checked before the database is
+			// opened: a missing login or an id the Worker cannot take is a
+			// sentence to print, not a reason to build a snapshot first.
+			var cloud publish.CloudOptions
+			if dest == "cloud" {
+				cloud, err = prepareCloudPublish(paths, token, out)
+				if err != nil {
+					return err
+				}
 			}
 			every := resolveInterval(cmd, interval, cfg.Publish)
 			gitBranch := branch
@@ -83,7 +95,9 @@ func newPublishCmd(flags *projectFlags) *cobra.Command {
 			// into the project tree on the way there would leave a `public/`
 			// nobody asked for next to the source.
 			dir := out
-			if dest == "git" {
+			if dest == "cloud" {
+				dir = "" // each cloud publish exports into its own temporary directory
+			} else if dest == "git" {
 				if dir == "" {
 					tmp, err := os.MkdirTemp("", "orch-export-")
 					if err != nil {
@@ -100,6 +114,9 @@ func newPublishCmd(flags *projectFlags) *cobra.Command {
 				return buildPublishSnapshot(ctx, paths, cfg, backend, every, time.Now())
 			}
 			publisher := func(ctx context.Context, snap snapshot.Snapshot) error {
+				if dest == "cloud" {
+					return runOneCloudPublish(ctx, cmd, cloud, snap)
+				}
 				return runOnePublish(ctx, cmd, dir, dest, token, gitBranch, paths, snap)
 			}
 
@@ -126,7 +143,7 @@ func newPublishCmd(flags *projectFlags) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&to, "to", "",
-		`Destination: "dir" or "git" (default: publish.to in config.yaml, else "dir")`)
+		`Destination: "dir", "git" or "cloud" (default: publish.to in config.yaml, else "dir")`)
 	cmd.Flags().StringVar(&out, "out", "",
 		"Directory to write; default = <project-root>/"+defaultPublishDir+" (publish.dir). "+
 			"With --to git the artefact is the branch, so this only says where the export is staged "+
@@ -174,6 +191,88 @@ func runOnePublish(ctx context.Context, cmd *cobra.Command, dir, dest, token, br
 	return nil
 }
 
+// prepareCloudPublish validates a `--to cloud` invocation before anything is
+// built: the flags that have no meaning there, the project id the Worker
+// will accept, and that there is a Worker to publish to at all.
+func prepareCloudPublish(paths config.Paths, token, out string) (publish.CloudOptions, error) {
+	if token != "" {
+		// --token puts the export under an obscure path on a static host.
+		// On orch-cloud the view token already IS that path, and it is a
+		// real, rotatable secret the Worker checks; a second, weaker one on
+		// top would only be a second thing to leak.
+		return publish.CloudOptions{}, withExitCode(2, errors.New(
+			"--token has no meaning with --to cloud: the Worker's view token is the link's secret — "+
+				"`orch cloud rotate` replaces it"))
+	}
+	if out != "" {
+		return publish.CloudOptions{}, withExitCode(2, errors.New(
+			"--out has no meaning with --to cloud: the site is exported to a temporary directory and uploaded"))
+	}
+	id, err := publish.CloudProjectID(paths.ID)
+	if err != nil {
+		return publish.CloudOptions{}, withExitCode(2, err)
+	}
+	credPath, err := publish.DefaultCredentialsPath()
+	if err != nil {
+		return publish.CloudOptions{}, err
+	}
+	opts := publish.CloudOptions{CredentialsPath: credPath, ProjectID: id}
+	cf, err := publish.LoadCredentials(credPath)
+	if err != nil {
+		return opts, err
+	}
+	if _, err := publish.ResolveCloudTarget(cf, id, os.Getenv); err != nil {
+		return opts, withExitCode(2, err)
+	}
+	return opts, nil
+}
+
+// runOneCloudPublish exports into a fresh temporary directory and uploads it.
+//
+// Fresh every time, never reused: Export leaves unknown files alone, and a
+// reused directory would carry an asset from an older bundle into the upload
+// — the Worker serves exactly the file set it is sent.
+func runOneCloudPublish(ctx context.Context, cmd *cobra.Command, opts publish.CloudOptions,
+	snap snapshot.Snapshot) error {
+	tmp, err := os.MkdirTemp("", "orch-cloud-")
+	if err != nil {
+		return fmt.Errorf("creating a temporary export directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+
+	if _, err := publish.Export(tmp, snap, publish.Options{}); err != nil {
+		return err
+	}
+	res, err := publish.PublishToCloud(ctx, tmp, opts)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if res.Created {
+		if _, err := fmt.Fprintf(out, "created project %s on orch-cloud; its tokens are saved in "+
+			"~/.orch/credentials\n", opts.ProjectID); err != nil {
+			return err
+		}
+	}
+	if res.Upload.Changed {
+		_, err = fmt.Fprintf(out, "published %s (version %d)\n", opts.ProjectID, res.Upload.Version)
+	} else {
+		_, err = fmt.Fprintf(out, "%s is already up to date (version %d); nothing uploaded\n",
+			opts.ProjectID, res.Upload.Version)
+	}
+	if err != nil {
+		return err
+	}
+	if res.ViewerURL != "" {
+		_, err = fmt.Fprintf(out, "stakeholder link: %s\n", res.ViewerURL)
+		return err
+	}
+	_, err = fmt.Fprintf(out, "stakeholder link: not known here — %s carries no view token; "+
+		"the operator's `orch cloud status` shows it\n", publish.EnvCloudPublishToken)
+	return err
+}
+
 // buildPublishSnapshot is buildStakeholderSnapshot with the refresh interval
 // filled in.
 //
@@ -203,18 +302,11 @@ func resolveDestination(flag string, cfg config.Publish) (string, error) {
 		dest = "dir"
 	}
 	switch dest {
-	case "dir", "git":
+	case "dir", "git", "cloud":
 		return dest, nil
-	case "cloud":
-		// Named in the config struct since F2, and deliberately not
-		// implemented here: "cloud" is a destination with no provider, no
-		// credentials story and no acceptance criterion. Refused by name so
-		// the answer is this sentence rather than a confusing "unknown".
-		return "", withExitCode(2, fmt.Errorf(
-			`publish.to: "cloud" is not implemented — use "dir" (and upload it) or "git"`))
 	default:
 		return "", withExitCode(2, fmt.Errorf(
-			`publish.to must be "dir" or "git", got %q`, dest))
+			`publish.to must be "dir", "git" or "cloud", got %q`, dest))
 	}
 }
 
