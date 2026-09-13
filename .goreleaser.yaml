@@ -2,8 +2,8 @@
 #
 # Tag scheme (see docs/RELEASING.md): a bare `v*` tag (no suffix) is a Go
 # binary release, picked up by .github/workflows/release-go.yml. `v*-py`
-# is the frozen Python line's own release.yml — the two never fire on the
-# same tag.
+# is the archived Python line, built by the release.yml on the
+# python-legacy branch — the two never fire on the same tag.
 #
 # `before.hooks` runs `make web`, which builds the operator dashboard SPA
 # into internal/dashboard/dist/build — internal/dashboard/spa.go's
@@ -61,10 +61,9 @@ checksum:
   name_template: 'checksums.txt'
 
 changelog:
-  # Both release.yml (Python) and this one already generate release notes
-  # from commits (softprops/action-gh-release and this respectively) —
-  # goreleaser's own changelog block would duplicate that. Off, not
-  # tuned, so there is exactly one source of release-notes text.
+  # Off, not tuned: goreleaser's own changelog block would duplicate the
+  # release notes GitHub already generates from commits, and one source of
+  # release-notes text is the point.
   disable: true
 
 # Requires github.com/hectorcanaimero/homebrew-orch to exist — goreleaser

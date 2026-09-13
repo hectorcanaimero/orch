@@ -1,10 +1,11 @@
 name: Release Go binary
 
 # Go binary tags only (see docs/RELEASING.md). `v[0-9]*` alone would also
-# match `v0.11.0-py` (the frozen Python line's own tag shape, built by
-# release.yml instead) — the `if:` guard below on the actual job is the
-# real protection; the glob just keeps this workflow from listening to
-# unrelated tags entirely (a `foo-bar` tag, say).
+# match `v0.11.0-py` (the archived Python line's tag shape; its wheel was
+# built by a release.yml that now lives only on the python-legacy branch) —
+# the `if:` guard below on the actual job is the real protection; the glob
+# just keeps this workflow from listening to unrelated tags entirely (a
+# `foo-bar` tag, say).
 on:
   push:
     tags:
@@ -16,8 +17,8 @@ permissions:
 
 jobs:
   goreleaser:
-    # Belt-and-suspenders against release.yml's own trigger: a `-py` tag
-    # must never reach goreleaser, glob match or not.
+    # A `-py` tag (pushed to the python-legacy branch) must never reach
+    # goreleaser, glob match or not.
     if: ${{ !endsWith(github.ref, '-py') }}
     runs-on: ubuntu-latest
     outputs:
@@ -32,7 +33,7 @@ jobs:
           go-version-file: go.mod
 
       # `make web` (goreleaser's own before-hook) needs these — same setup
-      # go.yml's go-test/parity jobs use.
+      # go.yml's go-test job uses.
       - uses: pnpm/action-setup@v4
         with:
           version: 9

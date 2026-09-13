@@ -142,9 +142,7 @@ is a reason to merge anyway and open a PR against the checklist.
 - **≤ 400 changed lines** (additions + deletions)
 - **no protected paths touched** — `.github/**`, `go.mod`, `go.sum`,
   `.goreleaser.yaml`, `internal/engine/**`, `internal/state/**`,
-  `internal/providers/**`, `internal/dashboard/auth*`, and while the Python
-  tree exists: `orchestrator/dispatcher.py`, `orchestrator/state/**`,
-  `orchestrator/dashboard/middleware.py`, `pyproject.toml`
+  `internal/providers/**`, `internal/dashboard/auth*`
 - **no `needs-human` label**
 
 The reasoning behind each protected path is in `policy.json` itself.
@@ -235,7 +233,7 @@ gh api -X PUT repos/hectorcanaimero/orch/branches/main/protection \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["go-test", "go-lint", "parity", "gemini-review"]
+    "contexts": ["go-test", "go-lint", "gemini-review"]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": null,
@@ -254,17 +252,18 @@ they are actually written today:
 | --- | --- |
 | `go-test` | the `go-test` job in `.github/workflows/go.yml` |
 | `go-lint` | the `go-lint` job in the same file — it is `go-lint`, not `lint` |
-| `parity` | the `parity` job in the same file |
 | `gemini-review` | a check run this workflow publishes through the API; there is no job by that name |
 
-Two jobs are deliberately **not** required. `smoke` (`ci-build.yml`) builds the
-Python wheel, and the Python line is frozen for the Go migration — add it back
-if you want the wheel gated again. `automerge-eligible` publishes `neutral`
-when a PR needs a human, and `neutral` does not satisfy a required check, so
-requiring it would block exactly the PRs it is meant to route to a person.
+`parity` (Go against Python on the same project) and `smoke` (the Python wheel)
+were jobs until G7.5 archived the Python line on `python-legacy`; neither
+exists any more, and a protection rule still naming either would hold every PR
+forever. `automerge-eligible` is deliberately **not** required: it publishes
+`neutral` when a PR needs a human, and `neutral` does not satisfy a required
+check, so requiring it would block exactly the PRs it is meant to route to a
+person.
 
-Neither `go.yml` nor `ci-build.yml` filters on `paths`, so a docs-only PR does
-run `go-test` and `parity` and can genuinely go green. Nothing to special-case.
+`go.yml` does not filter on `paths`, so a docs-only PR does run `go-test` and
+can genuinely go green. Nothing to special-case.
 
 ### 2. Let PRs merge themselves
 

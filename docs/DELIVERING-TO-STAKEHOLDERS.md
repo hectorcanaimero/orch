@@ -16,7 +16,7 @@ That sentence. That's it. No spreadsheet, no Slack thread, no weekly email.
 
 ## Prerequisites
 
-- `orch` installed (`pipx install https://github.com/hectorcanaimero/orch/releases/latest/download/orchestrator-0.6.1-py3-none-any.whl`)
+- `orch` installed (`curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh`, or `brew install hectorcanaimero/orch/orch` — see the README)
 - At least one AI CLI on your PATH: `claude`, `codex`, or `opencode`
 - Optional but recommended: `bore` for tunneling (`brew install bore-cli` or `cargo install bore-cli`)
 

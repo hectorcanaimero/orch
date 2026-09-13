@@ -28,12 +28,7 @@
     "internal/engine/**",
     "internal/state/**",
     "internal/providers/**",
-    "internal/dashboard/auth*",
-
-    "orchestrator/dispatcher.py",
-    "orchestrator/state/**",
-    "orchestrator/dashboard/middleware.py",
-    "pyproject.toml"
+    "internal/dashboard/auth*"
   ],
 
   "protected_paths_notes": {
@@ -42,8 +37,6 @@
     "internal/engine/**": "The dispatch loop. Concurrency and process lifecycle bugs here are expensive.",
     "internal/state/**": "SQLite schema and migrations — the compatibility contract.",
     "internal/providers/**": "Shells out to external CLIs; argument handling is security-relevant.",
-    "internal/dashboard/auth*": "The token gate. See docs/CI-REVIEW.md.",
-    "orchestrator/**": "The Python tree, until it is removed. Same reasoning as the Go paths it maps to.",
-    "pyproject.toml": "Version and packaging."
+    "internal/dashboard/auth*": "The token gate. See docs/CI-REVIEW.md."
   }
 }

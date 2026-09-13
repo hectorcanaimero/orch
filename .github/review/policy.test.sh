@@ -105,9 +105,11 @@ run "internal/dashboard/auth* is protected (prefix)" \
   '[{"path":"internal/dashboard/auth_middleware.go","additions":5,"deletions":2}]' \
   '[]' false "auth_middleware.go"
 
-run "the Python tree is still protected" \
+# The Python tree left main in G7.5; its protected paths left the policy with
+# it, so a path under the old tree is an ordinary path again, not a zone.
+run "the archived Python tree is no longer a protected zone" \
   '[{"path":"orchestrator/dashboard/middleware.py","additions":5,"deletions":2}]' \
-  '[]' false "middleware.py"
+  '[]' true
 
 run "a neighbouring path is NOT protected" \
   '[{"path":"internal/dashboard/summary.go","additions":5,"deletions":2}]' \

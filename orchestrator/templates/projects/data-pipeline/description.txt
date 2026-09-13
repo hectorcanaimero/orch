@@ -1,1 +1,0 @@
-Python ETL — DuckDB warehouse + APScheduler jobs. Read/transform/load with cheap local infra.

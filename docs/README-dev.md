@@ -1,3 +1,9 @@
+> **Historical.** This is the README of the Python implementation (≤ v0.11),
+> kept for the sprint history it records. orch is now a Go binary: install and
+> usage are in the top-level [`README.md`](../README.md) and the manuals, and
+> development is in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The Python code
+> this page describes lives on the `python-legacy` branch.
+
 # orch
 
 **Build AI-powered products. Deliver progress to your stakeholder.**
@@ -303,13 +309,9 @@ orch list                 Print this list
 
 ## Development
 
-```bash
-git clone https://github.com/hectorcanaimero/orch.git && cd orch
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
-pytest                  # 1026 tests
-./scripts/check.sh      # lint + type-check + tests
-```
+On `main` this section is obsolete: see [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+(`make web`, `make test`, `make lint`). The Python workflow it described
+(`pip install -e '.[dev]'`, `pytest`) only applies to a `python-legacy` checkout.
 
 ---
 

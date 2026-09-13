@@ -1,1 +1,0 @@
-Python HTTP API — FastAPI + pytest + ruff. Ready for `orch run` out of the box.
