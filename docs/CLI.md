@@ -25,12 +25,15 @@ flags Python does unless a difference is called out.
   [`MCP.md`](MCP.md)). **G6.6** then made `run`'s dispatch prompt offer those
   tools first, with the scripts as the fallback.
 - **G6.5 — landed**: `install-skills` (wider than Python — see its table
-  row). Only the `orch` skill is embedded in this repo today; the five
-  pipeline skills this project's own `CLAUDE.md` lists as relevant
-  (`orch-plan`/`orch-prd`/`orch-arch`/`orch-spec`/`orch-tasks`) live on the
-  operator's machine, not in this repo, and have no checked-in home yet —
-  `--all` installs whatever *is* embedded, so adding one later is a new
-  `internal/skills/<name>/SKILL.md` directory and nothing else.
+  row). Six skills are embedded: `orch`, the operating manual, and the
+  planning pipeline `orch-plan` → `orch-prd` → `orch-arch` → `orch-spec` →
+  `orch-tasks` (idea → `docs/prd/` → `docs/arch/` → `specs/` →
+  `orch atomize --apply`). The five pipeline skills were written for G6.5 —
+  before it they existed only as names in the docs. Each one is checked
+  against this binary in `internal/cli/skills_contract_test.go`: every
+  `orch …` invocation must resolve to a real command and flag, and
+  `orch-spec`'s example spec must go through the real atomize parser with no
+  warnings.
 - **G4.5 — landed**: `doctor` (narrower than Python — see its table row).
   `internal/doctor`'s checks (the package) landed earlier; this is the
   `orch doctor` command surface on top of them, wired separately.

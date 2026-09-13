@@ -21,11 +21,8 @@ import (
 // no Python-side equivalent at all. See
 // docs/brainstorm/go-migration-notes/sonnet-2.md.
 //
-// Only "orch" is embedded today (internal/skills). orch-plan/orch-prd/
-// orch-arch/orch-spec/orch-tasks — the rest of the pipeline this project's
-// own CLAUDE.md lists as relevant — exist on the operator's machine, not in
-// this repo, and have no Go (or checked-in) home yet; --all installs
-// whatever *is* embedded, so adding one later needs no CLI change (see
+// --all installs whatever internal/skills embeds — today orch and the five
+// planning-pipeline skills — so adding one needs no CLI change (see
 // internal/skills' package doc).
 func newInstallSkillsCmd(flags *projectFlags) *cobra.Command {
 	var (

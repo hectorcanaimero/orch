@@ -487,10 +487,13 @@ orch install-skills --dry-run                # preview first
 `codex`/`opencode` have no skills mechanism of their own, so they get a
 clearly-delimited, idempotently-replaceable section appended to the
 project's `AGENTS.md` instead; `cursor` gets a `.cursor/rules/<name>.mdc`
-file. Only the `orch` skill ships embedded in this binary today — the
-`orch-plan`/`orch-prd`/`orch-arch`/`orch-spec`/`orch-tasks` pipeline
-skills this project's own tooling uses live on the operator's machine,
-not in this repo.
+file. Six skills ship embedded in the binary: `orch`, the operating
+manual for an agent working inside a project, and the planning pipeline —
+`orch-plan` runs `orch-prd` (idea → `docs/prd/`), `orch-arch`
+(→ `docs/arch/`), `orch-spec` (→ `specs/`, in the exact format
+`orch atomize` parses) and `orch-tasks` (→ `tasks.json` via
+`orch atomize --apply`), stopping for you after each document and before
+anything is applied.
 
 ---
 

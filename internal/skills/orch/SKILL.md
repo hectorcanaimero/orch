@@ -9,13 +9,24 @@ description: Use when the user's cwd contains .orchestrator/ or tasks.json (a pr
 to Claude / Codex / OpenCode / Gemini in parallel, opens a PR per task, polls
 CI, and shows the whole thing on a stakeholder dashboard.
 
-**Getting `orch` on this machine:** `pipx install orch` installs the current
-release. A Go rewrite is underway (see the project's own
-`docs/brainstorm/go-migration-notes/`); once it ships, installation moves to
-a single static binary and this line will change — check `orch --version`
-first if you're unsure which one is on PATH, since both understand the same
-`tasks.json`/`config.yaml` shape during the transition. Repo:
-<https://github.com/hectorcanaimero/orch>.
+**Getting `orch` on this machine:** it is a single static binary (Linux and
+macOS, `amd64`/`arm64`). Check `orch --version` first; if it is missing, ask
+the user before installing anything, then use one of:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+brew install hectorcanaimero/orch/orch
+```
+
+The script verifies the release checksum and installs to `~/.local/bin`
+(`INSTALL_DIR=...` to override). A tarball from the Releases page works too.
+The old Python package (`pipx`, `v0.11.0-py`) is frozen; both read the same
+`tasks.json` and `config.yaml`. Repo: <https://github.com/hectorcanaimero/orch>.
+
+**The skills themselves:** `orch install-skills --all` installs this skill and
+the planning pipeline below into Claude Code (`~/.claude/skills/`); add
+`--target codex`, `--target opencode` (a section in the project's `AGENTS.md`)
+or `--target cursor` (`.cursor/rules/`) for other agents.
 
 ---
 
@@ -53,7 +64,7 @@ anything below about reading or transitioning state applies.
    `tasks_runtime`. Use `orch task set --id ID --status STATUS` or one of
    the `scripts/task-*.sh` helpers. Direct edits are silently discarded.
 2. **Never run `git worktree add -b orch/...` by hand** inside a project
-   with `dispatch.worktree_mode: true`. `WorktreeManager` owns those
+   with `dispatch.worktree_mode: true`. `orch run` owns those
    branches — a manual create leaves an orphan branch that blocks the
    next dispatch.
 3. **Never bypass `orch task set` transitions.** Legal transitions are
@@ -127,15 +138,20 @@ recover and `done → todo` as the only reopen. `orch task set` and
 to `in-progress`) is rejected, never silently coerced.
 
 ```bash
-orch task set --id F1.T2 --status done --model claude-sonnet-4-6
-orch task set --id F1.T2 --milestone "MVP Login"
+orch task set --id F1.T2 --status done
 orch task-status F1.T2 in-progress --author me --note "picking this up"
 orch reset                     # revert stuck in-progress → todo (dry-run first)
-orch stop                      # signal a running orch to drain and exit
 ```
 
 `orch reset` is dry-run by default — it prints what it would revert. Pass
 `--requeue` to actually apply it.
+
+`orch task set` only changes status in this binary: its `--model`,
+`--backend` and `--milestone` flags exist but refuse to run. To change a
+task's model, edit `Model` in its spec and re-run `orch atomize` (see
+`orch-tasks`). A running `orch run` stops on Ctrl+C (SIGINT) or SIGTERM: it
+dispatches nothing new, waits for what is in flight and exits 130; a second
+signal kills the in-flight agents.
 
 ## Migrating an old file-backend project
 
@@ -178,6 +194,21 @@ A task is `ready` when:
 
 Dependencies of blocked tasks do NOT unblock — a blocked task stops its
 subtree until an operator resets it.
+
+## Planning new work — the pipeline skills
+
+New work reaches `tasks.json` through four documents, each with its own skill:
+
+| Skill | Writes | From |
+| --- | --- | --- |
+| `orch-prd` | `docs/prd/NNN-<slug>.md` | an idea |
+| `orch-arch` | `docs/arch/NNN-<slug>.md` | the PRD and the code |
+| `orch-spec` | `specs/f<N>-<slug>.md` | the architecture |
+| `orch-tasks` | `tasks.json`, via `orch atomize --apply` | the specs |
+
+`orch-plan` runs all four with a stop for the user after each document and
+before anything is applied. Never write tasks into `tasks.json` by hand when
+a spec exists for them: the next `orch atomize` would report them as orphans.
 
 ## Where to find more
 

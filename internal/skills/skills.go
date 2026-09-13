@@ -20,13 +20,14 @@ import (
 	"strings"
 )
 
-// skillsFS embeds every "<name>/SKILL.md" next to this file. "orch" is the
-// only one that exists today — orch-plan/orch-prd/orch-arch/orch-spec/
-// orch-tasks live outside this repo on the operator's machine and have no
-// Go (or checked-in) home yet. Adding one later is exactly this: drop
-// "<name>/SKILL.md" in a new directory beside orch/ — nothing else in this
-// package needs to change, since List walks whatever the embed pattern
-// matched rather than naming skills individually.
+// skillsFS embeds every "<name>/SKILL.md" next to this file: "orch", the
+// operating manual, and the planning pipeline orch-plan, orch-prd,
+// orch-arch, orch-spec and orch-tasks (G6.5). Adding one is exactly this:
+// drop "<name>/SKILL.md" in a new directory beside them — nothing else in
+// this package needs to change, since List walks whatever the embed pattern
+// matched rather than naming skills individually. What does need changing
+// is the list in internal/cli's TestTheSixSkillsAreEmbedded, which also
+// checks every skill against the command tree and the atomize parser.
 //
 //go:embed */SKILL.md
 var skillsFS embed.FS
