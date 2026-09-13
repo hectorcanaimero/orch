@@ -130,14 +130,14 @@ func TestExportRobotsTxtDisallowsEverything(t *testing.T) {
 
 func TestExportTokenMovesTheSiteIntoASubdirectory(t *testing.T) {
 	dir := t.TempDir()
-	res, err := exportFrom(fakeBundle(), dir, testSnapshot(), Options{Token: "s3cr3t"})
+	res, err := exportFrom(fakeBundle(), dir, testSnapshot(), Options{Token: "hidden-dir"})
 	if err != nil {
 		t.Fatalf("exportFrom: %v", err)
 	}
-	if res.URLPath != "/s3cr3t/" {
-		t.Errorf("URLPath = %q, want /s3cr3t/", res.URLPath)
+	if res.URLPath != "/hidden-dir/" {
+		t.Errorf("URLPath = %q, want /hidden-dir/", res.URLPath)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "s3cr3t", "index.html")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "hidden-dir", "index.html")); err != nil {
 		t.Errorf("the page is not under the token directory: %v", err)
 	}
 	// Nothing at the bare root but robots.txt — a visitor who guesses the
@@ -250,7 +250,7 @@ func TestExportedSiteServesOverHTTP(t *testing.T) {
 	if served.ProjectName != snap.ProjectName {
 		t.Errorf("served project = %q, want %q", served.ProjectName, snap.ProjectName)
 	}
-	if got := get(t, srv.URL + "/robots.txt"); !strings.Contains(got, "Disallow: /") {
+	if got := get(t, srv.URL+"/robots.txt"); !strings.Contains(got, "Disallow: /") {
 		t.Errorf("GET /robots.txt = %q", got)
 	}
 }

@@ -40,7 +40,19 @@ func Watch(ctx context.Context, interval time.Duration, build func(context.Conte
 	if interval <= 0 {
 		interval = DefaultIntervalS * time.Second
 	}
+	start := func() (<-chan time.Time, func()) {
+		ticker := time.NewTicker(interval)
+		return ticker.C, ticker.Stop
+	}
+	return watch(ctx, interval, start, build, publish, log)
+}
 
+// watch is Watch with the clock handed in. start is called once, after the
+// first publish, and returns the tick channel and its stop function — so a
+// test drives the loop tick by tick instead of sleeping until a real ticker
+// has probably fired. interval is only named in the retry warning.
+func watch(ctx context.Context, interval time.Duration, start func() (<-chan time.Time, func()),
+	build func(context.Context) (snapshot.Snapshot, error), publish Publisher, log io.Writer) error {
 	var last string
 	publishNow := func() error {
 		snap, err := build(ctx)
@@ -62,8 +74,8 @@ func Watch(ctx context.Context, interval time.Duration, build func(context.Conte
 		return err
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	ticks, stop := start()
+	defer stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -71,7 +83,7 @@ func Watch(ctx context.Context, interval time.Duration, build func(context.Conte
 			// cancellation as an error would make `orch publish --watch`
 			// exit non-zero on its normal exit.
 			return nil
-		case <-ticker.C:
+		case <-ticks:
 			if err := publishNow(); err != nil {
 				// A failed tick does not end the watch: the database is
 				// busy, the network blipped, the remote rejected a push
