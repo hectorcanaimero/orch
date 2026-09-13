@@ -155,7 +155,7 @@ func printInitResult(cmd *cobra.Command, res scaffold.Result, opts scaffold.Opti
 		say("       orch validate --project-root %s", res.Root)
 	}
 	say("  3. Run it:")
-	say("       orch --project-root %s --mode semi", res.Root)
+	say("       orch run --project-root %s --mode semi", res.Root)
 	say("")
 	say("  If you change a task's `model` later, add its route:")
 	say("       orch router add-missing --yes --project-root %s", res.Root)

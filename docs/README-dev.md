@@ -60,7 +60,7 @@ echo "Hey María — your project dashboard: https://chatbot-client.bore.pub?tok
 echo "It updates live as tasks complete. ETA and spend visible in real time."
 
 # 6. Run
-orch --mode auto
+orch run --mode auto
 ```
 
 That last message? Your client sent it to their CTO. You spent zero time on it.
@@ -178,10 +178,10 @@ orch validate
 orch --project-root ~/work/my-app --dry-run
 
 # Run with approval prompts on critical tasks
-orch --project-root ~/work/my-app --mode semi
+orch run --project-root ~/work/my-app --mode semi
 
 # Run fully unattended
-orch --project-root ~/work/my-app --mode auto
+orch run --project-root ~/work/my-app --mode auto
 
 # Dashboard
 orch dashboard --project-root ~/work/my-app

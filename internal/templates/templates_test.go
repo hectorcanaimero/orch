@@ -249,10 +249,13 @@ var goOnly = map[string]bool{
 }
 
 // divergedFromPython are files present in both trees that differ on purpose,
-// each with the reason. Empty today: every shared file is still byte-identical
-// to the last Python release's. Editing a template is allowed; editing one
-// without an entry here is the drift TestGoTreeMatchesPython exists to catch.
-var divergedFromPython = map[string]string{}
+// each with the reason. Editing a template is allowed; editing one without an
+// entry here is the drift TestGoTreeMatchesPython exists to catch.
+var divergedFromPython = map[string]string{
+	"specs/README.md": "told users to run `orch --mode auto`; in the Go binary --mode is a flag " +
+		"of `orch run`, so the suggested command failed with an unknown flag",
+	"openspec/README.md": "same `orch --mode auto` → `orch run --mode auto` fix as specs/README.md",
+}
 
 // TestGoTreeMatchesPython is the guard on having two copies of this data.
 //

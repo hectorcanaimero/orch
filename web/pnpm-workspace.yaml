@@ -1,0 +1,13 @@
+# esbuild (vite's bundler) needs its postinstall script to fetch its binary.
+# pnpm 10+ no longer reads package.json's `pnpm.onlyBuiltDependencies`, and
+# newer releases fail `pnpm install` outright on a build script nobody
+# approved — which made `make build` fail on a clean clone with a current
+# pnpm while CI (pinned to pnpm 9) stayed green. Both spellings, so every
+# pnpm from 9 up agrees.
+# pnpm 9 refuses a workspace file without `packages`; this one package is it.
+packages:
+  - "."
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild

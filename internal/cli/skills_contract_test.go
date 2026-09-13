@@ -312,6 +312,11 @@ func resolveInvocation(root *cobra.Command, inv string) string {
 			if f == nil {
 				f = cmd.InheritedFlags().Lookup(name)
 			}
+			if f == nil {
+				// The root's own persistent flags (--project-root) are not in
+				// its Flags() until cobra merges them at Execute time.
+				f = cmd.PersistentFlags().Lookup(name)
+			}
 			if f == nil && !strings.HasPrefix(tok, "--") && len(name) == 1 {
 				f = cmd.Flags().ShorthandLookup(name)
 			}
