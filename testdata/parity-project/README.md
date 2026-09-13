@@ -1,9 +1,11 @@
 # testdata/parity-project
 
 A real project scaffolded by the Python `orch`, with real state committed
-(`orch.db` — SQLite, ~136 KB), used by `scripts/parity.sh` to diff the
-Python and Go CLIs' `--json` output over the exact same data, and by
-`internal/cli`'s testscript (`.txtar`) tests as golden output.
+(`orch.db` — SQLite, ~136 KB), used by `internal/cli`'s testscript (`.txtar`)
+tests as golden output. Until G7.5 it was also what `scripts/parity.sh` diffed
+the Python and Go CLIs' `--json` output over; that script left `main` with the
+Python tree, and the goldens here are frozen. The mentions of `parity.sh`
+below describe how the fixture was built and checked at the time.
 
 ## How it was generated
 

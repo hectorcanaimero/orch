@@ -1,7 +1,7 @@
 BINARY := bin/orch
 VERSION := $(shell git describe --tags --always)
 
-.PHONY: build web test lint parity clean
+.PHONY: build web test lint clean
 
 build: web
 	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/orch
@@ -37,16 +37,6 @@ lint:
 		echo "golangci-lint not installed locally; falling back to go vet (CI runs the real linter)"; \
 		go vet ./...; \
 	fi
-
-# G3.5's CI gate: the same real workflow (status/tasks/events/validate
-# --json, then init -> atomize --apply) run through both binaries and
-# diffed — see scripts/parity.sh's own header for what's compared, what's
-# deliberately excluded, and why. Needs `make build` first and a Python
-# venv at .venv (python3 -m venv .venv && .venv/bin/pip install -e
-# ".[dev]") — scripts/parity.sh explains how to point it elsewhere. Also
-# runs in CI as the `parity` job in .github/workflows/go.yml.
-parity:
-	scripts/parity.sh
 
 clean:
 	rm -rf bin/ coverage.out

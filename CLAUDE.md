@@ -1,102 +1,138 @@
 # orch — Project instructions
 
 Task orchestrator that walks a `tasks.json` DAG and dispatches each task to a
-local AI CLI (`claude` | `codex` | `opencode`). Single-user, local, no daemon.
+local AI CLI (`claude` | `codex` | `opencode` | `gemini` | `agy`). Single-user,
+local, no daemon. One static Go binary with the React SPA embedded.
 
 ## Stack
 
-- **Backend / CLI**: Python `>=3.11`, distributed as `orch` script (see `pyproject.toml`).
-- **Deps runtime**: `pyyaml`, `rich`, `fastapi>=0.115,<0.116` (pinned — 0.116+ regresses closure-scoped `Request` annotation resolution), `uvicorn[standard]`. See `pyproject.toml [project.dependencies]` for the authoritative list.
-- **Dev**: `pytest>=8.0`, `httpx>=0.27` (FastAPI TestClient uses it).
-- **Frontend** (`web/`, Sprint E-3 SPA spike; moved from `frontend/` in G5.1): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm` package manager, oxlint. `pnpm build`'s output goes straight to `internal/dashboard/dist/build/` (vite's `build.outDir`), not `web/dist/` — see the Go migration section below.
-- **State backend**: SQLite by default since v0.11 (PR #91); `file` is legacy JSONL kept for `orch migrate`. See `orchestrator/state/`.
-- **Persistence**: `state/` at runtime, never committed (`state/.gitkeep` only).
+- **CLI / engine / dashboard server**: Go. The `go` directive in `go.mod` is the
+  minimum and the only place the version lives (see *Go toolchain* below).
+- **Deps**: `spf13/cobra`, `gopkg.in/yaml.v3`, `modernc.org/sqlite` (pure Go, no
+  cgo), `modelcontextprotocol/go-sdk`, `go-pdf/fpdf`, `rogpeppe/go-internal`
+  (testscript). `go.mod` is the authoritative list; a new third-party dependency
+  is a decision stated in its PR, never a silent `go get`.
+- **Frontend** (`web/`): Vite + React + TypeScript + shadcn/ui + Tailwind, `pnpm`,
+  oxlint, vitest. Two bundles, both embedded — see *Gotchas*.
+- **State**: SQLite is the single source of truth for runtime status
+  (`.orchestrator/state/<project>/orch.db`); `tasks.json` is static input.
+  Migrations embedded in `internal/state/migrations/`.
+- **Release**: goreleaser on `v*` tags (`.github/workflows/release-go.yml`,
+  `docs/RELEASING.md`); `scripts/install.sh` and a Homebrew tap.
+
+## The Python line is archived
+
+orch was a Python package until the Go rewrite (phases G0–G8, checklist in the
+"Orch en Go" artifact). Since G7.5 `main` holds no Python: the package, its
+tests, the wheel workflows and the Go↔Python parity job live on the
+**`python-legacy`** branch and its `-py` tags (`git tag -l '*-py'` for the final
+one). What stays on `main` from that era is deliberate:
+
+- **Frozen goldens** under `internal/**/testdata/` and `testdata/` were generated
+  by running Python; each directory's README says so. Nothing regenerates them. A
+  Go change that moves one is a divergence from the last Python release, edited
+  by hand in the PR that says why.
+- **`testdata/python-frozen/`** copies (migrations 001–005, the three packaged
+  defaults, the project templates) keep the "same as the last Python release"
+  guards alive. Never edit them; declare intended differences in
+  `defaultsDivergedFromPython` / `divergedFromPython` / `goOnly`.
+- **`internal/pyfmt`** and the many comments citing `orchestrator/*.py` or
+  `scripts/parity.sh`: output shapes (`--json`, `validate` messages, float
+  formatting) were fixed to match Python byte for byte, and that shape is still
+  the contract with existing projects and scripts.
+- **`.github/review/parse-review.py`** is the Gemini reviewer's response parser,
+  run with the CI runner's system `python3`. It is reviewer tooling, not orch;
+  porting it is its own task.
+- **`scripts/ui-dom.py`** is a local helper for inspecting the dashboard in a
+  headless browser (`docs/UI-CHECKS.md`), not part of the product or of CI.
+
+Bugs found in the Python line are no longer fixed on `main`. The per-lane notes
+under `docs/brainstorm/go-migration-notes/` are history.
 
 ## Conventions
 
-- **Tests**: `pytest` from repo root. Full suite is 1530 passed + 3 skipped. Two known time-boundary flakes pass in isolation on a fast run but can fail on slow I/O (they seed rows at `datetime('now','-N days')` and race the query cutoff): `test_sprint_metrics.py::test_count_done_last_n_days` and `test_tunnel_manager.py::test_start_writes_atomic_state_json`. A single failure in either on a slow run is NOT a regression. New work must not regress the green count. When you add tests, bump this number in the same commit so the baseline stays honest.
-- **Never build after changes.** Type-check / test only.
+- **Tests**: `make test` (`go test ./... -race -cover`). Green, except that
+  without `make web` exactly two tests fail on purpose (`TestSPARequiresABuild`,
+  `TestBundleRequiresABuild`), each naming the command. New work must not regress
+  it. A new test is seen failing against the bug it is for before it is trusted
+  (review checklist rule 24).
+- **Lint**: `make lint` — golangci-lint v2 (falls back to `go vet` with a warning
+  if it is not installed; CI runs the real one). 0 issues.
+- **Never build after changes.** Test / lint only (`make build` is for releases
+  and manual checks).
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.
 - **Commits**: conventional-commits format (`feat:` / `fix:` / `test:` / `docs:` / `chore:` / `refactor:`). **No `Co-Authored-By` or AI attribution.**
-- **Branches**: sprint-scoped (e.g. `sprint-e3/spa-spike`). Merge to `main` via PR.
-- **PRs are reviewed by Gemini in CI**; see `docs/CI-REVIEW.md`.
+- **Branches**: task-scoped (e.g. `g6.5/pipeline-skills`). Merge to `main` via PR.
+- **PRs are reviewed by Gemini in CI**; see `docs/CI-REVIEW.md` and
+  `.github/review/CHECKLIST.md`.
+- **Docs follow commands**: a new command, flag or config key gets its row in
+  `docs/CLI.md` / `docs/CONFIG.md` in the same PR.
 - **Backups**: `orch atomize --apply` writes `tasks.json.bak-<ts>` — leave those alone.
-- **Docs live in `docs/`**: `MANUAL.{en,es,pt}.md`, dashboard/tunnel guides.
+- **Docs live in `docs/`**: `MANUAL.{en,es,pt}.md`, `CLI.md`, `CONFIG.md`, `MCP.md`, dashboard/tunnel guides.
 
 ## Layout (top-level)
 
-- `orchestrator/` — Python package. Subpackages: `dashboard/` (FastAPI app + tunnel manager), `state/` (file/SQLite backends, see `interface.py` + `adapters.py`), `vcs/` (GitHub/GitLab), `templates/`, `skills/`. Per-CLI dispatch adapters (`ClaudeBackend`, `CodexBackend`, `OpencodeBackend`) live in `orchestrator/dispatcher.py`, not a separate `providers/` package.
-- `web/` — Vite SPA (E-3 spike; moved from `frontend/` in G5.1). `pnpm build` here writes straight to `internal/dashboard/dist/build/` (see the Go migration section), so `orch dashboard` (Python) now always serves it via `orchestrator/spa/` (the wheel-shipped copy `scripts/build-spa.sh` refreshes from that same build) rather than its `<project_root>/frontend/dist` project-specific-override tier — that tier is a generic per-managed-project convention, unrelated to this repo's own layout, and was deliberately left untouched.
-- `docs/` — manuals + design docs.
-- `scripts/` — repo helpers (not the per-project `task-*.sh` contract).
+- `cmd/orch/` — `main`: wires cobra, version, exit codes.
+- `internal/` — every package (see the tree below). Nothing is public API.
+- `web/` — the SPA. `pnpm build` / `pnpm build:stakeholder` write straight into
+  the Go embed directories, not `web/dist/`.
+- `testdata/` — cross-package fixtures (`parity-project/`, `file-project/`).
+- `docs/` — manuals + design docs. `docs/brainstorm/`, `docs/history/` and
+  `docs/superpowers/` are history.
+- `scripts/` — `install.sh` (the curl installer) and `ui-dom.py`.
 - `state/` — gitignored runtime state; only `.gitkeep` tracked.
 
-## Migración a Go (en curso)
+## Go tree
 
-orch se está reescribiendo en Go (ver checklist en el artefacto "Orch en Go";
-fases G0–G8). Layout objetivo — las rutas marcadas **(existe)** ya están en
-el repo; el resto sigue planificado.
-
-**Go 1.25.0** es el mínimo, y la directiva `go` de `go.mod` es la única
-fuente: `.github/workflows/go.yml` la lee con `go-version-file: go.mod` en
-vez de repetir el número. No es una preferencia — `modernc.org/sqlite` (y
-`modernc.org/libc`, y `golang.org/x/sys`) declaran `go 1.25.0`, así que el
-piso lo fija la dependencia, no nosotros. El artefacto dice "1.23+"; eso era
-antes de elegir el driver de SQLite. `golangci-lint` tiene que estar
-compilado con un Go **igual o más nuevo** que esa directiva o se niega a
-correr, de ahí el v2.13.2 del workflow (el esquema de config de v2 es
-distinto al de v1 — ver `.golangci.yml`).
-
+**Go toolchain.** `go.mod`'s directive is the only source: `.github/workflows/go.yml`
+reads it with `go-version-file: go.mod`. The floor is set by `modernc.org/sqlite`
+(and `modernc.org/libc`, `golang.org/x/sys`), which declare `go 1.25.0`.
+`golangci-lint` must be built with a Go **at least as new** as that directive or
+it refuses to run — hence v2.13.2 in the workflow (v2's config schema differs from
+v1's; see `.golangci.yml`).
 
 ```
-cmd/orch/            — main package, arg parsing, entrypoint (existe)
+cmd/orch/            — main package, arg parsing, entrypoint
 internal/
-  cli/               — subcomandos (existe: status, tasks, validate, graph, router, config, atomize, init, migrate, run, task-status…; docs/CLI.md es la lista viva)
-  config/            — carga + merge de config.yaml / overrides (existe; docs/CONFIG.md)
-  model/             — Task, Finding, DAG y demás tipos de dominio (existe; puede importar pyfmt, regla 11)
-  graph/             — validate / cycles / orden / DOT sobre el DAG (#111)
-  pyfmt/             — emulación del formato de Python (repr, separador de miles) (#124)
-  atomize/           — tasks.json <-> spec (existe)
-  router/            — model_router.yaml (existe)
-  budget/            — guardrails por proveedor (existe)
-  state/             — backend (SQLite única fuente de verdad, ver F-12) (existe)
-  engine/            — el loop de dispatch: refill, reaper, scheduler, run loop, poller de CI (existe)
-  project/           — lo que CLI y dashboard comparten sobre un proyecto: tasks.json hidratado con el estado, horas humanas, último cambio (llega con G5.2 b1)
-  providers/         — adapters por CLI (existen los cinco: claude, codex, opencode, gemini, agy — G3.4; los caminos de éxito de codex/gemini/agy siguen con fixtures sintéticas porque esas CLIs están instaladas pero sin autenticar, ver testdata/README.md)
-  prompt/            — prompt_builder.py equivalente (existe)
-  worktree/          — aislamiento git por task (existe)
-  vcs/               — github/gitlab (existe)
-  dashboard/         — servidor HTTP (reemplaza FastAPI). (existe: spa.go embebe web/ — G5.1; servidor, modelo de acceso y endpoints — G5.2, en curso)
-  publish/           — snapshot del stakeholder (existe): snapshot/ es el documento (G6.1) y export/git/watch el sitio estático de `orch publish` (G6.3). Embebe el segundo bundle de web/ en dist/stakeholder, así que `make web` construye los dos (`pnpm build` y `pnpm build:stakeholder`). `to: cloud` sigue sin implementar y el comando lo rechaza por su nombre
-  mcp/               — servidor MCP stdio (tools orch_*) para agentes (existe: las siete tools sobre state.Backend, G6.4; docs/MCP.md)
-  skills/            — instalación de skills (`orch install-skills`) (existe: `orch` y el pipeline orch-plan/prd/arch/spec/tasks, G6.5; internal/cli/skills_contract_test.go los valida contra el árbol de comandos y el parser de atomize)
-  templates/         — plantillas de proyecto (embebidas; #145)
-  scaffold/          — `orch init`: batch, wizard, confirm gate (el paquete no se llama `init` porque ese nombre exige alias en cada import)
-  doctor/            — `orch doctor` / `orch validate` (existe)
-  notify/            — Slack/Discord webhooks
-  tunnel/            — supervisor de túneles del dashboard: autossh (Pinggy) y bore, los dos que Python tiene; no hay cloudflared (G5.6, en curso)
-web/                 — SPA (existe; movida desde frontend/ en G5.1),
-                       embebida por internal/dashboard vía el
-                       `build.outDir` de vite (no `web/dist/`)
+  cli/               — subcommands (docs/CLI.md is the living list)
+  config/            — config.yaml load + defaults + overrides (docs/CONFIG.md)
+  model/             — Task, Route, Status, DAG types (may import pyfmt, rule 11)
+  graph/             — validate / cycles / order / DOT / analytics over the DAG
+  pyfmt/             — Python-compatible formatting (repr, thousands separator)
+  atomize/           — spec markdown -> tasks.json
+  router/            — model_router.yaml
+  budget/            — per-provider guardrails
+  pricing/           — pricing.yaml for spend estimates
+  state/             — SQLite backend, the single source of truth
+  engine/            — dispatch loop: refill, reaper, scheduler, run loop, CI poller
+  project/           — what CLI and dashboard share: tasks.json hydrated with state
+  providers/         — per-CLI adapters: claude, codex, opencode, gemini, agy (real captures in testdata/)
+  prompt/            — dispatch prompt builder
+  worktree/          — per-task git isolation
+  vcs/               — github/gitlab via gh/glab
+  dashboard/         — HTTP server, access model, endpoints, SSE; embeds web/ (spa.go)
+  publish/           — stakeholder snapshot (snapshot/) and the static site of `orch publish`; embeds the stakeholder bundle
+  report/            — `orch report pdf`
+  mcp/               — MCP stdio server (orch_* tools; docs/MCP.md)
+  skills/            — embedded skills (orch + the planning pipeline orch-plan/prd/arch/spec/tasks, G6.5) + `orch install-skills`; internal/cli/skills_contract_test.go checks them against the command tree and the atomize parser
+  templates/         — embedded project templates
+  scaffold/          — `orch init`: batch, wizard, confirm gate (not `init`: that name needs an alias everywhere)
+  doctor/            — `orch doctor` checks
+  explain/           — `orch explain` / orch_context
+  notify/            — Slack/Discord webhooks, digest
+  tunnel/            — dashboard tunnel supervisor: autossh (Pinggy) and bore
+  telemetry/         — opt-in anonymous telemetry (off by default)
+web/                 — SPA, embedded by internal/dashboard and internal/publish
 ```
 
-**Go tree**: `make build` (bin/orch, versión desde `git describe`), `make test`
-(`go test ./... -race -cover`), `make lint` (golangci-lint si está instalado,
-si no `go vet` con aviso), `make web` (construye la SPA que internal/dashboard
-embebe; `make build` depende de él), `make parity` (scripts/parity.sh: corre
-init → atomize con los dos binarios y compara el árbol; goldens generados
-ejecutando Python, nunca a mano). CI en `.github/workflows/go.yml` (jobs
-`go-test` / `go-lint` / `parity`); no confundir con `ci-build.yml` (smoke
-del wheel Python) ni `review.yml` (revisor Gemini).
-
-Regla de la migración: **no se añaden features nuevas en la versión Python.**
-Los bugs que aparezcan mientras dure la migración se anotan en
-`docs/brainstorm/go-migration-notes/<carril>.md` (el fichero único quedó congelado el 2026-09-12) en lugar de arreglarse con una
-feature nueva o un refactor grande — fixes puntuales sí, features no.
+**Commands**: `make build` (bin/orch, version from `git describe`), `make test`,
+`make lint`, `make web` (builds both bundles; `make build` depends on it). CI in
+`.github/workflows/go.yml` (jobs `go-test`, `go-lint`, `goreleaser-dry-run`);
+`review.yml` is the Gemini reviewer and the auto-merge policy.
 
 ## Things NOT to invoke unless the user asks
 
-To keep context small, do not proactively call these MCP servers or skills on orch work — they are unrelated to a Python CLI + Vite SPA:
+To keep context small, do not proactively call these MCP servers or skills on orch work — they are unrelated to a Go CLI + Vite SPA:
 
 - **MCP servers**: `claude_ai_Figma__*`, `claude_ai_Miro__*`, `claude_ai_Supabase__*`, `claude_ai_Excalidraw__*`, `claude_ai_Google_Drive__*`, `claude_ai_Atlassian_Rovo__*`, `pencil__*`, `plugin_cloudflare_*`, `plugin_playwright_playwright__*`.
 - **Design/marketing skills**: `hyperframes`, `da-vinci`, `hallmark`, `copywriting`, `marketing-psychology`, `ui-ux-pro-max`, `html-to-image`, `mobile-app-ui-design`.
@@ -113,17 +149,17 @@ To keep context small, do not proactively call these MCP servers or skills on or
 
 ## Current context
 
-- **Branch**: `main` (per `git status`; check for drift — sprint branches like `sprint-e3/*` are historical).
-- **Version**: v0.11.0 on `main` (PR #98, freeze of the Python line; `python-legacy` branch + `v0.11.0-py` tag). G0 hygiene: #91–#97.
-- **Latest sprints**: H-7 wizard confirm gate (#80), H-6 `/orch` skill (#78), H-1a/b/c/d templates (#66/#67/#68/#77), H-3 brand (#65), H-4 README+HN (#66). Fixes fuera de serie: F-11 upgrade (#79), F-12 SQLite SoT (#75), F-13 bootstrap hygiene (#74/#76/#83), F-14 `agy` backend (#82).
-- **Pending explicit**: H-1e `expo-mobile` template (last of the 5 canonical).
-- **Prior sprints** (auto-memory has details): 7 budget guardrails · 8 packaging (v0.2.0, MIT, pipx) · 9 `orch init` · A runtime robustness · B SQLite backend · C observability subcommands · D `doctor`/`validate`/interactive `init` · E-1..E-8 dashboard iterations · F-1..F-6 clean foundation + PR automation · G-0..G-6 stakeholder UX · H-2 config consolidation · H-3..H-7 templates + brand + wizard.
+- **Branch**: `main` (per `git status`; check for drift).
+- **Version**: the Go binary's first release is `v0.12.0` (check `git tag -l 'v*'`
+  — it may not be tagged yet). The Python line ended on `python-legacy`.
+- **Gate**: G7.3 — reproduce the GIF of `docs/media/GIF-SCRIPT.md` with the Go
+  binary and real providers. Python was deleted from `main` only after it passed
+  (ADR-G6).
 
 ## Gotchas already learned
 
-- `go test ./...` fails locally in `internal/dashboard` until you run `make web` once: G5.1 embeds the built SPA and `TestSPARequiresABuild` says so on purpose. CI runs `make web` before `make test`, so it never sees this.
-- `fastapi<0.116` is a hard cap. Starlette 1.0 breaks the legacy `TemplateResponse` signature; pinning FastAPI keeps the compatible Starlette. The dashboard itself is the React SPA now (server-rendered Jinja templates are gone) — `jinja2` is no longer a runtime dependency.
-- Project templates (`orchestrator/templates/projects/*/tasks.json.tmpl`) must use `Task.from_json`'s camelCase keys (`estimateHours`, `specRef`) — snake_case silently defaults to `0.0`/`""` instead of erroring (see `docs/brainstorm/go-migration-notes.md`).
-- `orch dashboard` ships templates + `pricing.yaml` + `dashboard.yaml` + `static/` inside the wheel (see `pyproject.toml [tool.setuptools.package-data]`).
-- Runtime YAML defaults (`config.yaml`, `model_router.yaml`, `budgets.yaml`) also ship in the wheel so `pipx`-installed `orch` works without a manual copy.
-- `web/`'s `pnpm build` does NOT emit `web/dist/` — its vite config points `build.outDir` straight at `internal/dashboard/dist/build/` so the Go binary's `//go:embed` (which can't reach outside its own package directory) has something to embed with no separate copy step. `internal/dashboard/dist/README.md` is the one file tracked directly under `dist/`; everything under `dist/build/` is gitignored and rebuilt from scratch every `pnpm build`. `scripts/build-spa.sh` (the Python wheel's SPA) reads from that same `dist/build/`, not `web/dist/` — one `pnpm build` feeds both binaries.
+- `go test ./...` fails locally in `internal/dashboard` and `internal/publish` until you run `make web` once: both packages embed a built bundle, and `TestSPARequiresABuild` / `TestBundleRequiresABuild` say so on purpose. CI runs `make web` before `make test`, so it never sees this.
+- `web/`'s builds do NOT emit `web/dist/`: vite's `build.outDir` points straight at `internal/dashboard/dist/build/` (operator SPA) and `internal/publish/dist/stakeholder/` (stakeholder bundle), because `//go:embed` cannot reach outside its own package directory. Each `dist/` tracks only its `README.md`; the build output is gitignored and rebuilt from scratch.
+- Project templates (`internal/templates/files/projects/*/tasks.json.tmpl`) must use camelCase keys (`estimateHours`, `specRef`) — snake_case silently defaults to `0`/`""` instead of erroring.
+- Timestamps in one `orch.db` come in both `+00:00` and `Z` spellings (Python wrote both); never filter them with a string comparison in SQL — parse in Go.
+- A field that moved from `tasks.json` to the database needs its reader moved too: `.Status` / `.Comments` read off a `model.Task` without `project.Hydrate` upstream is the recurring bug (review checklist rule 30).

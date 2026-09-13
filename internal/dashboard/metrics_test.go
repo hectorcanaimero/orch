@@ -79,7 +79,7 @@ func TestSpendAggregationMatchesThePythonGolden(t *testing.T) {
 	for name, spends := range scenarios {
 		body, ok := golden[name]
 		if !ok {
-			t.Fatalf("scenario %q has no golden — regenerate with make-metrics-golden.py", name)
+			t.Fatalf("scenario %q has no golden — the goldens are frozen (see testdata/README.md): add the scenario's golden by hand, in the PR that adds the scenario", name)
 		}
 		var want metricsGolden
 		if err := json.Unmarshal(body, &want); err != nil {

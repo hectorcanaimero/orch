@@ -1,13 +1,17 @@
 # Releasing `orch`
 
-Two release lines share this repo during the Go migration, distinguished
-by tag suffix — the same tag namespace, split by a suffix rather than a
-prefix (see the note on why, below).
+Two release lines share this repo's tag namespace, distinguished by tag
+suffix rather than prefix (see the note on why, below).
 
 | Tag shape | Builds | Workflow |
 |---|---|---|
-| `v*-py` | The frozen Python wheel | `.github/workflows/release.yml` |
+| `v*-py` | The archived Python wheel | `.github/workflows/release.yml` **on the `python-legacy` branch** |
 | `v*` (no suffix) | The Go binary | `.github/workflows/release-go.yml` |
+
+Since G7.5 `main` has no Python tree and no `release.yml`. A tag push runs the
+workflows of the commit it points at, so a `-py` tag cut from `python-legacy`
+still builds with that branch's own `release.yml`; nothing on `main` is
+involved.
 
 ## Why a suffix, not a prefix
 

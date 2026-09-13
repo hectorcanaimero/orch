@@ -97,7 +97,7 @@ func TestEventDerivedFiguresMatchThePythonGolden(t *testing.T) {
 	for name, events := range scenarios {
 		want, ok := golden[name]
 		if !ok {
-			t.Fatalf("scenario %q has no golden — regenerate with make-events-golden.py", name)
+			t.Fatalf("scenario %q has no golden — the goldens are frozen (see testdata/README.md): add the scenario's golden by hand, in the PR that adds the scenario", name)
 		}
 		t.Run(name, func(t *testing.T) {
 			gotHours := HumanHoursByTask(events)

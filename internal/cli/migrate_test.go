@@ -15,7 +15,8 @@ import (
 // fileProjectFixtureDir is testdata/file-project — a synthetic file-mode
 // project (tasks.json + state/{events,spend}-run1.jsonl, no orch.db) with a
 // golden.json produced by running the REAL orchestrator.migrate.run_migrate
-// against it. See make-fixture.py.
+// against it. Frozen since the Python tree left main: see that directory's
+// README.md for where the generator lives now.
 func fileProjectFixtureDir(t *testing.T) string {
 	t.Helper()
 	dir, err := filepath.Abs(filepath.Join("..", "..", "testdata", "file-project"))
@@ -30,7 +31,7 @@ func fileProjectFixtureDir(t *testing.T) string {
 
 // copyMigrateFixture is copyProjectFixture's counterpart for this fixture:
 // same idea (walk + copyFile, both already defined in testscript_test.go),
-// excluding golden.json/make-fixture.py instead of goldens/README.md — this
+// excluding golden.json/README.md instead of goldens/README.md — this
 // fixture keeps its non-project files at the top level, not in a subdir.
 func copyMigrateFixture(t *testing.T, src, dst string) {
 	t.Helper()
@@ -42,7 +43,7 @@ func copyMigrateFixture(t *testing.T, src, dst string) {
 		if err != nil {
 			return err
 		}
-		if rel == "golden.json" || rel == "make-fixture.py" {
+		if rel == "golden.json" || rel == "README.md" {
 			return nil
 		}
 		target := filepath.Join(dst, rel)

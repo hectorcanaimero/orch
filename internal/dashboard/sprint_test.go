@@ -136,7 +136,7 @@ func TestSprintHealthMatchesThePythonGolden(t *testing.T) {
 	for name, sc := range scenarios {
 		want, ok := golden.Sprint[name]
 		if !ok {
-			t.Fatalf("scenario %q has no golden — regenerate with make-sprint-golden.py", name)
+			t.Fatalf("scenario %q has no golden — the goldens are frozen (see testdata/README.md): add the scenario's golden by hand, in the PR that adds the scenario", name)
 		}
 		t.Run(name, func(t *testing.T) {
 			got := sprintHealth(sc.tasks, sc.done7d, sc.lastEvents, frozenNow)
