@@ -1,0 +1,119 @@
+# orch export multica — the DAG out as Multica issues, through the real CLI.
+#
+# `multica` here is a shell stub: it logs argv and stdin and answers the two
+# output shapes internal/export reads (see internal/export's package doc for
+# where in Multica's source those shapes come from). $WORK/bin is put FIRST on
+# PATH before anything runs, so a real multica on the machine running the
+# tests can never be reached — an export is an action aimed outward.
+#
+# The fixture's DB has F0.T1, F1.T1 and F2.T1 done, F2.T2 in progress and
+# F2.T3 blocked, so the export is phase 2's two unfinished tasks.
+
+exec chmod 755 $WORK/bin/multica
+exec cp proj/tasks.json $WORK/tasks-before.json
+env PATH=$WORK/bin:$PATH
+env FAKE_MULTICA_LOG=$WORK/multica.log
+env FAKE_MULTICA_COUNTER=$WORK/counter
+
+# ---- --dry-run prints the plan, reads Multica, creates nothing --------------
+exec orch export multica --dry-run --project PRJ --project-root proj --project-id parity-project
+stdout 'Would create 1 parent issue\(s\) and 2 sub-issue\(s\) in Multica, all in backlog'
+stdout 'new +F2$'
+stdout 'stage 1  F2.T2 '
+stdout 'stage 2  F2.T3 '
+stdout 'deps: F2.T2'
+stdout 'Left out, done in orch: F0.T1, F1.T1, F2.T1'
+stdout 'only ordered stages under a parent'
+! stdout 'created'
+grep 'argv: \[issue\] \[list\] \[--output\] \[json\]' multica.log
+grep '\[--project\] \[PRJ\]' multica.log
+! grep '\[create\]' multica.log
+
+# Hydrated, not tasks.json: the file says all five are todo (rule 30).
+grep '"status": "todo"' proj/tasks.json
+
+# ---- the real run: parent first, children staged under its id ---------------
+exec orch export multica --project PRJ --project-root proj --project-id parity-project
+stdout 'created MUL-1 +parent  F2'
+stdout 'created MUL-2 +stage 1 F2.T2'
+stdout 'created MUL-3 +stage 2 F2.T3'
+stdout 'Created 3 issue\(s\) in Multica'
+grep 'argv: \[issue\] \[create\] \[--title\] \[F2\] \[--description-stdin\] \[--status\] \[backlog\] \[--output\] \[json\] \[--project\] \[PRJ\]' multica.log
+grep '\[--title\] \[F2.T3 — .*\] \[--description-stdin\] \[--status\] \[backlog\] \[--output\] \[json\] \[--parent\] \[uuid-1\] \[--stage\] \[2\] \[--project\] \[PRJ\]' multica.log
+grep 'Depends on: F2.T2 \(MUL-2\)' multica.log
+grep 'orch-task: parity-project/F2.T3' multica.log
+grep 'orch-phase: parity-project/2' multica.log
+
+# It wrote nothing to the project: no backup, tasks.json unchanged.
+exec bash -c '! ls proj/tasks.json.bak-* 2>/dev/null'
+cmp proj/tasks.json $WORK/tasks-before.json
+
+# ---- a re-run skips what Multica already has --------------------------------
+# The list now carries the parent and F2.T2 (by their markers), as if an
+# earlier run had stopped after them: only F2.T3 is created, under the
+# EXISTING parent's id.
+env FAKE_MULTICA_LIST=$WORK/partial.json
+exec orch export multica --project-root proj --project-id parity-project
+stdout 'Creating 0 parent issue\(s\) and 1 sub-issue\(s\) in Multica, all in backlog; 2 already there'
+stdout '=MUL-40 +F2'
+stdout '=MUL-41 +stage 1  F2.T2'
+stdout 'created MUL-4 +stage 2 F2.T3'
+grep '\[--parent\] \[uuid-parent\] \[--stage\] \[2\]' multica.log
+grep 'Depends on: F2.T2 \(MUL-41\)' multica.log
+env FAKE_MULTICA_LIST=
+
+# ---- scope flags -------------------------------------------------------------
+exec orch export multica --dry-run --only F2.T3 --project-root proj --project-id parity-project
+stdout 'and 1 sub-issue\(s\)'
+stdout 'stage 1  F2.T3 '
+! stdout 'F2.T2  '
+
+exec orch export multica --dry-run --phase 1 --project-root proj --project-id parity-project
+stdout 'Nothing to export from project parity-project \(left out, done in orch: F1.T1\)'
+
+# ---- a failing multica is an error that carries Multica's own message --------
+env FAKE_MULTICA_EXIT=1
+env FAKE_MULTICA_STDERR='workspace_id is required: use --workspace-id flag'
+! exec orch export multica --project-root proj --project-id parity-project
+stderr 'multica issue list'
+stderr 'workspace_id is required'
+! stdout 'created'
+env FAKE_MULTICA_EXIT=
+
+! exec orch export multica --project-root proj --project-id parity-project extra-arg
+stderr 'accepts 0 arg|unknown command'
+
+-- bin/multica --
+#!/bin/sh
+log="${FAKE_MULTICA_LOG:-/dev/null}"
+printf 'argv:' >>"$log"
+for a in "$@"; do printf ' [%s]' "$a" >>"$log"; done
+printf '\n' >>"$log"
+stdin=$(cat)
+printf 'stdin:%s\n' "$stdin" >>"$log"
+if [ -n "${FAKE_MULTICA_EXIT:-}" ]; then
+  printf '%s\n' "$FAKE_MULTICA_STDERR" >&2
+  exit "$FAKE_MULTICA_EXIT"
+fi
+case "$1 $2" in
+"issue list")
+  if [ -n "${FAKE_MULTICA_LIST:-}" ]; then cat "$FAKE_MULTICA_LIST"; else echo '{"issues":[],"has_more":false}'; fi ;;
+"issue create")
+  n=$(( $(cat "$FAKE_MULTICA_COUNTER" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" >"$FAKE_MULTICA_COUNTER"
+  printf '{"id":"uuid-%s","identifier":"MUL-%s"}\n' "$n" "$n" ;;
+*)
+  echo "fake multica: unexpected $*" >&2; exit 3 ;;
+esac
+-- partial.json --
+{
+  "issues": [
+    {"id": "uuid-parent", "identifier": "MUL-40", "description": "Phase F2 ...\n\norch-phase: parity-project/2\n"},
+    {"id": "uuid-t2", "identifier": "MUL-41", "description": "...\n---\norch-task: parity-project/F2.T2\n"},
+    {"id": "uuid-other", "identifier": "MUL-42", "description": "orch-task: another-project/F2.T3\n"}
+  ],
+  "total": 3,
+  "limit": 100,
+  "offset": 0,
+  "has_more": false
+}

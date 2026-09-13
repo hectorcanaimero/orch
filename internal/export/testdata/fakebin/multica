@@ -1,0 +1,34 @@
+#!/bin/sh
+# Fake `multica` for internal/export's exec-path tests.
+#
+# Logs argv and stdin, answers `issue list` with $FAKE_MULTICA_LIST (or an
+# empty page) and `issue create` with a numbered issue, and fails with
+# $FAKE_MULTICA_STDERR on stderr when $FAKE_MULTICA_EXIT is set. It knows
+# nothing about Multica beyond the two output shapes internal/export reads.
+log="${FAKE_MULTICA_LOG:-/dev/null}"
+printf 'argv:' >>"$log"
+for a in "$@"; do printf ' [%s]' "$a" >>"$log"; done
+printf '\n' >>"$log"
+stdin=$(cat)
+printf 'stdin:%s\n' "$stdin" >>"$log"
+
+if [ -n "${FAKE_MULTICA_EXIT:-}" ]; then
+  printf '%s\n' "${FAKE_MULTICA_STDERR:-boom}" >&2
+  exit "$FAKE_MULTICA_EXIT"
+fi
+
+case "$1 $2" in
+"issue list")
+  if [ -n "${FAKE_MULTICA_LIST:-}" ]; then cat "$FAKE_MULTICA_LIST"; else echo '{"issues":[],"has_more":false}'; fi
+  ;;
+"issue create")
+  counter="${FAKE_MULTICA_COUNTER:?FAKE_MULTICA_COUNTER must be set}"
+  n=$(( $(cat "$counter" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" >"$counter"
+  printf '{"id":"uuid-%s","identifier":"MUL-%s","title":"ignored","status":"backlog"}\n' "$n" "$n"
+  ;;
+*)
+  echo "fake multica: unexpected $*" >&2
+  exit 3
+  ;;
+esac

@@ -103,6 +103,7 @@ func newRootCmd(version string) (*cobra.Command, *projectFlags) {
 	root.AddCommand(newReportCmd(flags))
 	root.AddCommand(newPublishCmd(flags))
 	root.AddCommand(newSyncCmd(flags))
+	root.AddCommand(newExportCmd(flags))
 	return root, flags
 }
 
