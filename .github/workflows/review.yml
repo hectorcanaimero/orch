@@ -179,7 +179,11 @@ jobs:
           # Truncating is better than blowing the limit and getting no review
           # at all — or a confident review of the first half.
           MAX_PROMPT_BYTES=120000
-          gh pr diff "$PR" --repo "$REPO" > full.diff
+          # gh 2.100 refuses to print a diff carrying terminal escapes, even
+          # into a file. Real CLI captures under testdata/ keep theirs (run
+          # 34710647527, #215: gemini's untrusted-directory.log is red), and
+          # this diff only ever lands in a file, never on a terminal.
+          gh pr diff "$PR" --repo "$REPO" --allow-escape-sequences > full.diff
           DIFF_BYTES=$(wc -c < full.diff)
 
           gh pr view "$PR" --repo "$REPO" --json files \
