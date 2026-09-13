@@ -891,11 +891,16 @@ def _mk_retry_refill_env(
     return retry_queue, spawn_calls, cfg
 
 
-def _call_refill(retry_queue, cfg):
-    """Invoke _refill with harmless empties for everything except retry_queue."""
+def _call_refill(retry_queue, cfg, queue=None):
+    """Invoke _refill with harmless empties for everything except retry_queue.
+
+    `queue` lets a test hand in a ready set; the default one is empty.
+    """
     class _StubQueue:
         def ready(self, in_flight_ids=None, only=None):  # noqa: ARG002
             return []
+    if queue is None:
+        queue = _StubQueue()
 
     class _StubRunFile:
         pass
@@ -905,7 +910,7 @@ def _call_refill(retry_queue, cfg):
 
     gsem, psem = orch_mod._build_semaphores(cfg)
     return orch_mod._refill(
-        queue=_StubQueue(),
+        queue=queue,
         router={},
         cfg=cfg,
         mode="auto",
@@ -978,6 +983,78 @@ def test_retry_queue_zero_backoff_drains_next_tick(
     _call_refill(retry_queue, cfg)
     assert spawn_calls == [("T-BACKOFF", 2)]
     assert len(retry_queue) == 0
+
+
+def test_refill_blocks_task_whose_route_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 20 of the Go port: a ready task whose model has no route must be
+    BLOCKED, not skipped. Skipping left it `todo`, so `ready()` returned it
+    on every tick and the run loop's termination condition ("nothing ready,
+    nothing in flight, no retries") could never hold — `orch run` spun
+    forever at 200 ms per pass. Reachable today by deleting a router entry a
+    task still references."""
+    from orchestrator.task_queue import TaskQueue
+
+    monkeypatch.setattr(orch_mod.time, "monotonic", lambda: 0.0)
+    spawn_calls: list = []
+    monkeypatch.setattr(
+        orch_mod, "_spawn_one",
+        lambda task, *_a, **_kw: spawn_calls.append(task.id) or True,
+    )
+    blocked_on_disk: list = []
+    monkeypatch.setattr(
+        orch_mod, "call_task_block",
+        lambda task_id, reason, model, project_root=None: blocked_on_disk.append(
+            (task_id, reason, model)
+        ),
+    )
+
+    queue = TaskQueue([
+        Task.from_json({"id": "T-NOROUTE", "phase": 0, "title": "t", "model": "gone/model"}),
+    ])
+    assert [t.id for t in queue.ready()] == ["T-NOROUTE"], "precondition: task is ready"
+
+    events: list = []
+
+    class _EventLog:
+        def emit(self, event_type, task_id, backend=None, **extra):  # noqa: ANN001
+            events.append((event_type, task_id, extra.get("reason")))
+
+    class _RunFile:
+        blocked: list = []
+
+        def mark_blocked(self, task_id):  # noqa: ANN001
+            self.blocked.append(task_id)
+
+    run_file = _RunFile()
+    cfg = {
+        "concurrency": {"global_max": 3, "per_provider": {}},
+        "strict_files_phases": [],
+        "default_timeout_multiplier": 1.5,
+        "budget": {"per_dispatch_usd": 5.0},
+        "retry": {"backoff_seconds": 0.0},
+    }
+    gsem, psem = orch_mod._build_semaphores(cfg)
+    orch_mod._refill(
+        queue=queue, router={}, cfg=cfg, mode="auto", gate=None,
+        gsem=gsem, psem=psem, in_flight={}, run_file=run_file,
+        event_log=_EventLog(), run_id="test-run", state_dir=Path("/tmp"),
+        cwd=Path("/tmp"), dispatched_count=0, max_tasks=None, deferred=set(),
+        drain=orch_mod._DrainFlag(), retry_queue=[], use_task_locks=False,
+        only=None,
+    )
+
+    assert spawn_calls == [], "a task without a route must never be spawned"
+    assert queue.ready() == [], (
+        "the task must leave the ready set, or the run loop never terminates"
+    )
+    assert not queue.pending(), "blocked is terminal for this run"
+    assert blocked_on_disk == [
+        ("T-NOROUTE", "route missing for model gone/model", "gone/model")
+    ]
+    assert run_file.blocked == ["T-NOROUTE"]
+    assert events == [("block", "T-NOROUTE", "route missing for model gone/model")]
 
 
 # ---- Spoof detector -----------------------------------------------------
@@ -1911,3 +1988,64 @@ def test_run_file_load_tolerates_missing_parent_pid(tmp_path: Path) -> None:
     )
     rf = RunFile.load(path)
     assert rf.state.parent_pid == 0
+
+
+def test_ready_set_does_not_relaunch_a_task_the_retry_queue_still_owns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 15 of the Go port. After a retryable failure `_reap_once` resets the
+    task to `todo` and queues it with `retry_earliest_at = now + backoff`. The
+    ready-set pass of `_refill` used to ignore the retry queue, see the task in
+    `todo` with its deps done, and launch it in the same tick — so the backoff
+    never delayed anything, and the queued item launched it AGAIN when it
+    drained. The queue must own the task until the backoff expires, then
+    release it exactly once."""
+    fake_now = [1000.0]
+    retry_queue, spawn_calls, cfg = _mk_retry_refill_env(5.0, monkeypatch, fake_now)
+    owned_task = retry_queue[0].task
+
+    class _QueueThatOffersTheTaskAgain:
+        """What the real TaskQueue does once the retry branch set it to todo —
+        and stops doing once `_spawn_one` marks it in-progress (the fake spawn
+        never does, so the stub mirrors that transition itself; without it the
+        task would reach the router, and bug 20 now blocks a routeless task
+        instead of skipping it silently)."""
+        def ready(self, in_flight_ids=None, only=None):  # noqa: ARG002
+            return [] if spawn_calls else [owned_task]
+
+    q = _QueueThatOffersTheTaskAgain()
+
+    # Inside the backoff window: nothing may launch, from either pass.
+    _call_refill(retry_queue, cfg, queue=q)
+    assert spawn_calls == [], "launched during the backoff window"
+    assert len(retry_queue) == 1
+
+    # Backoff expired: exactly one launch, and the queue lets go of the task.
+    fake_now[0] += 5.0
+    _call_refill(retry_queue, cfg, queue=q)
+    assert spawn_calls == [("T-BACKOFF", 2)]
+    assert retry_queue == []
+
+
+def test_terminal_guard_reads_the_state_backend_before_tasks_json(tmp_path: Path) -> None:
+    """Bug 16 of the Go port. `scripts/task-finish.sh` -> `orch task-status`
+    writes the sqlite backend and leaves tasks.json untouched, so the
+    "sub-agent already finished" guard that read tasks.json saw `todo` on
+    every sqlite project and never fired."""
+    from orchestrator.state.sqlite_backend import SqliteBackend
+
+    tasks_json = tmp_path / "tasks.json"
+    tasks_json.write_text(
+        '{"tasks": [{"id": "T-1", "phase": 0, "title": "t", "model": "m", "status": "todo"}]}',
+        encoding="utf-8",
+    )
+    task = Task.from_json({"id": "T-1", "phase": 0, "title": "t", "model": "m"})
+    be = SqliteBackend(db_path=tmp_path / "orch.db", project_id="p1")
+    be.bootstrap([task])
+    be.set_task_status("T-1", "in-progress", author="test", note="start", ts="2026-09-12T00:00:00Z")
+    be.set_task_status("T-1", "done", author="test", note="finish", ts="2026-09-12T00:01:00Z")
+
+    assert orch_mod._task_status_in_file("T-1", tasks_json) == "todo"
+    assert orch_mod._task_status_current("T-1", tasks_json, be) == "done"
+    # No backend (file-backed project): the file still decides.
+    assert orch_mod._task_status_current("T-1", tasks_json, None) == "todo"

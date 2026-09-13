@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 
 _CI_STATE_MAP = {
@@ -36,12 +37,27 @@ class GitHubProvider:
         return result.stdout.strip() or None
 
     def get_ci_status(self, pr_url: str) -> str:
+        # Bug 27 of the Go port: `gh pr checks` has no `conclusion` field, so
+        # asking for one was a usage error (exit 1) that the branch below
+        # turned into "pending" — for every PR, forever. And `state` is one
+        # field doing two jobs (GitHub's status while a check runs, its
+        # conclusion once it finished) and gh emits it UPPERCASE; the maps are
+        # lowercase, so even with the field fixed every lookup missed. CI
+        # polling never resolved in either binary. Fixtures captured from the
+        # real gh 2.100.0 live in tests/fixtures/gh/2.100.0/.
         result = subprocess.run(
-            ["gh", "pr", "checks", pr_url, "--json", "state,conclusion"],
+            ["gh", "pr", "checks", pr_url, "--json", "name,state,bucket"],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
+            # "cannot run" is not "still waiting"; say why on stderr so the
+            # operator can tell a broken gh from a slow CI.
+            print(
+                f"[vcs] gh pr checks failed for {pr_url}: "
+                f"{(result.stderr or '').strip().splitlines()[0] if (result.stderr or '').strip() else 'exit ' + str(result.returncode)}",
+                file=sys.stderr,
+            )
             return "pending"
 
         try:
@@ -52,13 +68,12 @@ class GitHubProvider:
         if not checks:
             return "pending"
 
-        conclusions = [c.get("conclusion", "") for c in checks]
-        states = [c.get("state", "") for c in checks]
+        states = [str(c.get("state", "")).lower() for c in checks]
 
         if any(s in ("in_progress", "queued", "waiting", "requested", "pending") for s in states):
             return "pending"
 
-        mapped = [_CI_STATE_MAP.get(c, "pending") for c in conclusions]
+        mapped = [_CI_STATE_MAP.get(s, "pending") for s in states]
         if any(m == "failure" for m in mapped):
             return "failure"
         if all(m == "success" for m in mapped):

@@ -11,6 +11,10 @@ concurrency:
     codex: 1
     opencode: 2
 
+# Where this project keeps its specs. `specRef` in tasks.json is joined
+# onto this to build the "Spec ref (READ FIRST)" line of every prompt.
+spec_root: specs
+
 state:
   backend: sqlite         # default since v0.11 — single orch.db, WAL journaling
   sqlite_path: null

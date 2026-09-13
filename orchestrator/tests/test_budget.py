@@ -28,6 +28,7 @@ from orchestrator.budget import (
 )
 from orchestrator.models import SpendEntry
 from orchestrator.state import SpendLog
+from orchestrator.state.sqlite_backend import SqliteBackend
 
 
 # ---- Helpers -------------------------------------------------------------
@@ -441,3 +442,74 @@ def test_preset_sanity_warns_per_provider() -> None:
     assert len(warnings) == 2
     provider_names = {w.split("'")[3] for w in warnings}  # extract 'codex'/'opencode'
     assert provider_names == {"codex", "opencode"}
+
+
+# ---- SQLite spend source (bug 5 of the Go port) ---------------------------
+
+
+def _sqlite_backend(state_dir: Path) -> SqliteBackend:
+    """A project on the sqlite backend: `state/orch.db`, no JSONL files."""
+    return SqliteBackend(db_path=state_dir / "orch.db", project_id="p1")
+
+
+def test_can_dispatch_reads_spend_from_sqlite(tmp_path: Path) -> None:
+    """Regression for bug 5: with `state.backend: sqlite` (the default since
+    v0.11) spend lives only in the `spend` table. The gate used to read only
+    `spend-*.jsonl`, saw zero, and never fired — 750K tokens against a 600
+    token cap said "ok". Now the table counts."""
+    be = _sqlite_backend(tmp_path)
+    now = datetime.now(timezone.utc)
+    for i in range(5):
+        be.append_spend(
+            _entry(
+                backend="claude",
+                tokens_in=100_000,
+                tokens_out=50_000,
+                ts=now - timedelta(minutes=i),
+                task_id=f"T-{i}",
+            )
+        )
+    assert not list(tmp_path.glob("spend-*.jsonl")), "sqlite project has no JSONL"
+
+    cfg = BudgetConfig(
+        providers={"claude": ProviderBudget(window_hours=5, token_budget=1000, threshold_pct=60)}
+    )
+    gate = BudgetGate(state_dir=tmp_path, config=cfg)
+    ok, reason, reset_at = gate.can_dispatch("claude")
+    assert ok is False
+    assert reason is not None
+    assert reset_at is not None
+    assert gate.snapshot()["claude"]["tokens_used"] == 750_000
+
+
+def test_can_dispatch_sqlite_respects_window_and_provider(tmp_path: Path) -> None:
+    be = _sqlite_backend(tmp_path)
+    now = datetime.now(timezone.utc)
+    # In window, right provider: counts.
+    be.append_spend(_entry(backend="claude", tokens_in=500, tokens_out=100, ts=now, task_id="A"))
+    # Out of window: ignored.
+    be.append_spend(
+        _entry(backend="claude", tokens_in=9_000, tokens_out=0, ts=now - timedelta(hours=6), task_id="B")
+    )
+    # Other provider: ignored.
+    be.append_spend(_entry(backend="codex", tokens_in=9_000, tokens_out=0, ts=now, task_id="C"))
+    gate = BudgetGate(state_dir=tmp_path, config=_cfg())
+    assert gate.snapshot()["claude"]["tokens_used"] == 600
+
+
+def test_can_dispatch_dedups_rows_present_in_jsonl_and_sqlite(tmp_path: Path) -> None:
+    """A project migrated with `orch migrate` keeps its JSONL history AND has
+    the same rows in SQLite. They must count once."""
+    now = datetime.now(timezone.utc)
+    entry = _entry(backend="claude", tokens_in=400, tokens_out=200, ts=now, task_id="T-dup")
+    _write_entry(tmp_path, entry)
+    _sqlite_backend(tmp_path).append_spend(entry)
+    gate = BudgetGate(state_dir=tmp_path, config=_cfg())
+    assert gate.snapshot()["claude"]["tokens_used"] == 600
+
+
+def test_sqlite_source_degrades_to_nothing_on_unreadable_db(tmp_path: Path) -> None:
+    (tmp_path / "orch.db").write_bytes(b"this is not a sqlite database")
+    gate = BudgetGate(state_dir=tmp_path, config=_cfg())
+    ok, _, _ = gate.can_dispatch("claude")
+    assert ok is True

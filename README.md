@@ -4,11 +4,22 @@
 
 # orch
 
-> **orch is being rewritten in Go as a single binary.** The `python-legacy`
-> branch and the `v0.11.0-py` tag are the last Python version — everything
-> below still describes it, and it still works. Background and the running
-> list of what the rewrite has to carry over:
-> [`docs/brainstorm/go-migration-notes.md`](docs/brainstorm/go-migration-notes.md).
+> **This is the archived Python line of orch. It receives no new features or
+> fixes.** orch is now a single Go binary on
+> [`main`](https://github.com/hectorcanaimero/orch) — install it with the
+> script or Homebrew described there. This branch and the `v0.11.1-py` tag
+> are the last Python version; everything below still describes it and it
+> still works:
+> `pipx install https://github.com/hectorcanaimero/orch/releases/download/v0.11.1-py/orchestrator-0.11.1-py3-none-any.whl`
+> (the release wheel carries the built dashboard; a plain git install does not).
+>
+> `v0.11.1-py` is `v0.11.0-py` plus the Python fixes found while porting to
+> Go (bugs 5–27 in the migration notes on `main`): the budget guardrail
+> reading SQLite spend, CI polling that never resolved, retry backoff that was
+> ignored, a run loop that spun forever on an unrouted model, spend shown to
+> stakeholders with the flag off, and the template/spec-path bugs in
+> `orch init` and `orch atomize`. The dashboard SPA is the one frozen at
+> `v0.11.0-py`; later SPA changes on `main` belong to the Go dashboard.
 
 **Run AI agents as a team. Show clients a live dashboard — not a Slack thread.**
 

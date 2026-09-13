@@ -5,7 +5,7 @@ Working dir: /tmp/orch-golden-project
 Title: Root A
 Description: First root
 Files you may write: []
-Spec ref (READ FIRST): docs/rewrite-plan/specs/foo.md
+Spec ref (READ FIRST): specs/foo.md
 Completed dependencies (context):
   - T-DEP: dep did the thing
 

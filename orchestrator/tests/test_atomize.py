@@ -829,3 +829,163 @@ class TestOrchSpecOutputFormat:
         assert by_id["F1.1.T3"].estimate_hours == 16.0
         assert by_id["F1.1.T3"].dependencies == ["F1.1.T2", "F1.1.T1"]
         assert by_id["F1.1.T3"].status == "backlog"
+
+
+# ---- bug 18: the spec ref has to resolve where the prompt looks ------------
+
+_NESTED_SPEC = """# F0 — Foundation
+
+## F0.1 — Bootstrap
+
+### F0.1.T1 — Do the thing
+
+- **model**: claude/claude-sonnet-4-6
+"""
+
+
+@pytest.mark.parametrize(
+    "rel", ["f0-foundation.md", "api/auth.md", "api/v2/billing.md"]
+)
+def test_spec_ref_resolves_where_the_prompt_looks(tmp_path: Path, rel: str) -> None:
+    """Bug 18: the prompt's "READ FIRST" line has to name a file that exists.
+
+    `atomize` computed the ref against its own `specs_root` (which defaulted
+    to `<project>/docs`), while `prompt_builder` resolves it against
+    `spec_root` from config.yaml (default `specs`). With the two disagreeing,
+    `_relpath_for_spec_ref` fell to its "outside the root" branch on EVERY
+    run and returned the bare filename — right by accident for a spec sitting
+    directly under the spec root, and wrong for one in a subdirectory, which
+    is the first thing anyone does once they have more than three specs.
+
+    This drives the whole path: scaffold, write a spec, atomize, render the
+    prompt, and check the file the agent is told to read is on disk.
+    """
+    import io as _io
+    import contextlib
+
+    from orchestrator.init_cmd import orch_init
+    from orchestrator.models import Task
+    from orchestrator.prompt_builder import render_prompt
+
+    project = tmp_path / "proj"
+    with contextlib.redirect_stdout(_io.StringIO()):
+        assert orch_init(project) == 0
+
+    spec = project / "specs" / rel
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(_NESTED_SPEC, encoding="utf-8")
+
+    parse = parse_specs(_iter_spec_files(project / "specs", None), project / "specs")
+    assert len(parse.tasks) == 1, parse.warnings
+    task = parse.tasks[0]
+
+    # The ref keeps its subdirectory.
+    assert task.spec_ref == f"{rel}#F0.1.T1"
+
+    out = render_prompt(
+        task=Task(
+            id=task.id, phase=0, title=task.title, description="",
+            model=task.model, reason="", status="todo", dependencies=[],
+            estimate_hours=0.0, files=[], spec_ref=task.spec_ref, comments=[],
+        ),
+        completed_deps=[],
+        spec_ref=task.spec_ref,
+        run_id="r1",
+        state_dir=tmp_path / "state",
+        project_root=project,
+        spec_root="specs",
+    )
+    line = next(
+        l for l in out.read_text(encoding="utf-8").splitlines()
+        if l.startswith("Spec ref (READ FIRST): ")
+    )
+    referenced = project / line.split(": ", 1)[1].split("#", 1)[0]
+    assert referenced == spec, f"prompt points at {referenced}, spec is at {spec}"
+    assert referenced.exists()
+
+
+def test_fenced_code_blocks_are_not_spec_content(tmp_path: Path) -> None:
+    """A fenced block is documentation ABOUT the format, not content.
+
+    The `specs/README.md` that `orch init` writes carries the minimum format
+    inside a ```markdown fence. Without this, `orch atomize --apply` on a
+    project straight out of `init` imports the example as two real tasks
+    ("Setup monorepo", "Root README").
+
+    It surfaced while fixing bug 18: before that, `specs_root` defaulted to
+    `docs/`, which does not exist, so the scan found nothing and this was
+    hidden behind the other bug.
+    """
+    root = tmp_path / "specs"
+    root.mkdir()
+    (root / "guide.md").write_text(
+        "# F0 — Real phase\n"
+        "\n"
+        "## F0.1 — Real package\n"
+        "\n"
+        "### F0.1.T1 — A real task\n"
+        "\n"
+        "- **model**: claude/claude-sonnet-4-6\n"
+        "\n"
+        "Here is how the format looks:\n"
+        "\n"
+        "```markdown\n"
+        "# F9 — Documented phase\n"
+        "\n"
+        "## F9.1 — Documented package\n"
+        "\n"
+        "### F9.1.T1 — Documented task\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    parse = parse_specs(_iter_spec_files(root, None), root)
+    ids = [t.id for t in parse.tasks]
+    assert ids == ["F0.1.T1"], ids
+
+
+def test_init_then_atomize_imports_nothing_from_the_readme(tmp_path: Path) -> None:
+    """The whole path, because the files only interact at the end.
+
+    `orch init` writes `specs/README.md`; `orch atomize --apply` with no
+    `--file` scans `specs/`. Neither file is wrong on its own.
+    """
+    import io as _io
+    import contextlib
+
+    from orchestrator.init_cmd import orch_init
+
+    project = tmp_path / "proj"
+    with contextlib.redirect_stdout(_io.StringIO()):
+        assert orch_init(project) == 0
+
+    parse = parse_specs(_iter_spec_files(project / "specs", None), project / "specs")
+    assert parse.tasks == [], [t.id for t in parse.tasks]
+
+
+def test_relpath_warns_when_it_drops_a_directory(tmp_path: Path, capsys) -> None:
+    """The `.name` fallback loses any subdirectory, so it says so.
+
+    Until bug 18 this branch ran on every invocation and was silent, which is
+    why a wrong ref looked like a working one.
+    """
+    from orchestrator.atomize import _relpath_for_spec_ref
+
+    root = tmp_path / "specs"
+    root.mkdir()
+    outside = tmp_path / "elsewhere" / "deep" / "spec.md"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x", encoding="utf-8")
+
+    assert _relpath_for_spec_ref(outside, root) == "spec.md"
+    err = capsys.readouterr().err
+    assert "is outside" in err
+    assert "subdirectory is lost" in err
+    assert "--specs-dir" in err
+
+    # No warning when the spec is where it belongs.
+    inside = root / "a" / "b.md"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("x", encoding="utf-8")
+    assert _relpath_for_spec_ref(inside, root) == "a/b.md"
+    assert capsys.readouterr().err == ""

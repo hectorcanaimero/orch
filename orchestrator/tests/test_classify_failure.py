@@ -25,6 +25,7 @@ then the rest by specificity. Every check is case-insensitive.
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from orchestrator.dispatcher import (
     DispatchResult,
@@ -282,3 +283,68 @@ def test_failure_class_is_str_enum() -> None:
     assert FailureClass.PARSER.value == "parser"
     assert FailureClass.TRANSIENT.value == "transient"
     assert FailureClass.OTHER.value == "other"
+
+
+# ---- Bugs 6, 7, 8 of the Go port: real claude 2.1.269 output -------------
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "dispatcher" / "claude-2.1.269"
+
+
+def test_real_claude_unrecognized_model_is_version_drift() -> None:
+    """claude 2.1.269 rejects an unknown --model with 'It may not exist or you
+    may not have access to it' plus a `[claude-code:unrecognized_model]` line
+    mixed into stdout. None of the historical markers matched it, so the
+    fallback_cli_model retry never fired for the one case it exists for."""
+    stdout = (_FIXTURES / "unrecognized-model.log").read_text(encoding="utf-8")
+    result = _fail(exit_code=1, stdout=stdout, error_message="claude exited 1 (is_error=true)")
+    assert classify_failure(result) is FailureClass.VERSION_DRIFT
+    assert is_version_drift_error(result) is True
+
+
+def test_real_claude_truncated_envelope_is_parser_not_permission() -> None:
+    """A truncated claude envelope is a PARSER failure (retryable). Its numbers
+    include `"cacheReadInputTokens":40321`, which contains `403`; the bare
+    substring match used to classify it PERMISSION (terminal, never retried)."""
+    stdout = (_FIXTURES / "truncated.json").read_text(encoding="utf-8")
+    assert "40321" in stdout
+    result = _fail(exit_code=0, stdout=stdout, error_message="could not parse claude output")
+    assert classify_failure(result) is FailureClass.PARSER
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        '{"cache_read_input_tokens":40321}',
+        '{"duration_ms":15001}',
+        '{"n":4290}',
+        '{"cost":0.4291}',
+    ],
+)
+def test_status_codes_do_not_match_inside_other_numbers(stdout: str) -> None:
+    assert classify_failure(_fail(stdout=stdout)) is FailureClass.OTHER
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("HTTP 403 Forbidden", FailureClass.PERMISSION),
+        ("status: 401", FailureClass.PERMISSION),
+        ("error 429: slow down", FailureClass.RATE_LIMIT),
+        ("upstream returned 502", FailureClass.TRANSIENT),
+        ("(500)", FailureClass.TRANSIENT),
+    ],
+)
+def test_status_codes_still_match_as_standalone_numbers(text: str, expected: FailureClass) -> None:
+    assert classify_failure(_fail(stderr=text)) is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+        "auth expired, run `claude login`",
+        "Authentication Error: token rejected",
+    ],
+)
+def test_real_auth_failure_spellings_are_permission(text: str) -> None:
+    assert classify_failure(_fail(stderr=text)) is FailureClass.PERMISSION
