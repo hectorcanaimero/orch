@@ -159,10 +159,10 @@ you resend the link.
 orch --dry-run
 
 # Semi mode — prompts for critical tasks (recommended for first run)
-orch --mode semi
+orch run --mode semi
 
 # Full auto — no prompts (overnight runs)
-orch --mode auto
+orch run --mode auto
 ```
 
 The dashboard updates live as tasks complete. Your client sees progress moving in real time.

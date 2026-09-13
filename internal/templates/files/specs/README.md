@@ -75,6 +75,6 @@ If you use Claude Code + the SDD skills, the recommended flow is:
 4. `/sdd-design` — technical design
 5. `/sdd-tasks` — task breakdown → drop it here as `specs/<change>.md`
 6. `orch atomize --file specs/<change>.md --apply`
-7. `orch --mode auto`
+7. `orch run --mode auto`
 
 The `orch init --sdd` flag scaffolds the `openspec/` layout SDD uses.

@@ -37,7 +37,7 @@ orch atomize --file openspec/changes/<name>/tasks.md
 orch atomize --file openspec/changes/<name>/tasks.md --apply
 
 # Dispatch
-orch --mode auto
+orch run --mode auto
 ```
 
 ## SDD not installed?
