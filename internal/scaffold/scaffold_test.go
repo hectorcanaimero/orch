@@ -376,20 +376,24 @@ func TestSDDAddsTheOpenspecLayout(t *testing.T) {
 	}
 }
 
-// The three packaged defaults are copies of Python's, so they get the same
-// guard `internal/templates` has: drift fails here.
+// defaultsDivergedFromPython lists packaged defaults that are deliberately no
+// longer identical to the last Python release's, each with the reason. Empty
+// today. Changing a default is allowed; doing it without saying so here is
+// not, because a project scaffolded by the last Python release and one
+// scaffolded by this binary must not differ by accident.
+var defaultsDivergedFromPython = map[string]string{}
+
+// The three packaged defaults started as copies of Python's, so they get the
+// same guard `internal/templates` has: silent drift fails here.
 //
-// Same rule as that one — it reads the Python files by relative path, so it
-// stops working the day the Python tree is deleted. Delete the test then; do
-// not weaken it now.
+// The comparison is against testdata/python-frozen/, pinned from the Python
+// tree, not the tree itself. It used to read orchestrator/ and skip when that
+// was absent, which would have deleted the guard together with Python.
 func TestPackagedDefaultsMatchPython(t *testing.T) {
 	for _, name := range []string{"config.yaml", "budgets.yaml", "model_router.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			pythonPath := filepath.Join("..", "..", "orchestrator", name)
+			pythonPath := filepath.Join("testdata", "python-frozen", name)
 			want, err := os.ReadFile(pythonPath) // #nosec G304 -- a fixed path in the repo
-			if errors.Is(err, os.ErrNotExist) {
-				t.Skip("the Python tree is gone; this test goes with it")
-			}
 			if err != nil {
 				t.Fatalf("read %s: %v", pythonPath, err)
 			}
@@ -397,8 +401,14 @@ func TestPackagedDefaultsMatchPython(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read the embedded %s: %v", name, err)
 			}
-			if string(got) != string(want) {
-				t.Errorf("the embedded %s has drifted from orchestrator/%s", name, name)
+			reason, diverged := defaultsDivergedFromPython[name]
+			switch {
+			case !diverged && string(got) != string(want):
+				t.Errorf("the embedded %s has drifted from the last Python release's copy (%s); "+
+					"if that is intended, add it to defaultsDivergedFromPython with the reason", name, pythonPath)
+			case diverged && string(got) == string(want):
+				t.Errorf("defaultsDivergedFromPython lists %s (%q) but it is identical again; remove the entry",
+					name, reason)
 			}
 		})
 	}

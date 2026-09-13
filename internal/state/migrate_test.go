@@ -52,9 +52,15 @@ func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
 // Migrations 001-005 are copied byte for byte from the Python tree (ADR-G3).
 // If somebody edits one here instead of adding a new file, a database that
 // round-trips between the two implementations diverges. 006 onward has no
-// Python counterpart — the Python line froze at v0.11.0-py (ADR-G0) before
-// 006 existed — so this only checks the five that predate the freeze; see
-// migrate.go's own comment.
+// Python counterpart — the Python line froze (ADR-G0) before 006 existed — so
+// this only checks the five that predate the freeze; see migrate.go's own
+// comment.
+//
+// It compares against testdata/python-frozen/, a pinned copy of the Python
+// files, not against orchestrator/ itself: this used to skip when the Python
+// tree was absent, which would have made the guard vanish exactly when the
+// Python tree is deleted — while databases written by the last Python release
+// still exist and still have to open here. See that directory's README.
 func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
 	const lastMigrationSharedWithPython = 5
 
@@ -62,10 +68,8 @@ func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations: %v", err)
 	}
-	pythonDir := filepath.Join("..", "..", "orchestrator", "state", "sqlite_migrations")
-	if _, err := os.Stat(pythonDir); os.IsNotExist(err) {
-		t.Skip("the Python tree is gone; the embedded copies are now the only source")
-	}
+	pythonDir := filepath.Join("testdata", "python-frozen", "sqlite_migrations")
+	shared := 0
 	for _, m := range ms {
 		if m.version > lastMigrationSharedWithPython {
 			continue
@@ -74,12 +78,17 @@ func TestEmbeddedMigrationsMatchThePythonTree(t *testing.T) {
 		// pythonDir is a constant relative path inside the repo.
 		want, err := os.ReadFile(filepath.Join(pythonDir, m.name))
 		if err != nil {
-			t.Errorf("read %s from the Python tree: %v", m.name, err)
+			t.Errorf("read %s from the frozen Python copy: %v", m.name, err)
 			continue
 		}
+		shared++
 		if m.sql != string(want) {
-			t.Errorf("%s differs from orchestrator/state/sqlite_migrations/%s", m.name, m.name)
+			t.Errorf("%s differs from the last Python release's copy (%s)", m.name, filepath.Join(pythonDir, m.name))
 		}
+	}
+	// A loader that returned nothing would make the loop above check nothing.
+	if shared != lastMigrationSharedWithPython {
+		t.Errorf("compared %d migrations against the Python copy, want %d", shared, lastMigrationSharedWithPython)
 	}
 }
 

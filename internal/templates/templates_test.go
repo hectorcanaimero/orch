@@ -248,20 +248,31 @@ var goOnly = map[string]bool{
 	"projects/expo-mobile/tasks.json.tmpl":  true,
 }
 
+// divergedFromPython are files present in both trees that differ on purpose,
+// each with the reason. Empty today: every shared file is still byte-identical
+// to the last Python release's. Editing a template is allowed; editing one
+// without an entry here is the drift TestGoTreeMatchesPython exists to catch.
+var divergedFromPython = map[string]string{}
+
 // TestGoTreeMatchesPython is the guard on having two copies of this data.
 //
-// `go:embed` cannot reach outside its package directory, so the tree lives
-// here as well as under `orchestrator/templates/` until Python is deleted. Two
-// copies is where a fix lands on one side only — and this data has produced
-// bug 12 (specRef prefixes) and half of bug 14 already.
+// `go:embed` cannot reach outside its package directory, so the tree was
+// copied here from `orchestrator/templates/`. Two copies is where a fix lands
+// on one side only — and this data has produced bug 12 (specRef prefixes) and
+// half of bug 14 already.
 //
-// It reads the Python tree directly, so it stops working the day that tree is
-// removed. That is correct: at that point this becomes the only copy and the
-// test has nothing left to check. Delete it then, do not weaken it now.
+// It compares against testdata/python-frozen/templates, a copy pinned from
+// the Python tree, rather than the tree itself. It used to read orchestrator/
+// and skip once that was gone, on the reasoning that this would then be the
+// only copy. But the last Python release keeps scaffolding projects from its
+// copy, and a template edited here without saying so would make the two
+// binaries hand out different projects — so a file that differs on purpose
+// goes in goOnly (new here) or divergedFromPython (changed here), with the
+// reason, and anything else is still a failure.
 func TestGoTreeMatchesPython(t *testing.T) {
-	pythonRoot := filepath.Join("..", "..", "orchestrator", "templates")
-	if _, err := os.Stat(pythonRoot); errors.Is(err, fs.ErrNotExist) {
-		t.Skip("the Python tree is gone; this test goes with it")
+	pythonRoot := filepath.Join("testdata", "python-frozen", "templates")
+	if _, err := os.Stat(pythonRoot); err != nil {
+		t.Fatalf("the frozen Python templates are missing: %v", err)
 	}
 
 	goFiles := map[string][]byte{}
@@ -315,8 +326,13 @@ func TestGoTreeMatchesPython(t *testing.T) {
 		}
 	}
 	for path, want := range pyFiles {
-		if got, ok := goFiles[path]; ok && string(got) != string(want) {
+		if got, ok := goFiles[path]; ok && string(got) != string(want) && divergedFromPython[path] == "" {
 			differs = append(differs, path)
+		}
+	}
+	for path, reason := range divergedFromPython {
+		if got, ok := goFiles[path]; ok && string(got) == string(pyFiles[path]) {
+			t.Errorf("divergedFromPython lists %q (%q) but it is identical again; remove the entry", path, reason)
 		}
 	}
 	sort.Strings(missingHere)
@@ -334,7 +350,8 @@ func TestGoTreeMatchesPython(t *testing.T) {
 	}
 	if len(differs) > 0 {
 		t.Errorf("present in both and different: %v\n"+
-			"a fix landed on one side only", differs)
+			"a fix landed on one side only — or, if the change is meant, add it to "+
+			"divergedFromPython with the reason", differs)
 	}
 
 	// And the allowlist does not outlive what it allows.
