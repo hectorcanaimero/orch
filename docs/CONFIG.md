@@ -273,7 +273,7 @@ passed never overwrites it.
 ```yaml
 publish:
   interval_s: 60         # seconds between --watch checks (default 30)
-  to: dir                # dir | git
+  to: dir                # dir | git | cloud
   dir: public            # output directory for `to: dir`, relative to the project root
   git_branch: gh-pages   # branch replaced and pushed for `to: git`
 ```
@@ -281,7 +281,7 @@ publish:
 | Key | Notes |
 |---|---|
 | `interval_s` | How often `--watch` rebuilds the snapshot and compares it. It re-publishes only when the **content** changed — `generated_at` is excluded from the comparison, or every tick would be a change and `to: git` would grow one commit per interval. |
-| `to` | `dir` writes the site to a directory; `git` replaces a branch with it and pushes. **`cloud` is accepted by the config loader and refused by the command**: it was reserved in the struct before there was a provider, a credentials story or an acceptance criterion behind it. `orch publish` says so by name rather than failing as "unknown". |
+| `to` | `dir` writes the site to a directory; `git` replaces a branch with it and pushes; `cloud` uploads it to your orch-cloud Worker (G8.1, [`CLOUD.md`](CLOUD.md)). **There is no `publish.cloud_url` key, on purpose**: the Worker's URL and every token live in `~/.orch/credentials`, written by `orch cloud login`, because `config.yaml` is committed and a Worker belongs to an operator, not to a project. CI uses the `ORCH_CLOUD_URL` and `ORCH_CLOUD_PUBLISH_TOKEN` env vars instead. `dir` and `git_branch` are ignored for `to: cloud`. |
 | `dir` | Relative paths resolve against the project root, not the working directory — `orch publish --project-root ../other` is a normal thing to type. |
 | `git_branch` | The branch is treated as **output, not history**: every publish replaces its whole tree, so an asset a previous export emitted and this one does not is gone rather than left serving. It is created as an **orphan** the first time, so the published site shares no history with the source and a static host serving it never serves your repository. |
 

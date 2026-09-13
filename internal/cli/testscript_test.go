@@ -1,7 +1,9 @@
 package cli_test
 
 import (
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +11,8 @@ import (
 	"github.com/rogpeppe/go-internal/testscript"
 
 	"github.com/hectorcanaimero/orch/internal/cli"
+	"github.com/hectorcanaimero/orch/internal/publish"
+	"github.com/hectorcanaimero/orch/internal/publish/cloudfake"
 )
 
 // TestMain lets testscript scripts `exec orch ...` in-process — cheaper and
@@ -60,7 +64,39 @@ func TestCLICommands(t *testing.T) {
 				filepath.Join(env.WorkDir, "proj", "logo.png")); err != nil {
 				return err
 			}
+			// An orch-cloud Worker for cloud.txtar: the contract's in-memory
+			// fake, its URL in $CLOUD_URL and its admin token in a file, so
+			// the script can pipe it to `orch cloud login` without the
+			// token appearing in the script. $HOME points into $WORK so
+			// ~/.orch/credentials is the script's own.
+			worker := cloudfake.New()
+			env.Defer(worker.Close)
+			env.Setenv("CLOUD_URL", worker.URL)
+			env.Setenv("HOME", filepath.Join(env.WorkDir, "home"))
+			if err := os.WriteFile(filepath.Join(env.WorkDir, "admin-token.txt"),
+				[]byte(worker.AdminToken+"\n"), 0o600); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(env.WorkDir, "wrong-token.txt"),
+				[]byte(cloudfake.Token()+"\n"), 0o600); err != nil {
+				return err
+			}
 			return setUpEventsFixture(filepath.Join(env.WorkDir, "billing-api"))
+		},
+		Condition: func(cond string) (bool, error) {
+			// [bundle]: the stakeholder bundle has been built (`make web`),
+			// so a real export can run. CI always builds it first; a local
+			// run without it skips those lines instead of failing on a
+			// missing build, which TestBundleRequiresABuild already reports.
+			if cond == "bundle" {
+				b, err := publish.Bundle()
+				if err != nil {
+					return false, nil
+				}
+				_, err = fs.Stat(b, "stakeholder.html")
+				return err == nil, nil
+			}
+			return false, fmt.Errorf("unknown condition %q", cond)
 		},
 	})
 }

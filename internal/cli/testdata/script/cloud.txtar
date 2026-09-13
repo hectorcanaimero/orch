@@ -1,0 +1,100 @@
+# orch cloud + orch publish --to cloud — G8.1, through the real CLI against
+# the contract's in-memory Worker (internal/publish/cloudfake). The harness
+# sets $CLOUD_URL, writes the admin token to $WORK/admin-token.txt and a
+# token the Worker does not know to $WORK/wrong-token.txt, and points $HOME
+# into $WORK so ~/.orch/credentials is this script's own.
+#
+# Lines marked [bundle] need the built stakeholder bundle (`make web`); CI
+# always has it.
+
+# ---- nothing configured ---------------------------------------------------
+exec orch cloud status
+stdout 'not logged in'
+
+! exec orch publish --project-root proj --project-id proj --to cloud
+stderr 'orch cloud login'
+
+# ---- the flags that mean nothing for a cloud publish are refused by name ---
+! exec orch publish --project-root proj --project-id proj --to cloud --token x
+stderr '--token has no meaning with --to cloud'
+
+! exec orch publish --project-root proj --project-id proj --to cloud --out somewhere
+stderr '--out has no meaning with --to cloud'
+
+# ---- an id the Worker cannot take is refused before anything else --------
+! exec orch publish --project-root proj --project-id Bad_Id --to cloud
+stderr 'cannot be used with orch-cloud'
+
+# ---- login: the token must be piped, and a wrong one saves nothing --------
+! exec orch cloud login
+stderr '--url is required'
+
+stdin wrong-token.txt
+! exec orch cloud login --url $CLOUD_URL
+stderr 'admin token was rejected'
+! exists home/.orch/credentials
+
+stdin admin-token.txt
+exec orch cloud login --url $CLOUD_URL
+stdout 'logged in to http://127\.0\.0\.1:\d+'
+exists home/.orch/credentials
+
+exec orch cloud status --project-root proj --project-id proj
+stdout 'status:      reachable \(orch-cloud fake, API 1\)'
+stdout 'admin token: stored'
+stdout 'projects:    none yet'
+
+# ---- the first publish creates the project; later ones reuse it ----------
+[bundle] exec orch publish --project-root proj --project-id proj --to cloud
+[bundle] stdout 'created project proj on orch-cloud'
+[bundle] stdout 'published proj \(version 1\)'
+[bundle] stdout 'stakeholder link: http://127\.0\.0\.1:\d+/v/[0-9a-f]{64}/'
+
+# A re-run reuses the stored tokens and never creates the project again. Its
+# version depends on the clock: generated_at has one-second resolution, so a
+# re-run inside the same second sends identical bytes and the Worker answers
+# "unchanged", while a later one is version 2. Both are right; the script does
+# not race the clock to pick one.
+[bundle] exec orch publish --project-root proj --project-id proj --to cloud
+[bundle] ! stdout 'created project'
+[bundle] stdout 'proj is already up to date \(version 1\)|published proj \(version 2\)'
+
+[bundle] exec orch cloud status --project-root proj --project-id proj
+[bundle] stdout 'proj +publish token stored, view token stored'
+[bundle] stdout 'stakeholder link for proj:'
+! stdout 'publish_token'
+
+# ---- rotate asks first, and a decline changes nothing ---------------------
+[bundle] stdin decline.txt
+[bundle] ! exec orch cloud rotate --project-root proj --project-id proj
+[bundle] stdout 'anyone using the current link loses access'
+[bundle] stdout 'Aborted\. No changes made\.'
+
+[bundle] exec orch cloud rotate --project-root proj --project-id proj --yes
+[bundle] stdout 'new stakeholder link for proj:'
+
+[bundle] exec orch cloud rotate --publish --project-root proj --project-id proj
+[bundle] stdout 'issued and stored a new publish token for proj'
+
+# The re-issued publish token is the one the next publish uses: the old one
+# would be a 401 naming `orch cloud rotate --publish`.
+[bundle] exec orch publish --project-root proj --project-id proj --to cloud
+[bundle] stdout 'stakeholder link: http://127\.0\.0\.1:\d+/v/[0-9a-f]{64}/'
+[bundle] ! stderr 'rejected'
+
+# ---- logout asks first, then removes the block ----------------------------
+stdin decline.txt
+! exec orch cloud logout
+stdout 'Aborted\. No changes made\.'
+
+exec orch cloud logout --yes
+stdout 'logged out'
+
+exec orch cloud status
+stdout 'not logged in'
+
+exec orch cloud logout --yes
+stdout 'not logged in; nothing to remove'
+
+-- decline.txt --
+n
