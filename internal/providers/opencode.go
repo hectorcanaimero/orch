@@ -96,10 +96,7 @@ func (OpencodeProvider) Parse(exitCode int, output []byte) Result {
 	// free work into a zero spend. Python also warns once per (backend,
 	// model) here; the warning is the engine's to emit, since a pure parser
 	// has nowhere to keep the "once" and no logger to write to.
-	estimated := false
-	if hasAnyStepFinish(events) && tokensIn == 0 && tokensOut == 0 {
-		estimated = true
-	}
+	estimated := hasAnyStepFinish(events) && tokensIn == 0 && tokensOut == 0
 
 	var errMsg string
 	if !success {
