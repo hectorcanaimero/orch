@@ -45,6 +45,47 @@ func decodeObject(b []byte) (map[string]any, bool) {
 	return obj, ok
 }
 
+// event is one decoded JSONL line plus the bytes it came from. The raw line is
+// kept because codex's last-resort error message is Python's `str(ev)` — a
+// dict repr. Echoing the line the CLI actually wrote is both closer to useful
+// and far more testable than reimplementing CPython's dict formatting.
+type event struct {
+	obj map[string]any
+	raw string
+}
+
+// eventType returns the event's "type" field when it is a string.
+func (e event) eventType() string { return asString(e.obj["type"]) }
+
+// jsonlEvents yields every line of b that parses as a JSON object.
+//
+// Lines that do not parse are skipped silently, exactly as
+// `_iter_jsonl_events` does. Two real captures depend on that: a SIGKILLed
+// codex leaves a half-written final line, and an unauthenticated codex
+// interleaves plain-text `ERROR codex_api::…` lines from stderr among the
+// events (testdata/codex/0.154.0/auth-error.jsonl).
+//
+// Split by hand rather than with bufio.Scanner: a single JSONL event carrying
+// a large tool result can exceed Scanner's 64 KiB default and would be
+// dropped, which is the same silent data loss this function exists to avoid.
+func jsonlEvents(b []byte) []event {
+	lines := strings.Split(string(b), "\n")
+	events := make([]event, 0, len(lines))
+	for _, line := range lines {
+		// Python strips the full whitespace set; \r matters for CRLF logs.
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		obj, ok := decodeObject([]byte(line))
+		if !ok {
+			continue
+		}
+		events = append(events, event{obj: obj, raw: line})
+	}
+	return events
+}
+
 // pyTruthy implements Python's `bool(x)` for a value decoded from JSON, which
 // is how dispatcher.py reads `is_error` and how `a or b` chains pick a branch.
 func pyTruthy(v any) bool {

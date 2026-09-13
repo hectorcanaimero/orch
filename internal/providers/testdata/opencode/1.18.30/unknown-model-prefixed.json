@@ -1,0 +1,2 @@
+{"type":"error","timestamp":1789236350008,"sessionID":"ses_f6933f591ffekgFy3IYw8UqdGF","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_d6856057"}}}
+{"type":"error","timestamp":1789236350018,"sessionID":"ses_f6933f591ffekgFy3IYw8UqdGF","error":{"name":"UnknownError","data":{"message":"Model not found: deepseek/deepseek-v4-flash. Did you mean: deepseek-v4-flash, deepseek-v4-flash-vision-exp?"}}}

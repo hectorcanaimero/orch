@@ -103,9 +103,7 @@ type Result struct {
 
 	// Estimated marks a run whose backend reported activity but no token
 	// usage, so downstream spend rows can tell missing telemetry apart from
-	// genuinely zero-cost work. Only opencode ever sets it (Issue #8), and
-	// opencode is not ported yet — the field exists so the engine's spend
-	// path does not have to change shape when it lands.
+	// genuinely zero-cost work. Only opencode sets it (Issue #8).
 	Estimated bool
 }
 
@@ -139,23 +137,14 @@ type Provider interface {
 // not reached yet. Distinguished from an unknown name so the engine can tell
 // "you asked for something that does not exist" from "not yet", and so a
 // half-finished rewrite fails loudly rather than silently doing nothing.
+//
+// Empty since G3.4 ported the last four backends. Kept, with its test, because
+// the distinction it draws is what the engine's error message depends on; a
+// sixth backend added to model.Backend before its adapter exists lands here.
 var ErrNotPorted = errors.New("provider not implemented yet")
 
 // notPorted are the Python backends still awaiting their Go adapter.
-//
-// codex is here for a different reason from the rest: its adapter is written
-// and tested, but only against synthetic fixtures, because the `codex` CLI was
-// not installed on the machine the port was done on. Checklist rule 21 wants
-// captured output, so it waits on its own branch (g2/opus2-codex) until it can
-// be re-captured for real. That is a deliberate precedent — the risk the rule
-// guards against is a CLI whose schema drifted, and only a real capture can
-// show that.
-var notPorted = map[model.Backend]bool{
-	model.BackendCodex:    true,
-	model.BackendOpencode: true,
-	model.BackendGemini:   true,
-	model.BackendAgy:      true,
-}
+var notPorted = map[model.Backend]bool{}
 
 // Get returns the adapter for a router entry's backend.
 //
@@ -163,13 +152,23 @@ var notPorted = map[model.Backend]bool{
 // between ErrNotPorted and "unknown backend" is new, and exists only while the
 // rewrite is mid-flight.
 func Get(name model.Backend) (Provider, error) {
-	if name == model.BackendClaude {
+	switch name {
+	case model.BackendClaude:
 		return ClaudeProvider{}, nil
+	case model.BackendCodex:
+		return CodexProvider{}, nil
+	case model.BackendOpencode:
+		return OpencodeProvider{}, nil
+	case model.BackendGemini:
+		return GeminiProvider{}, nil
+	case model.BackendAgy:
+		return AgyProvider{}, nil
 	}
 	if notPorted[name] {
 		return nil, fmt.Errorf("backend %q: %w", name, ErrNotPorted)
 	}
-	return nil, fmt.Errorf("unknown backend %q; expected one of [claude]", name)
+	return nil, fmt.Errorf(
+		"unknown backend %q; expected one of [claude codex opencode gemini agy]", name)
 }
 
 // NewSessionID mints the per-dispatch session id claude correlates retries by.

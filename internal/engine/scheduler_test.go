@@ -135,39 +135,47 @@ func write(t *testing.T, path, content string) {
 // a scheduler that dispatched 4 claude tasks and then "corrected" itself
 // would still have run 4 agents.
 func TestRefillRespectsEveryCap(t *testing.T) {
+	// Two of the three backends are names no adapter serves. Until G3.4 that
+	// role was played by codex and opencode, which had no Go adapter yet;
+	// every Python backend is ported now, so the case is reached the way it
+	// will be reached from here on — a route naming a backend this binary
+	// does not know, from a typo or a newer config.
+	const (
+		backendX = model.Backend("nosuch-x")
+		backendO = model.Backend("nosuch-o")
+	)
 	routes := map[string]model.RouteEntry{
 		"claude/opus":  route(model.BackendClaude, "opus", false),
 		"claude/haiku": route(model.BackendClaude, "haiku", false),
-		"codex/gpt":    route(model.BackendCodex, "gpt-5.6-codex", false),
-		"opencode/gem": route(model.BackendOpencode, "google/gemini", false),
+		"unknown/x":    route(backendX, "some-model", false),
+		"unknown/o":    route(backendO, "other-model", false),
 	}
-	// 10 independent tasks: 4 claude, 3 codex, 3 opencode.
+	// 10 independent tasks: 4 claude, 3 on each unusable backend.
 	tasks := []model.Task{
 		task("C-1", 1, "claude/opus"), task("C-2", 1, "claude/haiku"),
 		task("C-3", 1, "claude/opus"), task("C-4", 1, "claude/haiku"),
-		task("X-1", 1, "codex/gpt"), task("X-2", 1, "codex/gpt"), task("X-3", 1, "codex/gpt"),
-		task("O-1", 1, "opencode/gem"), task("O-2", 1, "opencode/gem"), task("O-3", 1, "opencode/gem"),
+		task("X-1", 1, "unknown/x"), task("X-2", 1, "unknown/x"), task("X-3", 1, "unknown/x"),
+		task("O-1", 1, "unknown/o"), task("O-2", 1, "unknown/o"), task("O-3", 1, "unknown/o"),
 	}
 
 	const (
-		globalMax   = 5
-		claudeCap   = 2
-		codexCap    = 2
-		opencodeCap = 3
+		globalMax = 5
+		claudeCap = 2
+		xCap      = 2
+		oCap      = 3
 	)
 
 	f := newSchedulerFixture(t, tasks, routes, SchedulerOptions{
 		Mode:      ModeAuto,
 		GlobalMax: globalMax,
 		PerProvider: map[string]int{
-			"claude": claudeCap, "codex": codexCap, "opencode": opencodeCap,
+			"claude": claudeCap, string(backendX): xCap, string(backendO): oCap,
 		},
 	})
 
-	// codex and opencode have no Go adapter yet, so Get() refuses them.
-	// That must not end the tick: the claude tasks behind them in the ready
-	// set still have to run, or a half-ported binary makes no progress at
-	// all as soon as one unported backend sorts ahead of a working one.
+	// Get() refuses both unusable backends. That must not end the tick: the
+	// claude tasks behind them in the ready set still have to run, or one bad
+	// route sorting ahead of a working one stalls the whole run.
 	started, err := f.s.Refill(context.Background())
 	if err != nil {
 		t.Fatalf("Refill: %v — an unusable backend must not end the tick", err)
@@ -183,7 +191,7 @@ func TestRefillRespectsEveryCap(t *testing.T) {
 	if started != claudeCap {
 		t.Errorf("started = %d, want %d", started, claudeCap)
 	}
-	// The unported ones say why, rather than looking not-ready.
+	// The unusable ones say why, rather than looking not-ready.
 	for _, id := range []string{"X-1", "O-1"} {
 		if got := f.s.DeferReasons()[id]; !strings.HasPrefix(got, "backend-unavailable:") {
 			t.Errorf("defer reason for %s = %q, want a backend-unavailable reason", id, got)
@@ -235,13 +243,16 @@ func TestRefillHonoursTheGlobalCeiling(t *testing.T) {
 // semaphore slots AND its task lock, or the run bleeds capacity until it
 // stalls with nothing running and no way to tell why.
 func TestRefillLeaksNoCapacityOnError(t *testing.T) {
-	routes := map[string]model.RouteEntry{"codex/gpt": route(model.BackendCodex, "gpt-5.6-codex", false)}
-	tasks := []model.Task{task("X-1", 1, "codex/gpt")}
+	// The refusal comes from a backend no adapter serves; before G3.4 codex
+	// played that part.
+	const backend = model.Backend("nosuch")
+	routes := map[string]model.RouteEntry{"unknown/x": route(backend, "some-model", false)}
+	tasks := []model.Task{task("X-1", 1, "unknown/x")}
 
 	f := newSchedulerFixture(t, tasks, routes, SchedulerOptions{
 		Mode:         ModeAuto,
 		GlobalMax:    4,
-		PerProvider:  map[string]int{"codex": 2},
+		PerProvider:  map[string]int{string(backend): 2},
 		UseTaskLocks: true,
 	})
 
@@ -250,14 +261,14 @@ func TestRefillLeaksNoCapacityOnError(t *testing.T) {
 		t.Fatalf("Refill: %v", err)
 	}
 	if started != 0 {
-		t.Fatalf("started = %d, want 0 — codex has no adapter", started)
+		t.Fatalf("started = %d, want 0 — no adapter serves %q", started, backend)
 	}
 
 	if got := f.s.Sems.Global.Current(); got != 0 {
 		t.Errorf("global slots still held: %d", got)
 	}
-	if got := f.s.Sems.Provider["codex"].Current(); got != 0 {
-		t.Errorf("codex slots still held: %d", got)
+	if got := f.s.Sems.Provider[string(backend)].Current(); got != 0 {
+		t.Errorf("%s slots still held: %d", backend, got)
 	}
 	// And the lock file must be free for another orch.
 	lock, err := TryAcquireTaskLock(f.stateDir, "X-1")

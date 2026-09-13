@@ -62,14 +62,163 @@ where Python reaches for `err["message"]`.
 
 ---
 
+## `codex/0.154.0/` — real capture
+
+Captured on 2026-09-12 on this VPS, prompt on stdin, streams merged:
+
+```
+printf '<prompt>' | codex exec --skip-git-repo-check --json \
+    -o <out>.codex.json -C . --approve-for-me -m gpt-5.4
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `success.jsonl` | prompt `Reply with exactly: ok`, **no `-m`** | 0 |
+| `unknown-model.jsonl` | same, `-m no-such-model-xyz` | 1 |
+| `auth-error.jsonl` | captured before login, so every request 401s | 1 |
+| `truncated.jsonl` | `success.jsonl` cut at 260 bytes | — |
+
+`success.jsonl` was captured **without `-m`**, which is the one place these
+bytes and `CodexProvider.Argv` differ. Every model name in
+`model_router.yaml`'s codex routes is refused by this account — *"The
+'gpt-5.4' model is not supported when using Codex with a ChatGPT account"* —
+so the choice was a real success on the account default or no real success at
+all. Nothing in the parser reads the model, so the envelope is the same one a
+routed dispatch produces; the router's codex ids are a separate problem,
+recorded in the migration notes.
+
+`auth-error.jsonl` pins something no hand-written fixture would have: the
+capture carries **plain-text stderr interleaved among the JSONL**
+(`2026-…Z ERROR codex_api::endpoint::responses_websocket: …`). That is what
+`jsonlEvents` skipping unparseable lines is for; before this file, the only
+thing exercising it was a truncated final line.
+
+## `opencode/1.18.30/` — real capture
+
+Captured on 2026-09-12, prompt on stdin:
+
+```
+printf '<prompt>' | opencode run --format json --model <model> --auto --dir <abs>
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `success.json` | `--model opencode/mimo-v2.5-free` | 0 |
+| `unknown-model.json` | `--model no-such-model-xyz` | 1 |
+| `unknown-model-prefixed.json` | `--model deepseek/deepseek-v4-flash` | 1 |
+| `insufficient-balance.json` | `--model opencode-go/deepseek-v4-flash`, no credit | 1 |
+
+`unknown-model-prefixed.json` is the evidence behind the router note: the
+`deepseek/…` spelling `model_router.yaml` ships is refused even with the
+account authenticated, and `opencode models` serves those DeepSeek models
+under `opencode-go/`.
+
+`insufficient-balance.json` is the only fixture here whose error carries an
+HTTP status (`401`), which is what makes it land on `FailurePermission`.
+Redacted: the workspace id in the billing URL was replaced with
+`wrk_REDACTED`, for the same reason as the gemini path below.
+
+`success.json` is the one real happy path in this tree besides claude's, and
+it exists only because opencode's free tier needs no credential — `opencode
+models` lists 7 models on an unauthenticated machine and they all work. Its
+`cost` is genuinely `0` while both token counts are non-zero, which is the
+case that separates "this provider reports no usage" (Issue #8, `Estimated`)
+from "this run was free".
+
+`unknown-model.json` carries **two** error events: a generic `"Unexpected
+server error"` and then the specific `"Model not found: …"`. Both the Python
+parser and the Go port report the first. See bug 28 in
+`docs/brainstorm/go-migration-notes/sonnet-2.md`.
+
+## `gemini/0.59.0/` — real capture
+
+```
+gemini -p '<prompt>' --model gemini-2.5-flash
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `success.log` | `GEMINI_CLI_TRUST_WORKSPACE=true`, model `gemini-2.5-flash` | 0 |
+| `untrusted-directory.log` | the same command **without** that variable | **55** |
+| `auth-error.log` | captured before login | **41** |
+
+The exit codes are the point. Nothing should key on "1 means failure" for
+gemini, and `GeminiProvider.Parse` reads success as `exit == 0` for exactly
+this reason.
+
+`untrusted-directory.log` is the important one, and the reason `success.log`
+needed an environment variable to exist at all: gemini refuses to run in a
+directory it has not been told to trust, and orch dispatches into a fresh git
+worktree every time. Neither this adapter nor `dispatcher.py` passes
+`--skip-trust`. See bug 30 in the migration notes — the fix is one flag, but
+it turns off a security gate on a CLI orch runs unattended, so it is somebody's
+decision and not a drive-by.
+
+`success.log` opens with `Ripgrep is not available. Falling back to GrepTool.`
+before the answer. A hand-written fixture would have been the answer alone and
+would have hidden that gemini's stdout is a conversation, not a value.
+
+**The one redacted byte range in this tree.** gemini names the settings file
+by absolute path, so the capture contained the operator's home directory;
+`/home/<user>/` was rewritten to `/home/USER/` before committing, because the
+reviewer checklist forbids personal paths. Nothing else in the line was
+touched and no test asserts on the path. Flagged here rather than left for a
+reader to notice, since "these bytes are what the CLI wrote" is the promise
+this whole directory makes.
+
+## `agy/1.2.1/` — real capture
+
+```
+agy --output-format json --agent executor --model <model> --print '<prompt>'
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `success.json` | model `gemini-3.7-flash-medium` | 0 |
+| `unknown-model.json` | model `no-such-model-xyz` | 1 |
+| `auth-error.json` | captured before login; the OAuth wait timed out at 60s | 1 |
+
+Despite the name, `auth-error.json` is **not** pure JSON: agy writes an OAuth
+prompt and a waiting line first, and only then the envelope. That is the whole
+reason to keep it — it is the fixture behind bug 29, and
+`TestAgyParseRealAuthError` asserts the preamble is still there so a later
+clean re-capture cannot silently turn that test into a test of nothing.
+
+`success.json` spent 24 thinking tokens and still answered, which makes it the
+counter-example the issue-86 carve-out needs: thinking tokens alone are not
+absorption, an empty `response` alongside them is.
+
+`unknown-model.json` answers with the list of models agy does accept — and
+`Parse` throws that list away, because a non-SUCCESS status renders as
+`agy status=ERROR` and nothing reads the `error` field. Ported as-is from
+Python; noted because the discarded text is what an operator needs.
+
 ---
 
-## Where codex went
+## What is left synthetic, and why
 
-`CodexProvider` and its fixtures are not in this tree yet. They live on
-`g2/opus2-codex` and stay there until the `codex` CLI can be installed and its
-output captured for real: everything that could be written for it was written
-against hand-made fixtures, and checklist rule 21 exists precisely because
-that is the test which passes while the real CLI breaks. The risk is not a
-mis-written parser — it is a schema that drifted since `dispatcher.py` was
-written, and only a capture can show that.
+Every success path in this tree is now a real capture. What remains
+hand-written is the set of states that **cannot be provoked on demand**:
+
+| File | Why it cannot be captured |
+|---|---|
+| `claude/synthetic/rate-limit.json`, `codex/synthetic/rate-limit.jsonl` | a 429 needs the API hammered until it complains |
+| `claude/synthetic/auth-error.json` | kept byte-for-byte from the Python suite, which has asserted on it for sprints |
+| `codex/synthetic/nonfatal-warning.jsonl` | needs a run that emits a warning AND then succeeds |
+| `codex/synthetic/killed-empty.jsonl` | zero bytes; there is nothing to capture |
+| `opencode/synthetic/no-usage.json`, `aborted.json` | need a provider that reports no usage, and a cancelled run |
+| `agy/synthetic/empty-thinking.json` | needs a model to spend its whole budget on reasoning |
+
+Two of those are worth a real capture if the chance ever comes up.
+`codex/synthetic/nonfatal-warning.jsonl` is the sharper one: the real
+`codex/0.154.0/unknown-model.jsonl` shows codex emitting
+`"Model metadata for X not found. Defaulting to fallback metadata"` as an
+`item.completed` error, which the parser treats as fatal because it is not in
+`codexNonFatalWarnings`. In that capture the run failed anyway, so it proves
+nothing on its own — but a run that emits that warning and *then succeeds*
+would be reported as a failure. Deliberately not "fixed" by adding the marker,
+because no capture yet shows codex carrying on after it. See bug 31.
+
+If you do capture one, drop the bytes in a **new** version directory and
+delete the synthetic file it replaces. Do not edit a synthetic file to match a
+real capture: the two say different things about how much the test is worth.

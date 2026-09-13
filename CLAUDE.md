@@ -62,7 +62,7 @@ internal/
   state/             — backend (SQLite única fuente de verdad, ver F-12) (existe)
   engine/            — el loop de dispatch: refill, reaper, scheduler, run loop, poller de CI (existe)
   project/           — lo que CLI y dashboard comparten sobre un proyecto: tasks.json hidratado con el estado, horas humanas, último cambio (llega con G5.2 b1)
-  providers/         — adapters por CLI (existe: claude; codex/opencode/gemini/agy esperan a que sus CLIs estén instaladas para capturar fixtures reales)
+  providers/         — adapters por CLI (existen los cinco: claude, codex, opencode, gemini, agy — G3.4; los caminos de éxito de codex/gemini/agy siguen con fixtures sintéticas porque esas CLIs están instaladas pero sin autenticar, ver testdata/README.md)
   prompt/            — prompt_builder.py equivalente (existe)
   worktree/          — aislamiento git por task (existe)
   vcs/               — github/gitlab (existe)

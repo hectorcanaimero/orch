@@ -43,10 +43,10 @@ func TestGet(t *testing.T) {
 		errContains string
 	}{
 		{name: "claude", backend: model.BackendClaude, want: model.BackendClaude},
-		{name: "codex is written but waits on a real capture", backend: model.BackendCodex, wantErr: ErrNotPorted},
-		{name: "opencode is known but not ported", backend: model.BackendOpencode, wantErr: ErrNotPorted},
-		{name: "gemini is known but not ported", backend: model.BackendGemini, wantErr: ErrNotPorted},
-		{name: "agy is known but not ported", backend: model.BackendAgy, wantErr: ErrNotPorted},
+		{name: "codex", backend: model.BackendCodex, want: model.BackendCodex},
+		{name: "opencode", backend: model.BackendOpencode, want: model.BackendOpencode},
+		{name: "gemini", backend: model.BackendGemini, want: model.BackendGemini},
+		{name: "agy", backend: model.BackendAgy, want: model.BackendAgy},
 		{name: "an unknown name", backend: model.Backend("bogus"), errContains: "unknown backend"},
 		{name: "the empty name", backend: model.Backend(""), errContains: "unknown backend"},
 	}
@@ -174,7 +174,13 @@ func TestParseStdoutIsVerbatim(t *testing.T) {
 // TestEveryPortedBackendIsReachable keeps Get and the Provider set in step: a
 // new adapter that nobody wired into Get is invisible to the engine.
 func TestEveryPortedBackendIsReachable(t *testing.T) {
-	ported := []model.Backend{model.BackendClaude}
+	ported := []model.Backend{
+		model.BackendClaude,
+		model.BackendCodex,
+		model.BackendOpencode,
+		model.BackendGemini,
+		model.BackendAgy,
+	}
 	for _, b := range ported {
 		if notPorted[b] {
 			t.Errorf("%q is in the notPorted set but has an adapter", b)
