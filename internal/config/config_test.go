@@ -617,6 +617,73 @@ func TestExistingNamespacedStateIsDetected(t *testing.T) {
 	}
 }
 
+// Issue #229: `scripts/task-finish.sh` passes `--project-root .`, which is
+// explicit, so it resolved the namespaced layout while `orch run` started from
+// inside the project wrote the legacy one. The agent's verdict landed in a
+// fresh database nobody read.
+func TestExplicitRootKeepsExistingLegacyState(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orchestrator", "state"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, ".orchestrator", "state", "orch.db"), "not really a database")
+
+	p, err := ResolvePaths(dir, "", "")
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	if p.Layout != LayoutLegacy {
+		t.Errorf("layout = %q; an explicit root must keep the legacy state it already has", p.Layout)
+	}
+}
+
+// Issue #229: an agent dispatched into `.worktrees/<ID>` runs `orch mcp` and
+// the task scripts from there. `.orchestrator/` is gitignored, so resolving
+// the worktree as the project bootstrapped a second database inside it.
+func TestWorktreeResolvesToItsProject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".orchestrator"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(root, ".worktrees", "F1.T1")
+	if err := os.MkdirAll(wt, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ORCH_PROJECT_ROOT", "")
+	for name, arg := range map[string]string{"cwd": "", "explicit": wt} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(wt)
+			p, err := ResolvePaths(arg, "", "")
+			if err != nil {
+				t.Fatalf("ResolvePaths: %v", err)
+			}
+			if p.Root != root {
+				t.Errorf("Root = %q, want the worktree's project %q", p.Root, root)
+			}
+			if p.ID != DefaultProjectID(root) {
+				t.Errorf("ID = %q, want %q", p.ID, DefaultProjectID(root))
+			}
+		})
+	}
+}
+
+// A `.worktrees/` directory that is not orch's (no .orchestrator/ above it)
+// is left alone.
+func TestUnrelatedWorktreesDirIsNotRewritten(t *testing.T) {
+	wt := filepath.Join(t.TempDir(), ".worktrees", "x")
+	if err := os.MkdirAll(wt, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	p, err := ResolvePaths(wt, "", "")
+	if err != nil {
+		t.Fatalf("ResolvePaths: %v", err)
+	}
+	if p.Root != wt {
+		t.Errorf("Root = %q, want %q unchanged", p.Root, wt)
+	}
+}
+
 func TestEmptyNamespacedDirDoesNotFlipTheLayout(t *testing.T) {
 	dir := t.TempDir()
 	id := DefaultProjectID(dir)

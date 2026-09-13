@@ -78,6 +78,7 @@ func ResolvePaths(rootArg, idArg, configArg string) (Paths, error) {
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve project root %q: %w", root, err)
 	}
+	abs = worktreeProject(abs)
 
 	id := idArg
 	if id == "" {
@@ -102,14 +103,39 @@ func ResolvePaths(rootArg, idArg, configArg string) (Paths, error) {
 
 	p := Paths{Root: abs, ID: id, ConfigYAML: cfgPath, Layout: layout}
 
+	// Existing state wins over how the root was spelled, in both directions.
 	// A project previously run with an explicit root already has a
-	// namespaced directory. Detect it, or `orch dashboard` started from
-	// inside the project would read an empty legacy database while the CLI
-	// writes to the namespaced one — issue #84, which cost a day.
-	if layout == LayoutLegacy && hasNamespacedState(abs, id) {
+	// namespaced directory: miss it and `orch dashboard` started from inside
+	// the project reads an empty legacy database while the CLI writes the
+	// namespaced one — issue #84, which cost a day. The other way round is
+	// issue #229: `scripts/task-finish.sh --project-root .` wrote a fresh
+	// namespaced database next to the legacy one `orch run` was reading.
+	stateBase := filepath.Join(abs, ".orchestrator", "state")
+	switch {
+	case layout == LayoutLegacy && hasState(filepath.Join(stateBase, id)):
 		p.Layout = LayoutNamespaced
+	case layout == LayoutNamespaced && !hasState(filepath.Join(stateBase, id)) && hasState(stateBase):
+		p.Layout = LayoutLegacy
 	}
 	return p, nil
+}
+
+// worktreeProject maps `<project>/.worktrees/<task>` back to `<project>`.
+// A dispatched agent runs `orch mcp` and the task scripts from its worktree,
+// where `.orchestrator/` does not exist (it is gitignored), so resolving the
+// worktree itself bootstraps a second database nobody reads — issue #229.
+// Only a `.worktrees/` sitting next to an `.orchestrator/` is orch's.
+func worktreeProject(dir string) string {
+	parent := filepath.Dir(dir)
+	if filepath.Base(parent) != ".worktrees" {
+		return dir
+	}
+	project := filepath.Dir(parent)
+	// #nosec G703 -- only stats a path derived from the caller's own root.
+	if info, err := os.Stat(filepath.Join(project, ".orchestrator")); err == nil && info.IsDir() {
+		return project
+	}
+	return dir
 }
 
 // DefaultProjectID derives an id from the root's basename, skipping the
@@ -163,13 +189,12 @@ func (p Paths) SQLitePath(cfg Config) string {
 	return filepath.Join(p.StateDir(), raw)
 }
 
-// hasNamespacedState reports whether `.orchestrator/state/<id>/` already
-// holds real state — a database or the JSONL files a pre-SQLite project left
-// behind. An empty directory does not count: it would flip the layout on the
-// strength of a `mkdir`.
-func hasNamespacedState(root, id string) bool {
-	dir := filepath.Join(root, ".orchestrator", "state", id)
-	// #nosec G703 -- root and id come from the caller's own project layout;
+// hasState reports whether a state directory (`.orchestrator/state/` or
+// `.orchestrator/state/<id>/`) already holds real state — a database or the
+// JSONL files a pre-SQLite project left behind. An empty directory does not
+// count: it would flip the layout on the strength of a `mkdir`.
+func hasState(dir string) bool {
+	// #nosec G703 -- dir comes from the caller's own project layout;
 	// this only stats a path, it never opens or writes one.
 	if _, err := os.Stat(filepath.Join(dir, "orch.db")); err == nil {
 		return true
