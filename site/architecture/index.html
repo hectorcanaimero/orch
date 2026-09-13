@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How orch is built — orch</title>
+  <meta name="description" content="Five diagrams of orch's Go binary: its packages, how data moves through a project, how one task is dispatched, a task's lifecycle, and where the client page lives.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+  <style>
+    .arch-intro { padding-block: clamp(40px, 8vw, 88px) 24px; }
+    .arch-intro h1 { margin: 0; font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.05; font-weight: 600; letter-spacing: -0.03em; }
+    .arch-intro p { margin-top: 20px; max-width: var(--measure); color: var(--soft); }
+    .arch-list { list-style: none; margin: 0; padding: 0 0 clamp(64px, 9vw, 112px); display: grid; }
+    .arch-list li { border-top: 1px solid var(--line); }
+    .arch-list li:last-child { border-bottom: 1px solid var(--line); }
+    .arch-list a { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px 40px; padding-block: 28px; text-decoration: none; }
+    .arch-list a:hover h2 { text-decoration: underline; text-decoration-color: var(--violet); text-underline-offset: 0.18em; }
+    .arch-list h2 { margin: 0; font-size: 1.375rem; letter-spacing: -0.015em; }
+    .arch-list .kind { display: block; margin-top: 4px; font-size: 0.9rem; font-weight: 400; color: var(--soft); }
+    .arch-list p { color: var(--soft); max-width: 60ch; }
+    @media (max-width: 860px) { .arch-list a { grid-template-columns: minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top wrap">
+    <a class="brand" href="../" aria-label="orch home">
+      <svg viewBox="0 0 300 180" aria-hidden="true" class="brand-mark">
+        <rect x="0" y="0" width="210" height="24" rx="12" fill="#7c3aed"/>
+        <rect x="0" y="46" width="155" height="24" rx="12" fill="#a78bfa"/>
+        <rect x="0" y="92" width="232" height="24" rx="12" fill="#7c3aed"/>
+        <rect x="0" y="138" width="128" height="24" rx="12" fill="#a78bfa"/>
+      </svg>
+      <span class="brand-word">orch</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="../#how">How it works</a>
+      <a href="../#install">Install</a>
+      <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap">
+    <section class="arch-intro" aria-labelledby="arch-title">
+      <h1 id="arch-title">How orch is built</h1>
+      <p>Five diagrams of the Go binary, each drawn from the code as it is on <code>main</code> — the import graph, the transition table, the order of calls in the scheduler — not from the plan. Each opens as an interactive page you can zoom, search and trace. The diagrams are written in Spanish; their sources are in <a href="https://github.com/hectorcanaimero/orch/tree/main/docs/architecture"><code>docs/architecture/</code></a>.</p>
+    </section>
+
+    <ul class="arch-list">
+      <li>
+        <a href="packages.html">
+          <h2>Packages of the binary <span class="kind">Architecture</span></h2>
+          <p>What <code>internal/cli</code> wires together, what the engine may and may not import, and why <code>internal/state</code> is the one place runtime status lives.</p>
+        </a>
+      </li>
+      <li>
+        <a href="dataflow.html">
+          <h2>Data through a project <span class="kind">Data flow</span></h2>
+          <p>From <code>specs/*.md</code> to the client page: <code>tasks.json</code> as static input, <code>orch.db</code> as the truth, agents and CI writing back, one snapshot for every reader.</p>
+        </a>
+      </li>
+      <li>
+        <a href="dispatch.html">
+          <h2>Dispatching one task <span class="kind">Sequence</span></h2>
+          <p>What <code>orch run</code> does, in order: budget before capacity, worktree before prompt, the agent's report, the reap, and the pull request.</p>
+        </a>
+      </li>
+      <li>
+        <a href="task-lifecycle.html">
+          <h2>A task's lifecycle <span class="kind">Lifecycle</span></h2>
+          <p>The five statuses, the transitions orch allows, what triggers each one, and the moves it refuses.</p>
+        </a>
+      </li>
+      <li>
+        <a href="publish.html">
+          <h2>Where the client page lives <span class="kind">Architecture</span></h2>
+          <p><code>orch publish</code> to a folder, a <code>gh-pages</code> branch or your own <code>orch-cloud</code> Worker, and which secret protects each step.</p>
+        </a>
+      </li>
+    </ul>
+  </main>
+
+  <footer class="foot wrap">
+    <p>orch is MIT-licensed and built in the open.</p>
+    <nav aria-label="Footer">
+      <a href="../">Home</a>
+      <a href="https://github.com/hectorcanaimero/orch">Source</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/CLI.md">Command reference</a>
+    </nav>
+  </footer>
+</body>
+</html>

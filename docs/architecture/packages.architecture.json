@@ -1,0 +1,311 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "orch: paquetes del binario Go",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "internal/cli",
+      "sublabel": "cmd/orch + subcomandos",
+      "pos": [
+        60,
+        210
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "importa todo"
+    },
+    {
+      "id": "planning",
+      "type": "backend",
+      "label": "Planificación",
+      "sublabel": "atomize, graph, router, scaffold",
+      "pos": [
+        60,
+        70
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "internal/engine",
+      "sublabel": "Refill, Reap, CIPoller",
+      "pos": [
+        340,
+        210
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "+ prompt, worktree, vcs"
+    },
+    {
+      "id": "providers",
+      "type": "backend",
+      "label": "internal/providers",
+      "sublabel": "claude, codex, opencode, gemini, agy",
+      "pos": [
+        620,
+        210
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "external",
+      "label": "CLIs de agentes",
+      "sublabel": "un proceso por tarea",
+      "pos": [
+        920,
+        210
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "git",
+      "type": "external",
+      "label": "git + gh/glab",
+      "sublabel": "worktree, push, PR, CI",
+      "pos": [
+        920,
+        70
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "internal/state",
+      "sublabel": "SQLite orch.db",
+      "pos": [
+        340,
+        350
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "fuente de verdad"
+    },
+    {
+      "id": "read",
+      "type": "frontend",
+      "label": "Dashboard y explain",
+      "sublabel": "internal/dashboard, internal/explain",
+      "pos": [
+        620,
+        350
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "publish",
+      "type": "backend",
+      "label": "internal/publish",
+      "sublabel": "snapshot, export, report",
+      "pos": [
+        340,
+        490
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "cloud",
+      "type": "cloud",
+      "label": "orch-cloud Worker",
+      "sublabel": "Cloudflare KV",
+      "pos": [
+        920,
+        490
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "notify",
+      "type": "backend",
+      "label": "internal/notify",
+      "sublabel": "webhooks Slack / Discord",
+      "pos": [
+        60,
+        350
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "internal/mcp",
+      "sublabel": "orch_* tools (stdio)",
+      "pos": [
+        60,
+        490
+      ],
+      "size": [
+        180,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "binario orch (internal/)",
+      "wraps": [
+        "cli",
+        "planning",
+        "engine",
+        "providers",
+        "state",
+        "read",
+        "publish",
+        "notify",
+        "mcp"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "cli-engine",
+      "from": "cli",
+      "to": "engine",
+      "label": "orch run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cli-planning",
+      "from": "cli",
+      "to": "planning",
+      "label": "importa",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "engine-providers",
+      "from": "engine",
+      "to": "providers",
+      "label": "Argv, Parse",
+      "variant": "emphasis"
+    },
+    {
+      "id": "providers-agents",
+      "from": "providers",
+      "to": "agents",
+      "label": "argv de la CLI",
+      "variant": "emphasis"
+    },
+    {
+      "id": "engine-git",
+      "from": "engine",
+      "to": "git",
+      "label": "worktree, PR",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "engine-state",
+      "from": "engine",
+      "to": "state",
+      "label": "escribe",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 38
+    },
+    {
+      "id": "read-state",
+      "from": "read",
+      "to": "state",
+      "label": "lee"
+    },
+    {
+      "id": "publish-state",
+      "from": "publish",
+      "to": "state",
+      "label": "lee snapshot",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "publish-cloud",
+      "from": "publish",
+      "to": "cloud",
+      "label": "HTTPS PUT site",
+      "variant": "dashed"
+    },
+    {
+      "id": "cli-notify",
+      "from": "cli",
+      "to": "notify",
+      "label": "notify digest",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 38
+    },
+    {
+      "id": "mcp-state",
+      "from": "mcp",
+      "to": "state",
+      "label": "escribe y lee",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Estado",
+      "items": [
+        "internal/state (SQLite) es la única fuente de verdad del estado de las tareas",
+        "tasks.json es el DAG estático, nunca el estado",
+        "los agentes reportan por internal/mcp (orch_set_status, orch_block), que escribe en internal/state"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Dependencias",
+      "items": [
+        "engine no importa dashboard, publish, router ni notify",
+        "cli resuelve las rutas de model_router.yaml y conecta notify"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Hojas",
+      "items": [
+        "config, notify, pricing, pyfmt, skills, telemetry, templates, tunnel, vcs y worktree no importan nada interno"
+      ]
+    }
+  ]
+}

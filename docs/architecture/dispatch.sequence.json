@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "orch run: el despacho de una tarea",
+    "viewBox": [
+      1260,
+      684
+    ],
+    "quality_profile": "showcase",
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "orch run"
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "orch.db (SQLite)"
+    },
+    {
+      "id": "budget",
+      "type": "security",
+      "label": "budget"
+    },
+    {
+      "id": "worktree",
+      "type": "backend",
+      "label": "worktree (git)"
+    },
+    {
+      "id": "prompt",
+      "type": "backend",
+      "label": "prompt"
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "agent CLI"
+    },
+    {
+      "id": "gh",
+      "type": "external",
+      "label": "gh"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 214,
+      "label": "Refill y gates"
+    },
+    {
+      "from": 224,
+      "to": 338,
+      "label": "Lanzar"
+    },
+    {
+      "from": 364,
+      "to": 534,
+      "label": "Agente y reap"
+    },
+    {
+      "from": 544,
+      "to": 602,
+      "label": "Alternativas"
+    }
+  ],
+  "messages": [
+    {
+      "from": "scheduler",
+      "to": "state",
+      "y": 174,
+      "label": "Queue.Ready: retry queue primero, deps done, todo",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scheduler",
+      "to": "budget",
+      "y": 202,
+      "label": "gate de presupuesto → luego semáforos",
+      "variant": "security"
+    },
+    {
+      "from": "scheduler",
+      "to": "worktree",
+      "y": 242,
+      "label": "worktree.Create (antes del prompt)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scheduler",
+      "to": "prompt",
+      "y": 270,
+      "label": "prompt.Write (spec ref READ FIRST)",
+      "variant": "default"
+    },
+    {
+      "from": "scheduler",
+      "to": "agent",
+      "y": 298,
+      "label": "Spawn: grupo de proceso + timeout",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scheduler",
+      "to": "state",
+      "y": 326,
+      "label": "RecordDispatch + Transition in-progress",
+      "variant": "emphasis"
+    },
+    {
+      "from": "agent",
+      "to": "state",
+      "y": 382,
+      "label": "orch_set_status / task-finish.sh",
+      "variant": "default"
+    },
+    {
+      "from": "agent",
+      "to": "scheduler",
+      "y": 410,
+      "label": "salida + exit code",
+      "variant": "return"
+    },
+    {
+      "from": "scheduler",
+      "to": "state",
+      "y": 438,
+      "label": "Parse + Classify → RecordSpend",
+      "variant": "default"
+    },
+    {
+      "from": "scheduler",
+      "to": "worktree",
+      "y": 466,
+      "label": "CommitPending → Push → Remove",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scheduler",
+      "to": "gh",
+      "y": 494,
+      "label": "CreatePR",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scheduler",
+      "to": "state",
+      "y": 522,
+      "label": "SetTaskPR (ci_status pending)",
+      "variant": "default"
+    },
+    {
+      "from": "scheduler",
+      "to": "state",
+      "y": 562,
+      "label": "fallo: DecideRetry → todo + backoff / blocked",
+      "variant": "dashed"
+    },
+    {
+      "from": "scheduler",
+      "to": "gh",
+      "y": 590,
+      "label": "CIPoller: gh pr checks → done / redispatch",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "scheduler",
+      "from": 168,
+      "to": 598,
+      "type": "backend"
+    },
+    {
+      "participant": "budget",
+      "from": 196,
+      "to": 208,
+      "type": "security"
+    },
+    {
+      "participant": "worktree",
+      "from": 236,
+      "to": 248,
+      "type": "backend"
+    },
+    {
+      "participant": "agent",
+      "from": 292,
+      "to": 416,
+      "type": "external"
+    },
+    {
+      "participant": "gh",
+      "from": 488,
+      "to": 500,
+      "type": "external"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Órdenes que importan",
+      "items": [
+        "Presupuesto antes de los semáforos; worktree antes del prompt",
+        "Slots liberados antes del veredicto; CreatePR antes de SetTaskPR"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Si falla",
+      "items": [
+        "DecideRetry: a todo con backoff, escala de modelo en el tercer intento",
+        "Sin reintento: blocked + notify Blocked"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Después del PR",
+      "items": [
+        "CIPoller: verde → done (merge si auto_merge)",
+        "Rojo → redispatch con los logs de CI"
+      ]
+    }
+  ]
+}
