@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>orch — run AI agents as a team</title>
+  <meta name="description" content="orch runs your AI coding agents in parallel over a task graph, keeps spend inside a budget, and gives your client a live page instead of a status thread. One Go binary, local-first, MIT.">
+  <meta property="og:title" content="orch — run AI agents as a team">
+  <meta property="og:description" content="Parallel AI agents over a task graph, a budget per provider, and a live page for your client. One Go binary.">
+  <meta property="og:image" content="https://hectorcanaimero.github.io/orch/assets/stakeholder.png">
+  <meta property="og:url" content="https://hectorcanaimero.github.io/orch/">
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top wrap">
+    <a class="brand" href="./" aria-label="orch home">
+      <svg viewBox="0 0 300 180" aria-hidden="true" class="brand-mark">
+        <rect x="0" y="0" width="210" height="24" rx="12" fill="#7c3aed"/>
+        <rect x="0" y="46" width="155" height="24" rx="12" fill="#a78bfa"/>
+        <rect x="0" y="92" width="232" height="24" rx="12" fill="#7c3aed"/>
+        <rect x="0" y="138" width="128" height="24" rx="12" fill="#a78bfa"/>
+      </svg>
+      <span class="brand-word">orch</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#client">Client view</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <h1 id="hero-title">Run AI agents as a team. Show your client a live page, not a status thread.</h1>
+      <p class="lede">orch walks a graph of tasks, hands each one to the coding agent you route it to — Claude Code, Codex, OpenCode — in parallel, keeps spend inside a budget per provider, and publishes a page your client can open to see where the work stands.</p>
+      <div class="hero-actions">
+        <a class="button" href="#install">Install orch</a>
+        <a class="button quiet" href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Read the manual</a>
+      </div>
+
+      <figure class="run" aria-labelledby="run-caption">
+        <div class="run-head">
+          <p class="run-cmd"><span class="prompt" aria-hidden="true">$</span> orch run</p>
+          <button class="replay" type="button" id="replay" hidden>Run it again</button>
+        </div>
+        <div class="lanes" id="lanes" role="img" aria-label="Six tasks from the nextjs-saas template scheduled across three agents. F0.T1 runs first; F1.T1 and F2.T1 start together once it is done; F1.T2, F2.T2 and F3.T1 run in parallel after their dependencies finish."></div>
+        <div class="client" aria-hidden="true">
+          <p class="client-name">acme-portal <span>client page</span></p>
+          <div class="client-bar"><i id="client-fill"></i></div>
+          <p class="client-count" id="client-count">0 of 6 done</p>
+        </div>
+        <figcaption id="run-caption">The six tasks of the <code>nextjs-saas</code> template, routed to three agents. A task starts only when everything it depends on is done; the client page counts what is finished.</figcaption>
+      </figure>
+    </section>
+
+    <section class="how wrap" id="how" aria-labelledby="how-title">
+      <h2 id="how-title">How it works</h2>
+      <ol class="steps">
+        <li class="step">
+          <div class="step-text">
+            <h3>Write the work down</h3>
+            <p>Describe the work as markdown specs — phases, packages, tasks, the model for each and what it depends on. <code>orch atomize</code> turns them into <code>tasks.json</code> and shows you the diff before anything is written. Or start from one of five project templates.</p>
+          </div>
+<pre class="term" tabindex="0"><code><span class="c">$</span> orch init --template nextjs-saas
+<span class="c">$</span> orch tasks
+Tasks (6 shown)
+ID     STATUS  BACKEND/MODEL             DEPS
+F0.T1  todo    claude/claude-sonnet-4-6  —
+F1.T1  todo    claude/claude-sonnet-4-6  [F0.T1]
+F1.T2  todo    claude/claude-sonnet-4-6  [F1.T1]
+F2.T1  todo    claude/claude-sonnet-4-6  [F0.T1]
+F2.T2  todo    claude/claude-sonnet-4-6  [F1.T1 F2.T1]
+F3.T1  todo    claude/claude-sonnet-4-6  [F0.T1 F2.T1]</code></pre>
+        </li>
+        <li class="step">
+          <div class="step-text">
+            <h3>Route each task to an agent</h3>
+            <p><code>model_router.yaml</code> maps every model name to the CLI that runs it: <code>claude</code>, <code>codex</code>, <code>opencode</code>, <code>gemini</code> or <code>agy</code>, with your own logins and your own keys. Concurrency caps and a rolling token budget per provider decide how much runs at once and when to stop.</p>
+          </div>
+<pre class="term" tabindex="0"><code><span class="c">$</span> orch explain
+Tasks: 6 total, 0 done (0%)
+  todo         6
+  blocked      0
+
+Ready to dispatch: 1
+  F0.T1      Next.js 14 App Router scaffold + Tailwind + shadcn/ui</code></pre>
+        </li>
+        <li class="step">
+          <div class="step-text">
+            <h3>Run it</h3>
+            <p><code>orch run</code> dispatches every ready task at once, each in its own git worktree and branch. It opens a pull request per task, watches CI, retries what failed for a reason worth retrying, and blocks — with the reason written down — what should not be retried. Ctrl+C drains: nothing new starts, work in flight finishes.</p>
+          </div>
+<pre class="term" tabindex="0"><code><span class="c">$</span> orch run --worktree-mode
+<span class="c">$</span> orch status
+<span class="c">$</span> orch events F2.T2</code></pre>
+        </li>
+        <li class="step">
+          <div class="step-text">
+            <h3>Hand your client a link</h3>
+            <p><code>orch publish</code> writes the client page as a static site — milestones, blockers in plain language, how fresh the numbers are — to a folder or a <code>gh-pages</code> branch, and keeps it current with <code>--watch</code>. No login, no API, nothing of yours exposed.</p>
+          </div>
+<pre class="term" tabindex="0"><code><span class="c">$</span> orch publish --to git --watch
+<span class="c">$</span> orch dashboard --profile stakeholder --tunnel</code></pre>
+        </li>
+      </ol>
+    </section>
+
+    <section class="client-view wrap" id="client" aria-labelledby="client-title">
+      <div class="client-text">
+        <h2 id="client-title">What your client sees</h2>
+        <p>The page is built from one snapshot of the project, written for someone who does not care what a worktree is.</p>
+        <ul>
+          <li>Progress by milestone, in the names you gave them.</li>
+          <li>Blockers translated out of stack traces into sentences.</li>
+          <li>An estimate of the hours left, and how fresh the numbers are.</li>
+          <li>Spend only if you choose to show it. It is off by default.</li>
+          <li>Your agency's name, logo and colour instead of orch's, if you set them.</li>
+        </ul>
+      </div>
+      <figure class="shot">
+        <img src="assets/stakeholder.png" width="1440" height="1691" loading="lazy" alt="The client page for a sample project: overall progress, milestones with their completion, open blockers and the estimated hours remaining.">
+      </figure>
+    </section>
+
+    <section class="limits wrap" aria-labelledby="limits-title">
+      <h2 id="limits-title">Where orch stops</h2>
+      <dl>
+        <div><dt>It runs on your machine.</dt><dd>No daemon and no hosted service. You start <code>orch run</code>; it stops when the queue is empty or you stop it.</dd></div>
+        <div><dt>The agents are yours to install.</dt><dd>orch drives the CLIs you already use and are signed in to. It never holds a model key.</dd></div>
+        <div><dt>It is one operator's tool.</dt><dd>Several projects at once, yes. Several people editing the same plan, no — that is a project tracker's job.</dd></div>
+        <div><dt>Gemini needs one decision from you.</dt><dd>Gemini CLI refuses to run in a directory it was not told to trust, and every task gets a fresh worktree. orch does not switch that check off for you.</dd></div>
+      </dl>
+    </section>
+
+    <section class="install wrap" id="install" aria-labelledby="install-title">
+      <h2 id="install-title">Install</h2>
+      <p class="install-note">orch is a single binary for Linux and macOS. The first binary release is <strong>v0.12.0</strong> and is not tagged yet; until it is, build from source with Go 1.25+ and pnpm.</p>
+      <div class="install-grid">
+        <div>
+          <h3>From source, today</h3>
+<pre class="term" tabindex="0"><code>git clone https://github.com/hectorcanaimero/orch
+cd orch
+make build
+./bin/orch --version</code></pre>
+        </div>
+        <div>
+          <h3>From v0.12.0</h3>
+<pre class="term" tabindex="0"><code>curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+brew install hectorcanaimero/orch/orch</code></pre>
+        </div>
+      </div>
+      <p class="install-next">Then, in a project: <code>orch init</code>, <code>orch install-skills --all</code> to give your agent the planning skills, and <code>orch doctor</code> to check that every CLI your tasks route to is installed and signed in.</p>
+    </section>
+  </main>
+
+  <footer class="foot wrap">
+    <p>orch is MIT-licensed and built in the open.</p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/hectorcanaimero/orch">Source</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Manual</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.es.md">Manual en español</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.pt.md">Manual em português</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/CLI.md">Command reference</a>
+    </nav>
+  </footer>
+
+  <script src="run.js" defer></script>
+</body>
+</html>

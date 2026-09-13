@@ -123,6 +123,7 @@ internal/
   tunnel/            — dashboard tunnel supervisor: autossh (Pinggy) and bore
   telemetry/         — opt-in anonymous telemetry (off by default)
 web/                 — SPA, embedded by internal/dashboard and internal/publish
+site/                — the public project page (static, no build), deployed to GitHub Pages by .github/workflows/pages.yml
 ```
 
 **Commands**: `make build` (bin/orch, version from `git describe`), `make test`,
