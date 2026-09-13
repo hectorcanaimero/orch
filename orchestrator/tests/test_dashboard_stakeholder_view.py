@@ -180,9 +180,67 @@ def test_stakeholder_summary_json_shape(tmp_path: Path) -> None:
         # Sprint E-7: enhanced stakeholder view
         "phases_timeline", "spend_by_day", "exec_summary",
     }
-    # Spend is rounded up in $0.50 increments.
-    assert payload["spend_rounded_usd"] == pytest.approx(1.5)
     assert isinstance(payload["milestones"], list) and payload["milestones"]
+
+
+def _write_dashboard_config(paths, **dashboard) -> None:
+    import yaml
+    paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
+    paths.config_yaml.write_text(yaml.safe_dump({"dashboard": dashboard}), encoding="utf-8")
+
+
+def _add_spend_today(paths, cost: float) -> str:
+    """The fixture's spend rows are dated 2026-08-20, outside the 14-day
+    window of `spend_by_day`; a row dated today makes that series non-empty
+    so the test can tell "gated" from "nothing to show"."""
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    _write_jsonl(paths.project_root / ".orchestrator" / "state" / f"spend-{today}.jsonl", [
+        {"ts": f"{today}T09:00:00", "task_id": "T-C", "model": "claude-sonnet-4-6",
+         "tokens_in": 100, "tokens_out": 50, "cost_usd": cost},
+    ])
+    return today
+
+
+def test_stakeholder_summary_hides_spend_unless_flag_is_on(tmp_path: Path) -> None:
+    """Bug 22 of the Go port. `dashboard.show_spend_to_stakeholder` defaults to
+    false ("spend is sensitive") but only gated the /api/budget/summary route;
+    /stakeholder/summary — the payload the stakeholder page renders — carried
+    the rounded total, the daily series and the spend sentence of the
+    executive summary regardless. The earlier shape test asserted the 1.5
+    with no config at all, i.e. it pinned the leak."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orchestrator.dashboard.server import create_app
+
+    paths = _make_fixture_project(tmp_path)
+    _add_spend_today(paths, 0.10)  # inside the daily window, so [] means gated
+    client = TestClient(create_app(paths=paths, profile_override="stakeholder", token_override="t"))
+    r = client.get("/stakeholder/summary", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["spend_rounded_usd"] is None
+    assert payload["spend_by_day"] == []
+    assert "$" not in payload["exec_summary"], payload["exec_summary"]
+
+
+def test_stakeholder_summary_shows_spend_when_flag_is_on(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orchestrator.dashboard.server import create_app
+
+    paths = _make_fixture_project(tmp_path)
+    today = _add_spend_today(paths, 0.10)
+    _write_dashboard_config(paths, show_spend_to_stakeholder=True)
+    client = TestClient(create_app(paths=paths, profile_override="stakeholder", token_override="t"))
+    r = client.get("/stakeholder/summary", headers={"Authorization": "Bearer t"})
+    assert r.status_code == 200
+    payload = r.json()
+    # 1.47 + 0.10, rounded up in $0.50 increments; the daily series is
+    # grouped totals only (never per model) and only the last 14 days.
+    assert payload["spend_rounded_usd"] == pytest.approx(2.0)
+    assert payload["spend_by_day"] == [{"date": today, "cost": pytest.approx(0.10)}]
+    assert "$" in payload["exec_summary"]
 
 
 def test_stakeholder_summary_hides_per_task_details(tmp_path: Path) -> None:

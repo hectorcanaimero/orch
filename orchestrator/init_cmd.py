@@ -346,9 +346,19 @@ def orch_init(
 
     # ---- .orchestrator/model_router.yaml (H-2: stub, not the whole
     # shipped table). load_router() requires this file to exist; a fresh
-    # project has no tasks yet, so an empty mapping is valid. When the
-    # dev adds tasks referencing new models, `orch router add-missing`
-    # (issue #55) appends the routing entries.
+    # project has no tasks yet, so an empty router is valid. When the dev
+    # adds tasks referencing new models, `orch router add-missing`
+    # (issue #55) appends the routing entries — and for a project
+    # scaffolded from a template, `_populate_router_from_tasks` below has
+    # already done it.
+    #
+    # Comments only, with no `{}`. The stub used to end with an explicit
+    # empty flow mapping, which is a COMPLETE YAML document — appending a
+    # block mapping after it produces a file PyYAML refuses to parse
+    # ("expected '<document start>'"). That made `orch router add-missing`
+    # break the very file it was told to fix, on the one project layout
+    # that ships with the command printed in it. An empty document parses
+    # as None, and load_router already does `or {}`.
     router_dst = orch_dir / "model_router.yaml"
     if not router_dst.exists() or force:
         router_dst.write_text(
@@ -359,8 +369,7 @@ def orch_init(
             "#     orch router add-missing --yes\n"
             "# to append inferred entries. See the shipped default at\n"
             "# `orchestrator/model_router.yaml` in the package for a\n"
-            "# fully-populated reference.\n"
-            "{}\n",
+            "# fully-populated reference.\n",
             encoding="utf-8",
         )
 
@@ -403,6 +412,23 @@ def orch_init(
             encoding="utf-8",
         )
 
+    # ---- populate the router for a templated project -----------------
+    # The stub above is right for an empty project: no tasks, no routes.
+    # A template ships tasks, and every one of them names a model — so an
+    # empty router means the first command the next-steps banner suggests
+    # exits 1 with "model_router.yaml is missing entries for N task(s)".
+    #
+    # That was the state until this was added: `orch init --template
+    # python-api` succeeded and `orch --dry-run` immediately failed. The
+    # error named the fix, so nobody was stranded, but a scaffolder whose
+    # output does not run is not finished.
+    #
+    # Same inference `orch router add-missing --yes` uses, called directly
+    # rather than shelled out. A model whose key has no `backend/` prefix
+    # cannot be inferred and is left for a human; the templates have none
+    # today, and if one appears the line below says so.
+    added = _populate_router_from_tasks(project_path, orch_dir)
+
     # ---- --sdd: openspec/ layout ------------------------------------
     if sdd:
         openspec_dst = project_path / "openspec"
@@ -414,11 +440,77 @@ def orch_init(
         )
 
     # ---- success banner --------------------------------------------
-    _print_next_steps(project_path, sdd=sdd)
+    _print_next_steps(project_path, sdd=sdd, routes_added=added)
     return 0
 
 
-def _print_next_steps(project_path: Path, *, sdd: bool) -> None:
+def _populate_router_from_tasks(project_path: Path, orch_dir: Path) -> list[str]:
+    """Append a route for every model the project's tasks reference.
+
+    Returns the keys added, sorted — empty when there was nothing to add,
+    which is the normal case for a project scaffolded without a template.
+
+    Never raises: a scaffold that got this far has produced a usable project,
+    and failing here would leave one behind with no explanation. A failure
+    prints what went wrong and returns nothing, so the banner falls back to
+    telling the user to run `orch router add-missing` by hand.
+    """
+    from orchestrator.router import (
+        append_router_entries,
+        infer_route_entry,
+        load_router,
+        missing_models,
+    )
+    from orchestrator.state import load_tasks
+
+    router_path = orch_dir / "model_router.yaml"
+    try:
+        tasks = load_tasks(project_path / "tasks.json")
+        router = load_router(router_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"note: could not read tasks or router ({exc});")
+        print("      run `orch router add-missing --yes` once the project is set up.")
+        return []
+
+    missing = missing_models(tasks, router)
+    if not missing:
+        return []
+
+    entries = {}
+    uninferable: list[str] = []
+    for key in missing:
+        entry = infer_route_entry(key)
+        if entry is None:
+            uninferable.append(key)
+        else:
+            entries[key] = entry
+
+    added: list[str] = []
+    if entries:
+        try:
+            added = append_router_entries(router_path, entries)
+        except Exception as exc:  # noqa: BLE001
+            print(f"note: could not write routes ({exc});")
+            print("      run `orch router add-missing --yes` to add them.")
+            return []
+
+    if added:
+        print(
+            f"✓ model_router.yaml: added {len(added)} route(s) for the "
+            f"template's tasks — {', '.join(added)}"
+        )
+        print("  (tier defaults to `standard`; review it, it drives the budget gate)")
+    for key in uninferable:
+        print(
+            f"! model_router.yaml: cannot infer a backend for {key!r} "
+            f"(no `backend/` prefix) — add it by hand"
+        )
+    return added
+
+
+def _print_next_steps(
+    project_path: Path, *, sdd: bool, routes_added: list[str] | None = None
+) -> None:
     """Human-friendly summary of what was created + what to do next."""
     sdd_status = detect_sdd()
     print()
@@ -442,6 +534,9 @@ def _print_next_steps(project_path: Path, *, sdd: bool) -> None:
     print()
     print("  3. Dry-run to review the plan:")
     print(f"       orch --project-root {project_path} --dry-run")
+    print()
+    print("  If you change a task's `model` later, add its route:")
+    print(f"       orch router add-missing --yes --project-root {project_path}")
     print()
     print("  4. Full run:")
     print(f"       orch --project-root {project_path} --mode semi")
@@ -1012,6 +1107,13 @@ def _print_next_steps_checklist(
     console.print(
         f"  4. Health check       [cyan]orch doctor --project-root {project_root}[/cyan]"
     )
+    # Named even though `orch init` has already routed the template's models:
+    # the next model a user adds by hand is the one with no route, and the
+    # error they meet then does not say where it came from.
+    console.print(
+        "  •  New model later?   "
+        f"[cyan]orch router add-missing --yes --project-root {project_root}[/cyan]"
+    )
     console.print(
         f"  5. Dashboard          [cyan]orch dashboard --project-root {project_root}[/cyan]"
     )
@@ -1034,29 +1136,62 @@ def _post_process_config(
     Minimal (regex-based) edit rather than full YAML round-trip: preserves
     the comments in the shipped config.yaml so operators see the guidance
     when they open it in $EDITOR later.
+
+    A key the file does not contain is APPENDED rather than dropped. That
+    fallback is the fix for bug 17: `re.sub` with no match changes nothing,
+    and none of the four shipped templates carries `budgets_preset`. So for
+    every templated project the wizard asked for a preset, printed it in the
+    H-7 confirm summary, took the operator's "yes" — and the project then
+    loaded with the packaged default. The bug is in the gate, not the
+    setting: a confirmation screen that shows a choice which then has no
+    effect is worse than never asking, because the operator has been told it
+    took.
+
+    `state.backend` is the exception and is never appended: it is nested
+    under `state:`, and a bare `backend:` at the end of the file would be a
+    different, top-level key. A config with no `state:` block keeps its
+    default rather than gaining a wrong one.
     """
     if not config_yaml.exists():
         return
     text = config_yaml.read_text(encoding="utf-8")
-    text = re.sub(
-        r"(?m)^(\s*backend:\s*)\S+",
-        rf"\g<1>{state_backend}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(\s*backend:\s*)\S+", None, state_backend
     )
-    text = re.sub(
-        r"(?m)^budgets_preset:\s*\S+",
-        f"budgets_preset: {budget_preset}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(budgets_preset:\s*)\S+", "budgets_preset", budget_preset
     )
-    text = re.sub(
-        r"(?m)^spec_root:\s*\S+",
-        f"spec_root: {spec_root}",
-        text,
-        count=1,
+    text, _ = _set_config_key(
+        text, r"(?m)^(spec_root:\s*)\S+", "spec_root", spec_root
     )
     config_yaml.write_text(text, encoding="utf-8")
+
+
+def _set_config_key(
+    text: str, pattern: str, key: str | None, value: str
+) -> tuple[str, bool]:
+    """Replace the first line matching `pattern`, or append `key: value`.
+
+    Returns `(text, appended)`. `key=None` means "never append" — used for a
+    nested key, where a bare top-level line would mean something else.
+
+    The prefix the pattern captures (indent, key, spacing) is preserved, so a
+    nested key keeps its indentation and does not silently move to the top
+    level.
+    """
+    if not value:
+        return text, False
+    match = re.search(pattern, text)
+    if match:
+        return (
+            text[: match.start()] + match.group(1) + value + text[match.end() :],
+            False,
+        )
+    if key is None:
+        return text, False
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + f"\n# Added by `orch init`.\n{key}: {value}\n", True
 
 
 def _post_process_tasks_meta(

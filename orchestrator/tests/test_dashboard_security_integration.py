@@ -127,12 +127,22 @@ def _client(paths, **override):
 
 @pytest.mark.parametrize("backend", ["file", "sqlite"])
 def test_stakeholder_view_reads_from_both_backends(tmp_path: Path, backend: str) -> None:
-    """Whether spend lives in JSONL or sqlite, curated payload matches."""
+    """Whether spend lives in JSONL or sqlite, curated payload matches.
+
+    Spend reaches the stakeholder payload only with
+    `dashboard.show_spend_to_stakeholder` on (bug 22 of the Go port: it used
+    to leak with the flag off, and this test pinned the leak by asserting the
+    figure with no config at all)."""
+    import yaml
     paths = _make_project(tmp_path)
     if backend == "file":
         _write_file_backend_spends(paths, cost=1.75)
     else:
         _write_sqlite_backend_spends(paths, cost=1.75)
+    paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
+    paths.config_yaml.write_text(
+        yaml.safe_dump({"dashboard": {"show_spend_to_stakeholder": True}}), encoding="utf-8"
+    )
 
     client = _client(paths, profile="stakeholder", token="t")
     r = client.get("/stakeholder/summary", headers={"Authorization": "Bearer t"})

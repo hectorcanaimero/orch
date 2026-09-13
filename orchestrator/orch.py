@@ -889,6 +889,23 @@ def _install_sigint(
 # ---- Helpers ------------------------------------------------------------
 
 
+def _task_status_current(
+    task_id: str,
+    tasks_json_path: Path | str,
+    state_backend: "SqliteBackend | None",
+) -> str | None:
+    """Current status of `task_id`: the state backend when there is one,
+    otherwise tasks.json. See bug 16 in docs/brainstorm/go-migration-notes/."""
+    if state_backend is not None:
+        try:
+            status = state_backend.get_task_status(task_id)
+        except Exception:  # noqa: BLE001
+            status = None
+        if status is not None:
+            return str(status)
+    return _task_status_in_file(task_id, tasks_json_path)
+
+
 def _task_status_in_file(task_id: str, tasks_json_path: Path | str = "tasks.json") -> str | None:
     """Read tasks.json (fresh) and return the current `status` for `task_id`.
 
@@ -1275,7 +1292,15 @@ def _reap_once(
             # scripts/task-finish.sh (tasks.json status == "done") the CLI
             # wrapper's failure is spurious (skills-shortening warning,
             # step_finish buffering race, etc.). Respect the sub-agent.
-            file_status = _task_status_in_file(entry.task.id, cwd / "tasks.json")
+            # Bug 16 of the Go port: under `state.backend: sqlite` (the
+            # default since v0.11) `scripts/task-finish.sh` -> `orch
+            # task-status` writes the database and leaves tasks.json alone,
+            # so reading the file here saw `todo` forever and the guard was
+            # dead. Ask the backend first; the file stays as the fallback for
+            # file-backed projects.
+            file_status = _task_status_current(
+                entry.task.id, cwd / "tasks.json", state_backend
+            )
             if file_status == "done":
                 event_log.emit(
                     "success",
@@ -1637,8 +1662,8 @@ def _spawn_one(
     completed_dep_tasks = _completed_dep_tasks(queue, task)
     try:
         # `spec_root` viene de config.yaml (Fase 3). `_load_config` garantiza
-        # el default rupies histórico (`docs/rewrite-plan`) cuando la clave
-        # no está presente — no hace falta un fallback defensivo acá.
+        # el default (`specs`) cuando la clave no está presente — no hace
+        # falta un fallback defensivo acá.
         prompt_path = render_prompt(
             task=task,
             completed_deps=completed_dep_tasks,
@@ -1853,9 +1878,18 @@ def _refill(
         retry_queue[:] = remaining
 
     # ---- (2) normal ready set ---------------------------------------------
+    # Bug 15 of the Go port: the retry branch of `_reap_once` resets the task
+    # to `todo` and stamps `retry_earliest_at`, but this pass used to know
+    # nothing about the retry queue — so the task came back through
+    # `queue.ready()` and was launched in the SAME tick, ignoring the backoff
+    # (and launched a second time when the queue item finally drained). A
+    # task the retry queue still owns is its alone until it drains.
+    retry_owned = {item.task.id for item in (retry_queue or [])}
     in_flight_ids = {entry.task.id for entry in in_flight.values()}
     for task in queue.ready(in_flight_ids=in_flight_ids, only=only):
         if task.id in deferred:
+            continue
+        if task.id in retry_owned:
             continue
         if max_tasks is not None and dispatched_count >= max_tasks:
             break
@@ -1864,8 +1898,23 @@ def _refill(
 
         route = router.get(task.model)
         if route is None:
-            # Validated at startup; this branch is a defensive safety net.
+            # Bug 20 of the Go port: `validate` catches this at startup, but a
+            # router edited mid-run (delete an entry a task still references)
+            # reaches here, and a bare `continue` left the task `todo` — so
+            # `queue.ready()` returned it again next tick, the run never met
+            # its termination condition (nothing ready, nothing in flight, no
+            # retries) and `orch run` spun forever, logging this line every
+            # 200 ms. A task that can never be dispatched is blocked, not
+            # waited on; the row says why so `orch status` shows it.
+            reason = f"route missing for model {task.model}"
             log.error("route missing at dispatch time for %s (%s)", task.id, task.model)
+            try:
+                call_task_block(task.id, reason, task.model, project_root=cwd)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("route-missing block failed for %s: %s", task.id, exc)
+            event_log.emit("block", task.id, backend=None, reason=reason)
+            queue.mark_blocked(task.id)
+            run_file.mark_blocked(task.id)
             continue
 
         # ---- semi-mode gate ------------------------------------------------

@@ -134,6 +134,15 @@ def test_init_writes_router_stub_not_shipped_table(tmp_path: Path) -> None:
     import yaml
     parsed = yaml.safe_load(text) or {}
     assert parsed == {}
+    # And it must be APPENDABLE. It used to end with an explicit `{}`, which is
+    # a complete YAML document — appending a block mapping after it produced a
+    # file PyYAML refuses to parse, so `orch router add-missing` broke the very
+    # file whose own comment tells you to run it.
+    assert "{}" not in text, "the stub must not close the document"
+    appended = text + "\nsome/model:\n  backend: claude\n  cli_model: m\n  tier: standard\n"
+    assert yaml.safe_load(appended) == {
+        "some/model": {"backend": "claude", "cli_model": "m", "tier": "standard"}
+    }
 
 
 def test_init_pre_existing_dashboard_yaml_is_left_alone(tmp_path: Path) -> None:
@@ -627,3 +636,282 @@ def test_init_ships_sqlite_worktrees_and_auto_pr_on(
     assert cfg["dispatch"]["worktree_mode"] is True
     assert cfg["vcs"]["auto_pr"] is True
     assert cfg["github"]["auto_merge"] is False
+
+
+# ---- spec_root: a templated project must point at its own specs ----------
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_template_config_pins_spec_root_to_specs(tmp_path: Path, template: str) -> None:
+    """Without this, `_apply_defaults` supplied `docs/rewrite-plan` — a path
+    from orch's own repo — to every project scaffolded from a template."""
+    import yaml
+
+    from orchestrator.config_loader import load_config
+
+    dest = tmp_path / template
+    assert orch_init(dest, template=template) == 0
+    cfg_path = dest / ".orchestrator" / "config.yaml"
+
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    assert raw["spec_root"] == "specs", "the written config must say so out loud"
+
+    effective = load_config(cfg_path, project_root=dest)
+    assert effective["spec_root"] == "specs"
+
+
+def _spec_ref_line(text: str) -> str:
+    """The one line of a prompt this section is about."""
+    for line in text.splitlines():
+        if line.startswith("Spec ref (READ FIRST): "):
+            return line[len("Spec ref (READ FIRST): "):]
+    raise AssertionError("the prompt has no spec-ref line")
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_templated_task_prompt_points_at_the_projects_own_specs(
+    tmp_path: Path, template: str
+) -> None:
+    """Every task of every template, resolved the way a real dispatch does.
+
+    Two bugs have lived on this line. `docs/rewrite-plan/...` (fixed in #102)
+    was orch's own repo layout leaking into scaffolded projects. `specs/specs/
+    ...` came next, because the templates' `specRef` values carried the
+    `specs/` prefix that `spec_root` already supplies — so the prompt told the
+    agent to READ FIRST a file one directory deeper than the one `orch init`
+    creates.
+
+    The assertion is the whole resolved path, not a substring of it. The
+    previous version of this test checked `"Spec ref (READ FIRST): specs/" in
+    text`, which `specs/specs/f0-foundation.md#T1` satisfies — a test shaped to
+    pass rather than to check.
+    """
+    from orchestrator.config_loader import load_config
+    from orchestrator.prompt_builder import render_prompt
+    from orchestrator.state import load_tasks
+
+    dest = tmp_path / template
+    assert orch_init(dest, template=template) == 0
+
+    cfg = load_config(dest / ".orchestrator" / "config.yaml", project_root=dest)
+    tasks = load_tasks(dest / "tasks.json")
+    assert tasks, "the template seeds tasks"
+
+    for task in tasks:
+        assert task.spec_ref, f"{task.id} has no specRef — see PR #96"
+        out = render_prompt(
+            task=task,
+            completed_deps=[],
+            spec_ref=task.spec_ref,
+            run_id="r-spec-root",
+            state_dir=tmp_path / "state" / template,
+            project_root=dest,
+            spec_root=cfg["spec_root"],
+        )
+        rendered = _spec_ref_line(out.read_text(encoding="utf-8"))
+
+        assert rendered == f"specs/{task.spec_ref}", (
+            f"{template}/{task.id}: the prompt resolves to {rendered!r}"
+        )
+        assert "docs/rewrite-plan" not in rendered
+        assert "specs/specs" not in rendered
+
+        # The path has to land in the directory `orch init` actually creates.
+        # The spec file itself is the user's to write — `_print_next_steps`
+        # tells them to — so what is checked is the directory, and that the
+        # prompt and the wizard name the same file.
+        path_part = rendered.split("#", 1)[0]
+        assert (dest / path_part).parent == dest / "specs", (
+            f"{template}/{task.id}: {path_part!r} is not inside the specs/ "
+            f"directory orch init creates"
+        )
+
+    # And the file the wizard tells the user to write is the one the first
+    # task's prompt asks the agent to read. These two drifted apart silently
+    # once already.
+    first = tasks[0]
+    wizard_path = dest / "specs" / "f0-foundation.md"
+    prompt_path = dest / f"specs/{first.spec_ref}".split("#", 1)[0]
+    assert prompt_path == wizard_path, (
+        f"{template}: the wizard says to write {wizard_path}, the prompt asks "
+        f"the agent to read {prompt_path}"
+    )
+
+
+# ---- bug 14: a scaffolded project has to actually run --------------------
+
+
+def _orch(*args: str) -> "subprocess.CompletedProcess[str]":
+    import subprocess
+    import sys
+
+    return subprocess.run(
+        [sys.executable, "-m", "orchestrator.orch", *args],
+        capture_output=True, text=True, timeout=180,
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp", None],
+)
+def test_scaffolded_project_dry_runs_clean(tmp_path: Path, template: str | None) -> None:
+    """The test that was missing: not that `orch init` writes files, but that
+    the project it writes WORKS.
+
+    Bug 14. A template ships tasks, every task names a model, and the router
+    stub was empty — so `orch init --template python-api` exited 0 and the
+    first command the banner suggests exited 1 with "model_router.yaml is
+    missing entries for 2 task(s)". Running `orch router add-missing --yes`,
+    which both the error and the stub's own comment recommend, then wrote a
+    file PyYAML could not parse, so the documented escape hatch was broken
+    too.
+
+    This runs the real binary against a real scaffold. Every existing init
+    test asserts on files; none of them would have caught either half.
+    """
+    dest = tmp_path / (template or "blank")
+    assert orch_init(dest, template=template) == 0
+
+    result = _orch("--project-root", str(dest), "--dry-run")
+    assert result.returncode == 0, (
+        f"a freshly scaffolded {template or 'blank'} project failed its first "
+        f"command:\n{result.stderr[-2000:]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "template", ["python-api", "data-pipeline", "nextjs-saas", "chatbot-whatsapp"]
+)
+def test_init_with_template_routes_every_task_model(
+    tmp_path: Path, template: str
+) -> None:
+    """Every model the template's tasks reference has a route after init."""
+    from orchestrator.router import load_router, missing_models
+    from orchestrator.state import load_tasks
+
+    dest = tmp_path / template
+    assert orch_init(dest, template=template) == 0
+
+    router = load_router(dest / ".orchestrator" / "model_router.yaml")
+    tasks = load_tasks(dest / "tasks.json")
+    assert tasks, "a template scaffolds tasks"
+    assert missing_models(tasks, router) == [], (
+        f"{template}: models with no route after init"
+    )
+    # Inferred, not invented: the key is `backend/cli_model`.
+    for model in {t.model for t in tasks}:
+        entry = router[model]
+        assert entry.backend == model.split("/", 1)[0]
+        assert entry.cli_model == model.split("/", 1)[1]
+        # `tier` cannot be inferred from a model name and drives the budget
+        # gate, so it defaults to standard and the banner says to review it.
+        assert entry.tier == "standard"
+
+
+def test_init_without_a_template_adds_no_routes(tmp_path: Path) -> None:
+    """A blank project has no tasks, so there is nothing to route and the stub
+    stays empty. Populating it with guesses would be worse than leaving it."""
+    from orchestrator.router import load_router
+
+    dest = tmp_path / "blank"
+    assert orch_init(dest) == 0
+    assert load_router(dest / ".orchestrator" / "model_router.yaml") == {}
+
+
+def test_next_steps_name_the_router_command(tmp_path: Path, capsys) -> None:
+    """The banner names `orch router add-missing`, for the model a user adds by
+    hand later. Init has already routed the template's own models; the next one
+    is the one with no route, and the error it produces does not say where it
+    came from."""
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template="python-api") == 0
+    out = capsys.readouterr().out
+    assert "orch router add-missing" in out
+    # And it reports what it routed, so the tier default is visible.
+    assert "added 1 route(s)" in out
+    assert "tier defaults to `standard`" in out
+
+
+# ---- _populate_router_from_tasks: the paths a happy scaffold never takes ----
+
+
+def _scaffolded(tmp_path: Path, template: str | None = "python-api") -> Path:
+    dest = tmp_path / "proj"
+    assert orch_init(dest, template=template) == 0
+    return dest
+
+
+def test_populate_router_survives_unreadable_inputs(tmp_path: Path, capsys) -> None:
+    """A scaffold that got this far has produced a usable project. Raising here
+    would leave one behind with no explanation, so the helper reports and
+    returns nothing — and the message names the command that finishes the job.
+    """
+    from orchestrator.init_cmd import _populate_router_from_tasks
+
+    dest = _scaffolded(tmp_path)
+    capsys.readouterr()
+    (dest / "tasks.json").unlink()
+
+    added = _populate_router_from_tasks(dest, dest / ".orchestrator")
+    assert added == []
+    out = capsys.readouterr().out
+    assert "could not read tasks or router" in out
+    assert "orch router add-missing --yes" in out
+
+
+def test_populate_router_reports_a_model_it_cannot_infer(tmp_path: Path, capsys) -> None:
+    """`infer_route_entry` returns None for a key with no `backend/` prefix —
+    a bare model string, or a backend orch does not know. That needs a human,
+    not a guess, and the line says which model and why."""
+    from orchestrator.init_cmd import _populate_router_from_tasks
+
+    dest = _scaffolded(tmp_path)
+    capsys.readouterr()
+    tasks = json.loads((dest / "tasks.json").read_text(encoding="utf-8"))
+    tasks["tasks"][0]["model"] = "bare-model-with-no-slash"
+    (dest / "tasks.json").write_text(json.dumps(tasks), encoding="utf-8")
+    # Start from a stub again so the run has something to do.
+    (dest / ".orchestrator" / "model_router.yaml").write_text("# stub\n", encoding="utf-8")
+
+    added = _populate_router_from_tasks(dest, dest / ".orchestrator")
+    out = capsys.readouterr().out
+    assert "bare-model-with-no-slash" in out
+    assert "cannot infer a backend" in out
+    # The other model in the template is still routed — one uninferable entry
+    # must not cost the rest.
+    assert "claude/claude-sonnet-4-6" in added
+
+
+def test_populate_router_survives_a_failed_write(tmp_path: Path, capsys, monkeypatch) -> None:
+    """Same contract as the read failure: report, do not raise.
+
+    The write is made to fail by patching `append_router_entries` rather than
+    by breaking the file, because every way of breaking the file makes the READ
+    fail first — and a test that cannot tell the two branches apart is not
+    testing either. The assertion is on the write branch's own wording.
+    """
+    from orchestrator.init_cmd import _populate_router_from_tasks
+
+    dest = _scaffolded(tmp_path)
+    capsys.readouterr()
+    # Back to a stub, so there is something left to add.
+    (dest / ".orchestrator" / "model_router.yaml").write_text("# stub\n", encoding="utf-8")
+
+    import orchestrator.router as router_mod
+
+    def boom(*_args, **_kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(router_mod, "append_router_entries", boom)
+
+    added = _populate_router_from_tasks(dest, dest / ".orchestrator")
+    assert added == []
+    out = capsys.readouterr().out
+    assert "could not write routes" in out, out
+    assert "no space left on device" in out
+    assert "orch router add-missing --yes" in out
