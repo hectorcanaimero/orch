@@ -1,0 +1,242 @@
+/* orch — project site. Tokens follow docs/brand/brief.md: zinc base,
+   violet 600 as the one brand accent, DM Sans + JetBrains Mono. */
+
+:root {
+  --ink: #09090b;          /* zinc-950, the app background */
+  --raise: #18181b;        /* zinc-900, terminal and lane wells */
+  --line: #27272a;         /* zinc-800 */
+  --text: #fafafa;         /* zinc-50 */
+  --soft: #a1a1aa;         /* zinc-400, secondary text */
+  --violet: #7c3aed;       /* violet-600, brand; running work */
+  --lilac: #a78bfa;        /* violet-400, the logo's second tone; finished work */
+  --done: #10b981;         /* emerald-500, semantic done */
+
+  --sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --measure: 64ch;
+  --gutter: clamp(20px, 5vw, 56px);
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+
+a { color: var(--text); text-decoration-color: var(--violet); text-underline-offset: 0.2em; }
+a:hover { text-decoration-color: var(--lilac); }
+
+:focus-visible { outline: 2px solid var(--lilac); outline-offset: 3px; border-radius: 4px; }
+
+code { font-family: var(--mono); font-size: 0.86em; color: #e4e4e7; }
+
+.wrap { max-width: 1120px; margin-inline: auto; padding-inline: var(--gutter); }
+
+.skip {
+  position: absolute; left: 12px; top: -48px; padding: 8px 12px;
+  background: var(--violet); color: #fff; border-radius: 6px; z-index: 10;
+}
+.skip:focus { top: 12px; }
+
+/* ---- header ------------------------------------------------------------ */
+
+.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding-block: 28px;
+}
+
+.brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; }
+.brand-mark { width: 30px; height: 18px; }
+.brand-word { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.04em; line-height: 1; }
+
+.top nav { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 0.95rem; }
+.top nav a { color: var(--soft); text-decoration: none; }
+.top nav a:hover { color: var(--text); }
+
+/* ---- hero -------------------------------------------------------------- */
+
+.hero { padding-block: clamp(40px, 9vw, 104px) 72px; }
+
+.hero h1 {
+  margin: 0;
+  max-width: 17ch;
+  font-size: clamp(2.5rem, 6.2vw, 4.75rem);
+  line-height: 1.02;
+  font-weight: 600;
+  letter-spacing: -0.035em;   /* the wordmark's own tight tracking, at display size */
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 28px 0 0;
+  max-width: var(--measure);
+  font-size: clamp(1.0625rem, 1.6vw, 1.25rem);
+  color: var(--soft);
+}
+
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+
+.button {
+  display: inline-flex; align-items: center; min-height: 46px; padding: 0 20px;
+  border-radius: 999px;       /* the logo's bars are pills; so are the buttons */
+  background: var(--violet); color: #fff; font-weight: 500; text-decoration: none;
+}
+.button:hover { background: #6d28d9; }
+.button.quiet { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.button.quiet:hover { box-shadow: inset 0 0 0 1px var(--soft); }
+
+/* ---- the run ----------------------------------------------------------- */
+
+.run {
+  margin: clamp(56px, 8vw, 88px) 0 0;
+  padding: clamp(18px, 3vw, 32px);
+  background: var(--raise);
+  border-radius: 20px;
+}
+
+.run-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.run-cmd { margin: 0; font-family: var(--mono); font-size: 0.95rem; color: var(--text); }
+.prompt { color: var(--soft); margin-right: 0.6ch; }
+
+.replay {
+  font: inherit; font-size: 0.9rem; color: var(--text); background: transparent;
+  border: 0; box-shadow: inset 0 0 0 1px var(--line); border-radius: 999px;
+  padding: 7px 16px; cursor: pointer;
+}
+.replay:hover { box-shadow: inset 0 0 0 1px var(--soft); }
+
+.lanes { display: grid; gap: 14px; }
+
+.lane { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; gap: 16px; }
+.lane-name { font-family: var(--mono); font-size: 0.8rem; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track { position: relative; height: 40px; }
+
+.task {
+  position: absolute; top: 0; height: 40px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.task .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--violet); border-radius: inherit; }
+.task.done .fill { background: var(--lilac); }
+.task .label {
+  position: relative; display: flex; align-items: center; height: 100%;
+  padding-inline: 14px; gap: 10px; white-space: nowrap;
+  font-size: 0.8rem; color: var(--soft);
+}
+.task .label b { font-family: var(--mono); font-weight: 500; color: var(--text); flex: none; }
+.task .label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task.running .label, .task.done .label { color: rgba(255, 255, 255, 0.86); }
+.task.done .label, .task.done .label b { color: var(--ink); }
+
+.client {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px;
+  margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line);
+}
+.client-name { margin: 0; font-weight: 500; }
+.client-name span { color: var(--soft); font-weight: 400; margin-left: 0.5ch; }
+.client-bar { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.client-bar i { display: block; height: 100%; width: 0; background: var(--done); border-radius: inherit; }
+.client-count { margin: 0; font-variant-numeric: tabular-nums; color: var(--soft); min-width: 7ch; text-align: right; }
+
+.run figcaption { margin-top: 18px; font-size: 0.9rem; color: var(--soft); max-width: var(--measure); }
+
+/* ---- sections ---------------------------------------------------------- */
+
+main > section + section { border-top: 1px solid var(--line); }
+.how, .client-view, .limits, .install { padding-block: clamp(64px, 9vw, 112px); }
+
+h2 {
+  margin: 0 0 40px;
+  font-size: clamp(1.9rem, 3.6vw, 2.75rem);
+  line-height: 1.1; font-weight: 600; letter-spacing: -0.025em;
+}
+h3 { margin: 0 0 10px; font-size: 1.25rem; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; }
+p { margin: 0; }
+
+/* How it works is a real sequence, so it is numbered — by the list itself. */
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: clamp(40px, 6vw, 64px); }
+.step {
+  counter-increment: step;
+  display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(24px, 4vw, 56px); align-items: start;
+}
+.step-text { position: relative; padding-left: 3.25rem; }
+.step-text::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0.1rem;
+  display: grid; place-items: center; width: 2.1rem; height: 2.1rem;
+  border-radius: 999px; box-shadow: inset 0 0 0 1px var(--violet);
+  font-size: 0.95rem; font-weight: 600; color: var(--lilac);
+}
+.step-text p { color: var(--soft); max-width: 52ch; }
+
+.term {
+  margin: 0; padding: 18px 20px; overflow-x: auto;
+  background: var(--raise); border-radius: 14px;
+  font-family: var(--mono); font-size: 0.82rem; line-height: 1.65; color: #e4e4e7;
+}
+.term code { font-size: inherit; color: inherit; }
+.term .c { color: var(--lilac); }
+
+.client-view { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(32px, 5vw, 72px); align-items: start; }
+.client-text > p { color: var(--soft); max-width: 46ch; }
+.client-text ul { margin: 24px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.client-text li { position: relative; padding-left: 26px; }
+.client-text li::before {
+  content: ""; position: absolute; left: 0; top: 0.62em;
+  width: 14px; height: 6px; border-radius: 999px; background: var(--lilac);
+}
+.shot { margin: 0; border-radius: 14px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+
+.limits dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px clamp(32px, 5vw, 72px); }
+.limits dt { font-weight: 600; font-size: 1.125rem; }
+.limits dd { margin: 8px 0 0; color: var(--soft); max-width: 46ch; }
+
+.install-note { color: var(--soft); max-width: var(--measure); margin-bottom: 32px; }
+.install-note strong { color: var(--text); font-weight: 600; }
+.install-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; max-width: 900px; }
+.install-next { margin-top: 32px; color: var(--soft); max-width: var(--measure); }
+
+/* ---- footer ------------------------------------------------------------ */
+
+.foot {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px 32px;
+  padding-block: 40px 56px; border-top: 1px solid var(--line);
+  color: var(--soft); font-size: 0.95rem;
+}
+.foot nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.foot a { color: var(--soft); }
+.foot a:hover { color: var(--text); }
+
+/* ---- narrow ------------------------------------------------------------ */
+
+@media (max-width: 860px) {
+  .step, .client-view { grid-template-columns: minmax(0, 1fr); }
+  .limits dl { grid-template-columns: minmax(0, 1fr); }
+  /* The agent's name sits above its lane so the track gets the full width:
+     the shortest task is a fifth of it, and its id has to fit. */
+  .lane { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .lanes { gap: 12px; }
+  .track, .task { height: 34px; }
+  .task .label { padding-inline: 0; justify-content: center; font-size: 0.72rem; }
+  .task .label span { display: none; }   /* ids stay; titles need room */
+  .client { grid-template-columns: minmax(0, 1fr) auto; }
+  .client-bar { grid-column: 1 / -1; grid-row: 2; }
+}
+
+@media (max-width: 560px) {
+  .top nav a:not(:last-child) { display: none; }
+}

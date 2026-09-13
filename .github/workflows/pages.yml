@@ -1,0 +1,46 @@
+name: Site
+
+# Publishes site/ — the project's public page — to GitHub Pages. Plain static
+# files, no build step: what is in site/ is what is served.
+#
+# Needs Pages enabled once with "GitHub Actions" as the source
+# (Settings → Pages, or `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`).
+# Until then the deploy job fails with a message saying so and nothing else is
+# affected.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
