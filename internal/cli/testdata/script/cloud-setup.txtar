@@ -1,0 +1,52 @@
+# orch cloud setup — G8.1. The deploy itself runs against a fake wrangler in
+# internal/publish's tests; this script covers what the command does before
+# wrangler is ever involved. $HOME points into $WORK (see the harness), and
+# $CLOUD_URL / admin-token.txt are the in-memory Worker's.
+
+# ---- --dry-run prints the plan and runs nothing ---------------------------
+exec orch cloud setup --dry-run
+stdout 'plan for Worker "orch-cloud" \(--dry-run: nothing runs\)'
+stdout 'npx --yes wrangler@4\.131\.1 whoami'
+stdout 'login --device'
+stdout 'npx --yes wrangler@4\.131\.1 deploy'
+stdout 'secret put ADMIN_TOKEN'
+stdout 'orch publish --to cloud'
+! exists home/.orch/credentials
+
+exec orch cloud setup --dry-run --name acme-viewer
+stdout 'plan for Worker "acme-viewer"'
+
+! exec orch cloud setup --dry-run --name Not_A_Name
+stderr 'worker name "Not_A_Name" must be lowercase'
+
+# ---- no npx: the prerequisite is named, nothing else happens --------------
+# $ORCH_BIN_DIR holds only the orch command (see the harness), so this PATH
+# runs orch and nothing installed on the machine — in particular no npx.
+env SAVED_PATH=$PATH
+env PATH=$ORCH_BIN_DIR
+! exec orch cloud setup --yes
+stderr 'npx was not found on PATH'
+stderr 'install Node\.js 20\+'
+! exists home/.orch/credentials
+env PATH=$SAVED_PATH
+
+# ---- a machine that is already set up asks before changing anything -------
+stdin admin-token.txt
+exec orch cloud login --url $CLOUD_URL
+exists home/.orch/credentials
+
+# $CLOUD_URL is not a Worker named orch-cloud, so setup says the stored
+# project tokens would be dropped — and a "no" stops it before wrangler. The
+# PATH again has no npx, so reaching step 1 would print the npx error instead
+# of "Aborted".
+env PATH=$ORCH_BIN_DIR
+stdin no.txt
+! exec orch cloud setup
+stdout 'is not a Worker named "orch-cloud"'
+stdout 'Continue\? \[y/N\] Aborted\. No changes made\.'
+! stdout '\[1/6\]'
+! stderr 'npx'
+env PATH=$SAVED_PATH
+
+-- no.txt --
+n

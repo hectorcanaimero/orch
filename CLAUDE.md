@@ -111,7 +111,7 @@ internal/
   worktree/          — per-task git isolation
   vcs/               — github/gitlab via gh/glab
   dashboard/         — HTTP server, access model, endpoints, SSE; embeds web/ (spa.go)
-  publish/           — stakeholder snapshot (snapshot/), the static site of `orch publish --to dir|git`, and `--to cloud` (cloud.go + credentials.go, ~/.orch/credentials; contract in docs/CLOUD.md, Worker in the orch-cloud repo); embeds the stakeholder bundle
+  publish/           — stakeholder snapshot (snapshot/), the static site of `orch publish --to dir|git`, and `--to cloud` (cloud.go + credentials.go, ~/.orch/credentials; contract in docs/CLOUD.md, Worker in the orch-cloud repo); `orch cloud setup` (cloudsetup.go) drives a pinned `npx wrangler` to deploy the Worker's built copy in cloudworker/ (regenerate per its README); embeds the stakeholder bundle
   report/            — `orch report pdf`
   mcp/               — MCP stdio server (orch_* tools; docs/MCP.md)
   skills/            — embedded skills (orch + the planning pipeline orch-plan/prd/arch/spec/tasks, G6.5) + `orch install-skills`; internal/cli/skills_contract_test.go checks them against the command tree and the atomize parser

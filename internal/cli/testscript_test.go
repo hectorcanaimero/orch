@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -69,6 +70,13 @@ func TestCLICommands(t *testing.T) {
 			// the script can pipe it to `orch cloud login` without the
 			// token appearing in the script. $HOME points into $WORK so
 			// ~/.orch/credentials is the script's own.
+			// $ORCH_BIN_DIR is the directory testscript.Main put the orch
+			// command in. A script that needs a PATH without some tool —
+			// cloud-setup.txtar without npx — sets PATH=$ORCH_BIN_DIR, which
+			// still runs orch but nothing from the machine.
+			if orchPath, err := exec.LookPath("orch"); err == nil {
+				env.Setenv("ORCH_BIN_DIR", filepath.Dir(orchPath))
+			}
 			worker := cloudfake.New()
 			env.Defer(worker.Close)
 			env.Setenv("CLOUD_URL", worker.URL)
