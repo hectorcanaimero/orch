@@ -10,7 +10,7 @@
 // one of those answers already exists behind `state.Backend`; the scripts just
 // have no way to ask for them.
 //
-// These seven tools are that surface. The three the scripts already cover
+// These tools are that surface. The three the scripts already cover
 // (`orch_set_status`, `orch_block`) keep exactly the shape the scripts have, so
 // G6.6 can offer MCP first and fall back to the scripts without either side
 // learning a new vocabulary:
@@ -21,7 +21,8 @@
 //
 // The other five (`orch_list_tasks`, `orch_get_task`, `orch_budget`,
 // `orch_events`, `orch_context`) are read-only and have no script equivalent
-// at all.
+// at all. `orch_report_finding` writes nothing local: it files a GitHub issue
+// about orch itself, and only when the project opted in.
 //
 // # One backend, no second source of truth
 //
@@ -52,7 +53,7 @@ import (
 )
 
 // ServerName is the name the server reports in `initialize`. It is what an
-// agent's tool list groups these seven under, so it matches the binary.
+// agent's tool list groups these tools under, so it matches the binary.
 const ServerName = "orch"
 
 // BudgetReporter is the slice of *budget.Gate that `orch_budget` and
@@ -88,6 +89,9 @@ type Options struct {
 	// Version is reported in `initialize`, so an agent can tell which orch
 	// it is talking to.
 	Version string
+	// Findings files orch_report_finding's issues. Nil means
+	// `report_findings.enabled` is off: the tool is still listed, and says so.
+	Findings FindingsReporter
 }
 
 // server holds the options every tool handler closes over.
@@ -95,7 +99,7 @@ type server struct {
 	opts Options
 }
 
-// NewServer builds the MCP server with all seven tools registered.
+// NewServer builds the MCP server with every tool registered.
 func NewServer(opts Options) (*mcpsdk.Server, error) {
 	if opts.Backend == nil {
 		return nil, fmt.Errorf("mcp: Options.Backend is required")
@@ -156,6 +160,18 @@ func NewServer(opts Options) (*mcpsdk.Server, error) {
 			"counts, plus — with a task_id — everything that task's dispatch " +
 			"prompt carries, including what its finished dependencies said.",
 	}, s.taskContext)
+
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name: "orch_report_finding",
+		Description: "Report a bug in orch itself, or an improvement or feature " +
+			"orch should have, as a GitHub issue on " + FindingsRepo + ". Use it " +
+			"when orch (not the project you are working on) got in your way or " +
+			"surprised you: a wrong status, a refused tool, a confusing message, a " +
+			"missing command. Keep it about orch — no secrets, no project code, no " +
+			"customer or project names. It searches first: a same-titled issue is " +
+			"returned instead of filed, and similar ones stop the filing until you " +
+			"call again with confirm_new. Keep working on your task afterwards.",
+	}, s.reportFinding)
 
 	return srv, nil
 }

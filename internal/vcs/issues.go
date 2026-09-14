@@ -3,6 +3,7 @@ package vcs
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Issue is one GitHub issue, in the shape `gh issue list --json …` returns.
@@ -114,3 +115,50 @@ func (p *GitHubProvider) ListIssues(q IssueQuery) ([]Issue, error) {
 // 500 is well past any backlog someone would hand to one orch project, and
 // `--limit` moves it.
 const defaultIssueLimit = 500
+
+// SearchIssues returns up to limit issues in repo carrying label whose title
+// matches the words of query, open and closed alike. gh's `--search` is
+// GitHub's issue search, so the match is fuzzy by design: it is a list of
+// candidates for a human or a model to judge, not a verdict.
+func (p *GitHubProvider) SearchIssues(repo, label, query string, limit int) ([]Issue, error) {
+	if err := checkBinary("gh"); err != nil {
+		return nil, err
+	}
+	out, err := run("gh", nil, "issue", "list", "--repo", repo,
+		"--label", label, "--state", "all",
+		"--search", query+" in:title",
+		"--limit", fmt.Sprintf("%d", limit),
+		"--json", issueListFields)
+	if err != nil {
+		return nil, fmt.Errorf("gh issue list --repo %s --search %q: %w", repo, query, err)
+	}
+	var issues []Issue
+	if err := json.Unmarshal([]byte(out), &issues); err != nil {
+		return nil, fmt.Errorf("parsing gh issue list output: %w", err)
+	}
+	return issues, nil
+}
+
+// CreateIssue files an issue in repo and returns its URL, which is what
+// `gh issue create` prints.
+func (p *GitHubProvider) CreateIssue(repo, title, body string, labels []string) (string, error) {
+	if err := checkBinary("gh"); err != nil {
+		return "", err
+	}
+	args := []string{"issue", "create", "--repo", repo, "--title", title, "--body", body}
+	for _, l := range labels {
+		args = append(args, "--label", l)
+	}
+	out, err := run("gh", nil, args...)
+	if err != nil {
+		if authErr := checkAuth("gh", nil); authErr != nil {
+			return "", authErr
+		}
+		return "", fmt.Errorf("gh issue create --repo %s: %w", repo, err)
+	}
+	url := strings.TrimSpace(out)
+	if url == "" {
+		return "", fmt.Errorf("gh issue create --repo %s printed no URL", repo)
+	}
+	return url, nil
+}

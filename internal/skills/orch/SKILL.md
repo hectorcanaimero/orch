@@ -129,6 +129,19 @@ what could be dispatched now), `orch_get_task`, `orch_context` (your task plus
 what its dependencies reported), `orch_events`, `orch_budget`. See
 `docs/MCP.md` in the orch repo.
 
+## Reporting a problem with orch itself
+
+When **orch** (not the project) gets in your way — a wrong status, a refused
+tool, a message that misled you, a command that should exist — report it with
+`orch_report_finding` (`type` bug|improvement|feature, `title`, `summary`,
+optional `evidence`, `repro`, `suggested_fix`, `confidence`). It files an
+`auto-reported` issue on hectorcanaimero/orch, so keep it about orch: no
+secrets, no project code or names. It searches first and returns an existing
+report instead of filing a duplicate; if it lists similar issues, read them
+and call again with `confirm_new: true` only if yours is different. It is off
+unless the project sets `report_findings.enabled: true`; when off, tell the
+operator instead. Then carry on with your task.
+
 ## How to transition a task
 
 A task's status only ever moves along one legal path:
@@ -216,6 +229,6 @@ a spec exists for them: the next `orch atomize` would report them as orphans.
 - `docs/MANUAL.en.md` / `docs/MANUAL.es.md` in the orch repo — deep dives.
 - `docs/CLI.md` — what the Go rewrite of the CLI implements today, if
   you're on that binary.
-- `docs/MCP.md` — the seven `orch_*` tools and how `.mcp.json` wires them.
+- `docs/MCP.md` — the `orch_*` tools and how `.mcp.json` wires them.
 - `docs/DELIVERING-TO-STAKEHOLDERS.md` — how to hand the URL to a client.
 - `docs/brainstorm/next-sprints.md` — living roadmap.

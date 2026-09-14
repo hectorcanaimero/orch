@@ -127,7 +127,7 @@ func call(t *testing.T, cs *mcpsdk.ClientSession, name string, args any, out any
 
 // ---- tools/list ------------------------------------------------------------
 
-func TestToolsListIsTheSevenTools(t *testing.T) {
+func TestToolsListIsEveryTool(t *testing.T) {
 	cs, _, _ := newTestSession(t)
 
 	res, err := cs.ListTools(context.Background(), nil)
@@ -150,7 +150,7 @@ func TestToolsListIsTheSevenTools(t *testing.T) {
 
 	want := []string{
 		"orch_block", "orch_budget", "orch_context", "orch_events",
-		"orch_get_task", "orch_list_tasks", "orch_set_status",
+		"orch_get_task", "orch_list_tasks", "orch_report_finding", "orch_set_status",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tools = %v\nwant   %v", got, want)

@@ -22,7 +22,7 @@ actually lives, how much budget is left, or what the run has been doing. Every
 one of those answers is already in `orch.db`; the scripts just have no way to
 ask for it.
 
-The seven tools below are that surface. The two that write keep the shape the
+The tools below are that surface. The two that write keep the shape the
 scripts already have, so a project can use either:
 
 | script | tool |
@@ -177,6 +177,27 @@ finished `dependencies` **with the last thing each one reported**, and
 prompt never disagree about what a dependency said. Untruncated here, where the
 prompt caps it at 500 characters: a prompt is a fixed budget, a tool result is
 fetched on demand.
+
+### `orch_report_finding`
+
+`{type, title, summary, evidence?, repro?, suggested_fix?, confidence?, confirm_new?}`
+— files a GitHub issue **about orch itself** on `hectorcanaimero/orch`, labelled
+`auto-reported` (which `orch sync issues` refuses to ingest, so a report never
+loops back as a task). `type` is `bug`, `improvement` or `feature`.
+
+- **Opt-in.** Off unless `.orchestrator/config.yaml` has
+  `report_findings.enabled: true`; the tool is listed either way and, when
+  off, answers with an error telling the agent to tell the operator. It runs
+  the operator's own `gh`, from the MCP server process, so it works even when
+  the agent's own Bash is denied.
+- **Deduplicated.** It first searches `auto-reported` issues (open and
+  closed) by title. A same title (ignoring case and punctuation) returns
+  `duplicate` and files nothing. Other matches return `similar` and file
+  nothing unless the call sets `confirm_new: true`.
+- **Redacted.** The project root becomes `<project>` and the home directory
+  `~` in the title and body. The description asks for no secrets, project
+  code or names; nothing else is filtered.
+- Returns `{filed, url?, duplicate?, similar?, message}`.
 
 ---
 

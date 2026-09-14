@@ -341,6 +341,19 @@ claim one of those.
 that is the label orch puts on issues it *files itself*, so ingesting it would
 turn orch's own bug reports into tasks for orch, and every run would add more.
 
+### `report_findings` — new
+
+```yaml
+report_findings:
+  enabled: false   # let agents file issues about orch on hectorcanaimero/orch
+```
+
+Turns on the MCP tool `orch_report_finding` (see [`MCP.md`](MCP.md)): an agent
+that hits a bug in orch, or sees an improvement or a missing feature, files it
+as an `auto-reported` issue with your `gh` login. Off by default, because it
+publishes under your account. Not the Python line's `findings:` block, which
+was removed and still warns.
+
 ### Misc
 
 ```yaml
