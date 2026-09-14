@@ -168,6 +168,15 @@ func (m *Manager) Remove(taskID string) error {
 // run already pushed, so downstream code (context file injection, the
 // per-attempt spawn) works unchanged regardless of whether the worktree is
 // fresh or recreated.
+//
+// The fetch only moves origin/orch/<taskID>; checking out the local
+// orch/<taskID> ref afterwards would silently ignore it whenever the local
+// ref is stale or missing commits an operator (or another orch instance)
+// pushed straight to origin (#254). `worktree add -B` resets the local
+// branch to match the freshly fetched remote ref before checkout, so the
+// re-dispatch always starts from what's actually on origin. If origin has
+// no such branch, the fetch fails and Recreate returns an error instead of
+// falling back to a possibly-stale local branch.
 func (m *Manager) Recreate(taskID string) (string, error) {
 	// Clean up any stale dir first. Best-effort — Remove already logs a
 	// genuine failure at WARN — but folded into the returned error via
@@ -175,11 +184,12 @@ func (m *Manager) Recreate(taskID string) (string, error) {
 	cleanupErr := m.Remove(taskID)
 	branch := m.BranchName(taskID)
 	wtPath := m.WorktreePath(taskID)
+	remoteBranch := "origin/" + branch
 
 	if _, err := m.run(taskID, "git", "fetch", "origin", branch); err != nil {
 		return "", errors.Join(err, cleanupErr)
 	}
-	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, branch); err != nil {
+	if _, err := m.run(taskID, "git", "worktree", "add", "-B", branch, wtPath, remoteBranch); err != nil {
 		return "", errors.Join(err, cleanupErr)
 	}
 

@@ -371,6 +371,60 @@ func TestRecreateChecksOutThePushedBranch(t *testing.T) {
 	}
 }
 
+// #254: an operator (or a second orch instance) pushes a fix straight to
+// origin/orch/<taskID> after a rejected auto-push. Recreate must pick up
+// that pushed commit even though the local branch ref never moved — it
+// fetches origin/orch/<taskID> right before checking the branch out.
+func TestRecreatePicksUpCommitsPushedByAnotherClone(t *testing.T) {
+	root := newTestRepo(t)
+	remote := newBareRemote(t, root)
+	m := NewManager(root, true)
+
+	wt, err := m.Create("F9.T2", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "output.txt"), []byte("first attempt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F9.T2", "first attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Push("F9.T2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remove("F9.T2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another clone (an operator's manual fix, or a second orch instance)
+	// pushes a newer commit straight to origin/orch/F9.T2. The project's
+	// own local orch/F9.T2 ref never sees it.
+	other := filepath.Join(t.TempDir(), "other")
+	runGit(t, "", "clone", "-q", "-b", "orch/F9.T2", remote, other)
+	runGit(t, other, "config", "user.email", "test@example.com")
+	runGit(t, other, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(other, "output.txt"), []byte("pushed fix\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, other, "add", "-A")
+	runGit(t, other, "commit", "-q", "-m", "pushed fix")
+	runGit(t, other, "push", "-q", "origin", "orch/F9.T2")
+
+	recreated, err := m.Recreate("F9.T2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G304 -- recreated is a path this test just computed under t.TempDir().
+	data, err := os.ReadFile(filepath.Join(recreated, "output.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "pushed fix\n" {
+		t.Errorf("output.txt = %q, want %q (Recreate checked out the stale local branch instead of origin/orch/F9.T2)", data, "pushed fix\n")
+	}
+}
+
 // ---- Exists / BranchName / WorktreePath ------------------------------------
 
 func TestExistsReflectsDirectoryPresence(t *testing.T) {
