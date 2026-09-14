@@ -3,6 +3,7 @@ package snapshot
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hectorcanaimero/orch/internal/graph"
 )
@@ -16,7 +17,7 @@ import (
 // blockers feeds the "Bloqueos"/"Blocked" tail, capped at 3 like Python's
 // `reasons[:3]`, each rendered as "• title: reason" — reason already
 // translated (translate.go), never the raw text Python's version shipped.
-func executiveSummary(lang string, s graph.Summary, etaHours *float64, totalSpendUSD *float64, blockers []Blocker) string {
+func executiveSummary(lang string, s graph.Summary, etaHours *float64, projection *graph.Projection, totalSpendUSD *float64, blockers []Blocker) string {
 	pct := 0
 	if s.Total > 0 {
 		pct = roundInt(float64(s.Done) / float64(s.Total) * 100)
@@ -37,7 +38,11 @@ func executiveSummary(lang string, s graph.Summary, etaHours *float64, totalSpen
 		if len(blockers) > 0 {
 			tail = append(tail, "Blocked:\n"+blockerLines(blockers))
 		}
-		if etaHours != nil {
+		switch {
+		case projection != nil:
+			head = append(head, fmt.Sprintf("Estimated finish: %s (%s confidence).",
+				shortDate(projection.Date, "en"), projection.Confidence))
+		case etaHours != nil:
 			head = append(head, fmt.Sprintf("~%.1fh remaining at current pace.", *etaHours))
 		}
 		if totalSpendUSD != nil {
@@ -54,7 +59,15 @@ func executiveSummary(lang string, s graph.Summary, etaHours *float64, totalSpen
 		if len(blockers) > 0 {
 			tail = append(tail, "Bloqueos:\n"+blockerLines(blockers))
 		}
-		if etaHours != nil {
+		switch {
+		case projection != nil:
+			confidence := "alta"
+			if projection.Confidence == "low" {
+				confidence = "baja"
+			}
+			head = append(head, fmt.Sprintf("Fecha estimada: %s (confianza %s).",
+				shortDate(projection.Date, "es"), confidence))
+		case etaHours != nil:
 			head = append(head, fmt.Sprintf("Restan ~%.1fh al ritmo actual.", *etaHours))
 		}
 		if totalSpendUSD != nil {
@@ -67,6 +80,20 @@ func executiveSummary(lang string, s graph.Summary, etaHours *float64, totalSpen
 		text += "\n\n" + strings.Join(tail, "\n")
 	}
 	return text
+}
+
+// shortDate renders a YYYY-MM-DD day as "16 sept" or "Sep 16". A date that
+// does not parse is returned as given rather than dropped.
+func shortDate(day, lang string) string {
+	t, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return day
+	}
+	if lang == "en" {
+		return t.Format("Jan 2")
+	}
+	months := [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"}
+	return fmt.Sprintf("%d %s", t.Day(), months[t.Month()-1])
 }
 
 // blockerLines renders up to the first 3 blockers as "• title: reason",

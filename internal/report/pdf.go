@@ -220,7 +220,17 @@ func writeSummary(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	// The ETA only appears when there is one. A "—" in a box of numbers reads
 	// as a broken figure; an absent box reads as "not applicable yet", which
 	// is what a project with nothing finished actually is.
-	if s.Summary.ETAHours != nil {
+	// A finish date wins over hours: it is the figure the executive summary
+	// and the dashboard's Sprint page quote, and the box must not contradict
+	// the sentence under it.
+	switch {
+	case s.Summary.ETADate != nil:
+		value := *s.Summary.ETADate
+		if d, err := time.Parse("2006-01-02", value); err == nil {
+			value = d.Format("2 Jan 2006")
+		}
+		cells = append(cells, struct{ label, value string }{"Est. finish", value})
+	case s.Summary.ETAHours != nil:
 		cells = append(cells, struct{ label, value string }{
 			"Est. remaining", fmt.Sprintf("%.0f h", *s.Summary.ETAHours)})
 	}

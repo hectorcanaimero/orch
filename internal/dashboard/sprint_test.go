@@ -241,6 +241,31 @@ func TestBlockedTasksAreNotRemainingWork(t *testing.T) {
 	}
 }
 
+// The Sprint page said a task was blocked because of "success": the reason was
+// read off the task's last EVENT, and an agent that calls orch_block and exits
+// cleanly leaves a success event behind. The reason lives in the task's last
+// note, which is where orch_block and the engine write it.
+func TestBlockerReasonComesFromTheLastNote(t *testing.T) {
+	blocked := task("F6.1.T2", 6, model.StatusBlocked, 3, "Plan de campaña")
+	blocked.Comments = []json.RawMessage{
+		json.RawMessage(`{"author":"orch","body":"dispatched to claude/sonnet","at":"2026-09-13T10:00:00Z"}`),
+		json.RawMessage(`{"author":"claude/sonnet","body":"Falta el presupuesto de pauta en marketing/decisions.md","at":"2026-09-13T10:05:00Z"}`),
+	}
+	lastEvents := map[string]state.Event{"F6.1.T2": event("success", "2026-09-13T10:06:00Z", nil)}
+
+	got := sprintHealth([]model.Task{blocked}, 7, lastEvents, frozenNow).Blockers
+	if len(got) != 1 || got[0].Reason != "Falta el presupuesto de pauta en marketing/decisions.md" {
+		t.Errorf("reason = %+v, want the block note", got)
+	}
+
+	// No note and a non-failure event: say nothing specific, never "success".
+	blocked.Comments = nil
+	got = sprintHealth([]model.Task{blocked}, 7, lastEvents, frozenNow).Blockers
+	if got[0].Reason == "success" {
+		t.Errorf("reason = %q: an event that is not a failure is not a reason", got[0].Reason)
+	}
+}
+
 func eqFloatPtr(a, b *float64) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil

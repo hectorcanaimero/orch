@@ -156,6 +156,11 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 	if err != nil {
 		return snapshot.Snapshot{}, fmt.Errorf("reading the spend log: %w", err)
 	}
+	// The pace behind the finish date, counted as the Sprint page counts it.
+	doneInWindow, err := backend.CountDoneLastNDays(ctx, snapshot.VelocityWindowDays)
+	if err != nil {
+		return snapshot.Snapshot{}, fmt.Errorf("counting recent completions: %w", err)
+	}
 
 	name := f.Meta.Project
 	if name == "" {
@@ -189,5 +194,7 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		ShowSpend: cfg.Dashboard.ShowSpendToStakeholder,
 		Branding:  branding,
 		Now:       now,
+
+		DoneInVelocityWindow: doneInWindow,
 	}), nil
 }

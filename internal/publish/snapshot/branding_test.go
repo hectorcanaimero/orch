@@ -246,7 +246,7 @@ var allowedKeys = map[string]bool{
 	// summary
 	"total": true, "done": true, "in_progress": true, "blocked": true,
 	"backlog": true, "percent_done": true, "estimate_hours_total": true,
-	"eta_hours": true,
+	"eta_hours": true, "eta_date": true, "eta_confidence": true,
 	// milestones
 	"phase": true, "name": true, "complete": true,
 	// blockers
@@ -265,6 +265,7 @@ var allowedKeys = map[string]bool{
 func TestEveryEmittedKeyIsInTheSchema(t *testing.T) {
 	in := demoInput()
 	in.ShowSpend = true
+	in.DoneInVelocityWindow = 7 // so eta_date and eta_confidence are emitted
 	in.Branding = Branding{
 		Name: "Acme", Logo: "data:image/png;base64," +
 			base64.StdEncoding.EncodeToString(onePixelPNG),

@@ -72,7 +72,15 @@ type Input struct {
 	// Now is injected rather than read from the clock so a snapshot is
 	// reproducible in a test.
 	Now time.Time
+	// DoneInVelocityWindow is how many tasks finished in the last
+	// VelocityWindowDays (state.CountDoneLastNDays). Zero means no pace is
+	// known, and the summary falls back to the hours estimate.
+	DoneInVelocityWindow int
 }
+
+// VelocityWindowDays is the window DoneInVelocityWindow is counted over —
+// the same seven days the dashboard's Sprint page measures velocity on.
+const VelocityWindowDays = 7
 
 // Snapshot is the document itself.
 type Snapshot struct {
@@ -107,6 +115,11 @@ type Summary struct {
 	// left) — rendering "—" is the caller's job; a 0 here would be read as
 	// "no time left", which is a different fact.
 	ETAHours *float64 `json:"eta_hours"`
+	// ETADate is the projected finish day (YYYY-MM-DD) at the measured pace,
+	// graph.ProjectCompletion — the date the Sprint page shows. Absent when
+	// no pace is known. ETAConfidence is "high" or "low" alongside it.
+	ETADate       *string `json:"eta_date,omitempty"`
+	ETAConfidence string  `json:"eta_confidence,omitempty"`
 }
 
 // Milestone is one phase's progress. Phase numbers are not task ids — they
@@ -167,6 +180,7 @@ func Build(in Input) Snapshot {
 	summary := graph.Summarize(in.Tasks)
 	humanHours := project.HumanHoursByTask(in.Events)
 	eta := etaHoursRemaining(in.Tasks, humanHours)
+	projection := graph.ProjectCompletion(remainingTasks(in.Tasks), in.DoneInVelocityWindow, VelocityWindowDays, in.Now)
 
 	milestones := buildMilestones(in.Tasks, in.Phases)
 	blockers := buildBlockers(in.Tasks, in.Events, lang)
@@ -196,6 +210,8 @@ func Build(in Input) Snapshot {
 			PercentDone:        round1(summary.PercentDone),
 			EstimateHoursTotal: round1(summary.EstimateHoursTotal),
 			ETAHours:           eta,
+			ETADate:            projectionDate(projection),
+			ETAConfidence:      projectionConfidence(projection),
 		},
 		Milestones: milestones,
 		Blockers:   blockers,
@@ -205,11 +221,37 @@ func Build(in Input) Snapshot {
 			SpendByDay: spendByDay,
 		},
 		ExecutiveSummary: ExecutiveSummary{
-			Text:     executiveSummary(lang, summary, eta, totalSpendForSummary, blockers),
+			Text:     executiveSummary(lang, summary, eta, projection, totalSpendForSummary, blockers),
 			Language: lang,
 		},
 		Branding: brandingOrNil(in.Branding),
 	}
+}
+
+// remainingTasks is what the velocity projection counts down: tasks neither
+// done nor blocked, as the Sprint page counts them.
+func remainingTasks(tasks []model.Task) int {
+	n := 0
+	for _, t := range tasks {
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked {
+			n++
+		}
+	}
+	return n
+}
+
+func projectionDate(p *graph.Projection) *string {
+	if p == nil {
+		return nil
+	}
+	return &p.Date
+}
+
+func projectionConfidence(p *graph.Projection) string {
+	if p == nil {
+		return ""
+	}
+	return p.Confidence
 }
 
 // brandingOrNil keeps the field absent rather than present-and-empty.

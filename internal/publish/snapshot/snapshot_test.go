@@ -187,6 +187,45 @@ func TestETAHoursFallsBackToRawEstimateWithNothingDoneYet(t *testing.T) {
 	}
 }
 
+// With a measured pace the snapshot carries the same finish date the Sprint
+// page shows, and the executive sentence quotes the date rather than hours:
+// the summary said "Restan ~1.7h" next to a Sprint page promising a date.
+func TestETADateFromVelocity(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	in := fixtureInput(now)
+	in.Tasks = []model.Task{
+		{ID: "A", Status: model.StatusDone, EstimateHours: 2},
+		{ID: "B", Status: model.StatusTodo, EstimateHours: 3},
+		{ID: "C", Status: model.StatusTodo, EstimateHours: 3},
+		{ID: "D", Status: model.StatusBlocked, EstimateHours: 3},
+	}
+	in.DoneInVelocityWindow = 7 // one a day; B and C remain, D is blocked
+	for lang, want := range map[string]string{
+		"es": "Fecha estimada: 16 sept (confianza alta).",
+		"en": "Estimated finish: Sep 16 (high confidence).",
+	} {
+		in.Language = lang
+		snap := Build(in)
+		if snap.Summary.ETADate == nil || *snap.Summary.ETADate != "2026-09-16" || snap.Summary.ETAConfidence != "high" {
+			t.Errorf("%s: ETADate %v confidence %q, want 2026-09-16 high", lang, snap.Summary.ETADate, snap.Summary.ETAConfidence)
+		}
+		if !strings.Contains(snap.ExecutiveSummary.Text, want) {
+			t.Errorf("%s summary = %q, want it to say %q", lang, snap.ExecutiveSummary.Text, want)
+		}
+		if strings.Contains(snap.ExecutiveSummary.Text, "h al ritmo") || strings.Contains(snap.ExecutiveSummary.Text, "h remaining") {
+			t.Errorf("%s summary still quotes hours: %q", lang, snap.ExecutiveSummary.Text)
+		}
+	}
+
+	// No pace yet: no date, and the hours sentence stays (Python's shape).
+	in.DoneInVelocityWindow = 0
+	in.Language = "es"
+	snap := Build(in)
+	if snap.Summary.ETADate != nil {
+		t.Errorf("ETADate = %v with no velocity, want none", *snap.Summary.ETADate)
+	}
+}
+
 func TestETAHoursNilWhenNothingRemains(t *testing.T) {
 	in := fixtureInput(time.Now())
 	in.Tasks = []model.Task{{ID: "X", Status: model.StatusDone, EstimateHours: 5}}
