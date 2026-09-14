@@ -266,7 +266,7 @@ var allowedKeys = map[string]bool{
 func TestEveryEmittedKeyIsInTheSchema(t *testing.T) {
 	in := demoInput()
 	in.ShowSpend = true
-	in.DoneInVelocityWindow = 7 // so eta_date and eta_confidence are emitted
+	in.DoneInVelocityWindow = 7                                      // so eta_date and eta_confidence are emitted
 	in.FinishedAt = map[string]string{"T-1": "2026-09-11T08:30:00Z"} // so deliveries and finished_at are
 	in.Branding = Branding{
 		Name: "Acme", Logo: "data:image/png;base64," +
