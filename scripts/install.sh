@@ -40,15 +40,16 @@ esac
 # ---- resolve the tag --------------------------------------------------------
 
 if [ "$VERSION" = "latest" ]; then
-  # The GitHub "latest" release redirect follows Python's own v*-py tags
-  # too if one is ever newer — ask the API for the newest v* (no -py)
-  # release specifically instead of trusting /releases/latest.
+  # Neither /releases/latest nor the newest v* tag is safe: the archived
+  # Python line published v0.5.1…v0.10.1 (no -py suffix, wheels only) and
+  # v0.11.0-py, so picking by tag name 404'd on v0.10.1 (#234). Pick the
+  # newest release that actually carries this platform's Go archive — the
+  # API lists releases newest first.
   TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
-    | grep -o '"tag_name": *"v[0-9][^"]*"' \
-    | grep -v -- '-py"' \
+    | grep -o "releases/download/v[0-9][^/\"]*/orch_v[^/\"]*_${goos}_${goarch}\.tar\.gz" \
     | head -n 1 \
-    | sed -E 's/.*"(v[0-9][^"]*)".*/\1/')
-  [ -n "$TAG" ] || die "could not find a Go release (a tag matching v[0-9]* without -py) — see https://github.com/${REPO}/releases"
+    | sed -E 's#releases/download/([^/]+)/.*#\1#')
+  [ -n "$TAG" ] || die "no release has an orch binary for ${goos}/${goarch} yet — see https://github.com/${REPO}/releases, or build from source (docs/RELEASING.md)"
 else
   TAG="$VERSION"
 fi
@@ -64,7 +65,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 info "Downloading ${ASSET}..."
 curl -fsSL -o "${TMP_DIR}/${ASSET}" "$URL" \
-  || die "download failed: $URL (does that release/asset exist?)"
+  || die "download failed: $URL — ${TAG} has no orch binary for ${goos}/${goarch} (releases before v0.12.0 are the Python line). Omit the version to get the newest Go release."
 
 if curl -fsSL -o "${TMP_DIR}/checksums.txt" "$CHECKSUMS_URL" 2>/dev/null; then
   info "Verifying checksum..."

@@ -59,12 +59,12 @@ func (s *server) listTasks(ctx context.Context, _ *mcpsdk.CallToolRequest, in li
 
 	// Ready is computed from the hydrated set, not from tasks.json's own
 	// status field — which F-12 froze at whatever it was when the file was
-	// written. `graph.Parallelizable` is the same function the dispatch loop
-	// asks, so "ready" here means the same thing it means in a run.
+	// written. `graph.Ready` is the dispatch loop's notion (todo, dependencies
+	// done), so "ready" here means the same thing it means in a run (#235).
 	var ready map[string]bool
 	if in.Ready {
 		ready = map[string]bool{}
-		for _, t := range graph.Parallelizable(tasks) {
+		for _, t := range graph.Ready(tasks) {
 			ready[t.ID] = true
 		}
 	}

@@ -99,8 +99,26 @@ func PhaseCounts(tasks []model.Task) []PhaseRow {
 	return out
 }
 
-// Parallelizable returns the tasks that could be dispatched right now:
-// backlog or todo, with every dependency already done.
+// Ready is what `orch run` would dispatch right now: Parallelizable narrowed
+// to todo. A backlog task must be promoted first — engine.TaskQueue.Ready
+// skips it — so calling it ready promised a dispatch that never came (#235).
+// This is the notion every "ready" surface (orch explain, orch_context,
+// orch_list_tasks{ready}) publishes.
+func Ready(tasks []model.Task) []model.Task {
+	par := Parallelizable(tasks)
+	ready := par[:0]
+	for _, t := range par {
+		if t.Status == model.StatusTodo {
+			ready = append(ready, t)
+		}
+	}
+	return ready
+}
+
+// Parallelizable returns the tasks whose dependencies no longer hold them
+// back: backlog or todo, with every dependency already done. It is Python's
+// analytics figure (the dashboard's `parallelizable`), not what a run
+// dispatches — that is Ready.
 //
 // A dependency that names a task nobody defined counts as NOT done. That is
 // Python's `by_id.get(dep_id)` returning None, and it is the safe reading — a

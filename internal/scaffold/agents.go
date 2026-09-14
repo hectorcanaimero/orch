@@ -71,8 +71,8 @@ const aboutOrchBlock = `## About orch (this project is orch-managed)
 
 - ` + "`orch`" + ` walks ` + "`tasks.json`" + ` as a DAG and dispatches each task to
   Claude / Codex / OpenCode / Gemini in parallel.
-- **CLI missing?** ` + "`pipx install orch`" + `
-  (repo: <https://github.com/hectorcanaimero/orch>).
+- **CLI missing?** ` + "`curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh`" + `
+  or ` + "`brew install hectorcanaimero/orch/orch`" + ` (repo: <https://github.com/hectorcanaimero/orch>).
 - **Never edit ` + "`tasks.json`" + ` status directly** — runtime state lives
   in SQLite. Use ` + "`orch task set --id ID --status STATUS`" + ` or one of
   the ` + "`scripts/task-*.sh`" + ` helpers.
