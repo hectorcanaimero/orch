@@ -65,6 +65,7 @@ naming the key.
 | `branding` | object | **Optional**, absent unless `presentation.branding` is configured. See below. |
 | `executive_summary` | object | See below. |
 | `deliveries` | array of object | **Optional**, absent when nothing was finished in the last 30 days. See below. |
+| `documents` | array of object | **Optional**, absent when `portal.documents` matches nothing. See below. |
 
 ## `summary`
 
@@ -116,6 +117,15 @@ Each `deliverables[]` entry is `title`, `status` — `done`, `in_progress`,
 `blocked` or `pending` (backlog and todo are one state to a client: not
 started) — and `finished_at` (RFC 3339) on a done deliverable whose finish
 time is recorded.
+
+## `documents[]`
+
+The project files the operator shares (`portal.documents` in
+[`CONFIG.md`](CONFIG.md)): `id` (a slug of the title, unique in the document,
+for links — never a path), `title` (the first `# ` heading, a plan's `F<n> — `
+dropped, else the file name), `updated_at` (the file's modification time, RFC
+3339 UTC) and `markdown` (the body, YAML frontmatter stripped). Rendering is
+the viewer's; the portal sanitises the HTML it produces.
 
 ## `deliveries[]`
 

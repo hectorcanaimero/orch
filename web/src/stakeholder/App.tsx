@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from "react"
-import { ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, TriangleAlert } from "lucide-react"
+import { ArrowLeft, ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, FileText, TriangleAlert } from "lucide-react"
 import {
   copy,
   currentPhase,
   deliveriesSince,
   formatDay,
   langOf,
+  parseRoute,
   phaseName,
   phaseState,
   readAndRecordVisit,
+  renderMarkdown,
   statusLine,
   type Lang,
   type PhaseState,
+  type Tab,
 } from "./portal"
 import "./portal.css"
-import type { DeliverableStatus, StakeholderMilestone, StakeholderSnapshot } from "./types"
+import type { DeliverableStatus, StakeholderDocument, StakeholderMilestone, StakeholderSnapshot } from "./types"
 
 declare global {
   interface Window {
@@ -39,10 +42,8 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; data: StakeholderSnapshot }
 
-type Tab = "overview" | "roadmap"
-
-function tabFromHash(): Tab {
-  return typeof window !== "undefined" && window.location.hash === "#roadmap" ? "roadmap" : "overview"
+function currentRoute() {
+  return parseRoute(typeof window !== "undefined" ? window.location.hash : "")
 }
 
 export default function App() {
@@ -99,22 +100,28 @@ export default function App() {
 function Portal({ data }: { data: StakeholderSnapshot }) {
   const lang = langOf(data)
   const t = copy[lang]
-  const [tab, setTab] = useState<Tab>(tabFromHash)
+  const [route, setRoute] = useState(currentRoute)
   // Read once per page load: the previous visit is what "since" means.
   const [lastVisit] = useState(() => readAndRecordVisit(data.project_name, new Date()))
 
   useEffect(() => {
-    const onHash = () => setTab(tabFromHash())
+    const onHash = () => {
+      setRoute(currentRoute())
+      window.scrollTo(0, 0)
+    }
     window.addEventListener("hashchange", onHash)
     return () => window.removeEventListener("hashchange", onHash)
   }, [])
 
   const accent = data.branding?.accent_color
   const name = data.branding?.name?.trim() || data.project_name
+  const documents = data.documents ?? []
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: t.summary },
     { id: "roadmap", label: t.roadmap },
+    ...(documents.length > 0 ? [{ id: "documents" as Tab, label: t.documents }] : []),
   ]
+  const tab = route.tab === "documents" && documents.length === 0 ? "overview" : route.tab
 
   return (
     <div className="portal" lang={lang} style={accent ? ({ "--portal-accent": accent } as React.CSSProperties) : undefined}>
@@ -136,7 +143,9 @@ function Portal({ data }: { data: StakeholderSnapshot }) {
       </header>
 
       <main className="mx-auto max-w-[720px] px-5 pb-28 pt-8 sm:pb-16">
-        {tab === "overview" ? <Overview data={data} lang={lang} lastVisit={lastVisit} /> : <Roadmap data={data} lang={lang} />}
+        {tab === "overview" ? <Overview data={data} lang={lang} lastVisit={lastVisit} /> : null}
+        {tab === "roadmap" ? <Roadmap data={data} lang={lang} /> : null}
+        {tab === "documents" ? <Documents documents={documents} open={route.doc} lang={lang} /> : null}
         {data.branding?.footer ? (
           <footer className="mt-16 border-t border-[var(--portal-line)] pt-5 text-sm text-[var(--portal-muted)]">{data.branding.footer}</footer>
         ) : null}
@@ -292,6 +301,54 @@ function Overview({ data, lang, lastVisit }: { data: StakeholderSnapshot; lang: 
       ) : null}
 
     </div>
+  )
+}
+
+function Documents({ documents, open, lang }: { documents: StakeholderDocument[]; open?: string; lang: Lang }) {
+  const t = copy[lang]
+  const doc = open ? documents.find((d) => d.id === open) : undefined
+  const html = useMemo(() => (doc ? renderMarkdown(doc.markdown) : ""), [doc])
+
+  if (open) {
+    return (
+      <article className="flex flex-col gap-6">
+        <a href="#documents" className="inline-flex items-center gap-2 self-start text-base font-medium no-underline">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          {t.allDocuments}
+        </a>
+        {doc ? (
+          <>
+            <p className="text-sm text-[var(--portal-muted)]">{t.updatedOn(formatDay(doc.updated_at, lang))}</p>
+            <div
+              className="portal-prose prose max-w-none prose-headings:font-semibold"
+              // Sanitised by renderMarkdown (DOMPurify) before it gets here.
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          </>
+        ) : (
+          <p className="text-[var(--portal-muted)]">{t.noDocument}</p>
+        )}
+      </article>
+    )
+  }
+
+  return (
+    <section aria-label={t.documents}>
+      <ul className="flex flex-col divide-y divide-[var(--portal-line)] rounded-xl bg-[var(--portal-surface)]">
+        {documents.map((d) => (
+          <li key={d.id}>
+            <a href={`#documents/${d.id}`} className="flex items-center gap-4 px-5 py-4 text-[var(--portal-ink)] no-underline">
+              <FileText className="h-5 w-5 shrink-0 text-[var(--portal-muted)]" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="portal-display text-lg font-semibold">{d.title}</p>
+                <p className="text-sm text-[var(--portal-muted)]">{t.updatedOn(formatDay(d.updated_at, lang))}</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-[var(--portal-muted)]" aria-hidden />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

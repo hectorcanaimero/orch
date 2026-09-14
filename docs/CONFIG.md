@@ -377,6 +377,24 @@ agents are asked for those ideas rather than only reporting what blocked them. O
 publishes under your account. Not the Python line's `findings:` block, which
 was removed and still warns.
 
+### `portal` — new
+
+```yaml
+portal:
+  documents:            # globs relative to the project root
+    - docs/prd/*.md
+    - docs/arch/*.md
+    - specs/f*.md
+```
+
+The markdown files the client portal (`orch publish`) lets a client read, in
+the order listed. The default is what the orch-plan pipeline writes. Each
+document is shown by its first `# ` heading (or its file name), with YAML
+frontmatter stripped and **never with its path**. A glob or a file that
+resolves outside the project is ignored, a file over 256 KB is skipped, and
+the whole set stops at 2 MB. `documents: []` publishes none. Specs name tasks
+(`### F1.1.T1`), so drop `specs/f*.md` if those should stay internal.
+
 ### Misc
 
 ```yaml

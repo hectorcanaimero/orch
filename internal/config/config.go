@@ -51,7 +51,23 @@ type Config struct {
 	Telemetry            Telemetry      `yaml:"telemetry"`
 	Sync                 Sync           `yaml:"sync"`
 	ReportFindings       ReportFindings `yaml:"report_findings"`
+	Portal               Portal         `yaml:"portal"`
 }
+
+// Portal configures what the client portal (`orch publish`) shows beyond the
+// project's status.
+type Portal struct {
+	// Documents are globs, relative to the project root, of the markdown
+	// files a client may read — by default what the orch-plan pipeline
+	// writes. An empty list publishes no documents.
+	Documents []string `yaml:"documents"`
+}
+
+// DefaultPortalDocuments is what `portal.documents` lists when a project says
+// nothing: the PRDs, architectures and specs the planning pipeline writes.
+// `specs/f*.md` rather than `specs/*.md`: orch-spec names specs fN-slug.md,
+// and the folder's README is about the folder, not the project.
+var DefaultPortalDocuments = []string{"docs/prd/*.md", "docs/arch/*.md", "specs/f*.md"}
 
 // ReportFindings lets the MCP tool orch_report_finding file GitHub issues
 // about orch itself on hectorcanaimero/orch, with the operator's own `gh`.

@@ -242,7 +242,7 @@ var allowedKeys = map[string]bool{
 	"schema": true, "generated_at": true, "project_name": true,
 	"refresh_interval_s": true, "summary": true, "milestones": true,
 	"blockers": true, "budget": true, "executive_summary": true,
-	"branding": true, "deliveries": true,
+	"branding": true, "deliveries": true, "documents": true,
 	// summary
 	"total": true, "done": true, "in_progress": true, "blocked": true,
 	"backlog": true, "percent_done": true, "estimate_hours_total": true,
@@ -250,6 +250,8 @@ var allowedKeys = map[string]bool{
 	// milestones
 	"phase": true, "name": true, "complete": true,
 	"packages": true, "deliverables": true, "status": true, "finished_at": true,
+	// documents
+	"id": true, "updated_at": true, "markdown": true,
 	// blockers
 	"title": true, "reason": true,
 	// budget
@@ -268,6 +270,7 @@ func TestEveryEmittedKeyIsInTheSchema(t *testing.T) {
 	in.ShowSpend = true
 	in.DoneInVelocityWindow = 7                                      // so eta_date and eta_confidence are emitted
 	in.FinishedAt = map[string]string{"T-1": "2026-09-11T08:30:00Z"} // so deliveries and finished_at are
+	in.Documents = []Document{{ID: "prd", Title: "PRD", UpdatedAt: "2026-09-10T00:00:00Z", Markdown: "# PRD\n"}}
 	in.Branding = Branding{
 		Name: "Acme", Logo: "data:image/png;base64," +
 			base64.StdEncoding.EncodeToString(onePixelPNG),

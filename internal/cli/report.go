@@ -166,6 +166,14 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 	if err != nil {
 		return snapshot.Snapshot{}, fmt.Errorf("reading when tasks finished: %w", err)
 	}
+	read, err := project.PortalDocuments(paths.Root, cfg.Portal.Documents)
+	if err != nil {
+		return snapshot.Snapshot{}, fmt.Errorf("reading the documents portal.documents lists: %w", err)
+	}
+	documents := make([]snapshot.Document, 0, len(read))
+	for _, d := range read {
+		documents = append(documents, snapshot.Document{ID: d.ID, Title: d.Title, UpdatedAt: d.UpdatedAt, Markdown: d.Markdown})
+	}
 
 	// The pace behind the finish date, counted as the Sprint page counts it.
 	doneInWindow, err := backend.CountDoneLastNDays(ctx, snapshot.VelocityWindowDays)
@@ -210,5 +218,6 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		PhaseTitles:          outline.Phases,
 		PackageTitles:        outline.Packages,
 		FinishedAt:           finishedAt,
+		Documents:            documents,
 	}), nil
 }

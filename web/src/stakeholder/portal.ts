@@ -1,3 +1,5 @@
+import DOMPurify from "dompurify"
+import { marked } from "marked"
 import type { StakeholderDelivery, StakeholderMilestone, StakeholderSnapshot } from "./types"
 
 export type Lang = "es" | "en"
@@ -31,6 +33,10 @@ export const copy = {
     loading: "Cargando…",
     showAll: (n: number) => `Ver las ${n} entregas`,
     showLess: "Ver menos",
+    documents: "Documentos",
+    allDocuments: "Todos los documentos",
+    updatedOn: (day: string) => `Actualizado el ${day}`,
+    noDocument: "Ese documento ya no está publicado.",
   },
   en: {
     summary: "Overview",
@@ -54,6 +60,10 @@ export const copy = {
     loading: "Loading…",
     showAll: (n: number) => `Show all ${n} deliveries`,
     showLess: "Show less",
+    documents: "Documents",
+    allDocuments: "All documents",
+    updatedOn: (day: string) => `Updated ${day}`,
+    noDocument: "That document is no longer published.",
   },
 } as const
 
@@ -142,4 +152,23 @@ export function readAndRecordVisit(project: string, now: Date): string | null {
   } catch {
     return null
   }
+}
+
+export type Tab = "overview" | "roadmap" | "documents"
+
+// parseRoute reads the page's hash: a tab, and on Documents the open one.
+// Hash routes keep a published folder working from any static host or file.
+export function parseRoute(hash: string): { tab: Tab; doc?: string } {
+  const [head, doc] = hash.replace(/^#/, "").split("/", 2)
+  if (head === "roadmap") return { tab: "roadmap" }
+  if (head === "documents") return doc ? { tab: "documents", doc } : { tab: "documents" }
+  return { tab: "overview" }
+}
+
+// renderMarkdown turns a shared document into HTML that is safe to insert:
+// the markdown is the operator's, but the page is a client's, so nothing
+// executable survives (scripts, event handlers, javascript: links).
+export function renderMarkdown(markdown: string): string {
+  const html = marked.parse(markdown, { async: false }) as string
+  return DOMPurify.sanitize(html)
 }

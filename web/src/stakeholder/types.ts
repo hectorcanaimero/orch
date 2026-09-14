@@ -115,5 +115,14 @@ export interface StakeholderSnapshot {
   branding?: StakeholderBranding
   // What finished in the last 30 days, newest first; absent when nothing did.
   deliveries?: StakeholderDelivery[]
+  // Files the operator shares (portal.documents); absent when none.
+  documents?: StakeholderDocument[]
+}
+
+export interface StakeholderDocument {
+  id: string
+  title: string
+  updated_at: string
+  markdown: string
 }
 

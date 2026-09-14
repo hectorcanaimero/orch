@@ -86,6 +86,7 @@ func Defaults() Config {
 		}},
 		Publish: Publish{IntervalS: 60, To: "dir", Dir: "public", GitBranch: "gh-pages"},
 		Sync:    Sync{IssuesLabel: DefaultSyncIssuesLabel},
+		Portal:  Portal{Documents: append([]string(nil), DefaultPortalDocuments...)},
 	}
 }
 
@@ -285,6 +286,7 @@ var knownKeys = map[string]bool{
 	"tunnel.url_parse_timeout_s": true, "tunnel.stop_timeout_s": true,
 	"telemetry.enabled": true, "telemetry.endpoint": true,
 	"report_findings.enabled": true,
+	"portal.documents":        true,
 }
 
 // droppedKeys explains the keys a pre-Go config is most likely to carry, so

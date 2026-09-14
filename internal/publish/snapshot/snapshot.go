@@ -82,6 +82,9 @@ type Input struct {
 	PhaseTitles   map[int]string
 	PackageTitles map[string]string
 	FinishedAt    map[string]string
+	// Documents are the project files the portal shows (portal.documents),
+	// already read by the caller.
+	Documents []Document
 }
 
 // VelocityWindowDays is the window DoneInVelocityWindow is counted over —
@@ -108,6 +111,18 @@ type Snapshot struct {
 	// newest first — the portal's "since your last visit". Omitted when
 	// nothing was.
 	Deliveries []Delivery `json:"deliveries,omitempty"`
+	// Documents are the files the operator chose to share, by title and
+	// never by path. Omitted when there are none.
+	Documents []Document `json:"documents,omitempty"`
+}
+
+// Document is one shared project file: a stable id for linking, its title,
+// when it last changed, and its markdown (frontmatter stripped).
+type Document struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updated_at"`
+	Markdown  string `json:"markdown"`
 }
 
 // DeliveriesWindowDays is how far back Deliveries reaches.
@@ -271,6 +286,7 @@ func Build(in Input) Snapshot {
 		},
 		Branding:   brandingOrNil(in.Branding),
 		Deliveries: buildDeliveries(in.Tasks, milestones, in.FinishedAt, in.Now),
+		Documents:  in.Documents,
 	}
 }
 
