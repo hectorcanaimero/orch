@@ -192,3 +192,29 @@ func TestHydrateKeepsTheFilesCommentsWithNoRow(t *testing.T) {
 		t.Errorf("comments = %v, want the file's kept", got[0].Comments)
 	}
 }
+
+// FinishedAt is the portal's "since your last visit" source: every task that
+// has a finish time, keyed by id, and nothing for one that never finished.
+// A backend that cannot answer is an error, not an empty map — an empty map
+// would read as "nothing was ever delivered".
+func TestFinishedAt(t *testing.T) {
+	r := &fakeReader{rows: []state.TaskRuntime{
+		{ID: "F1.1.T1", Status: model.StatusDone, FinishedAt: "2026-09-13T10:00:00Z"},
+		{ID: "F1.1.T2", Status: model.StatusTodo},
+		{ID: "F1.1.T3", Status: model.StatusDone, FinishedAt: "2026-09-12T08:00:00+00:00"},
+	}}
+	got, err := FinishedAt(context.Background(), r)
+	if err != nil {
+		t.Fatalf("FinishedAt: %v", err)
+	}
+	if len(got) != 2 || got["F1.1.T1"] != "2026-09-13T10:00:00Z" || got["F1.1.T3"] != "2026-09-12T08:00:00+00:00" {
+		t.Errorf("FinishedAt = %v, want the two finished tasks as stored", got)
+	}
+	if _, ok := got["F1.1.T2"]; ok {
+		t.Error("a task that never finished has a finish time")
+	}
+
+	if _, err := FinishedAt(context.Background(), &fakeReader{err: errors.New("database is locked")}); err == nil {
+		t.Error("a failing backend was reported as no finish times")
+	}
+}

@@ -160,11 +160,11 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 	// finished: the portal's roadmap and "since your last visit".
 	outline, err := project.SpecOutline(paths.Root, cfg.SpecRoot, tasks)
 	if err != nil {
-		return snapshot.Snapshot{}, err
+		return snapshot.Snapshot{}, fmt.Errorf("reading phase and package names from the specs: %w", err)
 	}
 	finishedAt, err := project.FinishedAt(ctx, backend)
 	if err != nil {
-		return snapshot.Snapshot{}, err
+		return snapshot.Snapshot{}, fmt.Errorf("reading when tasks finished: %w", err)
 	}
 
 	// The pace behind the finish date, counted as the Sprint page counts it.
