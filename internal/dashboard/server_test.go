@@ -166,6 +166,47 @@ func TestWhoamiIsReachableByAStakeholder(t *testing.T) {
 	}
 }
 
+// A stakeholder's whoami names the routes the gate will let through, so the
+// SPA builds its navigation from the rule the server enforces instead of a
+// second copy that drifts: before this, the sidebar offered Tasks, Kanban,
+// Milestones and Sprint to a token that got 403 on every one of them. An
+// operator (and `both`, whose SPA surface is ungated) gets no list: nothing
+// is filtered for them.
+func TestWhoamiListsTheStakeholderRoutes(t *testing.T) {
+	s := newTestServer(t, cfg(ProfileStakeholder, "test-token-stakeholder"), t.TempDir())
+	resp := get(t, s, "/api/whoami?token=test-token-stakeholder")
+	var body whoamiPayload
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	_ = resp.Body.Close()
+	want := map[string]bool{}
+	for _, r := range DefaultStakeholderRoutes {
+		want[r] = true
+	}
+	if len(body.Routes) != len(want) {
+		t.Fatalf("routes = %v, want the allow-list %v", body.Routes, DefaultStakeholderRoutes)
+	}
+	for _, r := range body.Routes {
+		if !want[r] {
+			t.Errorf("routes has %q, which the gate does not allow", r)
+		}
+	}
+
+	for _, profile := range []Profile{ProfileOperator, ProfileBoth} {
+		s := newTestServer(t, cfg(profile, ""), t.TempDir())
+		resp := get(t, s, "/api/whoami")
+		raw, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("%s: read whoami body: %v", profile, err)
+		}
+		if strings.Contains(string(raw), "routes") {
+			t.Errorf("%s whoami = %s, want no routes list", profile, raw)
+		}
+	}
+}
+
 // The token may arrive in a query parameter, because the stakeholder profile
 // exists to make a shareable URL and a pasted link carries no header.
 func TestTokenFromQueryParameter(t *testing.T) {

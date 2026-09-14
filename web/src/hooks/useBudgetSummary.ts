@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { apiClient } from "@/lib/api"
 
 export interface BudgetRow {
   provider: string
@@ -16,9 +17,8 @@ export interface BudgetSummary {
 }
 
 async function fetchBudgetSummary(): Promise<BudgetSummary> {
-  const resp = await fetch("/api/budget/summary")
-  if (!resp.ok) throw new Error(`budget summary failed: ${resp.status}`)
-  return (await resp.json()) as BudgetSummary
+  const { data } = await apiClient.get<BudgetSummary>("/api/budget/summary")
+  return data
 }
 
 export function useBudgetSummary() {

@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react"
+import { describeLoadError } from "@/lib/errors"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -29,7 +30,7 @@ export function BudgetPage() {
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>Failed to load budget</AlertTitle>
-        <AlertDescription>{(error as Error)?.message}</AlertDescription>
+        <AlertDescription>{describeLoadError(error)}</AlertDescription>
       </Alert>
     )
   }

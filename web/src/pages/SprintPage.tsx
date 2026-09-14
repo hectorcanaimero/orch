@@ -1,3 +1,4 @@
+import { describeLoadError } from "@/lib/errors"
 import {
   AlertTriangle,
   CalendarClock,
@@ -141,7 +142,7 @@ export function SprintPage() {
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>Error al cargar sprint health</AlertTitle>
-        <AlertDescription>{(error as Error)?.message}</AlertDescription>
+        <AlertDescription>{describeLoadError(error)}</AlertDescription>
       </Alert>
     )
   }

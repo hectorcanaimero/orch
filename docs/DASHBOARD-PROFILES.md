@@ -203,6 +203,18 @@ matters for your setup, do not bind the portfolio beyond localhost.
 token would suggest a shared one exists, and a tunnel is configured per project
 — there is no single project here to take one from.
 
+### What a stakeholder session sees
+
+`/api/whoami` answers a stakeholder session with its allow-list as well as its
+profile — `{"profile":"stakeholder","routes":["stakeholder_summary_json", …]}` —
+and the SPA builds its sidebar from that list: a page is shown only when the
+route it reads is on it. With the default allow-list that is the Summary alone.
+A page opened by URL whose route is not allowed sends the reader to the summary
+instead of a 403, Project configuration (which reads `/api/config`) is not
+rendered, and a load that does fail says what happened in words (an expired
+link, no access, the dashboard unreachable), never a bare status code.
+Operator and `both` sessions get no `routes` list and see every page.
+
 ### `/stakeholder/summary`
 
 The one route the stakeholder profile exists for, and the landing page of both

@@ -20,9 +20,59 @@ vi.mock("@/hooks/useStakeholderSummary", async () => {
   }
 })
 
+// A summary as /stakeholder/summary sends it, with the spend switched off
+// (show_spend_to_stakeholder: false makes spend_rounded_usd null).
+function summaryWithoutSpend() {
+  return {
+    project_id: "demo",
+    summary: { total: 4, done: 2, in_progress: 1, blocked: 0, backlog: 1, todo: 0, percent_done: 50, estimate_hours_total: 8 },
+    milestones: [],
+    spend_rounded_usd: null,
+    eta_hours: 3,
+    refresh_interval_s: 30,
+    phases_timeline: [],
+    spend_by_day: [],
+    exec_summary: "",
+  }
+}
+
+vi.mock("@/components/ProjectConfigWidget", () => ({
+  ProjectConfigWidget: () => <div>Project configuration</div>,
+}))
+const mockUseWhoami = vi.fn()
+vi.mock("@/hooks/useWhoami", () => ({ useWhoami: () => mockUseWhoami() }))
+
 describe("StakeholderSummaryPage", () => {
   afterEach(() => {
     vi.clearAllMocks()
+  })
+
+  // With spend off the card used to render "$0.00": a figure that is not
+  // zero, shown as zero, to exactly the reader it was hidden from.
+  it("shows no spend card when the spend is not shared", () => {
+    mockUseWhoami.mockReturnValue({ data: { profile: "operator" } })
+    mockUseStakeholderSummary.mockReturnValue({
+      data: summaryWithoutSpend(), isLoading: false, isError: false, error: null, isFetching: false,
+    })
+    render(<StakeholderSummaryPage />)
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Spend$/i)).not.toBeInTheDocument()
+  })
+
+  // Project configuration reads /api/config, which a stakeholder token gets
+  // 403 on; it is operator material anyway.
+  it("hides project configuration from a stakeholder, and keeps it for an operator", () => {
+    mockUseStakeholderSummary.mockReturnValue({
+      data: summaryWithoutSpend(), isLoading: false, isError: false, error: null, isFetching: false,
+    })
+    mockUseWhoami.mockReturnValue({ data: { profile: "stakeholder", routes: ["stakeholder_summary_json"] } })
+    const { unmount } = render(<StakeholderSummaryPage />)
+    expect(screen.queryByText("Project configuration")).not.toBeInTheDocument()
+    unmount()
+
+    mockUseWhoami.mockReturnValue({ data: { profile: "operator" } })
+    render(<StakeholderSummaryPage />)
+    expect(screen.getByText("Project configuration")).toBeInTheDocument()
   })
 
   it("shows a named 'not available' state when the route isn't implemented (shape error)", () => {

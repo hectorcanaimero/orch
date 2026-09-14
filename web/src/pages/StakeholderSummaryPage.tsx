@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { formatEta } from "@/lib/eta"
+import { useWhoami } from "@/hooks/useWhoami"
 import {
   AlertTriangle,
   Ban,
@@ -279,6 +280,8 @@ function PrintButton() {
 
 export function StakeholderSummaryPage() {
   const { data, isLoading, isError, error, isFetching } = useStakeholderSummary()
+  const { data: whoami } = useWhoami()
+  const isStakeholder = whoami?.profile === "stakeholder"
 
   if (isLoading) {
     return (
@@ -443,7 +446,8 @@ export function StakeholderSummaryPage() {
         </Card>
       ) : null}
 
-      <ProjectConfigWidget />
+      {/* /api/config is operator material, and a stakeholder token gets 403 on it. */}
+      {isStakeholder ? null : <ProjectConfigWidget />}
     </div>
   )
 }
