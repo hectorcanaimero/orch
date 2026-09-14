@@ -136,6 +136,9 @@ func outcomeEvent(runID string, d Dispatch, o Outcome, ts string, attempt int) s
 		Extra:     map[string]any{"attempt": attempt},
 		EventType: EventFail,
 	}
+	if len(o.Result.PermissionDenials) > 0 {
+		ev.Extra["permission_denials"] = o.Result.PermissionDenials
+	}
 
 	switch {
 	case o.Result.Success:

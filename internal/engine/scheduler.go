@@ -511,6 +511,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 			Cwd:       workdir,
 			SessionID: providers.NewSessionID(),
 			BudgetUSD: s.Opts.BudgetUSD,
+			Settings:  projectClaudeSettings(s.Opts.Cwd, workdir),
 		},
 		PromptPath: promptPath,
 		LogPath:    LogPathFor(s.Opts.StateDir, task.ID),

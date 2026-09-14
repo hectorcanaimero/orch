@@ -160,6 +160,32 @@ func TestRecordFinishSuccess(t *testing.T) {
 	}
 }
 
+// #231: the denied tools reach the outcome event, success or not — it is the
+// one place `orch events` and the dashboard can show why an agent that
+// "succeeded" did nothing.
+func TestRecordFinishCarriesPermissionDenials(t *testing.T) {
+	ctx := context.Background()
+	b := openBackend(t)
+	d := recordDispatch("B-020")
+	out := Outcome{
+		Result: providers.Result{
+			Success: true, PermissionDenials: []string{"Bash(git fetch)", "WebFetch"},
+		},
+		StartedAt: time.Date(2026, 9, 11, 18, 30, 0, 0, time.UTC),
+	}
+	if err := RecordFinish(ctx, b, "run-1", d, out, 1); err != nil {
+		t.Fatalf("RecordFinish: %v", err)
+	}
+	events, err := b.Events(ctx, "B-020", 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Events = %v, %v", events, err)
+	}
+	got, _ := events[0].Extra["permission_denials"].([]any)
+	if len(got) != 2 || got[0] != "Bash(git fetch)" || got[1] != "WebFetch" {
+		t.Errorf("extra permission_denials = %#v", events[0].Extra["permission_denials"])
+	}
+}
+
 // TestRecordFinishEventTypes is the mapping this package promises: Python's
 // spellings, and no others. Every one is written through the real backend, so
 // a type outside the closed set fails here rather than in production.

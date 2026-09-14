@@ -86,6 +86,26 @@ func TestClaudeArgv(t *testing.T) {
 			},
 		},
 		{
+			// #231: a worktree lacks the gitignored .claude/ settings, so the
+			// engine hands the project root's over, and they go before the
+			// budget.
+			name: "settings from the project root",
+			req: Request{
+				Route:     claudeRoute("opus"),
+				Settings:  `{"permissions":{"allow":["Bash(git status)"]}}`,
+				BudgetUSD: &budget,
+			},
+			want: []string{
+				"claude", "-p",
+				"--output-format", "json",
+				"--model", "opus",
+				"--add-dir", ".",
+				"--permission-mode", "acceptEdits",
+				"--settings", `{"permissions":{"allow":["Bash(git status)"]}}`,
+				"--max-budget-usd", "5.0",
+			},
+		},
+		{
 			name: "whole-number budget still renders with the .0",
 			req: Request{
 				Route:     claudeRoute("opus"),
@@ -128,6 +148,29 @@ func TestClaudeArgvNoShellMetacharacters(t *testing.T) {
 		BudgetUSD: &budget,
 	})
 	assertNoShellMetacharacters(t, argv)
+}
+
+// #231: under acceptEdits, every tool not allow-listed is denied without a
+// prompt, and the run still ends `success`. The denials are the only trace,
+// so Parse carries them out — without turning the run into a failure, since
+// an agent often works around a denial.
+func TestClaudeParseReportsPermissionDenials(t *testing.T) {
+	out := []byte(`{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,` +
+		`"usage":{"input_tokens":1,"output_tokens":1},"permission_denials":[` +
+		`{"tool_name":"Bash","tool_use_id":"a","tool_input":{"command":"git fetch origin dev"}},` +
+		`{"tool_name":"WebFetch","tool_use_id":"b","tool_input":{"url":"https://example.com"}},` +
+		`{"tool_name":"mcp__orch__orch_block","tool_use_id":"c","tool_input":{}}]}`)
+	res := ClaudeProvider{}.Parse(0, out)
+	if !res.Success {
+		t.Fatalf("a denial is not a failure: %q", res.ErrorMessage)
+	}
+	want := []string{"Bash(git fetch origin dev)", "WebFetch", "mcp__orch__orch_block"}
+	if strings.Join(res.PermissionDenials, "|") != strings.Join(want, "|") {
+		t.Errorf("PermissionDenials = %q, want %q", res.PermissionDenials, want)
+	}
+	if got := (ClaudeProvider{}).Parse(0, readFixture(t, "claude", "2.1.269", "success.json")).PermissionDenials; len(got) != 0 {
+		t.Errorf("an empty permission_denials gave %q", got)
+	}
 }
 
 // ---- Parse: real claude 2.1.269 captures --------------------------------

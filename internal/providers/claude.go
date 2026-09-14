@@ -52,6 +52,9 @@ func (ClaudeProvider) Argv(req Request) []string {
 		"--add-dir", ".",
 		"--permission-mode", "acceptEdits",
 	)
+	if req.Settings != "" {
+		argv = append(argv, "--settings", req.Settings)
+	}
 	if req.BudgetUSD != nil {
 		argv = append(argv, "--max-budget-usd", pyfmt.Float(*req.BudgetUSD))
 	}
@@ -84,14 +87,37 @@ func (c ClaudeProvider) Parse(exitCode int, output []byte) Result {
 	}
 
 	return Result{
-		ExitCode:     exitCode,
-		Success:      success,
-		CostUSD:      cost,
-		TokensIn:     tokensIn,
-		TokensOut:    tokensOut,
-		Stdout:       text,
-		ErrorMessage: errMsg,
+		ExitCode:          exitCode,
+		Success:           success,
+		CostUSD:           cost,
+		TokensIn:          tokensIn,
+		TokensOut:         tokensOut,
+		Stdout:            text,
+		ErrorMessage:      errMsg,
+		PermissionDenials: claudeDenials(env),
 	}
+}
+
+// claudeDenials reads `permission_denials`: one object per refused call, with
+// `tool_name` and the `tool_input` it was refused. A Bash call names its
+// command, because "Bash" alone does not say what to allow.
+func claudeDenials(env map[string]any) []string {
+	list, _ := env["permission_denials"].([]any)
+	var out []string
+	for _, item := range list {
+		d, ok := asObject(item)
+		if !ok {
+			continue
+		}
+		name := asString(d["tool_name"])
+		if input, ok := asObject(d["tool_input"]); ok {
+			if cmd := asString(input["command"]); cmd != "" {
+				name += "(" + cmd + ")"
+			}
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // claudeErrorMessage ports the `err = api_error_status or terminal_reason or ""`
