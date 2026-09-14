@@ -108,6 +108,10 @@ func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 func (m *Manager) CommitPending(taskID, message string) (bool, error) {
 	wt := m.WorktreePath(taskID)
 
+	if err := m.verifyWorktree(taskID, wt); err != nil {
+		return false, err
+	}
+
 	if _, err := m.run(taskID, "git", "-C", wt, "add", "-A"); err != nil {
 		return false, err
 	}
@@ -125,6 +129,36 @@ func (m *Manager) CommitPending(taskID, message string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// verifyWorktree confirms wt is still git's registered worktree for taskID,
+// not a directory that outlived `git worktree remove` and got recreated by
+// a still-running agent (#253). `git -C <dir>` has no notion of "this isn't
+// a worktree anymore" — without a `.git` file inside wt to anchor it, it
+// walks up the filesystem and resolves to the main checkout's `.git`
+// instead, so CommitPending's add/commit would silently run there. Comparing
+// `git -C wt rev-parse --show-toplevel` against wt itself catches exactly
+// that: for a real worktree it echoes wt back; for a plain directory it
+// prints the main checkout's root.
+func (m *Manager) verifyWorktree(taskID, wt string) error {
+	top, err := m.run(taskID, "git", "-C", wt, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("worktree: the worktree for %s no longer exists: %w", taskID, err)
+	}
+
+	top = strings.TrimSpace(top)
+	wantReal, resolveErr := filepath.EvalSymlinks(wt)
+	if resolveErr != nil {
+		wantReal = wt
+	}
+	gotReal, resolveErr := filepath.EvalSymlinks(top)
+	if resolveErr != nil {
+		gotReal = top
+	}
+	if gotReal != wantReal {
+		return fmt.Errorf("worktree: the worktree for %s no longer exists (resolved to %s instead of %s)", taskID, top, wt)
+	}
+	return nil
 }
 
 // Push pushes taskID's branch to origin with --force-with-lease, so a

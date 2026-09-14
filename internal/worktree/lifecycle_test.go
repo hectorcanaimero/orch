@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -215,6 +216,52 @@ func TestCommitPendingWorksWithoutAnyGlobalGitIdentity(t *testing.T) {
 	}
 	if !committed {
 		t.Fatalf("commit_pending failed without an ambient git identity")
+	}
+}
+
+// #253: an agent still writing into a task's worktree path after orch has
+// already removed it (see #248's re-dispatch race) recreates the directory
+// as a plain one, with no `.git` file anchoring it back to the worktree.
+// `git -C <wt>` then walks up and finds the main checkout's `.git` instead,
+// so CommitPending must refuse to commit rather than silently landing the
+// agent's file — and whatever the operator has lying around — on the main
+// checkout's current branch.
+func TestCommitPendingRefusesWhenTheWorktreeIsGone(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	wt, err := m.Create("F3.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Remove("F3.1.T1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(wt, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "agent-output.txt"), []byte("late write\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "operator-scratch.txt"), []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, err := m.CommitPending("F3.1.T1", "F3.1.T1: orch auto-commit")
+	if err == nil {
+		t.Fatalf("expected an error, got committed=%v", committed)
+	}
+	if committed {
+		t.Errorf("committed = true, want false")
+	}
+
+	log := runGit(t, root, "log", "-1", "--pretty=%s")
+	if strings.Contains(log, "orch auto-commit") {
+		t.Errorf("main checkout got the auto-commit: %q", log)
+	}
+	status := runGit(t, root, "status", "--porcelain")
+	if !strings.Contains(status, "operator-scratch.txt") {
+		t.Errorf("operator's scratch file got swept up:\n%s", status)
 	}
 }
 
