@@ -400,6 +400,107 @@ func TestCIRedispatchSkippedWhenTheWorktreeCannotBeRecreated(t *testing.T) {
 	}
 }
 
+// ---- No checks at all ----------------------------------------------------
+
+// TestCINoChecksFinishesAfterTheGrace: #233. A repo with no workflow never
+// reports a check, and waiting on one forever deadlocked the run — including
+// the task meant to add CI. Past the grace the task is done, as it would be
+// without auto_pr, and nothing is merged: no check vouched for it.
+func TestCINoChecksFinishesAfterTheGrace(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CINone
+	f.poller.AutoMerge = true
+	f.poller.PollInterval = time.Second
+
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	f.s.now = func() time.Time { return now }
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	now = now.Add(ciNoChecksGrace - time.Second)
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got == model.StatusDone {
+		t.Fatal("finished inside the grace: a PR opened a moment ago has no checks yet either")
+	}
+
+	now = now.Add(time.Second)
+	acted, err := f.poller.Poll(context.Background(), f.s)
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if acted != 1 {
+		t.Errorf("acted on %d tasks, want 1", acted)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+		t.Errorf("status = %q, want done once the grace passed", got)
+	}
+	if got := f.ci.statuses(); !equalStrings(got, []string{"C-1=" + CIStatusSkipped}) {
+		t.Errorf("ci status writes = %v, want skipped", got)
+	}
+	if got := f.backend.eventTypes("C-1"); !equalStrings(got, []string{EventCINoChecks}) {
+		t.Errorf("events = %v, want just ci_no_checks", got)
+	}
+	if got := f.vcs.mergedPRs(); len(got) != 0 {
+		t.Errorf("merged %v with no check to vouch for it", got)
+	}
+}
+
+// Checks that show up restart the clock: the grace is for a PR that has had
+// none the whole time, not one whose CI is between runs.
+func TestCINoChecksGraceRestartsWhenChecksAppear(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	url := "https://github.com/o/r/pull/1"
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	f.s.now = func() time.Time { return now }
+
+	poll := func(st vcs.CIState, advance time.Duration) {
+		t.Helper()
+		now = now.Add(advance)
+		f.vcs.mu.Lock()
+		f.vcs.status[url] = st
+		f.vcs.mu.Unlock()
+		if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+	}
+	poll(vcs.CINone, 0)
+	poll(vcs.CIPending, ciNoChecksGrace/2)
+	poll(vcs.CINone, ciNoChecksGrace/2)
+	poll(vcs.CINone, ciNoChecksGrace/2)
+
+	if got, _ := f.s.Queue.Status("C-1"); got == model.StatusDone {
+		t.Error("finished although checks were reported inside the grace")
+	}
+}
+
+// TestCIConflictBlocksTheTask: #236. A conflicting PR gets no workflow run, so
+// it must neither wait forever nor pass as a repo without CI.
+func TestCIConflictBlocksTheTask(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIConflict
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want blocked", got)
+	}
+	if got := f.ci.statuses(); !equalStrings(got, []string{"C-1=" + CIStatusFailure}) {
+		t.Errorf("ci status writes = %v, want failure", got)
+	}
+	if got := f.backend.eventTypes("C-1"); !equalStrings(got, []string{EventCIBlocked}) {
+		t.Errorf("events = %v, want ci_blocked", got)
+	}
+	if got := n.ciBlockedList(); len(got) != 1 {
+		t.Errorf("announced %d CI blocks, want 1", len(got))
+	}
+}
+
 // ---- Polling behaviour ---------------------------------------------------
 
 func TestPollRespectsItsInterval(t *testing.T) {

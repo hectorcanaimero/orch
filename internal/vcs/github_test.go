@@ -234,17 +234,68 @@ func TestGitHubCIStatusReportsMalformedJSON(t *testing.T) {
 	}
 }
 
-// No checks yet is NOT an error: a PR opened a second ago has none, and that
-// is the one case where "pending, nothing to report" is the whole truth.
-func TestGitHubCIStatusPendingOnEmptyChecks(t *testing.T) {
+// No checks is NOT an error, and it is not pending either: a PR opened a
+// second ago has none, but so does one on a repo with no workflow, and only
+// the second never changes (#233). CINone lets the poller tell them apart by
+// how long it lasts.
+func TestGitHubCIStatusNoneOnEmptyChecks(t *testing.T) {
 	withFakeBin(t)
 	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[]`)
+	t.Setenv("FAKE_GH_VIEW_STDOUT", `{"mergeable":"MERGEABLE"}`)
 	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got != CINone {
+		t.Errorf("got %q, want none", got)
+	}
+}
+
+// What real gh does with no checks: exit 1 and say so on stderr (#233's log:
+// `no checks reported on the 'orch/F3.3.T1' branch`). That is an answer, not
+// a failure to read one.
+func TestGitHubCIStatusNoChecksReportedIsNone(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GH_CHECKS_EXIT", "1")
+	t.Setenv("FAKE_GH_CHECKS_STDERR", "no checks reported on the 'orch/T-1' branch\n")
+	t.Setenv("FAKE_GH_VIEW_STDOUT", `{"mergeable":"UNKNOWN"}`)
+	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != CINone {
+		t.Errorf("got %q, want none", got)
+	}
+}
+
+// GitHub runs no workflow on a conflicting PR, so its missing checks will
+// never arrive (#236). Saying so is what keeps it from being finished as a
+// repo without CI.
+func TestGitHubCIStatusConflictWhenNoChecksAndConflicting(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[]`)
+	t.Setenv("FAKE_GH_VIEW_STDOUT", `{"mergeable":"CONFLICTING"}`)
+	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != CIConflict {
+		t.Errorf("got %q, want conflict", got)
+	}
+}
+
+// If the mergeable state cannot be read, "none" would let the poller finish a
+// PR that may be conflicting. Pending with the error is the safe answer.
+func TestGitHubCIStatusNoChecksAndUnreadableMergeableIsPending(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GH_CHECKS_STDOUT", `[]`)
+	t.Setenv("FAKE_GH_VIEW_EXIT", "1")
+	got, err := NewGitHubProvider().CIStatus("https://github.com/org/repo/pull/1")
+	if err == nil {
+		t.Error("an unreadable mergeable state was not reported")
+	}
 	if got != CIPending {
-		t.Errorf("got %q, want pending", got)
+		t.Errorf("got %q, want pending alongside the error", got)
 	}
 }
 

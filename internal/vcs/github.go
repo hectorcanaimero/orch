@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -101,6 +102,11 @@ func (p *GitHubProvider) CIStatus(prURL string) (CIState, error) {
 	// `state` only. `conclusion` is not a field gh offers, and asking for it
 	// fails the whole command — see githubChecksRow.
 	out, err := run("gh", nil, "pr", "checks", prURL, "--json", "name,state,bucket")
+	var re *runError
+	if errors.As(err, &re) && strings.Contains(re.stderr, "no checks reported") {
+		// gh's own spelling of an empty list: exit 1 and this on stderr.
+		return p.noChecks(prURL)
+	}
 	if err != nil {
 		// Reported, not swallowed. Python returns "pending" here and so did
 		// this, which is exactly what hid a command that could never succeed:
@@ -116,7 +122,7 @@ func (p *GitHubProvider) CIStatus(prURL string) (CIState, error) {
 		return CIPending, fmt.Errorf("parsing gh pr checks output for %s: %w", prURL, err)
 	}
 	if len(checks) == 0 {
-		return CIPending, nil
+		return p.noChecks(prURL)
 	}
 
 	for _, c := range checks {
@@ -146,6 +152,26 @@ func (p *GitHubProvider) CIStatus(prURL string) (CIState, error) {
 		return CISuccess, nil
 	}
 	return CIPending, nil
+}
+
+// noChecks tells a PR that has no checks because it conflicts with its base
+// from one that simply has none. An unreadable answer is pending with the
+// error, never none: none can end in the task being finished.
+func (p *GitHubProvider) noChecks(prURL string) (CIState, error) {
+	out, err := run("gh", nil, "pr", "view", prURL, "--json", "mergeable")
+	if err != nil {
+		return CIPending, fmt.Errorf("gh pr view %s --json mergeable: %w", prURL, err)
+	}
+	var view struct {
+		Mergeable string `json:"mergeable"`
+	}
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		return CIPending, fmt.Errorf("parsing gh pr view output for %s: %w", prURL, err)
+	}
+	if view.Mergeable == "CONFLICTING" {
+		return CIConflict, nil
+	}
+	return CINone, nil
 }
 
 type githubPRView struct {

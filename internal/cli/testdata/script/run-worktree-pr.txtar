@@ -61,6 +61,10 @@ grep 'pr checks' $WORK/gh-state/calls
 exec orch tasks --project-root $WORK/wtproj --json
 stdout '"status":"done"'
 
+# And auto_merge merged it with a method: non-interactive `gh pr merge`
+# refuses to run without one (#232). Python sent `--squash --auto`.
+grep 'pr merge https://github.com/o/r/pull/1 --squash --auto' $WORK/gh-state/calls
+
 -- wtproj/tasks.json --
 {"tasks":[{"id":"T-1","phase":1,"title":"do the thing","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"specs/a.md#T1","reason":"because"}]}
 -- wtproj/.orchestrator/config.yaml --
@@ -76,6 +80,8 @@ vcs:
   auto_pr: true
   ci_poll_interval_s: 0
   ci_max_retries: 1
+github:
+  auto_merge: true
 -- wtproj/.orchestrator/model_router.yaml --
 claude/haiku:
   backend: claude

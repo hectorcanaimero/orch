@@ -63,6 +63,7 @@ func (p *GitLabProvider) CreatePR(head, base, title, body string) (string, error
 }
 
 type gitlabMRView struct {
+	HasConflicts bool `json:"has_conflicts"`
 	HeadPipeline struct {
 		ID     json.Number `json:"id"`
 		Status string      `json:"status"`
@@ -88,7 +89,11 @@ func (p *GitLabProvider) CIStatus(prURL string) (CIState, error) {
 		return CIPending, nil
 	}
 	if view.HeadPipeline.Status == "" {
-		return CIPending, nil
+		// No pipeline at all: see CINone and CIConflict.
+		if view.HasConflicts {
+			return CIConflict, nil
+		}
+		return CINone, nil
 	}
 	if mapped, ok := gitlabPipelineStatusMap[view.HeadPipeline.Status]; ok {
 		return mapped, nil
