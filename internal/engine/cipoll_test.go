@@ -410,6 +410,89 @@ func TestCIRedispatchSkippedWhenTheWorktreeCannotBeRecreated(t *testing.T) {
 	}
 }
 
+// TestCIFailureIgnoredWhileTheRedispatchIsStillRunning (#248). A re-dispatch
+// does not push a new commit the instant it starts: the PR head CI reads is
+// still describing the OLD failure until the new agent finishes. Without a
+// guard, the very next poll sees that same stale failure and re-dispatches
+// again — spawning a second live agent for the task and burning the retry
+// budget on a failure that was never new.
+func TestCIFailureIgnoredWhileTheRedispatchIsStillRunning(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 1))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	f.poller.MaxRetries = 2
+
+	// Simulate a live agent already dispatched for C-1 — the re-dispatch this
+	// same failure already caused, per the previous poll.
+	task, _ := f.s.Queue.Task("C-1")
+	f.s.inFlight[12345] = &InFlight{Task: task}
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if got := f.ci.incremented(); len(got) != 0 {
+		t.Errorf("incremented %v — the attempt already in flight must not be double-counted", got)
+	}
+	if len(f.s.RetryQueue()) != 0 {
+		t.Error("queued a second retry while the first agent for this task is still running")
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got == model.StatusBlocked {
+		t.Error("blocked the task while its re-dispatched agent is still running")
+	}
+	if got := f.backend.eventTypes("C-1"); len(got) != 0 {
+		t.Errorf("events = %v, want none — nothing changed since the last poll", got)
+	}
+}
+
+// TestCIFailureIgnoredWhileAlreadyQueuedForRetry: the same race, one tick
+// earlier — the re-dispatch has been queued but the scheduler has not yet
+// forked the agent for it (still sitting in the retry queue, not s.inFlight).
+func TestCIFailureIgnoredWhileAlreadyQueuedForRetry(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 1))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	f.poller.MaxRetries = 2
+
+	task, _ := f.s.Queue.Task("C-1")
+	f.s.retryQueue = append(f.s.retryQueue, RetryItem{Task: task, Attempt: 1, EarliestAt: f.s.now()})
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if got := f.ci.incremented(); len(got) != 0 {
+		t.Errorf("incremented %v — already queued for retry", got)
+	}
+	if len(f.s.RetryQueue()) != 1 {
+		t.Errorf("retry queue has %d items, want the original 1", len(f.s.RetryQueue()))
+	}
+}
+
+// TestCIFailureIgnoredWhileDraining: SIGINT drains an `orch run` — Refill
+// stops, so a re-dispatch queued here can never actually start. Treating the
+// unchanged failure as new anyway burns the whole retry budget in the couple
+// of polls it takes to drain, blocking the task before a human ever sees it
+// (#248 comment: "draining after SIGINT").
+func TestCIFailureIgnoredWhileDraining(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 1))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	f.poller.MaxRetries = 1 // already used, so ciFailed would otherwise block immediately
+	f.s.StartDraining()
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if got, _ := f.s.Queue.Status("C-1"); got == model.StatusBlocked {
+		t.Error("blocked the task while draining; nothing can dispatch a fix right now")
+	}
+	if got := f.ci.incremented(); len(got) != 0 {
+		t.Errorf("incremented %v while draining", got)
+	}
+	if got := f.backend.eventTypes("C-1"); len(got) != 0 {
+		t.Errorf("events = %v, want none while draining", got)
+	}
+}
+
 // ---- No checks at all ----------------------------------------------------
 
 // TestCINoChecksFinishesAfterTheGrace: #233. A repo with no workflow never
