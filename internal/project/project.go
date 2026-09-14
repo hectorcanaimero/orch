@@ -103,3 +103,19 @@ func Load(ctx context.Context, backend StatusReader, tasksJSON string) ([]model.
 	}
 	return Hydrate(ctx, backend, f.Tasks)
 }
+
+// FinishedAt maps each task id to when it first reached done, for the tasks
+// that have. An id with no finish time is absent.
+func FinishedAt(ctx context.Context, backend StatusReader) (map[string]string, error) {
+	runtime, err := backend.Tasks(ctx, state.TaskFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("read task finish times: %w", err)
+	}
+	out := make(map[string]string, len(runtime))
+	for _, r := range runtime {
+		if r.FinishedAt != "" {
+			out[r.ID] = r.FinishedAt
+		}
+	}
+	return out, nil
+}

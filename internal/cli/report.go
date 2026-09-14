@@ -156,6 +156,17 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 	if err != nil {
 		return snapshot.Snapshot{}, fmt.Errorf("reading the spend log: %w", err)
 	}
+	// Names the specs give that tasks.json does not, and when each task
+	// finished: the portal's roadmap and "since your last visit".
+	outline, err := project.SpecOutline(paths.Root, cfg.SpecRoot, tasks)
+	if err != nil {
+		return snapshot.Snapshot{}, fmt.Errorf("reading phase and package names from the specs: %w", err)
+	}
+	finishedAt, err := project.FinishedAt(ctx, backend)
+	if err != nil {
+		return snapshot.Snapshot{}, fmt.Errorf("reading when tasks finished: %w", err)
+	}
+
 	// The pace behind the finish date, counted as the Sprint page counts it.
 	doneInWindow, err := backend.CountDoneLastNDays(ctx, snapshot.VelocityWindowDays)
 	if err != nil {
@@ -196,5 +207,8 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		Now:       now,
 
 		DoneInVelocityWindow: doneInWindow,
+		PhaseTitles:          outline.Phases,
+		PackageTitles:        outline.Packages,
+		FinishedAt:           finishedAt,
 	}), nil
 }

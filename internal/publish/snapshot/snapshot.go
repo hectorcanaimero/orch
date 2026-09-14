@@ -76,6 +76,12 @@ type Input struct {
 	// VelocityWindowDays (state.CountDoneLastNDays). Zero means no pace is
 	// known, and the summary falls back to the hours estimate.
 	DoneInVelocityWindow int
+	// PhaseTitles and PackageTitles are project.SpecOutline's names, used
+	// where tasks.json has none. FinishedAt maps a task id to when it first
+	// reached done (tasks_runtime.finished_at). All three may be nil.
+	PhaseTitles   map[int]string
+	PackageTitles map[string]string
+	FinishedAt    map[string]string
 }
 
 // VelocityWindowDays is the window DoneInVelocityWindow is counted over —
@@ -98,6 +104,42 @@ type Snapshot struct {
 	// field existed. See docs/SNAPSHOT-SCHEMA.md for why this is additive
 	// rather than a schema bump.
 	Branding *Branding `json:"branding,omitempty"`
+	// Deliveries is what was finished in the last DeliveriesWindowDays,
+	// newest first — the portal's "since your last visit". Omitted when
+	// nothing was.
+	Deliveries []Delivery `json:"deliveries,omitempty"`
+}
+
+// DeliveriesWindowDays is how far back Deliveries reaches.
+const DeliveriesWindowDays = 30
+
+// deliveriesLimit caps Deliveries: it is a headline, not the history.
+const deliveriesLimit = 30
+
+// Delivery is one finished deliverable, by title — never by id.
+type Delivery struct {
+	Title      string `json:"title"`
+	Phase      string `json:"phase"`
+	FinishedAt string `json:"finished_at"`
+}
+
+// Package is one group of deliverables inside a phase: an atomizer package
+// (F6.1) named from its spec, or the unnamed group of tasks outside that
+// scheme.
+type Package struct {
+	Name         string        `json:"name"`
+	Total        int           `json:"total"`
+	Done         int           `json:"done"`
+	Deliverables []Deliverable `json:"deliverables"`
+}
+
+// Deliverable is one task as a client reads it: a title and a state.
+type Deliverable struct {
+	Title string `json:"title"`
+	// Status is done | in_progress | blocked | pending (backlog and todo are
+	// one state to a client: not started).
+	Status     string `json:"status"`
+	FinishedAt string `json:"finished_at,omitempty"`
 }
 
 // Summary is the header bar — the same seven figures
@@ -136,6 +178,8 @@ type Milestone struct {
 	Backlog     int     `json:"backlog"`
 	PercentDone float64 `json:"percent_done"`
 	Complete    bool    `json:"complete"`
+	// Packages is the phase's deliverables grouped by package, in id order.
+	Packages []Package `json:"packages,omitempty"`
 }
 
 // Blocker is one blocked task, named by title (never by id) with a
@@ -182,7 +226,8 @@ func Build(in Input) Snapshot {
 	eta := etaHoursRemaining(in.Tasks, humanHours)
 	projection := graph.ProjectCompletion(remainingTasks(in.Tasks), in.DoneInVelocityWindow, VelocityWindowDays, in.Now)
 
-	milestones := buildMilestones(in.Tasks, in.Phases)
+	milestones := buildMilestones(in.Tasks, in.Phases, in.PhaseTitles)
+	addPackages(milestones, in.Tasks, in.PackageTitles, in.FinishedAt)
 	blockers := buildBlockers(in.Tasks, in.Events, lang)
 
 	var spendUSD *float64
@@ -224,7 +269,8 @@ func Build(in Input) Snapshot {
 			Text:     executiveSummary(lang, summary, eta, projection, totalSpendForSummary, blockers),
 			Language: lang,
 		},
-		Branding: brandingOrNil(in.Branding),
+		Branding:   brandingOrNil(in.Branding),
+		Deliveries: buildDeliveries(in.Tasks, milestones, in.FinishedAt, in.Now),
 	}
 }
 
@@ -254,6 +300,98 @@ func projectionConfidence(p *graph.Projection) string {
 	return p.Confidence
 }
 
+// addPackages groups each phase's tasks into packages, in task-id order.
+func addPackages(milestones []Milestone, tasks []model.Task, titles map[string]string, finishedAt map[string]string) {
+	byPhase := map[int][]model.Task{}
+	for _, t := range tasks {
+		byPhase[t.Phase] = append(byPhase[t.Phase], t)
+	}
+	for i := range milestones {
+		phaseTasks := byPhase[milestones[i].Phase]
+		sort.SliceStable(phaseTasks, func(a, b int) bool { return phaseTasks[a].ID < phaseTasks[b].ID })
+		index := map[string]int{}
+		var packages []Package
+		for _, t := range phaseTasks {
+			key := project.PackageKey(t.ID)
+			name := ""
+			if key != "" {
+				name = titles[key]
+				if name == "" {
+					name = "F" + key
+				}
+			}
+			pi, ok := index[name]
+			if !ok {
+				pi = len(packages)
+				index[name] = pi
+				packages = append(packages, Package{Name: name})
+			}
+			d := Deliverable{Title: t.Title, Status: clientStatus(t.Status)}
+			if t.Status == model.StatusDone {
+				d.FinishedAt = finishedAt[t.ID]
+				packages[pi].Done++
+			}
+			packages[pi].Total++
+			packages[pi].Deliverables = append(packages[pi].Deliverables, d)
+		}
+		// Unnamed groups last: named packages are the plan, the rest was added.
+		sort.SliceStable(packages, func(a, b int) bool { return packages[a].Name != "" && packages[b].Name == "" })
+		milestones[i].Packages = packages
+	}
+}
+
+// clientStatus is a task status in the four states a client distinguishes.
+func clientStatus(s model.Status) string {
+	switch s {
+	case model.StatusDone:
+		return "done"
+	case model.StatusInProgress:
+		return "in_progress"
+	case model.StatusBlocked:
+		return "blocked"
+	default:
+		return "pending"
+	}
+}
+
+// buildDeliveries lists what was finished in the last DeliveriesWindowDays,
+// newest first. Timestamps are parsed, not compared as strings: one orch.db
+// holds both the +00:00 and the Z spelling.
+func buildDeliveries(tasks []model.Task, milestones []Milestone, finishedAt map[string]string, now time.Time) []Delivery {
+	phaseName := map[int]string{}
+	for _, m := range milestones {
+		phaseName[m.Phase] = m.Name
+	}
+	cutoff := now.Add(-DeliveriesWindowDays * 24 * time.Hour)
+	type dated struct {
+		d  Delivery
+		at time.Time
+	}
+	var rows []dated
+	for _, t := range tasks {
+		if t.Status != model.StatusDone {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, finishedAt[t.ID])
+		if err != nil || at.Before(cutoff) || at.After(now) {
+			continue
+		}
+		rows = append(rows, dated{Delivery{Title: t.Title, Phase: phaseName[t.Phase], FinishedAt: at.UTC().Format(time.RFC3339)}, at})
+	}
+	sort.SliceStable(rows, func(a, b int) bool { return rows[a].at.After(rows[b].at) })
+	if len(rows) > deliveriesLimit {
+		rows = rows[:deliveriesLimit]
+	}
+	out := make([]Delivery, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.d)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // brandingOrNil keeps the field absent rather than present-and-empty.
 //
 // `omitempty` on a struct does not omit it — only a nil pointer does — so an
@@ -271,10 +409,15 @@ func brandingOrNil(b Branding) *Branding {
 // tasks.json's own `phases[]` list — the same lookup Python's
 // `_stakeholder_payload` does, falling back to "Phase N" when a project has
 // no name for it (or none at all: plenty of fixtures predate `phases[]`).
-func buildMilestones(tasks []model.Task, phases []model.Phase) []Milestone {
+func buildMilestones(tasks []model.Task, phases []model.Phase, specTitles map[int]string) []Milestone {
 	names := make(map[int]string, len(phases))
+	for n, title := range specTitles {
+		names[n] = title
+	}
 	for _, p := range phases {
-		names[p.ID] = p.Name
+		if p.Name != "" {
+			names[p.ID] = p.Name
+		}
 	}
 	rows := graph.PhaseCounts(tasks)
 	out := make([]Milestone, 0, len(rows))
