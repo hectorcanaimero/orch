@@ -31,6 +31,48 @@ func TestCreateReturnsWorktreePathAndRegistersBranch(t *testing.T) {
 	}
 }
 
+// #236: a task dispatched right after its dependency's PR merged branched
+// from the LOCAL base, which had never fetched that merge. Its PR conflicted,
+// GitHub ran no CI on it, and the poller waited forever. With a remote, the
+// worktree starts from the remote's base.
+func TestCreateBranchesFromTheFreshRemoteBase(t *testing.T) {
+	root := newTestRepo(t)
+	remote := newBareRemote(t, root)
+	runGit(t, root, "push", "-q", "origin", "main")
+
+	// The dependency merges on the remote; the project never pulls.
+	other := filepath.Join(t.TempDir(), "other")
+	runGit(t, "", "clone", "-q", "-b", "main", remote, other)
+	runGit(t, other, "config", "user.email", "test@example.com")
+	runGit(t, other, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(other, "dep.txt"), []byte("merged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, other, "add", "-A")
+	runGit(t, other, "commit", "-q", "-m", "the dependency")
+	runGit(t, other, "push", "-q", "origin", "main")
+
+	m := NewManager(root, true)
+	wt, err := m.Create("F2.1.T9", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "dep.txt")); err != nil {
+		t.Errorf("the worktree lacks the dependency merged on origin: %v", err)
+	}
+}
+
+// With push disabled (--no-push, or no remote to speak of) nothing is
+// fetched: the local base is all there is.
+func TestCreateUsesTheLocalBaseWhenPushIsDisabled(t *testing.T) {
+	root := newTestRepo(t)
+	newBareRemote(t, root) // configured but empty: a fetch would fail
+	m := NewManager(root, false)
+	if _, err := m.Create("F2.1.T9", "main"); err != nil {
+		t.Fatalf("Create with push disabled: %v", err)
+	}
+}
+
 func TestCreateRecreatesOverAPriorRealWorktree(t *testing.T) {
 	// Mirrors Python's test_create_cleans_stale_path_first, but against a
 	// real prior worktree (a plain leftover directory isn't something git

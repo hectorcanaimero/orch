@@ -32,15 +32,20 @@ exec git commit -q -m 'initial'
 exec git remote add origin $WORK/remote.git
 exec git push -q -u origin main
 
-# CI is green, so the second run's poll finishes the task.
+# CI is green, so the poller finishes the task.
 cp $WORK/gh-green $WORK/gh-state/checks
 
-# First run: dispatch into a worktree, commit, push, open the PR. The task is
-# NOT done afterwards — it is under review, and the CI poller decides.
+# One run: dispatch into a worktree, commit, push, open the PR, then stay up
+# until CI answers. It used to exit with the task in-progress and leave the
+# green CI for the next `orch run` to notice (#239); the unit tests
+# (TestSuccessfulPushOpensAPRAndWaitsForCI) still pin that a task under
+# review is not done before CI says so.
 exec orch run --project-root $WORK/wtproj
 grep 'pr create' $WORK/gh-state/calls
 grep '\-\-head orch/T-1' $WORK/gh-state/calls
 grep '\-\-base main' $WORK/gh-state/calls
+grep 'pr checks' $WORK/gh-state/calls
+stderr 'waiting on CI'
 
 # The branch really reached the remote: the push is real git against a real
 # bare repo, so a broken push could not be mistaken for a working one.
@@ -48,16 +53,6 @@ cd $WORK
 exec git --git-dir=$WORK/remote.git branch --list
 stdout 'orch/T-1'
 
-# in-progress, not done and not todo — the dashboard has to show a task that
-# is under review as under review.
-exec orch tasks --project-root $WORK/wtproj --json
-stdout '"status":"in-progress"'
-! stdout '"status":"done"'
-
-# Second run: nothing new to dispatch, but the poller asks about the open PR
-# and a green answer finishes the task.
-exec orch run --project-root $WORK/wtproj
-grep 'pr checks' $WORK/gh-state/calls
 exec orch tasks --project-root $WORK/wtproj --json
 stdout '"status":"done"'
 
@@ -78,7 +73,7 @@ dispatch:
 vcs:
   provider: github
   auto_pr: true
-  ci_poll_interval_s: 0
+  ci_poll_interval_s: 1
   ci_max_retries: 1
 github:
   auto_merge: true

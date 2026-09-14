@@ -104,6 +104,16 @@ func (b *fakeCIBackend) SetTaskCIStatus(_ context.Context, taskID, status string
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.ciStatuses = append(b.ciStatuses, taskID+"="+status)
+	// Like the real filter: a row whose CI resolved is no longer pending.
+	if status != CIStatusPending {
+		kept := b.rows[:0]
+		for _, r := range b.rows {
+			if r.ID != taskID {
+				kept = append(kept, r)
+			}
+		}
+		b.rows = kept
+	}
 	return nil
 }
 
