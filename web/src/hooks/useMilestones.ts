@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { apiClient } from "@/lib/api"
 
 export interface MilestoneProgress {
   total: number
@@ -23,11 +24,11 @@ export interface Milestone {
   eta: MilestoneEta | null
 }
 
+// Through apiClient, not bare fetch: a stakeholder session's token rides on
+// its interceptor, and a 401 is handled like everywhere else.
 async function fetchMilestones(): Promise<Milestone[]> {
-  const resp = await fetch("/api/milestones")
-  if (!resp.ok) throw new Error(`milestones fetch failed: ${resp.status}`)
-  const data = await resp.json()
-  return data.milestones as Milestone[]
+  const { data } = await apiClient.get<{ milestones: Milestone[] }>("/api/milestones")
+  return data.milestones
 }
 
 export function useMilestones() {

@@ -1,4 +1,5 @@
 import { useRef } from "react"
+import { describeLoadError } from "@/lib/errors"
 import {
   AlertTriangle,
   Calendar,
@@ -56,7 +57,7 @@ export function MilestonesPage() {
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>Failed to load milestones</AlertTitle>
-        <AlertDescription>{(error as Error)?.message}</AlertDescription>
+        <AlertDescription>{describeLoadError(error)}</AlertDescription>
       </Alert>
     )
   }

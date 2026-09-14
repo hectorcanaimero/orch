@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
+import { apiClient } from "@/lib/api"
 import type { SprintHealth } from "@/lib/types"
 
 async function fetchSprintHealth(): Promise<SprintHealth> {
-  const resp = await fetch("/api/sprint")
-  if (!resp.ok) throw new Error(`sprint fetch failed: ${resp.status}`)
-  return resp.json() as Promise<SprintHealth>
+  const { data } = await apiClient.get<SprintHealth>("/api/sprint")
+  return data
 }
 
 export function useSprintHealth() {

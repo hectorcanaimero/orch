@@ -36,7 +36,9 @@ export interface StakeholderSummary {
   project_id: string
   summary: StakeholderSummaryStats
   milestones: StakeholderMilestone[]
-  spend_rounded_usd: number
+  // null when the project does not share spend with stakeholders
+  // (dashboard.show_spend_to_stakeholder off).
+  spend_rounded_usd: number | null
   eta_hours: number | null
   refresh_interval_s: number
   // Sprint E-7: enhanced stakeholder view

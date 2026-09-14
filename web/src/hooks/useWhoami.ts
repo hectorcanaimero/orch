@@ -5,6 +5,8 @@ export type DashboardProfile = "operator" | "stakeholder" | "both"
 
 interface Whoami {
   profile: DashboardProfile
+  // The stakeholder allow-list by route name; only sent for that profile.
+  routes?: string[]
 }
 
 async function fetchWhoami(): Promise<Whoami> {

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { describeLoadError } from "@/lib/errors"
 import {
   AlertTriangle,
   ChevronDown,
@@ -334,7 +335,7 @@ export function ListPage() {
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Failed to load tasks</AlertTitle>
-          <AlertDescription>{error?.message ?? "Unknown error"}</AlertDescription>
+          <AlertDescription>{describeLoadError(error)}</AlertDescription>
         </Alert>
       ) : isEmpty ? (
         <div className="rounded-lg border border-dashed bg-zinc-50 p-10 text-center">

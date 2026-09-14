@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useWhoami } from "@/hooks/useWhoami"
 import {
   AlertTriangle,
   Ban,
@@ -275,6 +276,8 @@ function PrintButton() {
 
 export function StakeholderSummaryPage() {
   const { data, isLoading, isError, error, isFetching } = useStakeholderSummary()
+  const { data: whoami } = useWhoami()
+  const isStakeholder = whoami?.profile === "stakeholder"
 
   if (isLoading) {
     return (
@@ -394,7 +397,7 @@ export function StakeholderSummaryPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {spend_by_day?.length > 1 ? (
           <SpendChart days={spend_by_day} />
-        ) : (
+        ) : spend_rounded_usd == null ? null : (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardDescription className="text-xs uppercase tracking-wide">Spend</CardDescription>
@@ -440,7 +443,8 @@ export function StakeholderSummaryPage() {
         </Card>
       ) : null}
 
-      <ProjectConfigWidget />
+      {/* /api/config is operator material, and a stakeholder token gets 403 on it. */}
+      {isStakeholder ? null : <ProjectConfigWidget />}
     </div>
   )
 }

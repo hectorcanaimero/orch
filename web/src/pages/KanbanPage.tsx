@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react"
+import { describeLoadError } from "@/lib/errors"
 import { AlertTriangle, Maximize2, Minimize2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -162,7 +163,7 @@ export function KanbanPage() {
         <Alert variant="destructive" className="flex-shrink-0">
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Failed to load tasks</AlertTitle>
-          <AlertDescription>{error?.message ?? "Unknown error"}</AlertDescription>
+          <AlertDescription>{describeLoadError(error)}</AlertDescription>
         </Alert>
       ) : !data || data.tasks.length === 0 ? (
         <div className="flex-shrink-0 rounded-lg border border-dashed bg-white p-10 text-center">
