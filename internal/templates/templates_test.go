@@ -255,6 +255,8 @@ var divergedFromPython = map[string]string{
 	"specs/README.md": "told users to run `orch --mode auto`; in the Go binary --mode is a flag " +
 		"of `orch run`, so the suggested command failed with an unknown flag",
 	"openspec/README.md": "same `orch --mode auto` → `orch run --mode auto` fix as specs/README.md",
+	"github/orch-ci.yml.tmpl": "hardcoded setup-python and pip install in every repo (#233); the " +
+		"setup steps are now a SETUP_STEPS token filled per stack by internal/scaffold/ci.go",
 }
 
 // TestGoTreeMatchesPython is the guard on having two copies of this data.

@@ -482,11 +482,12 @@ func (w *writer) workflow() {
 		w.fail("the embedded tree has no CI workflow: %w", err)
 		return
 	}
-	// Python substitutes the literal token TEST_COMMAND with `pytest`. The
-	// per-template command lives in config.yaml (`github.test_command`) and
-	// the workflow reads it from there at run time; this is only the fallback
-	// baked into the file.
-	w.write(rel, []byte(strings.ReplaceAll(string(body), "TEST_COMMAND", "pytest")), 0o600)
+	// Python baked `pytest` and a Python toolchain into every repo (#233).
+	// The command is config.yaml's `github.test_command` — the template's, or
+	// the one the repo's files imply — and the setup steps follow it.
+	testCommand := w.testCommand()
+	wf := strings.ReplaceAll(string(body), "SETUP_STEPS", setupSteps(w.root, testCommand))
+	w.write(rel, []byte(strings.ReplaceAll(wf, "TEST_COMMAND", testCommand)), 0o600)
 }
 
 // ErrTemplateNotFound is re-exported so a caller can tell a bad --template
