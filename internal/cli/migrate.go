@@ -102,7 +102,7 @@ func planMigration(paths config.Paths) (*dryRunReport, error) {
 	}
 	// Glob's only error is a malformed pattern (ErrBadPattern), which these
 	// fixed literals can never produce — same reasoning as
-	// config.hasNamespacedState's own comment on the same call.
+	// config.hasState's own comment on the same call.
 	runFiles, _ := filepath.Glob(filepath.Join(stateDir, "run-*.json"))
 	eventFiles, _ := filepath.Glob(filepath.Join(stateDir, "events-*.jsonl"))
 	spendFiles, _ := filepath.Glob(filepath.Join(stateDir, "spend-*.jsonl"))
@@ -185,14 +185,10 @@ func checkSourceLayout(paths config.Paths, stateDir string) error {
 // from there instead.
 //
 // This is deliberately re-derived here rather than reused from
-// config.Paths: ResolvePaths' own namespace detection
-// (hasNamespacedState) only ever flips LEGACY to NAMESPACED when it finds
-// evidence a project already has namespaced state; it has no reason to
-// flip the other way, because every OTHER command wants the namespaced
-// path to exist even when empty (that's where it will write). `migrate`
-// is the one command reading a project that may predate namespacing
-// entirely, so it alone needs the fallback — matching the shape of
-// migrate.py's own state_dir/has_state_files check exactly.
+// config.Paths: ResolvePaths' own detection (config.hasState) looks for a
+// database or events/spend JSONL, while migrate.py's check is run-*.json or
+// events-*.jsonl. A project holding only run files predates both, and
+// migrate is the one command that has to read it.
 func resolveSourceStateDir(paths config.Paths) string {
 	stateDir := paths.StateDir()
 	if hasStateFiles(stateDir) || paths.Layout != config.LayoutNamespaced {

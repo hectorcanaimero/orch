@@ -64,6 +64,15 @@ func newFileProject(t *testing.T) (root string, common []string) {
 	return root, []string{"--project-root", root, "--project-id", "file-project"}
 }
 
+// migratedDBPath is where migrate writes the fixture's database: next to the
+// state it imports. The fixture's state is flat (`.orchestrator/state/`), and
+// since #229 an explicit --project-root keeps a layout that already holds
+// state instead of opening an empty namespaced one beside it. Python wrote
+// `state/<id>/orch.db`; the rows, which the golden checks, are the same.
+func migratedDBPath(root string) string {
+	return filepath.Join(root, ".orchestrator", "state", "orch.db")
+}
+
 func TestMigrateDryRunTouchesNothing(t *testing.T) {
 	root, common := newFileProject(t)
 	args := append([]string{"migrate", "--dry-run"}, common...)
@@ -94,7 +103,7 @@ func TestMigrateImportsFileProjectMatchingPythonGolden(t *testing.T) {
 		t.Fatalf("migrate: rc = %d, want 0", rc)
 	}
 
-	dbPath := filepath.Join(root, ".orchestrator", "state", "file-project", "orch.db")
+	dbPath := migratedDBPath(root)
 	got := dumpMigratedRows(t, dbPath, "file-project")
 
 	var want goldenDump
@@ -129,7 +138,7 @@ func TestMigrateForceReimportIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate --force: rc = %d, want 0", rc)
 	}
 
-	dbPath := filepath.Join(root, ".orchestrator", "state", "file-project", "orch.db")
+	dbPath := migratedDBPath(root)
 	got := dumpMigratedRows(t, dbPath, "file-project")
 	if len(got.Events) != 4 {
 		t.Errorf("events = %d after re-import, want 4 (deduped, not doubled)", len(got.Events))
@@ -155,7 +164,7 @@ func TestMigrateSkipsUnknownEventTypeInsteadOfFailing(t *testing.T) {
 		t.Fatalf("migrate with one unknown event type: rc = %d, want 0", rc)
 	}
 
-	dbPath := filepath.Join(root, ".orchestrator", "state", "file-project", "orch.db")
+	dbPath := migratedDBPath(root)
 	got := dumpMigratedRows(t, dbPath, "file-project")
 	if len(got.Events) != 4 {
 		t.Errorf("events = %d, want 4 (the unknown-type row skipped, the other 4 still imported)", len(got.Events))
