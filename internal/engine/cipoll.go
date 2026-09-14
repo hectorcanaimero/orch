@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,7 +262,7 @@ func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntim
 	if err := s.Queue.MarkBlocked(row.ID); err != nil {
 		s.logger().Error("mark blocked failed", "task", row.ID, "err", err)
 	}
-	if err := s.Backend.Transition(ctx, row.ID, model.StatusBlocked, reason); err != nil {
+	if err := transitionThroughTodo(ctx, s.Backend, row.ID, model.StatusBlocked, reason); err != nil {
 		s.logger().Error("recording blocked failed", "task", row.ID, "err", err)
 	}
 	p.emit(ctx, s, EventCIBlocked, row, map[string]any{
@@ -354,6 +355,18 @@ func (p *CIPoller) redispatch(ctx context.Context, s *Scheduler, row state.TaskR
 			"task", row.ID, "err", err)
 	}
 
+	// The backend has to be reopened to `todo` here, not just the in-memory
+	// queue below: the agent already left the task `done` before its PR's CI
+	// ran, and `done` only reopens to `todo`, never straight to
+	// `in-progress`. Without this, the scheduler's own in-progress
+	// transition moments from now is illegal, the write is rejected, and the
+	// agent is spawned anyway on a task the database still calls done
+	// (#251).
+	if err := s.Backend.Transition(ctx, row.ID, model.StatusTodo, "CI failed; re-dispatching with logs"); err != nil {
+		s.logger().Warn("CI re-dispatch: reopening the task failed; skipping", "task", row.ID, "err", err)
+		return false
+	}
+
 	if err := s.Queue.MarkTodo(row.ID); err != nil {
 		s.logger().Error("CI re-dispatch: resetting to todo failed", "task", row.ID, "err", err)
 		return false
@@ -382,6 +395,26 @@ func writeCIFeedback(worktreePath, ciLogs string) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// transitionThroughTodo moves a task to `to`, hopping through `todo` first
+// when the direct move is illegal. An agent reports its own task `done`
+// (task-finish.sh, orch_set_status) before orch ever opens the PR, so by the
+// time CI hands down its own verdict the backend already has the task at
+// `done` — which only reopens to `todo` (model.CanTransition), never
+// straight to `in-progress` or `blocked`. Asking for the illegal move
+// directly leaves the task `done` with a failing PR while its dependents
+// are released as though the work had been accepted (#251).
+func transitionThroughTodo(ctx context.Context, backend RecordBackend, taskID string, to model.Status, note string) error {
+	err := backend.Transition(ctx, taskID, to, note)
+	if err == nil || !errors.Is(err, state.ErrIllegalTransition) {
+		return err
+	}
+	if reopenErr := backend.Transition(ctx, taskID, model.StatusTodo, note); reopenErr != nil {
+		return fmt.Errorf("reopening %q to retry the move to %s failed: %w (original: %s)",
+			taskID, to, reopenErr, err)
+	}
+	return backend.Transition(ctx, taskID, to, note)
 }
 
 func (p *CIPoller) emit(ctx context.Context, s *Scheduler, eventType string, row state.TaskRuntime, extra map[string]any) {

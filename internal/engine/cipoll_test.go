@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +159,63 @@ func (w *fakeCIWorktree) Recreate(_ context.Context, taskID string) (string, err
 		return "", err
 	}
 	return path, nil
+}
+
+// strictBackend enforces the same transition legality the real SQLite
+// backend does (model.CanTransition), unlike fakeBackend which records
+// every Transition call and never rejects one. Issue #251 was only
+// reachable through a backend that actually refuses an illegal move — a
+// fake that always "succeeds" hides it.
+type strictBackend struct {
+	mu     sync.Mutex
+	status map[string]model.Status
+	// failTransitionTo makes a Transition call to that status fail outright,
+	// before legality is even checked — for exercising a write failure that
+	// is not itself an illegal move (e.g. a locked database).
+	failTransitionTo map[model.Status]error
+}
+
+func newStrictBackend(initial map[string]model.Status) *strictBackend {
+	st := make(map[string]model.Status, len(initial))
+	for k, v := range initial {
+		st[k] = v
+	}
+	return &strictBackend{status: st}
+}
+
+func (b *strictBackend) RecordDispatchAndEvent(context.Context, string, Dispatch, *Spawned, int) error {
+	return nil
+}
+func (b *strictBackend) RecordFinish(context.Context, string, Dispatch, Outcome, int) error { return nil }
+func (b *strictBackend) AppendEngineEvent(context.Context, string, string, string, string, map[string]any) error {
+	return nil
+}
+
+func (b *strictBackend) TaskStatus(_ context.Context, taskID string) (model.Status, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st, ok := b.status[taskID]
+	if !ok {
+		return model.StatusTodo, nil
+	}
+	return st, nil
+}
+
+func (b *strictBackend) Transition(_ context.Context, taskID string, to model.Status, _ string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.failTransitionTo[to]; err != nil {
+		return err
+	}
+	from, ok := b.status[taskID]
+	if !ok {
+		from = model.StatusTodo
+	}
+	if !model.CanTransition(from, to) {
+		return fmt.Errorf("%q: %w %s -> %s", taskID, state.ErrIllegalTransition, from, to)
+	}
+	b.status[taskID] = to
+	return nil
 }
 
 // ---- Fixture -------------------------------------------------------------
@@ -387,6 +445,126 @@ func TestCIFailureWithUnreadableLogsStillRetries(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "log retrieval failed") {
 		t.Errorf("want the placeholder in the file:\n%s", body)
+	}
+}
+
+// TestCIRedispatchReopensATaskTheAgentAlreadyMarkedDone: #251. The agent
+// reports `done` itself (task-finish.sh / orch_set_status) before orch ever
+// opens the PR, so by the time CI fails the backend already has the task at
+// `done` — which only reopens to `todo` (model.CanTransition), never
+// straight to `in-progress`. If the re-dispatch does not make that hop
+// explicit, the scheduler's own in-progress transition moments later is
+// illegal, the backend rejects it, and the task is left `done` while a new
+// agent runs anyway.
+func TestCIRedispatchReopensATaskTheAgentAlreadyMarkedDone(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	f.s.Backend = strict
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if len(f.s.RetryQueue()) != 1 {
+		t.Fatalf("retry queue has %d items, want 1", len(f.s.RetryQueue()))
+	}
+	if got, err := strict.TaskStatus(context.Background(), "C-1"); err != nil || got != model.StatusTodo {
+		t.Errorf("backend status = %q (err=%v), want todo — otherwise the scheduler's "+
+			"next in-progress transition is an illegal move straight from done", got, err)
+	}
+}
+
+// TestCIBlockReopensATaskTheAgentAlreadyMarkedDone: #251, the same illegal
+// move on the other exit — a CI failure out of retries blocks a task the
+// backend still has at `done`. `done` -> `blocked` is not in the transition
+// table either; only `done` -> `todo` -> `blocked` is legal.
+func TestCIBlockReopensATaskTheAgentAlreadyMarkedDone(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 1))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	f.poller.MaxRetries = 1 // already used
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	f.s.Backend = strict
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if got, err := strict.TaskStatus(context.Background(), "C-1"); err != nil || got != model.StatusBlocked {
+		t.Errorf("backend status = %q (err=%v), want blocked — a done task with failed "+
+			"CI must not stay done, releasing dependents onto rejected work", got, err)
+	}
+}
+
+// TestCIRedispatchSkippedWhenReopeningTheTaskFails: redispatch() must not
+// queue the retry (or bump the CI-attempts counter) when its own reopen of
+// the task to `todo` fails outright — spawning an agent while the backend
+// still calls the task `done` is the exact bug #251 was about.
+func TestCIRedispatchSkippedWhenReopeningTheTaskFails(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	strict.failTransitionTo = map[model.Status]error{model.StatusTodo: errors.New("database is locked")}
+	f.s.Backend = strict
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if len(f.s.RetryQueue()) != 0 {
+		t.Errorf("re-dispatched despite failing to reopen the task in the backend")
+	}
+	if got, err := strict.TaskStatus(context.Background(), "C-1"); err != nil || got != model.StatusDone {
+		t.Errorf("backend status = %q (err=%v), want done — unchanged since the reopen failed", got, err)
+	}
+	if got := f.ci.incremented(); len(got) != 0 {
+		t.Errorf("incremented %v for a re-dispatch that was skipped", got)
+	}
+}
+
+// transitionErrBackend forces its Transition calls to fail in a fixed
+// sequence, so transitionThroughTodo's error-wrapping path can be tested
+// without wiring up a whole scheduler run.
+type transitionErrBackend struct {
+	errs []error // consumed in order, one per Transition call
+}
+
+func (b *transitionErrBackend) RecordDispatchAndEvent(context.Context, string, Dispatch, *Spawned, int) error {
+	return nil
+}
+func (b *transitionErrBackend) RecordFinish(context.Context, string, Dispatch, Outcome, int) error {
+	return nil
+}
+func (b *transitionErrBackend) AppendEngineEvent(context.Context, string, string, string, string, map[string]any) error {
+	return nil
+}
+func (b *transitionErrBackend) TaskStatus(context.Context, string) (model.Status, error) {
+	return model.StatusDone, nil
+}
+
+func (b *transitionErrBackend) Transition(context.Context, string, model.Status, string) error {
+	err := b.errs[0]
+	b.errs = b.errs[1:]
+	return err
+}
+
+// TestTransitionThroughTodoWrapsBothErrorsWhenTheReopenAlsoFails: rule 19 —
+// an error on the reopen hop must not silently replace the original
+// illegal-transition failure it was trying to recover from.
+func TestTransitionThroughTodoWrapsBothErrorsWhenTheReopenAlsoFails(t *testing.T) {
+	illegal := fmt.Errorf("%q: %w done -> blocked", "C-1", state.ErrIllegalTransition)
+	reopenErr := errors.New("database is locked")
+	b := &transitionErrBackend{errs: []error{illegal, reopenErr}}
+
+	err := transitionThroughTodo(context.Background(), b, "C-1", model.StatusBlocked, "CI failed")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !errors.Is(err, reopenErr) {
+		t.Errorf("error does not wrap the reopen failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), illegal.Error()) {
+		t.Errorf("error dropped the original illegal-transition failure: %v", err)
 	}
 }
 
