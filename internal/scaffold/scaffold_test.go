@@ -688,3 +688,68 @@ func TestMCPConfigIsNeverOverwritten(t *testing.T) {
 		}
 	}
 }
+
+// #233: `orch init` wrote a Python workflow (`setup-python`, `pip install`,
+// `pytest`) into every repo, so a Node or Go project's CI failed, or never
+// ran the tests at all. The workflow and `github.test_command` follow what
+// the repo is made of.
+func TestWorkflowFollowsTheRepoStack(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []string
+		want  []string
+		test  string
+	}{
+		{"pnpm", []string{"package.json", "pnpm-lock.yaml"}, []string{"actions/setup-node", "pnpm install --frozen-lockfile"}, "pnpm test"},
+		{"npm", []string{"package.json"}, []string{"actions/setup-node", "npm install"}, "npm test"},
+		{"yarn", []string{"package.json", "yarn.lock"}, []string{"actions/setup-node", "yarn install --frozen-lockfile"}, "yarn test"},
+		{"go", []string{"go.mod"}, []string{"actions/setup-go", "go-version-file: go.mod"}, "go test ./..."},
+		{"python", []string{"pyproject.toml"}, []string{"actions/setup-python", "pip install -e .[dev]"}, "pytest"},
+		{"empty", nil, []string{"actions/setup-python"}, "pytest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "proj")
+			if err := os.MkdirAll(root, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(root, f), []byte("{}\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			res, err := Run(Options{Root: root, Now: fixedNow})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			wf := readFile(t, res, ".github/workflows/orch-ci.yml")
+			for _, want := range append(tc.want, "run: "+tc.test) {
+				if !strings.Contains(wf, want) {
+					t.Errorf("workflow is missing %q:\n%s", want, wf)
+				}
+			}
+			if tc.name != "python" && tc.name != "empty" && strings.Contains(wf, "python") {
+				t.Errorf("a %s repo got a Python workflow:\n%s", tc.name, wf)
+			}
+			if cfg := readFile(t, res, ".orchestrator/config.yaml"); !strings.Contains(cfg, "test_command: "+tc.test) {
+				t.Errorf("config.yaml does not say test_command: %s", tc.test)
+			}
+		})
+	}
+}
+
+// A template already names its test command; the workflow has to run that
+// command with the toolchain it needs, not pytest.
+func TestWorkflowFollowsTheTemplateTestCommand(t *testing.T) {
+	res := scaffolded(t, "nextjs-saas")
+	wf := readFile(t, res, ".github/workflows/orch-ci.yml")
+	for _, want := range []string{"actions/setup-node", "run: pnpm test"} {
+		if !strings.Contains(wf, want) {
+			t.Errorf("workflow is missing %q:\n%s", want, wf)
+		}
+	}
+	if strings.Contains(wf, "python") {
+		t.Errorf("the nextjs-saas template got a Python workflow:\n%s", wf)
+	}
+}

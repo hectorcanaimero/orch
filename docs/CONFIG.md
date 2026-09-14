@@ -107,6 +107,14 @@ github:
   auto_merge: false      # requires branch protection you control
 ```
 
+`orch init` writes `.github/workflows/orch-ci.yml` (never over an existing
+one) and fills `test_command` from what the repo is made of when the config
+still has the packaged `pytest`: `go.mod` → `go test ./...`; `package.json`
+→ `pnpm test` with `pnpm-lock.yaml`, `yarn test` with `yarn.lock`, else
+`npm test`. A template's own command is kept. The workflow's setup steps
+follow the command's first word (`go`, `pnpm`, `yarn`, `npm`; anything else
+gets Python). Both are plain files afterwards: edit them freely.
+
 ### `retry`
 
 The policy the reaper applies to a failed dispatch. Two forms, and they
