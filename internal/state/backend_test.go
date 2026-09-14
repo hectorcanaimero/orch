@@ -244,6 +244,67 @@ func TestTransitionTable(t *testing.T) {
 	}
 }
 
+// TestTransitionToTodoClearsStalePRAndCI pins issue #255's second symptom: a
+// task reset to todo (via `orch task-status <id> todo` or `orch reset`) kept
+// its old pr_url and `ci_status = 'pending'`, so TasksWithPendingCI fed the
+// CIPoller the same dead PR forever — logging "reading CI status failed" on
+// every tick even after the task got a brand new PR. Landing back in todo has
+// to mean "no PR to poll" until something records a new one.
+func TestTransitionToTodoClearsStalePRAndCI(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+
+	if err := b.Transition(ctx, "T1", model.StatusInProgress, Note{}); err != nil {
+		t.Fatalf("setup in-progress: %v", err)
+	}
+	if err := b.SetTaskPR(ctx, "T1", "https://example.test/pr/18"); err != nil {
+		t.Fatalf("setup SetTaskPR: %v", err)
+	}
+	if _, err := b.IncrementCIAttempts(ctx, "T1"); err != nil {
+		t.Fatalf("setup IncrementCIAttempts: %v", err)
+	}
+	if err := b.Transition(ctx, "T1", model.StatusBlocked, Note{}); err != nil {
+		t.Fatalf("setup blocked: %v", err)
+	}
+
+	got, err := b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.PRURL == "" || got.CIStatus == "" || got.CIAttempts == 0 {
+		t.Fatalf("setup did not stick: PRURL=%q CIStatus=%q CIAttempts=%d",
+			got.PRURL, got.CIStatus, got.CIAttempts)
+	}
+
+	if err := b.Transition(ctx, "T1", model.StatusTodo, Note{Author: "orch-reset"}); err != nil {
+		t.Fatalf("Transition to todo: %v", err)
+	}
+
+	got, err = b.Task(ctx, "T1")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.PRURL != "" {
+		t.Errorf("PRURL = %q after reset to todo, want empty", got.PRURL)
+	}
+	if got.CIStatus != "" {
+		t.Errorf("CIStatus = %q after reset to todo, want empty", got.CIStatus)
+	}
+	if got.CIAttempts != 0 {
+		t.Errorf("CIAttempts = %d after reset to todo, want 0", got.CIAttempts)
+	}
+
+	pending, err := b.TasksWithPendingCI(ctx)
+	if err != nil {
+		t.Fatalf("TasksWithPendingCI: %v", err)
+	}
+	for _, row := range pending {
+		if row.ID == "T1" {
+			t.Fatalf("T1 is still in TasksWithPendingCI after its reset to todo")
+		}
+	}
+}
+
 func TestIllegalTransitionIsRefusedAndChangesNothing(t *testing.T) {
 	ctx := context.Background()
 	b := seeded(t, "T1")
