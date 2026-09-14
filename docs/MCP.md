@@ -181,7 +181,8 @@ fetched on demand.
 ### `orch_report_finding`
 
 `{type, title, summary, evidence?, repro?, suggested_fix?, confidence?, confirm_new?}`
-— files a GitHub issue **about orch itself** on `hectorcanaimero/orch`, labelled
+— files a bug, an improvement or a feature request **about orch itself** on
+`hectorcanaimero/orch`, labelled
 `auto-reported` (which `orch sync issues` refuses to ingest, so a report never
 loops back as a task). `type` is `bug`, `improvement` or `feature`.
 
@@ -197,6 +198,10 @@ loops back as a task). `type` is `bug`, `improvement` or `feature`.
 - **Redacted.** The project root becomes `<project>` and the home directory
   `~` in the title and body. The description asks for no secrets, project
   code or names; nothing else is filtered.
+- **Asked for.** With the opt-in on, every dispatch prompt ends with an
+  optional "Feedback about orch itself" block, after the report-back step,
+  inviting the agent to report what orch should do better or does not do.
+  Without it the prompt is unchanged.
 - Returns `{filed, url?, duplicate?, similar?, message}`.
 
 ---

@@ -371,7 +371,9 @@ report_findings:
 
 Turns on the MCP tool `orch_report_finding` (see [`MCP.md`](MCP.md)): an agent
 that hits a bug in orch, or sees an improvement or a missing feature, files it
-as an `auto-reported` issue with your `gh` login. Off by default, because it
+as an `auto-reported` issue with your `gh` login. It also adds a closing,
+optional "Feedback about orch itself" block to every dispatch prompt, so
+agents are asked for those ideas rather than only reporting what blocked them. Off by default, because it
 publishes under your account. Not the Python line's `findings:` block, which
 was removed and still warns.
 

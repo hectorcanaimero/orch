@@ -163,14 +163,16 @@ func NewServer(opts Options) (*mcpsdk.Server, error) {
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name: "orch_report_finding",
-		Description: "Report a bug in orch itself, or an improvement or feature " +
-			"orch should have, as a GitHub issue on " + FindingsRepo + ". Use it " +
-			"when orch (not the project you are working on) got in your way or " +
-			"surprised you: a wrong status, a refused tool, a confusing message, a " +
-			"missing command. Keep it about orch — no secrets, no project code, no " +
+		Description: "Report something about orch itself as a GitHub issue on " +
+			FindingsRepo + ": a bug (orch did something wrong or got in your way — " +
+			"a wrong status, a refused tool, a confusing message), an improvement " +
+			"(it works but could be clearer, faster or take fewer steps), or a " +
+			"feature (a capability orch lacks — a command or flag you looked for, a " +
+			"step you had to do by hand that orch could do). Only about orch, never " +
+			"the project you are working on: no secrets, no project code, no " +
 			"customer or project names. It searches first: a same-titled issue is " +
 			"returned instead of filed, and similar ones stop the filing until you " +
-			"call again with confirm_new. Keep working on your task afterwards.",
+			"call again with confirm_new. Report once per finding, then carry on.",
 	}, s.reportFinding)
 
 	return srv, nil

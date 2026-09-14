@@ -492,6 +492,9 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		StateDir:    s.Opts.StateDir,
 		ProjectRoot: workdir,
 		SpecRoot:    s.Opts.Cfg.SpecRoot,
+		// The invitation names orch_report_finding, which only files when
+		// the project opted in; otherwise it would ask for the impossible.
+		ReportFindings: s.Opts.Cfg.ReportFindings.Enabled,
 	})
 	if err != nil {
 		release()

@@ -1191,3 +1191,26 @@ func TestARetriedTaskIsNotAnnounced(t *testing.T) {
 		t.Errorf("announced %v for a task that will retry", got)
 	}
 }
+
+// The dispatch prompt invites feedback about orch exactly when the project
+// opted into report_findings: the scheduler, not a caller, carries the setting
+// from config.yaml into what the agent reads.
+func TestDispatchPromptCarriesTheFindingsOptIn(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		opts := SchedulerOptions{Cfg: config.Config{
+			Retry:          config.Retry{MaxAttempts: 2, BackoffSeconds: 5, RateLimitBackoffSeconds: 60},
+			ReportFindings: config.ReportFindings{Enabled: enabled},
+		}}
+		f := newReapFixture(t, []model.Task{task("C-1", 1, "claude/opus")},
+			map[string]fakeResponse{"C-1": okResponse()}, opts)
+		f.runOnce(t)
+
+		raw, err := os.ReadFile(filepath.Join(f.s.Opts.StateDir, "prompts", f.s.Opts.RunID, "C-1.txt"))
+		if err != nil {
+			t.Fatalf("read the dispatched prompt: %v", err)
+		}
+		if got := strings.Contains(string(raw), "orch_report_finding"); got != enabled {
+			t.Errorf("report_findings.enabled=%v: prompt mentions orch_report_finding = %v", enabled, got)
+		}
+	}
+}
