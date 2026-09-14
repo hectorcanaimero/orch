@@ -153,18 +153,15 @@ func TestClaudeArgvNoShellMetacharacters(t *testing.T) {
 // #231: under acceptEdits, every tool not allow-listed is denied without a
 // prompt, and the run still ends `success`. The denials are the only trace,
 // so Parse carries them out — without turning the run into a failure, since
-// an agent often works around a denial.
-func TestClaudeParseReportsPermissionDenials(t *testing.T) {
-	out := []byte(`{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,` +
-		`"usage":{"input_tokens":1,"output_tokens":1},"permission_denials":[` +
-		`{"tool_name":"Bash","tool_use_id":"a","tool_input":{"command":"git fetch origin dev"}},` +
-		`{"tool_name":"WebFetch","tool_use_id":"b","tool_input":{"url":"https://example.com"}},` +
-		`{"tool_name":"mcp__orch__orch_block","tool_use_id":"c","tool_input":{}}]}`)
+// an agent often works around a denial. Real claude 2.1.270 output: a Bash
+// `curl` refused twice (the model retried) and a WebFetch.
+func TestClaude2_1_270ParseReportsPermissionDenials(t *testing.T) {
+	out := readFixture(t, "claude", "2.1.270", "permission-denials.json")
 	res := ClaudeProvider{}.Parse(0, out)
 	if !res.Success {
 		t.Fatalf("a denial is not a failure: %q", res.ErrorMessage)
 	}
-	want := []string{"Bash(git fetch origin dev)", "WebFetch", "mcp__orch__orch_block"}
+	want := []string{"Bash(curl -sI https://example.com)", "Bash(curl -sI https://example.com)", "WebFetch"}
 	if strings.Join(res.PermissionDenials, "|") != strings.Join(want, "|") {
 		t.Errorf("PermissionDenials = %q, want %q", res.PermissionDenials, want)
 	}
