@@ -105,32 +105,66 @@ func (s *Scheduler) finish(ctx context.Context, c completion) error {
 		}
 	}
 
-	prOpened := s.tidyWorktree(ctx, entry, out)
+	// The agent may have blocked the task itself (orch_block, task-block.sh)
+	// and then exited cleanly, which the wrapper reports as a success. The
+	// state backend is asked rather than the wrapper believed — the same rule
+	// handleFailure applies to a done — and a blocked task's branch is not
+	// published: tidied as a failure, it is committed locally and no further.
+	agentBlocked := out.Result.Success && s.taskStatusIs(ctx, entry.Task.ID, model.StatusBlocked)
+	tidyOut := out
+	if agentBlocked {
+		tidyOut.Result.Success = false
+	}
+	prOpened, noPR := s.tidyWorktree(ctx, entry, tidyOut)
 
 	// Capacity comes back before the verdict, so a retry queued below can be
 	// picked up by the very next refill rather than waiting a tick.
 	s.Sems.Release(string(entry.Route.Backend))
 	entry.Lock.Release()
 
-	if out.Result.Success {
-		if prOpened {
-			// The work is pushed and under review. The CI poller decides
-			// whether it is done; marking it now would finish a task whose
-			// tests have not run.
-			s.logger().Info("waiting on CI", "task", entry.Task.ID)
-			return nil
-		}
-		return s.markDone(ctx, entry)
+	switch {
+	case agentBlocked:
+		return s.keepAgentBlock(ctx, entry)
+	case !out.Result.Success:
+		return s.handleFailure(ctx, entry, out)
+	case prOpened:
+		// The work is pushed and under review. The CI poller decides
+		// whether it is done; marking it now would finish a task whose
+		// tests have not run.
+		s.logger().Info("waiting on CI", "task", entry.Task.ID)
+		return nil
+	case noPR != "":
+		// A PR was expected and none exists. In worktree mode that is the
+		// only road from the task's branch to the base, so finishing it
+		// would release dependents onto work that is not there (#230).
+		// Waiting is no better: nothing records a URL to poll.
+		return s.blockTask(ctx, entry, truncateReason(noPR), out)
 	}
-	return s.handleFailure(ctx, entry, out)
+	return s.markDone(ctx, entry)
+}
+
+// keepAgentBlock honours a block the sub-agent recorded before exiting
+// cleanly. The database already says blocked, with the agent's own note, so
+// only the queue and the operator are told.
+func (s *Scheduler) keepAgentBlock(ctx context.Context, entry *InFlight) error {
+	s.logger().Info("the sub-agent blocked the task and exited cleanly; keeping it blocked",
+		"task", entry.Task.ID)
+	if err := s.Queue.MarkBlocked(entry.Task.ID); err != nil {
+		s.logger().Error("mark blocked failed", "task", entry.Task.ID, "err", err)
+	}
+	if s.Notify != nil {
+		s.Notify.Blocked(ctx, entry.Task.ID, "blocked by the agent")
+	}
+	return nil
 }
 
 // tidyWorktree runs the Caller contract from internal/worktree.
 // tidyWorktree returns whether it opened a PR — a task waiting on CI is not
-// finished, so the caller must not mark it done yet.
-func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outcome) (prOpened bool) {
+// finished, so the caller must not mark it done yet — and, when a PR was
+// expected (auto_pr on) but none was opened, why not.
+func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outcome) (prOpened bool, noPR string) {
 	if s.Worktree == nil {
-		return false
+		return false, ""
 	}
 	id := entry.Task.ID
 
@@ -140,20 +174,23 @@ func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outco
 		s.logger().Error("worktree: commit failed", "task", id, "err", err)
 	}
 
-	// Push only on success — incomplete work does not get published. A push
-	// failure is logged and does NOT downgrade the task: the work is
-	// committed locally either way, and failing a finished task over a
-	// broken remote would be the worse trade.
+	// Push only on success — incomplete work does not get published. The
+	// work is committed locally either way. Without auto_pr a push failure
+	// does not downgrade the task; with it, no PR can follow, and the caller
+	// blocks the task rather than finish work that never reached the base.
 	//
 	// The PR is opened only after the push actually succeeded. Opening one
 	// from a branch that never reached the remote would produce a PR that
 	// cannot be reviewed and a task waiting on CI that will never run.
 	if out.Result.Success {
 		if err := s.Worktree.Push(ctx, id); err != nil {
-			s.logger().Error("worktree: push failed; the task still counts as done",
-				"task", id, "err", err)
-		} else {
-			prOpened = s.openPR(ctx, entry)
+			s.logger().Error("worktree: push failed", "task", id, "err", err)
+			if s.prExpected() {
+				noPR = "the agent exited cleanly but its work was not pushed, so no PR was opened: " + err.Error()
+			}
+		} else if s.prExpected() {
+			noPR = s.openPR(ctx, entry)
+			prOpened = noPR == ""
 		}
 	}
 
@@ -161,19 +198,21 @@ func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outco
 	if err := s.Worktree.Remove(ctx, id); err != nil {
 		s.logger().Error("worktree: remove failed", "task", id, "err", err)
 	}
-	return prOpened
+	return prOpened, noPR
+}
+
+// prExpected reports whether a successful worktree task should end in a PR.
+func (s *Scheduler) prExpected() bool {
+	return s.VCS != nil && s.Opts.AutoPR
 }
 
 // openPR opens a pull request for a task whose work is pushed, and records
 // the URL so the CI poller starts watching it.
 //
-// Reports whether a PR is now open. Every failure answers false: without a
-// recorded PR URL nothing would ever poll it, so a task that thinks it is
-// waiting on CI would wait forever. Better to finish it normally.
-func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) bool {
-	if s.VCS == nil || !s.Opts.AutoPR {
-		return false
-	}
+// Returns "" when a PR is now open and being watched, otherwise why not.
+// Every failure counts: without a recorded PR URL nothing would ever poll
+// it, so a task that thinks it is waiting on CI would wait forever.
+func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) string {
 	task := entry.Task
 
 	spec := task.SpecRef
@@ -188,34 +227,33 @@ func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) bool {
 
 	prURL, err := s.VCS.CreatePR(s.Worktree.BranchName(task.ID), s.Opts.BaseBranch, title, body)
 	if err != nil {
-		s.logger().Error("opening the PR failed; finishing the task without one",
-			"task", task.ID, "err", err)
-		return false
+		s.logger().Error("opening the PR failed", "task", task.ID, "err", err)
+		return "the agent exited cleanly but opening the PR failed: " + err.Error()
 	}
 	if prURL == "" {
-		// The CLI ran and produced no PR — Python's None. Not an error, and
-		// not something to wait on either.
-		s.logger().Warn("no PR was opened; finishing the task without one", "task", task.ID)
-		return false
+		// The CLI ran and produced no PR — Python's None, typically a branch
+		// with no commits: the agent changed nothing.
+		s.logger().Warn("no PR was opened", "task", task.ID)
+		return "the agent exited cleanly but no PR was opened (no changes to propose?)"
 	}
 
 	if s.CIRecorder == nil {
 		s.logger().Error("a PR was opened with nowhere to record it; CI will not be polled",
 			"task", task.ID, "pr", prURL)
-		return false
+		return "a PR was opened with nowhere to record it: " + prURL
 	}
 	// SetTaskPR also moves ci_status to pending, which is what puts the task
 	// into the poller's filter. Without it the PR is open and nobody watches.
 	if err := s.CIRecorder.SetTaskPR(ctx, task.ID, prURL); err != nil {
 		s.logger().Error("recording the PR failed; CI will not be polled",
 			"task", task.ID, "pr", prURL, "err", err)
-		return false
+		return "a PR was opened but recording it failed (" + prURL + "): " + err.Error()
 	}
 	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventPRCreated, task.ID,
 		string(entry.Route.Backend), map[string]any{"pr_url": prURL}); err != nil {
 		s.logger().Error("recording the pr_created event failed", "task", task.ID, "err", err)
 	}
-	return true
+	return ""
 }
 
 // markDone finishes a successful task.
@@ -243,7 +281,7 @@ func (s *Scheduler) handleFailure(ctx context.Context, entry *InFlight, out Outc
 	// tasks.json alone, so the guard is dead on every project scaffolded
 	// since. Reading the backend is the port of the intent; see
 	// docs/brainstorm/go-migration-notes.md.
-	if s.taskAlreadyDone(ctx, entry.Task.ID) {
+	if s.taskStatusIs(ctx, entry.Task.ID, model.StatusDone) {
 		s.logger().Info("the sub-agent finished despite the wrapper's failure; respecting it",
 			"task", entry.Task.ID, "detector_reason", reason)
 		if err := s.Queue.MarkDone(entry.Task.ID); err != nil {
@@ -360,10 +398,11 @@ func (s *Scheduler) blockTask(ctx context.Context, entry *InFlight, reason strin
 	return nil
 }
 
-// taskAlreadyDone asks the state backend whether the sub-agent finished the
-// work itself. A backend that cannot answer reads as "no": the wrapper's
-// verdict stands, which is the conservative side.
-func (s *Scheduler) taskAlreadyDone(ctx context.Context, taskID string) bool {
+// taskStatusIs asks the state backend whether the sub-agent left the task in
+// the given status itself (done via task-finish.sh, blocked via orch_block).
+// A backend that cannot answer reads as "no": the wrapper's verdict stands,
+// which is the conservative side.
+func (s *Scheduler) taskStatusIs(ctx context.Context, taskID string, want model.Status) bool {
 	if s.Backend == nil {
 		return false
 	}
@@ -373,7 +412,7 @@ func (s *Scheduler) taskAlreadyDone(ctx context.Context, taskID string) bool {
 			"task", taskID, "err", err)
 		return false
 	}
-	return status == model.StatusDone
+	return status == want
 }
 
 func (s *Scheduler) transition(ctx context.Context, taskID string, to model.Status, note string) error {

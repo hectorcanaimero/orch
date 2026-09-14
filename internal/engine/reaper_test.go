@@ -911,16 +911,18 @@ func TestNoPRWithoutASuccessfulPush(t *testing.T) {
 	if got := pr.get("C-1"); got != "" {
 		t.Errorf("recorded a PR after a failed push: %q", got)
 	}
-	// The work is committed locally, so the task is done rather than stuck.
-	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
-		t.Errorf("status = %q, want done", got)
+	// Issue #230: in worktree mode the work only reaches the base through a
+	// PR, so a dependent released now would build on work that is not there.
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want blocked", got)
 	}
 }
 
-// TestPRFailuresFinishTheTaskNormally. Every one of these leaves no recorded
-// PR URL, so nothing would ever poll it — a task that thought it was waiting
-// on CI would wait forever.
-func TestPRFailuresFinishTheTaskNormally(t *testing.T) {
+// TestPRFailuresBlockTheTask. Every one of these leaves no recorded PR URL,
+// so nothing would ever poll it — waiting on CI would wait forever. Finishing
+// it instead (Python's choice) released its dependents onto work that never
+// reached the base branch: issue #230. Blocked is the one honest verdict.
+func TestPRFailuresBlockTheTask(t *testing.T) {
 	tests := []struct {
 		name    string
 		prepare func(v *fakeVCS, pr *recordingPR)
@@ -947,10 +949,50 @@ func TestPRFailuresFinishTheTaskNormally(t *testing.T) {
 
 			f.runOnce(t)
 
-			if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
-				t.Errorf("status = %q, want done — a task nothing will poll must not wait on CI", got)
+			if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+				t.Errorf("status = %q, want blocked — neither waiting on CI nor done", got)
+			}
+			if got := f.backend.eventTypes("C-1"); !contains(got, EventFail) {
+				t.Errorf("events = %v, want a fail event saying why", got)
 			}
 		})
+	}
+}
+
+// TestAgentBlockedSurvivesACleanExit: issue #230. The agent called orch_block
+// (a missing input) and exited 0. The wrapper's success must not overwrite
+// the agent's verdict, nor publish its half-done branch.
+func TestAgentBlockedSurvivesACleanExit(t *testing.T) {
+	f, _, v, _ := prFixture(t)
+	f.backend.status["C-1"] = model.StatusBlocked
+
+	f.runOnce(t)
+
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want the agent's blocked kept", got)
+	}
+	if v.created != 0 {
+		t.Errorf("opened %d PRs for a task the agent blocked", v.created)
+	}
+	for _, tr := range f.backend.transitions {
+		if tr.taskID == "C-1" && tr.to == model.StatusDone {
+			t.Error("recorded done over the agent's blocked")
+		}
+	}
+}
+
+// Without worktrees there is no PR to expect, but the agent's block still wins.
+func TestAgentBlockedSurvivesACleanExitWithoutWorktrees(t *testing.T) {
+	f := newReapFixture(t,
+		[]model.Task{task("C-1", 1, "claude/opus")},
+		map[string]fakeResponse{"C-1": okResponse()},
+		SchedulerOptions{})
+	f.backend.status["C-1"] = model.StatusBlocked
+
+	f.runOnce(t)
+
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want the agent's blocked kept", got)
 	}
 }
 
