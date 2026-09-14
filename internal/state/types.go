@@ -151,7 +151,7 @@ var eventTypes = map[string]bool{
 	// Go only. Python declares no such type and never emits one — see
 	// goOnlyEventTypes in eventtypes_test.go for why that is safe in a
 	// database both binaries write to.
-	"sprint_done": true,
+	"sprint_done": true, "ci_no_checks": true,
 }
 
 // Milestone groups tasks for the stakeholder view, with the progress counts

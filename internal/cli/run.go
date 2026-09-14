@@ -171,6 +171,10 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 					PollInterval: time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
 					MaxRetries:   cfg.VCS.CIMaxRetries,
 					AutoMerge:    cfg.GitHub.AutoMerge,
+					// Python's `gh pr merge --squash --auto`. Without a
+					// method gh refuses to merge non-interactively (#232).
+					Squash:           true,
+					MergeWhenPassing: true,
 				}
 			}
 			// One gate, shared: the scheduler asks it per dispatch and the

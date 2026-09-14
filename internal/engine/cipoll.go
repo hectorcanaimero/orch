@@ -35,7 +35,17 @@ const (
 	EventCIBlocked         = "ci_blocked"
 	EventPRAutoMerged      = "pr_auto_merged"
 	EventPRAutoMergeFailed = "pr_auto_merge_failed"
+	// EventCINoChecks is Go only: a PR finished with no check ever reported.
+	EventCINoChecks = "ci_no_checks"
 )
+
+// ciNoChecksGrace is how long a PR may report no check at all before orch
+// stops waiting for one. GitHub registers a workflow's checks within seconds
+// of the push; a PR still bare after this has no CI to wait on (#233).
+//
+// ponytail: fixed and in memory, so a restarted run waits the grace again;
+// a vcs.* config key if a repo's checks are ever slower to appear.
+const ciNoChecksGrace = 10 * time.Minute
 
 // defaultCIPollInterval matches Python's `vcs.ci_poll_interval_s` default.
 const defaultCIPollInterval = 30 * time.Second
@@ -92,11 +102,16 @@ type CIPoller struct {
 	// `github.auto_merge`.
 	AutoMerge bool
 	// Squash and MergeWhenPassing are passed to MergePR. Python hardcodes
-	// both; internal/vcs made them parameters, so they are surfaced here.
+	// both on (`gh pr merge --squash --auto`); internal/vcs made them
+	// parameters, so they are surfaced here and `orch run` sets both. Both
+	// off is a `gh pr merge` with no method, which gh refuses outside a
+	// terminal (#232).
 	Squash           bool
 	MergeWhenPassing bool
 
 	lastPoll time.Time
+	// noChecksSince is when each task's PR was first seen with no checks.
+	noChecksSince map[string]time.Time
 }
 
 // Poll asks CI about every task waiting on it, if enough time has passed.
@@ -134,6 +149,9 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 				"task", row.ID, "pr", row.PRURL, "err", err)
 			continue
 		}
+		if state != vcs.CINone {
+			delete(p.noChecksSince, row.ID)
+		}
 		switch state {
 		case vcs.CISuccess:
 			p.ciSucceeded(ctx, s, row)
@@ -141,11 +159,34 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 		case vcs.CIFailure:
 			p.ciFailed(ctx, s, row)
 			acted++
+		case vcs.CIConflict:
+			p.block(ctx, s, row, "the PR conflicts with its base branch, so CI will not run")
+			acted++
+		case vcs.CINone:
+			if p.noChecksFor(row.ID, now) >= ciNoChecksGrace {
+				delete(p.noChecksSince, row.ID)
+				p.ciNoChecks(ctx, s, row)
+				acted++
+			}
 		case vcs.CIPending:
 			// Nothing to do yet.
 		}
 	}
 	return acted, nil
+}
+
+// noChecksFor is how long the task's PR has reported no checks, starting the
+// clock the first time it is seen that way.
+func (p *CIPoller) noChecksFor(taskID string, now time.Time) time.Duration {
+	if p.noChecksSince == nil {
+		p.noChecksSince = map[string]time.Time{}
+	}
+	since, ok := p.noChecksSince[taskID]
+	if !ok {
+		p.noChecksSince[taskID] = now
+		return 0
+	}
+	return now.Sub(since)
 }
 
 func (p *CIPoller) pollInterval() time.Duration {
@@ -165,19 +206,7 @@ func (p *CIPoller) maxRetries() int {
 // ciSucceeded finishes a task whose CI went green, and merges its PR when
 // the project asked for that.
 func (p *CIPoller) ciSucceeded(ctx context.Context, s *Scheduler, row state.TaskRuntime) {
-	if err := p.Backend.SetTaskCIStatus(ctx, row.ID, CIStatusSuccess); err != nil {
-		s.logger().Error("recording CI success failed", "task", row.ID, "err", err)
-	}
-	if err := s.Queue.MarkDone(row.ID); err != nil {
-		s.logger().Error("mark done failed", "task", row.ID, "err", err)
-	}
-	// And in the database. The queue is this run's view; the row is what
-	// `orch status` and the dashboard show afterwards, and a task whose CI
-	// went green while the queue alone learned about it would read as
-	// in-progress forever.
-	if err := s.Backend.Transition(ctx, row.ID, model.StatusDone, "CI passed"); err != nil {
-		s.logger().Error("recording done failed", "task", row.ID, "err", err)
-	}
+	p.finishTask(ctx, s, row, CIStatusSuccess, "CI passed")
 	p.emit(ctx, s, EventCISuccess, row, map[string]any{"pr_url": row.PRURL})
 
 	if !p.AutoMerge {
@@ -195,25 +224,59 @@ func (p *CIPoller) ciSucceeded(ctx context.Context, s *Scheduler, row state.Task
 	p.emit(ctx, s, event, row, map[string]any{"pr_url": row.PRURL})
 }
 
+// ciNoChecks finishes a task whose PR never reported a check within the
+// grace: the repo has no CI to wait on. `skipped` is the column's word for
+// exactly that, and it takes the row out of the pending filter. No
+// auto-merge — nothing vouched for the change.
+func (p *CIPoller) ciNoChecks(ctx context.Context, s *Scheduler, row state.TaskRuntime) {
+	s.logger().Warn("no CI check was reported; finishing the task without CI and without merging",
+		"task", row.ID, "pr", row.PRURL, "grace", ciNoChecksGrace)
+	p.finishTask(ctx, s, row, CIStatusSkipped, "no CI checks reported")
+	p.emit(ctx, s, EventCINoChecks, row, map[string]any{"pr_url": row.PRURL})
+}
+
+// finishTask records a task done by the poller's verdict.
+func (p *CIPoller) finishTask(ctx context.Context, s *Scheduler, row state.TaskRuntime, ciStatus, note string) {
+	if err := p.Backend.SetTaskCIStatus(ctx, row.ID, ciStatus); err != nil {
+		s.logger().Error("recording the CI status failed", "task", row.ID, "status", ciStatus, "err", err)
+	}
+	if err := s.Queue.MarkDone(row.ID); err != nil {
+		s.logger().Error("mark done failed", "task", row.ID, "err", err)
+	}
+	// And in the database. The queue is this run's view; the row is what
+	// `orch status` and the dashboard show afterwards, and a task whose CI
+	// went green while the queue alone learned about it would read as
+	// in-progress forever.
+	if err := s.Backend.Transition(ctx, row.ID, model.StatusDone, note); err != nil {
+		s.logger().Error("recording done failed", "task", row.ID, "err", err)
+	}
+}
+
+// block is the CI verdict nothing more can change: a failure out of retries,
+// or a PR whose CI will never run.
+func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntime, reason string) {
+	if err := p.Backend.SetTaskCIStatus(ctx, row.ID, CIStatusFailure); err != nil {
+		s.logger().Error("recording CI failure failed", "task", row.ID, "err", err)
+	}
+	if err := s.Queue.MarkBlocked(row.ID); err != nil {
+		s.logger().Error("mark blocked failed", "task", row.ID, "err", err)
+	}
+	if err := s.Backend.Transition(ctx, row.ID, model.StatusBlocked, reason); err != nil {
+		s.logger().Error("recording blocked failed", "task", row.ID, "err", err)
+	}
+	p.emit(ctx, s, EventCIBlocked, row, map[string]any{
+		"pr_url": row.PRURL, "attempts": row.CIAttempts, "reason": reason,
+	})
+	if s.Notify != nil {
+		s.Notify.CIBlocked(ctx, row.ID, row.PRURL, row.CIAttempts)
+	}
+}
+
 // ciFailed re-dispatches the task with the failing logs, or blocks it once
 // the attempts are used up.
 func (p *CIPoller) ciFailed(ctx context.Context, s *Scheduler, row state.TaskRuntime) {
 	if row.CIAttempts >= p.maxRetries() {
-		if err := p.Backend.SetTaskCIStatus(ctx, row.ID, CIStatusFailure); err != nil {
-			s.logger().Error("recording CI failure failed", "task", row.ID, "err", err)
-		}
-		if err := s.Queue.MarkBlocked(row.ID); err != nil {
-			s.logger().Error("mark blocked failed", "task", row.ID, "err", err)
-		}
-		if err := s.Backend.Transition(ctx, row.ID, model.StatusBlocked, "CI failed"); err != nil {
-			s.logger().Error("recording blocked failed", "task", row.ID, "err", err)
-		}
-		p.emit(ctx, s, EventCIBlocked, row, map[string]any{
-			"pr_url": row.PRURL, "attempts": row.CIAttempts,
-		})
-		if s.Notify != nil {
-			s.Notify.CIBlocked(ctx, row.ID, row.PRURL, row.CIAttempts)
-		}
+		p.block(ctx, s, row, "CI failed")
 		return
 	}
 

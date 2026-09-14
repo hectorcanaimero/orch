@@ -52,6 +52,16 @@ const (
 	CIPending CIState = "pending"
 	CISuccess CIState = "success"
 	CIFailure CIState = "failure"
+	// CINone is a PR with no check (GitHub) or pipeline (GitLab) at all. Go
+	// only: Python called it pending, which is true for a PR opened a moment
+	// ago and never stops being "true" on a repo with no CI — #233. The
+	// engine decides how long none may last.
+	CINone CIState = "none"
+	// CIConflict is a PR with no checks that conflicts with its base. GitHub
+	// runs no workflow on a conflicting PR, so its checks are never coming
+	// (#236). Only reported alongside no checks: a PR whose CI already ran
+	// is judged by that run.
+	CIConflict CIState = "conflict"
 )
 
 // Provider opens, polls, and merges a PR (GitHub) or MR (GitLab).

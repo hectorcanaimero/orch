@@ -94,6 +94,8 @@ func TestEventTypesMatchPython(t *testing.T) {
 // reason next to it.
 var goOnlyEventTypes = map[string]bool{
 	"sprint_done": true,
+	// A PR finished with no CI check ever reported (#233).
+	"ci_no_checks": true,
 }
 
 // The four names the plan's FR-STATE-7 listed are not event types.

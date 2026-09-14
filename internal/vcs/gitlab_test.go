@@ -111,6 +111,27 @@ func TestGitLabCIStatusPendingWhenRunning(t *testing.T) {
 	}
 }
 
+// An MR with no pipeline at all is none, or conflict when it cannot merge —
+// the same two answers GitHub gives, so the poller treats both alike.
+func TestGitLabCIStatusNoPipeline(t *testing.T) {
+	for body, want := range map[string]CIState{
+		`{"head_pipeline":null}`:                      CINone,
+		`{"has_conflicts":true,"head_pipeline":null}`: CIConflict,
+	} {
+		t.Run(string(want), func(t *testing.T) {
+			withFakeBin(t)
+			t.Setenv("FAKE_GLAB_VIEW_STDOUT", body)
+			got, err := NewGitLabProvider("gitlab.com").CIStatus("https://gitlab.com/org/repo/-/merge_requests/7")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestGitLabCIStatusPendingOnGlabError(t *testing.T) {
 	withFakeBin(t)
 	t.Setenv("FAKE_GLAB_VIEW_EXIT", "1")
