@@ -61,3 +61,32 @@
 @media (prefers-reduced-motion: no-preference) {
   .portal-chevron { transition: transform 160ms ease-out; }
 }
+
+/* Shared documents read in the portal's own type and colours. */
+.portal-prose {
+  --tw-prose-body: var(--portal-ink);
+  --tw-prose-headings: var(--portal-ink);
+  --tw-prose-links: var(--portal-accent);
+  --tw-prose-bold: var(--portal-ink);
+  --tw-prose-bullets: var(--portal-muted);
+  --tw-prose-counters: var(--portal-muted);
+  --tw-prose-hr: var(--portal-line);
+  --tw-prose-quotes: var(--portal-ink);
+  --tw-prose-quote-borders: var(--portal-line);
+  --tw-prose-code: var(--portal-ink);
+  --tw-prose-pre-bg: var(--portal-surface);
+  --tw-prose-pre-code: var(--portal-ink);
+  --tw-prose-th-borders: var(--portal-line);
+  --tw-prose-td-borders: var(--portal-line);
+  font-size: 1.0625rem;
+}
+.portal-prose :where(h1, h2, h3) {
+  font-family: "Source Serif 4 Variable", "Source Serif 4", Georgia, serif;
+  text-wrap: balance;
+}
+/* A wide table or code block scrolls inside itself; the page never does. */
+.portal-prose { overflow-wrap: anywhere; min-width: 0; }
+.portal-prose pre,
+.portal-prose table { display: block; max-width: 100%; overflow-x: auto; }
+.portal-prose code::before,
+.portal-prose code::after { content: none; }

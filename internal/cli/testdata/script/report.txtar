@@ -6,6 +6,8 @@ grep '"name": "Autenticación"' site/data.json
 grep '"name": "inicio de sesión"' site/data.json
 grep '"title": "Formulario de acceso"' site/data.json
 ! grep 'F1\.1\.T1' site/data.json
+grep '"title": "Visión del portal"' site/data.json
+! grep 'Borrador interno' site/data.json
 
 # orch report pdf — through the real CLI, against the shipped parity fixture.
 
@@ -106,3 +108,9 @@ this is plainly not a PNG
 #!/bin/sh
 -- mini/.orchestrator/config.yaml --
 spec_root: specs
+portal:
+  documents: ["docs/prd/*.md"]
+-- mini/docs/prd/001-vision.md --
+# Visión del portal
+-- mini/docs/notes/draft.md --
+# Borrador interno

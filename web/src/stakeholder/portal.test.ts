@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { currentPhase, deliveriesSince, phaseName, phaseState, statusLine } from "@/stakeholder/portal"
+import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, renderMarkdown, statusLine } from "@/stakeholder/portal"
 import type { StakeholderMilestone, StakeholderSnapshot } from "@/stakeholder/types"
 
 function milestone(phase: number, name: string, done: number, total: number, extra: Partial<StakeholderMilestone> = {}): StakeholderMilestone {
@@ -85,5 +85,26 @@ describe("deliveriesSince", () => {
 
   it("copes with no deliveries at all", () => {
     expect(deliveriesSince(undefined, null, now)).toEqual([])
+  })
+})
+
+describe("renderMarkdown", () => {
+  // Documents are the operator's files, but the page is a client's: whatever
+  // the markdown carries, only safe HTML reaches the DOM.
+  it("renders markdown and strips anything executable", () => {
+    const html = renderMarkdown("# Título\n\nTexto con **énfasis**.\n\n<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>\n\n[enlace](javascript:alert(1))")
+    expect(html).toContain("<h1>Título</h1>")
+    expect(html).toContain("<strong>énfasis</strong>")
+    expect(html).not.toMatch(/<script|onerror|javascript:/i)
+  })
+})
+
+describe("parseRoute", () => {
+  it("reads the tab and the open document from the hash", () => {
+    expect(parseRoute("")).toEqual({ tab: "overview" })
+    expect(parseRoute("#roadmap")).toEqual({ tab: "roadmap" })
+    expect(parseRoute("#documents")).toEqual({ tab: "documents" })
+    expect(parseRoute("#documents/portal-para-clientes")).toEqual({ tab: "documents", doc: "portal-para-clientes" })
+    expect(parseRoute("#nonsense")).toEqual({ tab: "overview" })
   })
 })
