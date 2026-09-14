@@ -226,6 +226,75 @@ func TestETADateFromVelocity(t *testing.T) {
 	}
 }
 
+// The roadmap a client reads: every phase named (from the specs when
+// tasks.json has no name), its packages named, and each deliverable by title
+// with its state — never a task id, a file or a spec path.
+func TestRoadmapNamesPhasesPackagesAndDeliverables(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	in := fixtureInput(now)
+	in.Phases = nil
+	in.Tasks = []model.Task{
+		{ID: "F6.1.T1", Phase: 6, Title: "Plan de campaña", Status: model.StatusBlocked},
+		{ID: "F6.1.T2", Phase: 6, Title: "Presupuesto de pauta", Status: model.StatusDone},
+		{ID: "F6.2.T1", Phase: 6, Title: "Textos de anuncios", Status: model.StatusTodo},
+		{ID: "gh-7", Phase: 6, Title: "Arreglo pedido por el cliente", Status: model.StatusInProgress},
+	}
+	in.PhaseTitles = map[int]string{6: "Campaña de lanzamiento"}
+	in.PackageTitles = map[string]string{"6.1": "estrategia", "6.2": "piezas"}
+	in.FinishedAt = map[string]string{"F6.1.T2": "2026-09-13T10:00:00Z"}
+
+	snap := Build(in)
+	if len(snap.Milestones) != 1 || snap.Milestones[0].Name != "Campaña de lanzamiento" {
+		t.Fatalf("milestones = %+v, want the phase named from its spec", snap.Milestones)
+	}
+	pk := snap.Milestones[0].Packages
+	if len(pk) != 3 || pk[0].Name != "estrategia" || pk[1].Name != "piezas" || pk[2].Name != "" {
+		t.Fatalf("packages = %+v, want estrategia, piezas, then the unpackaged task", pk)
+	}
+	if pk[0].Total != 2 || pk[0].Done != 1 {
+		t.Errorf("estrategia counts = %d/%d, want 1/2", pk[0].Done, pk[0].Total)
+	}
+	d := pk[0].Deliverables
+	if d[0].Title != "Plan de campaña" || d[0].Status != "blocked" || d[1].Status != "done" || d[1].FinishedAt != "2026-09-13T10:00:00Z" {
+		t.Errorf("deliverables = %+v", d)
+	}
+	if pk[2].Deliverables[0].Status != "in_progress" {
+		t.Errorf("unpackaged deliverable = %+v, want in_progress", pk[2].Deliverables[0])
+	}
+
+	raw, _ := json.Marshal(snap)
+	for _, leak := range []string{"F6.1.T1", "gh-7", `"6.1"`} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("snapshot leaks %q", leak)
+		}
+	}
+}
+
+// "Since your last visit": what was delivered recently, newest first, by
+// title and phase, with the day — a window, not the whole history.
+func TestDeliveriesAreRecentNewestFirst(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	in := fixtureInput(now)
+	in.Phases = []model.Phase{{ID: 1, Name: "Seguridad"}}
+	in.Tasks = []model.Task{
+		{ID: "F1.1.T1", Phase: 1, Title: "Old", Status: model.StatusDone},
+		{ID: "F1.1.T2", Phase: 1, Title: "Recent", Status: model.StatusDone},
+		{ID: "F1.1.T3", Phase: 1, Title: "Newest", Status: model.StatusDone},
+		{ID: "F1.1.T4", Phase: 1, Title: "Undated", Status: model.StatusDone},
+		{ID: "F1.1.T5", Phase: 1, Title: "Not done", Status: model.StatusTodo},
+	}
+	in.FinishedAt = map[string]string{
+		"F1.1.T1": "2026-07-01T00:00:00Z",
+		"F1.1.T2": "2026-09-10T08:00:00+00:00", // Python's spelling, parsed not compared
+		"F1.1.T3": "2026-09-14T09:00:00Z",
+		"F1.1.T5": "2026-09-14T09:30:00Z",
+	}
+	got := Build(in).Deliveries
+	if len(got) != 2 || got[0].Title != "Newest" || got[1].Title != "Recent" || got[0].Phase != "Seguridad" {
+		t.Errorf("deliveries = %+v, want Newest then Recent in Seguridad", got)
+	}
+}
+
 func TestETAHoursNilWhenNothingRemains(t *testing.T) {
 	in := fixtureInput(time.Now())
 	in.Tasks = []model.Task{{ID: "X", Status: model.StatusDone, EstimateHours: 5}}

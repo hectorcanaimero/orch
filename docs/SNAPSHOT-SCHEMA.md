@@ -64,6 +64,7 @@ naming the key.
 | `budget` | object | See below. |
 | `branding` | object | **Optional**, absent unless `presentation.branding` is configured. See below. |
 | `executive_summary` | object | See below. |
+| `deliveries` | array of object | **Optional**, absent when nothing was finished in the last 30 days. See below. |
 
 ## `summary`
 
@@ -94,13 +95,14 @@ done, or none with recorded human hours).
 ## `milestones[]`
 
 One row per phase — this is Python's `phases_timeline`/`milestones_from_
-phases` reshaped into one object, not two. No task list: a milestone is a
-phase's aggregate, never a breakdown by task.
+phases` reshaped into one object, not two. The aggregate comes first; the
+optional `packages[]` breaks it down into deliverables by **title** — never by
+task id, file or spec path — which is what the client portal's roadmap reads.
 
 | Field | Type | Notes |
 |---|---|---|
 | `phase` | integer | The phase number from `tasks.json`. Not a task id. |
-| `name` | string | From `tasks.json`'s `phases[]`; `"Phase N"` when the project has none. |
+| `name` | string | From `tasks.json`'s `phases[]`; else the spec's `# F<n> — <title>` header; `"Phase N"` when neither names it. |
 | `total` | integer | |
 | `done` | integer | |
 | `in_progress` | integer | |
@@ -108,6 +110,18 @@ phase's aggregate, never a breakdown by task.
 | `backlog` | integer | |
 | `percent_done` | number | Rounded to 1 decimal; `0` when `total` is `0`. |
 | `complete` | boolean | `true` iff `total > 0 && done == total`. |
+| `packages` | array of object | **Optional** (additive, schema 1). The phase's tasks grouped by package, in task-id order: `name` (the spec's `## F<n>.<k> — <title>` header, a leading `Package: ` dropped; `"F<n>.<k>"` when the spec has no header; `""` for the group of tasks outside the `F<n>.<k>.T<m>` scheme, listed last), `total`, `done`, and `deliverables[]`. |
+
+Each `deliverables[]` entry is `title`, `status` — `done`, `in_progress`,
+`blocked` or `pending` (backlog and todo are one state to a client: not
+started) — and `finished_at` (RFC 3339) on a done deliverable whose finish
+time is recorded.
+
+## `deliveries[]`
+
+What was finished in the last 30 days, newest first, at most 30: `title`,
+`phase` (the phase's `name`) and `finished_at` (RFC 3339, UTC). The portal's
+"since your last visit". Absent when nothing was.
 
 ## `blockers[]`
 

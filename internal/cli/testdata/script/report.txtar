@@ -1,3 +1,12 @@
+# orch publish --to dir: the portal's roadmap reaches the static site, named
+# from the specs (tasks.json names no phase here), by title, never by id.
+exec orch publish --project-root mini --project-id mini --to dir --out site
+exists site/data.json
+grep '"name": "Autenticación"' site/data.json
+grep '"name": "inicio de sesión"' site/data.json
+grep '"title": "Formulario de acceso"' site/data.json
+! grep 'F1\.1\.T1' site/data.json
+
 # orch report pdf — through the real CLI, against the shipped parity fixture.
 
 exec orch report pdf --project-root proj --project-id proj --out report.pdf
@@ -84,3 +93,16 @@ presentation:
 
 -- notanimage.png --
 this is plainly not a PNG
+
+-- mini/tasks.json --
+{"tasks":[{"id":"F1.1.T1","phase":1,"title":"Formulario de acceso","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"f1.md#F1.1.T1","reason":"r"}]}
+-- mini/specs/f1.md --
+# F1 — Autenticación
+
+## F1.1 — Package: inicio de sesión
+
+### F1.1.T1 — Formulario de acceso
+-- mini/scripts/task-start.sh --
+#!/bin/sh
+-- mini/.orchestrator/config.yaml --
+spec_root: specs

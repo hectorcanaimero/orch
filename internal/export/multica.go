@@ -54,10 +54,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -67,6 +65,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/project"
 )
 
 // MulticaBinary is the CLI export shells out to.
@@ -350,52 +349,16 @@ func specPath(specRoot, ref string) string {
 
 // ---- phase titles ------------------------------------------------------
 
-var phaseHeader = regexp.MustCompile(`^#\s+F(\d+)\s*[—–-]\s*(.+?)\s*$`)
-
 // PhaseTitles reads each phase's title from the `# F<n> — <title>` header of
-// the specs its tasks point at. tasks.json keeps no phase names, and "F1" in
-// a tracker says nothing to the people reading it there.
-//
-// A task with no specRef, or a spec file that is not there, contributes no
-// title — the parent falls back to "F<n>". A spec that exists and cannot be
-// read is an error: that is a broken project, not an absent spec.
-//
-// A specRef is tried under spec_root first and then as written, because
-// specs from before bug 12 carry the `specs/` prefix themselves.
+// the specs its tasks point at (project.SpecOutline). tasks.json keeps no
+// phase names, and "F1" in a tracker says nothing to the people reading it
+// there. A phase with no title falls back to "F<n>" at the call site.
 func PhaseTitles(projectRoot, specRoot string, tasks []model.Task) (map[int]string, error) {
-	titles := map[int]string{}
-	seen := map[string]bool{}
-	for _, t := range tasks {
-		file, _, _ := strings.Cut(t.SpecRef, "#")
-		if file == "" || seen[file] {
-			continue
-		}
-		seen[file] = true
-		for _, candidate := range []string{
-			filepath.Join(projectRoot, specRoot, file),
-			filepath.Join(projectRoot, file),
-		} {
-			data, err := os.ReadFile(candidate) // #nosec G304 -- a spec path inside the operator's own project root.
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("export: reading spec %s: %w", candidate, err)
-			}
-			for _, line := range strings.Split(string(data), "\n") {
-				m := phaseHeader.FindStringSubmatch(strings.TrimRight(line, "\r"))
-				if m == nil {
-					continue
-				}
-				n, _ := strconv.Atoi(m[1])
-				if _, ok := titles[n]; !ok {
-					titles[n] = m[2]
-				}
-			}
-			break
-		}
+	outline, err := project.SpecOutline(projectRoot, specRoot, tasks)
+	if err != nil {
+		return nil, fmt.Errorf("export: %w", err)
 	}
-	return titles, nil
+	return outline.Phases, nil
 }
 
 // ---- talking to the CLI -----------------------------------------------
