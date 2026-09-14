@@ -90,18 +90,25 @@ jobs:
         run: orch validate --project-root /tmp/smoke-project
 
       - name: orch doctor
-        # Exit 1 (warnings only — e.g. no .mcp.json, or codex/opencode
-        # genuinely absent from this runner) is a legitimate result for a
-        # freshly scaffolded scratch project, not a smoke-test failure;
-        # only exit >=2 (a real "error"-status check, per
-        # internal/doctor.ExitCode) fails this step. See
+        # Warnings are a legitimate result for a fresh scratch project. So
+        # is ONE kind of error: `backend.<cli>` — this bare runner has no
+        # coding CLI installed on purpose, and the template routes to
+        # claude, so doctor rightly reports it missing (exit 2). v0.12.0's
+        # smoke run failed on exactly that. Any other error, or a doctor
+        # that cannot print its JSON report, fails the step. See
         # docs/brainstorm/go-migration-notes/sonnet-2.md for why `orch
         # doctor` didn't exist as a command until #183.
         run: |
           set +e
-          orch doctor --project-root /tmp/smoke-project
+          orch doctor --project-root /tmp/smoke-project --json > /tmp/doctor.json
           code=$?
           set -e
-          if [ "$code" -ge 2 ]; then
+          jq . /tmp/doctor.json
+          unexpected=$(jq -r '.checks[] | select(.status == "error") | select(.name | startswith("backend.") | not) | .name' /tmp/doctor.json)
+          if [ -n "$unexpected" ]; then
+            echo "doctor reported errors a bare runner should not have: $unexpected"
+            exit 1
+          fi
+          if [ "$code" -gt 2 ]; then
             exit "$code"
           fi
