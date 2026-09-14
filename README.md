@@ -58,7 +58,7 @@ Downloads the matching tarball from the latest GitHub Release, verifies
 its checksum, and installs to `~/.local/bin` (`INSTALL_DIR=...` to
 override).
 
-**Homebrew**:
+**Homebrew** (once the tap is published — see `docs/RELEASING.md`):
 
 ```bash
 brew install hectorcanaimero/orch/orch

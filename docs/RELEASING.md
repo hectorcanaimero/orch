@@ -71,7 +71,12 @@ Pushing the tag triggers `release-go.yml`, which:
    Also needs a `HOMEBREW_TAP_GITHUB_TOKEN` repo secret — a PAT with
    `contents:write` on that tap repo specifically; the default
    `GITHUB_TOKEN` this workflow otherwise uses only has permissions on
-   *this* repo.
+   *this* repo. `.goreleaser.yaml` passes it as `brews.repository.token`.
+
+   **Until that secret exists the tap push is skipped** (`skip_upload`
+   is templated on it), so a release still publishes its GitHub archives
+   and `install.sh` works; `brew install` does not until a release runs
+   with the secret set. `v0.12.0` shipped this way.
 
 Nothing publishes on an ordinary push or PR — only an actual `v*` tag
 push triggers a real release. Every other event (PR, push to `main`)
