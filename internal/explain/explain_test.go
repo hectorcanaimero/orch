@@ -77,6 +77,22 @@ func TestGatherReadyIsTheDispatchLoopsNotionOfReady(t *testing.T) {
 	}
 }
 
+// #235: a backlog task whose dependencies are done is parallelizable, but
+// `orch run` only dispatches todo — listing it under "Ready to dispatch"
+// promised a dispatch that never came.
+func TestGatherReadyLeavesBacklogOut(t *testing.T) {
+	tasks := append(demoTasks(), task("T-5", 0, model.StatusBacklog, []string{"T-1"}, 1, "Docs"))
+	got, err := Gather(context.Background(), Options{Tasks: tasks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range got.Ready {
+		if r.ID == "T-5" {
+			t.Errorf("ready = %+v, lists the backlog task T-5", got.Ready)
+		}
+	}
+}
+
 // No budgets.yaml is `enabled:false` with an EMPTY map, never null — a caller
 // iterates it without branching on a case that does not exist.
 func TestGatherBudgetIsNeverNull(t *testing.T) {

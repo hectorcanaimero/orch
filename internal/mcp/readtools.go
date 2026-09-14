@@ -175,8 +175,7 @@ type contextOut struct {
 	// and `orch_budget` and joining them, and a join an agent performs is a
 	// join that can disagree with the one the dispatch loop performs.
 	//
-	// Same types the other tools publish — `graph.Parallelizable`'s notion of
-	// ready, and `orch_budget`'s own snapshot shape — so there is one spelling
+	// Same types the other tools publish — `graph.Ready`'s notion of ready, and `orch_budget`'s own snapshot shape — so there is one spelling
 	// of each across every surface.
 	Ready  []explain.ReadyTask `json:"ready"`
 	Budget explain.Budget      `json:"budget"`
@@ -251,7 +250,7 @@ func (s *server) taskContext(ctx context.Context, _ *mcpsdk.CallToolRequest, in 
 	for _, id := range t.Dependencies {
 		dep, known := byID[id]
 		// A dependency naming a task nobody defined counts as not done —
-		// the same reading `graph.Parallelizable` takes, and the safe one.
+		// the same reading `graph.Ready` takes, and the safe one.
 		if !known || dep.Status != model.StatusDone {
 			tc.PendingDependencies = append(tc.PendingDependencies, id)
 			continue

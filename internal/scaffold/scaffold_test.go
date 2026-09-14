@@ -753,3 +753,19 @@ func TestWorkflowFollowsTheTemplateTestCommand(t *testing.T) {
 		t.Errorf("the nextjs-saas template got a Python workflow:\n%s", wf)
 	}
 }
+
+// #234: every AGENTS.md told an agent with no orch on PATH to run `pipx
+// install orch` — the archived Python package, which is not this binary.
+func TestAgentsMDInstallsTheGoBinary(t *testing.T) {
+	for _, tmpl := range append([]string{""}, templates.Names()...) {
+		t.Run("template="+tmpl, func(t *testing.T) {
+			got := readFile(t, scaffolded(t, tmpl), "AGENTS.md")
+			if strings.Contains(got, "pipx") {
+				t.Errorf("AGENTS.md still installs the Python package:\n%s", got)
+			}
+			if !strings.Contains(got, "scripts/install.sh") {
+				t.Errorf("AGENTS.md does not say how to install orch:\n%s", got)
+			}
+		})
+	}
+}

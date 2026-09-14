@@ -91,8 +91,8 @@ Run it from a client, not from a terminal.
 
 Every task with its live status. Filters: `status` (a list), `ids` (a list),
 `milestone`, `limit`, and `ready` — the tasks that could be dispatched right
-now, which is `backlog` or `todo` with every dependency `done`, the same
-question the dispatch loop asks.
+now, which is `todo` with every dependency `done`, the same question the
+dispatch loop asks. A `backlog` task is not ready until it is promoted.
 
 Returns `tasks[]` plus `count` (rows returned) and `total` (rows matched), so
 a truncated page is distinguishable from a complete one.

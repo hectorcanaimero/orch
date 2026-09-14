@@ -136,15 +136,17 @@ func countByStatus(tasks []model.Task) map[string]int {
 	return counts
 }
 
-// readyTasks is `graph.Parallelizable`, not a second definition of "ready".
+// readyTasks is `graph.Ready`, not a second definition of "ready".
 //
-// That function is what the dispatch loop consults and what
-// `orch_list_tasks{ready:true}` already publishes, so the word means the same
-// thing in the prompt, in the tool and in the run. A narrower notion — say,
-// "ready and not deferred by budget" — would be a different field with a
-// different name, never a `ready` that disagrees with the published one.
+// That is the dispatch loop's notion (todo, dependencies done) and what
+// `orch_list_tasks{ready:true}` publishes, so the word means the same thing
+// in the prompt, in the tool and in the run. It used to be
+// `graph.Parallelizable`, which also counts backlog and so listed tasks no run
+// would start (#235). A narrower notion — say, "ready and not deferred by
+// budget" — would be a different field with a different name, never a
+// `ready` that disagrees with the published one.
 func readyTasks(tasks []model.Task) []ReadyTask {
-	ready := graph.Parallelizable(tasks)
+	ready := graph.Ready(tasks)
 	out := make([]ReadyTask, 0, len(ready))
 	for _, t := range ready {
 		out = append(out, ReadyTask{
