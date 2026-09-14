@@ -39,10 +39,18 @@ func (s *Server) routes() []route {
 // token is — so the SPA reads it to hide operator-only navigation.
 type whoamiPayload struct {
 	Profile string `json:"profile"`
+	// Routes is the stakeholder allow-list, by route name, and only for the
+	// stakeholder profile: the SPA shows exactly the pages whose data route
+	// is on it. Omitted for operator and both, whose SPA surface is ungated.
+	Routes []string `json:"routes,omitempty"`
 }
 
 func (s *Server) handleWhoami(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, whoamiPayload{Profile: string(s.cfg.Profile)})
+	payload := whoamiPayload{Profile: string(s.cfg.Profile)}
+	if s.cfg.Profile == ProfileStakeholder {
+		payload.Routes = s.cfg.StakeholderRoutes
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // configStatusPayload is `/api/config/status`'s body.
