@@ -401,13 +401,28 @@ func (b *SQLite) Transition(ctx context.Context, id string, to model.Status, not
 			finished = at
 		}
 
+		// Landing back in todo means no PR is being tracked for this task
+		// anymore: whatever pr_url/ci_status/ci_attempts were left from a
+		// previous attempt (blocked or done) are stale the moment a human
+		// resets the task, and left alone they keep TasksWithPendingCI
+		// feeding the CIPoller a dead PR forever (issue #255). The CI
+		// retry path (cipoll.go's redispatch) never reaches here — it
+		// keeps the queue's in-memory view at todo without a Transition
+		// call, precisely so a retry on the SAME PR is not cleared by
+		// this.
+		clearPR := to == model.StatusTodo
+
 		res, err := tx.ExecContext(ctx,
 			`UPDATE tasks_runtime
 			    SET status = ?, comments_json = ?, updated_at = ?,
 			        started_at = COALESCE(?, started_at),
-			        finished_at = COALESCE(?, finished_at)
+			        finished_at = COALESCE(?, finished_at),
+			        pr_url = CASE WHEN ? THEN NULL ELSE pr_url END,
+			        ci_status = CASE WHEN ? THEN NULL ELSE ci_status END,
+			        ci_attempts = CASE WHEN ? THEN 0 ELSE ci_attempts END
 			  WHERE project_id = ? AND task_id = ?`,
-			string(to), comments, at, started, finished, b.projectID, id)
+			string(to), comments, at, started, finished,
+			clearPR, clearPR, clearPR, b.projectID, id)
 		if err != nil {
 			return fmt.Errorf("update %q: %w", id, err)
 		}
