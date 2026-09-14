@@ -115,6 +115,10 @@ func (s *Scheduler) finish(ctx context.Context, c completion) error {
 	if agentBlocked {
 		tidyOut.Result.Success = false
 	}
+	if denied := out.Result.PermissionDenials; len(denied) > 0 {
+		s.logger().Warn("the CLI denied tool calls; allow them in .claude/settings.json if the task needs them",
+			"task", entry.Task.ID, "denied", strings.Join(denied, ", "))
+	}
 	prOpened, noPR := s.tidyWorktree(ctx, entry, tidyOut)
 
 	// Capacity comes back before the verdict, so a retry queued below can be

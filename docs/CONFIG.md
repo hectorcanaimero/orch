@@ -85,6 +85,27 @@ dispatch:
 With `worktree_mode` on and no git repo — or no remote — orch **degrades and
 says so** rather than failing: see `orch doctor`.
 
+**Claude permissions in a worktree.** `claude` runs with
+`--permission-mode acceptEdits`: every tool that is not allow-listed (Bash,
+WebFetch, `mcp__orch__*`…) is refused without a prompt, and the run still ends
+`success`. A worktree only holds what git tracks, so a repo that ignores
+`.claude/` would give the agent no allow-list at all. orch passes the project
+root's `.claude/settings.json` and `.claude/settings.local.json` with
+`--settings` when the worktree lacks them. Refused calls are logged and land
+in the outcome event's `permission_denials`. A minimal allow-list for
+dispatched agents:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+              "Bash(pnpm:*)", "Bash(go test:*)", "Bash(scripts/task-*.sh:*)",
+              "WebFetch", "WebSearch", "mcp__orch"],
+    "deny": ["Bash(git push:*)"]
+  }
+}
+```
+
 ### `vcs`
 
 ```yaml

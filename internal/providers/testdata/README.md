@@ -14,6 +14,24 @@ what the parser used to have to cope with.
 
 ---
 
+## `claude/2.1.270/` — real capture
+
+Captured on 2026-09-14 on this VPS in a fresh `git init` directory, with
+`ClaudeProvider.Argv`'s flags plus `--setting-sources project` (so the
+operator's own allow-list could not let the calls through) and
+`--no-session-persistence`, prompt on stdin:
+
+```
+printf '<prompt>' | claude -p --output-format json \
+    --model claude-haiku-4-5-20251001 --add-dir . \
+    --permission-mode acceptEdits \
+    --setting-sources project --no-session-persistence
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `permission-denials.json` | prompt: run exactly `curl -sI https://example.com` with Bash, then WebFetch `https://example.com`, no alternatives. Both refused (Bash twice); `subtype` still `success` (#231) | 0 |
+
 ## `claude/2.1.269/` — real capture
 
 Captured on 2026-09-11 on this VPS with the argv `ClaudeProvider.Argv`

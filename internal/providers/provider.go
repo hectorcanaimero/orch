@@ -72,6 +72,12 @@ type Request struct {
 	// BudgetUSD is the per-dispatch spend cap to hand the CLI, when the
 	// operator configured one. nil omits the flag entirely.
 	BudgetUSD *float64
+
+	// Settings is a claude settings JSON to load on top of the ones the CLI
+	// finds itself — the project root's, for a worktree that lacks them
+	// because git ignores .claude/ (#231). Only claude reads it; empty omits
+	// the flag.
+	Settings string
 }
 
 // Result is the terminal state of one dispatch. Ported from
@@ -105,6 +111,12 @@ type Result struct {
 	// usage, so downstream spend rows can tell missing telemetry apart from
 	// genuinely zero-cost work. Only opencode sets it (Issue #8).
 	Estimated bool
+
+	// PermissionDenials are the tool calls the CLI refused without asking,
+	// as `Tool` or `Bash(command)`. A run can succeed with some; one that
+	// could do nothing looks the same from its exit code (#231). Only claude
+	// reports them.
+	PermissionDenials []string
 }
 
 // Provider is the adapter contract. One implementation per external CLI.
