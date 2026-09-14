@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { formatEta } from "@/lib/eta"
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -193,10 +194,7 @@ function SummaryCard({ summary }: { summary: StakeholderSnapshot["summary"] }) {
         <Stat label="In progress" value={summary.in_progress} />
         <Stat label="Blocked" value={summary.blocked} />
         <Stat label="Backlog" value={summary.backlog} />
-        <Stat
-          label="ETA"
-          value={summary.eta_hours == null ? "—" : `${summary.eta_hours.toFixed(1)}h`}
-        />
+        <Stat label="Estimated finish" value={formatEta(summary).value} />
       </CardContent>
     </Card>
   )

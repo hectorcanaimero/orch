@@ -68,7 +68,8 @@ naming the key.
 ## `summary`
 
 The same seven figures `graph.Summarize` already produces for `orch
-status`/the operator dashboard, plus one new figure — `eta_hours`.
+status`/the operator dashboard, plus the finish estimate — `eta_hours`, and
+`eta_date`/`eta_confidence` when a pace is known.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -80,6 +81,8 @@ status`/the operator dashboard, plus one new figure — `eta_hours`.
 | `percent_done` | number | Rounded to 1 decimal. |
 | `estimate_hours_total` | number | Sum of every task's `estimateHours`. Rounded to 1 decimal. |
 | `eta_hours` | number or `null` | Remaining estimate scaled by actual pace on done tasks. `null` when there is no signal — nothing left, ever (see below). |
+| `eta_date` | string, optional | Projected finish day (`YYYY-MM-DD`, UTC) at the pace of the last 7 days: tasks neither done nor blocked, divided by tasks finished per day. The same projection the dashboard's Sprint page shows. **Absent** when nothing remains or nothing finished in the window. Additive, so still schema 1 (like `branding`). |
+| `eta_confidence` | string, optional | `"high"` when `eta_date` is within 30 days, `"low"` beyond. Present exactly when `eta_date` is. |
 
 `eta_hours` ports `eta_hours_remaining` (`orchestrator/dashboard/
 metrics.py`): sum `estimate_hours` over every not-done task; if that is

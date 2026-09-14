@@ -41,8 +41,12 @@ type stakeholderSummaryPayload struct {
 	Milestones []stakeholderMilestone `json:"milestones"`
 	// SpendRoundedUSD is null — not zero — when the spend flag is off. Zero
 	// would read as "nothing was spent", which is a different claim.
-	SpendRoundedUSD  *float64           `json:"spend_rounded_usd"`
-	ETAHours         *float64           `json:"eta_hours"`
+	SpendRoundedUSD *float64 `json:"spend_rounded_usd"`
+	ETAHours        *float64 `json:"eta_hours"`
+	// ETADate and ETAConfidence are the finish date the Sprint page shows,
+	// null and "" when no pace is known. Go only: Python sent hours alone.
+	ETADate          *string            `json:"eta_date"`
+	ETAConfidence    string             `json:"eta_confidence"`
 	RefreshIntervalS int                `json:"refresh_interval_s"`
 	PhasesTimeline   []stakeholderPhase `json:"phases_timeline"`
 	SpendByDay       []stakeholderDaily `json:"spend_by_day"`
@@ -119,6 +123,11 @@ func (s *Server) handleStakeholderSummary(w http.ResponseWriter, r *http.Request
 		s.failRead(w, "stakeholder summary", err)
 		return
 	}
+	doneInWindow, err := s.state.CountDoneLastNDays(r.Context(), velocityWindowDays)
+	if err != nil {
+		s.failRead(w, "stakeholder summary", err)
+		return
+	}
 
 	snap := snapshot.Build(snapshot.Input{
 		Tasks:            view.Tasks,
@@ -130,6 +139,8 @@ func (s *Server) handleStakeholderSummary(w http.ResponseWriter, r *http.Request
 		Language:         s.cfg.SummaryLanguage,
 		ShowSpend:        s.cfg.ShowSpendToStakeholder,
 		Now:              time.Now(),
+
+		DoneInVelocityWindow: doneInWindow,
 	})
 
 	writeJSON(w, http.StatusOK, stakeholderSummaryPayload{
@@ -138,6 +149,8 @@ func (s *Server) handleStakeholderSummary(w http.ResponseWriter, r *http.Request
 		Milestones:       stakeholderMilestonesFrom(snap.Milestones),
 		SpendRoundedUSD:  stakeholderSpendTotal(snap.Budget),
 		ETAHours:         snap.Summary.ETAHours,
+		ETADate:          snap.Summary.ETADate,
+		ETAConfidence:    snap.Summary.ETAConfidence,
 		RefreshIntervalS: snap.RefreshIntervalS,
 		PhasesTimeline:   phasesTimeline(snap.Milestones, view.Tasks),
 		SpendByDay:       stakeholderSpendByDay(snap.Budget),

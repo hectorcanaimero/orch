@@ -160,6 +160,22 @@ func TestMoreMilestonesThanFitAreSummarised(t *testing.T) {
 	}
 }
 
+// With a measured pace the box carries the finish date the executive summary
+// and the Sprint page quote, not hours next to a sentence naming a date.
+func TestTheReportShowsTheFinishDateWhenThereIsOne(t *testing.T) {
+	snap := demoSnapshot(3)
+	date := "2026-09-16"
+	snap.Summary.ETADate = &date
+	snap.Summary.ETAConfidence = "high"
+	b := render(t, snap, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	if !bytes.Contains(b, []byte("16 Sep 2026")) {
+		t.Error("the report does not carry the finish date")
+	}
+	if bytes.Contains(b, []byte("42 h")) {
+		t.Error("the report still shows hours alongside a finish date")
+	}
+}
+
 // Everything the page promises to carry is on it.
 func TestTheReportCarriesTheSnapshotsFigures(t *testing.T) {
 	b := render(t, demoSnapshot(3), time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))

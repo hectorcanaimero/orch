@@ -1,10 +1,13 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
@@ -24,10 +27,9 @@ import (
 // than as a stalled project.
 const velocityWindowDays = 7
 
-// etaConfidenceDays is where a projection stops being worth trusting. Beyond a
-// month, a velocity measured over one week is extrapolating further than it
-// can see.
-const etaConfidenceDays = 30
+// etaConfidenceDays is where a projection stops being worth trusting; the
+// value lives with the projection itself, graph.ProjectCompletion.
+const etaConfidenceDays = graph.ProjectionTrustDays
 
 // sprintPayload is `/api/sprint`'s body.
 //
@@ -112,13 +114,11 @@ func sprintHealth(tasks []model.Task, done7d int, lastEvents map[string]state.Ev
 	// No velocity or nothing left means no projection — and no projection is
 	// reported as null rather than as zero days, because "done today" and "no
 	// idea" are opposite claims.
-	if velocity > 0 && remainingTasks > 0 {
-		etaDays := float64(remainingTasks) / velocity
-		etaDate := now.UTC().Add(time.Duration(etaDays * float64(24*time.Hour))).Format("2006-01-02")
-		rounded := round1(etaDays)
-		out.ETADays = &rounded
-		out.ETADate = &etaDate
-		out.Confidence = confidenceFor(etaDays)
+	if p := graph.ProjectCompletion(remainingTasks, done7d, velocityWindowDays, now); p != nil {
+		days, date := p.Days, p.Date
+		out.ETADays = &days
+		out.ETADate = &date
+		out.Confidence = p.Confidence
 	}
 	return out
 }
@@ -142,8 +142,15 @@ func blockers(blocked []model.Task, lastEvents map[string]state.Event) []blocker
 	out := make([]blockerRow, 0, len(blocked))
 	for _, t := range blocked {
 		ev, hasEvent := lastEvents[t.ID]
-		reason := extraString(ev.Extra, "reason")
+		// The last note first: orch_block, task-block.sh and the engine's own
+		// block all write the reason there. The last event is only a
+		// fallback, and only a failure event names one — an agent that
+		// blocked itself and exited cleanly leaves "success" behind.
+		reason := lastNoteBody(t.Comments)
 		if reason == "" {
+			reason = extraString(ev.Extra, "reason")
+		}
+		if reason == "" && failureEvents[ev.EventType] {
 			reason = ev.EventType
 		}
 		if reason == "" {
@@ -163,6 +170,24 @@ func blockers(blocked []model.Task, lastEvents map[string]state.Event) []blocker
 		})
 	}
 	return out
+}
+
+// failureEvents are the event types whose name is itself a reason to show.
+var failureEvents = map[string]bool{
+	"fail": true, "timeout": true, "block": true, "ci_blocked": true, "id_spoof_detected": true,
+}
+
+// lastNoteBody is the body of a task's most recent comment, whoever wrote it.
+func lastNoteBody(comments []json.RawMessage) string {
+	for i := len(comments) - 1; i >= 0; i-- {
+		var c struct {
+			Body string `json:"body"`
+		}
+		if json.Unmarshal(comments[i], &c) == nil && strings.TrimSpace(c.Body) != "" {
+			return strings.TrimSpace(c.Body)
+		}
+	}
+	return ""
 }
 
 func titleOr(t model.Task) string {

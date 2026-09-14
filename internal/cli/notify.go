@@ -221,6 +221,10 @@ func digestText(ctx context.Context, backend state.Backend, paths config.Paths, 
 	if err != nil {
 		return "", err
 	}
+	doneInWindow, err := backend.CountDoneLastNDays(ctx, snapshot.VelocityWindowDays)
+	if err != nil {
+		return "", fmt.Errorf("count recent completions: %w", err)
+	}
 
 	// ShowSpend follows Python's `total_spend = round(sum(...), 2) if spend
 	// else None`, and the condition is the ROWS, not the sum: a day with no
@@ -250,6 +254,8 @@ func digestText(ctx context.Context, backend state.Backend, paths config.Paths, 
 		Language:    lang,
 		ShowSpend:   len(spends) > 0,
 		Now:         now,
+
+		DoneInVelocityWindow: doneInWindow,
 	})
 
 	milestones, err := digestMilestones(ctx, backend, tasks, now)

@@ -15,6 +15,9 @@ export interface StakeholderSummary {
   percent_done: number
   estimate_hours_total: number
   eta_hours: number | null
+  // Absent when no pace is known (docs/SNAPSHOT-SCHEMA.md).
+  eta_date?: string
+  eta_confidence?: string
 }
 
 export interface StakeholderMilestone {

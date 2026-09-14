@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { formatEta } from "@/lib/eta"
 import { useWhoami } from "@/hooks/useWhoami"
 import {
   AlertTriangle,
@@ -170,11 +171,14 @@ function PhaseTimeline({ phases }: { phases: StakeholderPhase[] }) {
 
 // ---- Spend sparkline -------------------------------------------------------
 
-function SpendChart({ days }: { days: SpendByDay[] }) {
+// total is spend_rounded_usd when the server sent it: the same figure the
+// executive summary quotes, so the card and the sentence cannot disagree
+// ($185.76 next to "$186.00").
+function SpendChart({ days, total: sharedTotal }: { days: SpendByDay[]; total: number | null }) {
   if (!days.length) return null
 
   const max = Math.max(...days.map((d) => d.cost), 0.01)
-  const total = days.reduce((s, d) => s + d.cost, 0)
+  const total = sharedTotal ?? days.reduce((s, d) => s + d.cost, 0)
   const W = 280
   const H = 48
   const barW = Math.max(2, Math.floor(W / days.length) - 1)
@@ -329,12 +333,12 @@ export function StakeholderSummaryPage() {
     summary,
     milestones,
     spend_rounded_usd,
-    eta_hours,
     refresh_interval_s,
     phases_timeline,
     spend_by_day,
     exec_summary,
   } = data
+  const eta = formatEta(data)
 
   const refreshSeconds = refresh_interval_s && refresh_interval_s > 0 ? refresh_interval_s : 10
 
@@ -396,7 +400,7 @@ export function StakeholderSummaryPage() {
       {/* Spend + ETA */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {spend_by_day?.length > 1 ? (
-          <SpendChart days={spend_by_day} />
+          <SpendChart days={spend_by_day} total={spend_rounded_usd} />
         ) : spend_rounded_usd == null ? null : (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -412,17 +416,16 @@ export function StakeholderSummaryPage() {
         )}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardDescription className="text-xs uppercase tracking-wide">ETA</CardDescription>
-            {eta_hours == null ? (
+            <CardDescription className="text-xs uppercase tracking-wide">Estimated finish</CardDescription>
+            {eta.value === "—" ? (
               <Clock className="h-4 w-4 text-muted-foreground" />
             ) : (
               <Timer className="h-4 w-4 text-muted-foreground" />
             )}
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold">
-              {eta_hours == null ? "—" : `${eta_hours.toFixed(1)}h`}
-            </div>
+            <div className="text-2xl font-semibold">{eta.value}</div>
+            {eta.detail ? <p className="mt-1 text-sm text-muted-foreground">{eta.detail}</p> : null}
           </CardContent>
         </Card>
       </div>

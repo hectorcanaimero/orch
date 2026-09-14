@@ -40,6 +40,9 @@ export interface StakeholderSummary {
   // (dashboard.show_spend_to_stakeholder off).
   spend_rounded_usd: number | null
   eta_hours: number | null
+  // The Sprint page's finish date; null / "" when no pace is known.
+  eta_date?: string | null
+  eta_confidence?: string
   refresh_interval_s: number
   // Sprint E-7: enhanced stakeholder view
   phases_timeline: StakeholderPhase[]
