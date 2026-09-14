@@ -323,6 +323,48 @@ gh pr merge <N> --disable-auto           # right now, this PR only
 
 ---
 
+## Issue triage
+
+`.github/workflows/triage.yml` runs on every new issue (and by hand, with
+`workflow_dispatch` and an issue number, to triage one again). Gemini reads
+the issue, `.github/review/TRIAGE.md` and the repository map from `CLAUDE.md`,
+and answers with JSON that `.github/review/parse-triage.py` validates. The
+workflow then:
+
+| It sets | From |
+|---|---|
+| `priority:urgent` or `priority:planned` | the rubric: urgent means state lost, the main flow blocked, work wrongly marked done, install broken, security or a regression, **and** no workaround |
+| `type:bug`, `type:improvement` or `type:feature` | the rubric |
+| a milestone | the newest `vX.Y.Z` tag: urgent → `vX.Y.Z+1`, planned → `vX.Y+1.0` (created when missing) |
+| one comment (`<!-- orch:gemini-triage -->`, edited on a re-triage) | severity, workaround, likely areas, the reasoning; `cc @owner` only when urgent |
+
+Same guarantees as the reviewer: the model gets no token and no tools, the
+issue text reaches it only inside the prompt (never through `${{ }}` in a
+`run:` block) and is marked untrusted, and a malformed answer labels nothing
+and fails the run. An empty answer is retried once.
+
+It is a **proposal**. Change the labels or the milestone when you disagree:
+the workflow does not run again on its own.
+
+### `claude:go` — handing an issue to Claude
+
+Nothing is worked on until the maintainer adds **`claude:go`**. A Claude Code
+cloud routine (set up with `/schedule`, running on the maintainer's Claude
+subscription) checks every hour, takes **one** issue per run (urgent first),
+and moves it through:
+
+| Label | Meaning |
+|---|---|
+| `claude:go` | approved by the maintainer, waiting for the routine |
+| `claude:working` | taken; the next run will not take it again |
+| `claude:pr-open` | a PR with `Closes #N` is open, and the issue has a comment saying what changed |
+| `claude:blocked` | the routine could not fix it; its comment says why |
+
+The routine never merges, never tags and never releases. For something that
+cannot wait an hour, ask a Claude session directly.
+
+---
+
 ## Related
 
 - [`.github/review/CHECKLIST.md`](../.github/review/CHECKLIST.md) — the rules the reviewer applies
