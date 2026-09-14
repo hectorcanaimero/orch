@@ -196,8 +196,11 @@ func TestWhoamiListsTheStakeholderRoutes(t *testing.T) {
 	for _, profile := range []Profile{ProfileOperator, ProfileBoth} {
 		s := newTestServer(t, cfg(profile, ""), t.TempDir())
 		resp := get(t, s, "/api/whoami")
-		raw, _ := io.ReadAll(resp.Body)
+		raw, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("%s: read whoami body: %v", profile, err)
+		}
 		if strings.Contains(string(raw), "routes") {
 			t.Errorf("%s whoami = %s, want no routes list", profile, raw)
 		}
