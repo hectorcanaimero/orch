@@ -411,7 +411,8 @@ func transitionThroughTodo(ctx context.Context, backend RecordBackend, taskID st
 		return err
 	}
 	if reopenErr := backend.Transition(ctx, taskID, model.StatusTodo, note); reopenErr != nil {
-		return err
+		return fmt.Errorf("reopening %q to retry the move to %s failed: %w (original: %s)",
+			taskID, to, reopenErr, err)
 	}
 	return backend.Transition(ctx, taskID, to, note)
 }

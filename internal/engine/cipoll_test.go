@@ -489,6 +489,52 @@ func TestCIBlockReopensATaskTheAgentAlreadyMarkedDone(t *testing.T) {
 	}
 }
 
+// transitionErrBackend forces its Transition calls to fail in a fixed
+// sequence, so transitionThroughTodo's error-wrapping path can be tested
+// without wiring up a whole scheduler run.
+type transitionErrBackend struct {
+	errs []error // consumed in order, one per Transition call
+}
+
+func (b *transitionErrBackend) RecordDispatchAndEvent(context.Context, string, Dispatch, *Spawned, int) error {
+	return nil
+}
+func (b *transitionErrBackend) RecordFinish(context.Context, string, Dispatch, Outcome, int) error {
+	return nil
+}
+func (b *transitionErrBackend) AppendEngineEvent(context.Context, string, string, string, string, map[string]any) error {
+	return nil
+}
+func (b *transitionErrBackend) TaskStatus(context.Context, string) (model.Status, error) {
+	return model.StatusDone, nil
+}
+
+func (b *transitionErrBackend) Transition(context.Context, string, model.Status, string) error {
+	err := b.errs[0]
+	b.errs = b.errs[1:]
+	return err
+}
+
+// TestTransitionThroughTodoWrapsBothErrorsWhenTheReopenAlsoFails: rule 19 —
+// an error on the reopen hop must not silently replace the original
+// illegal-transition failure it was trying to recover from.
+func TestTransitionThroughTodoWrapsBothErrorsWhenTheReopenAlsoFails(t *testing.T) {
+	illegal := fmt.Errorf("%q: %w done -> blocked", "C-1", state.ErrIllegalTransition)
+	reopenErr := errors.New("database is locked")
+	b := &transitionErrBackend{errs: []error{illegal, reopenErr}}
+
+	err := transitionThroughTodo(context.Background(), b, "C-1", model.StatusBlocked, "CI failed")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !errors.Is(err, reopenErr) {
+		t.Errorf("error does not wrap the reopen failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), illegal.Error()) {
+		t.Errorf("error dropped the original illegal-transition failure: %v", err)
+	}
+}
+
 // TestCIRedispatchSkippedWhenTheWorktreeCannotBeRecreated: sending the agent
 // back with no idea what broke is worse than leaving the task alone.
 func TestCIRedispatchSkippedWhenTheWorktreeCannotBeRecreated(t *testing.T) {
