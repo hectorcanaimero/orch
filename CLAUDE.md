@@ -41,8 +41,9 @@ one). What stays on `main` from that era is deliberate:
   formatting) were fixed to match Python byte for byte, and that shape is still
   the contract with existing projects and scripts.
 - **`.github/review/parse-review.py`** is the Gemini reviewer's response parser,
-  run with the CI runner's system `python3`. It is reviewer tooling, not orch;
-  porting it is its own task.
+  and **`parse-triage.py`** beside it the issue triager's (it imports the
+  former's JSON extraction), both run with the CI runner's system `python3`.
+  They are CI tooling, not orch; porting them is its own task.
 - **`scripts/ui-dom.py`** is a local helper for inspecting the dashboard in a
   headless browser (`docs/UI-CHECKS.md`), not part of the product or of CI.
 
