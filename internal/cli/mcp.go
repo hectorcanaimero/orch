@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/mcp"
+	"github.com/hectorcanaimero/orch/internal/vcs"
 )
 
 // newMCPCmd wires `orch mcp` — the stdio MCP server.
@@ -65,6 +66,11 @@ func newMCPCmd(flags *projectFlags) *cobra.Command {
 			// tool checks `Budget == nil`, and a typed nil is not nil.
 			if gate := newBudgetGate(paths, cfg, backend); gate != nil {
 				opts.Budget = gate
+			}
+			// Opt-in: orch_report_finding files public issues with the
+			// operator's own gh, so a project must ask for it.
+			if cfg.ReportFindings.Enabled {
+				opts.Findings = vcs.NewGitHubProvider()
 			}
 
 			// SIGINT and SIGTERM end the session as cleanly as stdin

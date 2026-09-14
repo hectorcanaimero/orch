@@ -165,3 +165,58 @@ func TestListIssuesNeedsGH(t *testing.T) {
 		t.Fatal("ListIssues succeeded with no gh on PATH")
 	}
 }
+
+// SearchIssues reads the same captured payload shape, and asks gh for the
+// repo, the label, every state and a title search.
+func TestSearchIssuesAsksForTheRepoLabelAndTitle(t *testing.T) {
+	withFakeBin(t)
+	log := ghLog(t)
+	abs, err := filepath.Abs(capturedIssueList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_GH_ISSUES_FILE", abs)
+
+	issues, err := NewGitHubProvider().SearchIssues("o/r", "auto-reported", "CI poller waits", 10)
+	if err != nil {
+		t.Fatalf("SearchIssues: %v", err)
+	}
+	if len(issues) != 3 {
+		t.Errorf("got %d issues, want the 3 in the capture", len(issues))
+	}
+	got := readLog(t, log)
+	for _, want := range []string{"issue list", "--repo o/r", "--label auto-reported", "--state all", "--search CI poller waits in:title", "--limit 10"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("gh invocation missing %q, got: %s", want, got)
+		}
+	}
+}
+
+func TestCreateIssueReturnsTheURL(t *testing.T) {
+	withFakeBin(t)
+	log := ghLog(t)
+	t.Setenv("FAKE_GH_ISSUE_CREATE_STDOUT", "https://github.com/o/r/issues/7\n")
+
+	url, err := NewGitHubProvider().CreateIssue("o/r", "A title", "A body", []string{"auto-reported"})
+	if err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if url != "https://github.com/o/r/issues/7" {
+		t.Errorf("url = %q", url)
+	}
+	got := readLog(t, log)
+	for _, want := range []string{"issue create", "--repo o/r", "--title A title", "--body A body", "--label auto-reported"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("gh invocation missing %q, got: %s", want, got)
+		}
+	}
+}
+
+func TestCreateIssueReportsAFailure(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GH_ISSUE_CREATE_EXIT", "1")
+	t.Setenv("FAKE_GH_AUTH_EXIT", "0")
+	if _, err := NewGitHubProvider().CreateIssue("o/r", "t", "b", nil); err == nil {
+		t.Error("a failing gh issue create was reported as filed")
+	}
+}

@@ -45,8 +45,7 @@ sqlite3 ` + dbPath + ` \
 |--------|---------|
 | View status | ` + "`orch status`" + ` |
 | Set model/status | ` + "`orch task set --id TASK --model MODEL --status done`" + ` |
-| Capture finding | ` + "`orch findings capture --type bug\\|feature\\|fix --about orch\\|project --summary \"...\" --evidence \"...\"`" + ` |
-| Publish finding | ` + "`orch findings publish <id> --repo <repo> --yes`" + ` |
+| Report a problem with orch itself | MCP tool ` + "`orch_report_finding`" + ` (needs ` + "`report_findings.enabled: true`" + `) |
 | Re-atomize | ` + "`orch atomize --apply`" + ` |
 
 ## Provider concurrency caps

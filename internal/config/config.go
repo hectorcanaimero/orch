@@ -30,26 +30,37 @@ package config
 // wire format is legible from the struct alone rather than from Go's
 // lowercasing rules.
 type Config struct {
-	Concurrency          Concurrency   `yaml:"concurrency"`
-	StrictFilesPhases    []int         `yaml:"strict_files_phases"`
-	DefaultTimeoutMult   float64       `yaml:"default_timeout_multiplier"`
-	Budget               Budget        `yaml:"budget"`
-	Retry                Retry         `yaml:"retry"`
-	SpecRoot             string        `yaml:"spec_root"`
-	State                State         `yaml:"state"`
-	BudgetsConfig        string        `yaml:"budgets_config"`
-	BudgetsPreset        string        `yaml:"budgets_preset"`
-	TypicalDispatchToken int           `yaml:"typical_dispatch_tokens"`
-	Dashboard            Dashboard     `yaml:"dashboard"`
-	Dispatch             Dispatch      `yaml:"dispatch"`
-	VCS                  VCS           `yaml:"vcs"`
-	GitHub               GitHub        `yaml:"github"`
-	Notifications        Notifications `yaml:"notifications"`
-	Presentation         Presentation  `yaml:"presentation"`
-	Publish              Publish       `yaml:"publish"`
-	Tunnel               Tunnel        `yaml:"tunnel"`
-	Telemetry            Telemetry     `yaml:"telemetry"`
-	Sync                 Sync          `yaml:"sync"`
+	Concurrency          Concurrency    `yaml:"concurrency"`
+	StrictFilesPhases    []int          `yaml:"strict_files_phases"`
+	DefaultTimeoutMult   float64        `yaml:"default_timeout_multiplier"`
+	Budget               Budget         `yaml:"budget"`
+	Retry                Retry          `yaml:"retry"`
+	SpecRoot             string         `yaml:"spec_root"`
+	State                State          `yaml:"state"`
+	BudgetsConfig        string         `yaml:"budgets_config"`
+	BudgetsPreset        string         `yaml:"budgets_preset"`
+	TypicalDispatchToken int            `yaml:"typical_dispatch_tokens"`
+	Dashboard            Dashboard      `yaml:"dashboard"`
+	Dispatch             Dispatch       `yaml:"dispatch"`
+	VCS                  VCS            `yaml:"vcs"`
+	GitHub               GitHub         `yaml:"github"`
+	Notifications        Notifications  `yaml:"notifications"`
+	Presentation         Presentation   `yaml:"presentation"`
+	Publish              Publish        `yaml:"publish"`
+	Tunnel               Tunnel         `yaml:"tunnel"`
+	Telemetry            Telemetry      `yaml:"telemetry"`
+	Sync                 Sync           `yaml:"sync"`
+	ReportFindings       ReportFindings `yaml:"report_findings"`
+}
+
+// ReportFindings lets the MCP tool orch_report_finding file GitHub issues
+// about orch itself on hectorcanaimero/orch, with the operator's own `gh`.
+//
+// Off by default: a public issue under someone's account is not something a
+// project should do because an agent decided to. Go only, no Python source —
+// the Python line's `findings:` block was a different, dropped feature.
+type ReportFindings struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // Concurrency caps in-flight dispatches. `global_max` is the hard ceiling
