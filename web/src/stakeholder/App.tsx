@@ -8,6 +8,7 @@ import {
   langOf,
   parseRoute,
   phaseName,
+  snapshotURL,
   phaseState,
   readAndRecordVisit,
   renderMarkdown,
@@ -55,26 +56,32 @@ export default function App() {
       return
     }
     let cancelled = false
-    fetch("./data.json")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data: StakeholderSnapshot) => {
-        if (!cancelled) setState({ status: "ready", data })
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        const blockedLocally = err instanceof TypeError && window.location.protocol === "file:"
-        setState({
-          status: "error",
-          message: blockedLocally
-            ? "Your browser blocks a local file from reading another local file. Serve this folder over HTTP (for example `python3 -m http.server`) and open it from there."
-            : `data.json could not be loaded (${err instanceof Error ? err.message : String(err)}).`,
+    let timer: number | undefined
+    const load = () =>
+      fetch(snapshotURL(window.location.search), { cache: "no-store" })
+        .then((res) => {
+          if (res.status === 401 || res.status === 403) throw new LinkError()
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return res.json()
         })
-      })
+        .then((data: StakeholderSnapshot) => {
+          if (cancelled) return
+          setState({ status: "ready", data })
+          // Served live (orch dashboard), the snapshot says how often to
+          // look again; a published folder says 0 and is read once.
+          if (data.refresh_interval_s > 0 && window.location.protocol.startsWith("http")) {
+            timer = window.setTimeout(load, data.refresh_interval_s * 1000)
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return
+          // A refresh that fails keeps the last good page on screen.
+          setState((prev) => (prev.status === "ready" && !(err instanceof LinkError) ? prev : { status: "error", message: loadMessage(err) }))
+        })
+    load()
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
   }, [])
 
@@ -95,6 +102,25 @@ export default function App() {
     )
   }
   return <Portal data={state.data} />
+}
+
+class LinkError extends Error {}
+
+// loadMessage says what went wrong in words a client can act on. The page has
+// no project language yet, so it answers in the reader's own.
+function loadMessage(err: unknown): string {
+  const es = typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("es")
+  if (err instanceof LinkError) {
+    return es
+      ? "Este enlace ya no es válido. Pide al equipo un enlace nuevo."
+      : "This link is no longer valid. Ask the team for a new one."
+  }
+  if (err instanceof TypeError && window.location.protocol === "file:") {
+    return "Your browser blocks a local file from reading another local file. Serve this folder over HTTP (for example `python3 -m http.server`) and open it from there."
+  }
+  return es
+    ? "No pudimos cargar el estado del proyecto. Vuelve a intentarlo en un momento."
+    : "We couldn't load the project status. Try again in a moment."
 }
 
 function Portal({ data }: { data: StakeholderSnapshot }) {

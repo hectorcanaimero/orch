@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, renderMarkdown, statusLine } from "@/stakeholder/portal"
+import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
 import type { StakeholderMilestone, StakeholderSnapshot } from "@/stakeholder/types"
 
 function milestone(phase: number, name: string, done: number, total: number, extra: Partial<StakeholderMilestone> = {}): StakeholderMilestone {
@@ -106,5 +106,15 @@ describe("parseRoute", () => {
     expect(parseRoute("#documents")).toEqual({ tab: "documents" })
     expect(parseRoute("#documents/portal-para-clientes")).toEqual({ tab: "documents", doc: "portal-para-clientes" })
     expect(parseRoute("#nonsense")).toEqual({ tab: "overview" })
+  })
+})
+
+describe("snapshotURL", () => {
+  // Served live, the data sits behind the token the shared link carries; a
+  // published folder has no token and reads the file beside it.
+  it("forwards the link's token, and only that", () => {
+    expect(snapshotURL("?token=abc%2B1")).toBe("./data.json?token=abc%2B1")
+    expect(snapshotURL("")).toBe("./data.json")
+    expect(snapshotURL("?utm_source=mail")).toBe("./data.json")
   })
 })

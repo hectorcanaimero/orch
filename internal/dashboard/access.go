@@ -63,6 +63,7 @@ const StakeholderPathPrefix = "/stakeholder"
 //   - spa — the static shell and every client-side route under it.
 var DefaultStakeholderRoutes = []string{
 	"stakeholder_summary_json",
+	"stakeholder_snapshot_json",
 	"api_tunnel_capabilities",
 	"api_whoami",
 	"api_docs_list",

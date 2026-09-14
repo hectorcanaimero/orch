@@ -14,6 +14,8 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/dashboard"
+	"github.com/hectorcanaimero/orch/internal/publish"
+	"github.com/hectorcanaimero/orch/internal/publish/snapshot"
 	"github.com/hectorcanaimero/orch/internal/state"
 	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
@@ -129,11 +131,22 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			}
 			defer stopTunnel()
 
+			portal, err := publish.Bundle()
+			if err != nil {
+				return fmt.Errorf("reading the embedded client portal: %w", err)
+			}
+
 			server, err := dashboard.New(dashCfg, dashboard.Options{
 				Paths:  paths,
 				Static: dashboard.SPAHandler(spa),
 				State:  backend,
 				Tunnel: tunnelOpts,
+				// The client portal at /stakeholder/, reading the snapshot
+				// `orch publish` would write, built fresh per request.
+				Portal: portal,
+				Snapshot: func(ctx context.Context) (snapshot.Snapshot, error) {
+					return buildPublishSnapshot(ctx, paths, cfg, backend, portalRefresh, time.Now())
+				},
 			})
 			if err != nil {
 				return err
@@ -370,3 +383,6 @@ func setUpTunnel(cmd *cobra.Command, cfg config.Config, paths config.Paths,
 // buffer exists so `/api/tunnel/logs` can replay a tail; that route is not
 // ported, so this only bounds memory for a long-lived process.
 const tunnelLogLines = 200
+
+// portalRefresh is how often a live portal re-reads its snapshot.
+const portalRefresh = 30 * time.Second
