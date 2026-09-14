@@ -9,7 +9,12 @@ import (
 	"strings"
 )
 
-// githubConclusionMap ports _CI_STATE_MAP from orchestrator/vcs/github.py.
+// githubConclusionMap ports _CI_STATE_MAP from orchestrator/vcs/github.py,
+// with one intentional divergence: "cancelled" and "stale" map to CIPending,
+// not CIFailure (#252). Cancelling a slow check to re-run it, or a check
+// superseded by `concurrency: cancel-in-progress`, is not a code failure —
+// mapping it to CIFailure made the poller re-dispatch the agent (spending a
+// CI retry) while the real re-run was still on its way.
 //
 // "skipped" mapping to success (not to a distinct skipped state) is the
 // actual Python behavior, not an oversight worth "fixing" here — see the
@@ -21,10 +26,10 @@ var githubConclusionMap = map[string]CIState{
 	"failure":         CIFailure,
 	"timed_out":       CIFailure,
 	"action_required": CIFailure,
-	"cancelled":       CIFailure,
+	"cancelled":       CIPending,
 	"neutral":         CISuccess,
 	"skipped":         CISuccess,
-	"stale":           CIFailure,
+	"stale":           CIPending,
 }
 
 var githubInProgressStates = map[string]bool{

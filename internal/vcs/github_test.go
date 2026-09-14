@@ -144,9 +144,13 @@ func TestGitHubCIStatusMapsGitHubsUppercaseStates(t *testing.T) {
 		{"SKIPPED", CISuccess},
 		{"FAILURE", CIFailure},
 		{"TIMED_OUT", CIFailure},
-		{"CANCELLED", CIFailure},
 		{"ACTION_REQUIRED", CIFailure},
-		{"STALE", CIFailure},
+		// A cancelled or stale check is not a code failure: cancelling a slow
+		// job to re-run it (or a run superseded by
+		// `concurrency: cancel-in-progress`) must not read as CI red and
+		// spend a retry while the re-run is still on its way (#252).
+		{"CANCELLED", CIPending},
+		{"STALE", CIPending},
 		{"IN_PROGRESS", CIPending},
 		{"QUEUED", CIPending},
 		{"WAITING", CIPending},

@@ -6,11 +6,13 @@ import (
 	"strings"
 )
 
-// gitlabPipelineStatusMap ports _CI_STATE_MAP from orchestrator/vcs/gitlab.py.
+// gitlabPipelineStatusMap ports _CI_STATE_MAP from orchestrator/vcs/gitlab.py,
+// with one intentional divergence: "canceled" maps to CIPending, not
+// CIFailure (#252) — see the matching comment on githubConclusionMap.
 var gitlabPipelineStatusMap = map[string]CIState{
 	"success":              CISuccess,
 	"failed":               CIFailure,
-	"canceled":             CIFailure,
+	"canceled":             CIPending,
 	"skipped":              CISuccess,
 	"running":              CIPending,
 	"pending":              CIPending,

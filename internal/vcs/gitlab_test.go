@@ -99,6 +99,21 @@ func TestGitLabCIStatusFailure(t *testing.T) {
 	}
 }
 
+// A canceled pipeline is not a code failure: canceling a run to re-trigger
+// it must not read as CI red and spend a retry while the re-run is still on
+// its way (#252).
+func TestGitLabCIStatusPendingWhenCanceled(t *testing.T) {
+	withFakeBin(t)
+	t.Setenv("FAKE_GLAB_VIEW_STDOUT", `{"head_pipeline":{"id":1,"status":"canceled"}}`)
+	got, err := NewGitLabProvider("gitlab.com").CIStatus("https://gitlab.com/org/repo/-/merge_requests/7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != CIPending {
+		t.Errorf("got %q, want pending", got)
+	}
+}
+
 func TestGitLabCIStatusPendingWhenRunning(t *testing.T) {
 	withFakeBin(t)
 	t.Setenv("FAKE_GLAB_VIEW_STDOUT", `{"head_pipeline":{"id":1,"status":"running"}}`)
