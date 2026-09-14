@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/publish/snapshot"
 	"github.com/hectorcanaimero/orch/internal/state"
 	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
@@ -43,6 +45,9 @@ type Server struct {
 	boundAddr string
 	// static is the SPA handler, mounted at "/" and deliberately NOT gated.
 	static http.Handler
+	// portal and snapshot are Options.Portal and Options.Snapshot.
+	portal   fs.FS
+	snapshot func(ctx context.Context) (snapshot.Snapshot, error)
 	// tunnel is what the two tunnel routes need: whether it is configured,
 	// and the manager when it is. Zero value = not configured, which is what
 	// every project that has never set one up has.
@@ -132,6 +137,13 @@ type Options struct {
 	Tunnel TunnelOptions
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Portal is the client portal bundle (publish.Bundle), served at
+	// /stakeholder/. Optional: nil keeps /stakeholder/ a data prefix only.
+	Portal fs.FS
+	// Snapshot builds the document the portal reads at
+	// /stakeholder/data.json — the same builder `orch publish` uses, passed
+	// in so this package never assembles one of its own.
+	Snapshot func(ctx context.Context) (snapshot.Snapshot, error)
 }
 
 // New builds a server. It does not listen; Serve does.
@@ -154,6 +166,9 @@ func New(cfg Config, opts Options) (*Server, error) {
 		log:    log,
 		state:  opts.State,
 		static: opts.Static,
+		portal: opts.Portal,
+
+		snapshot: opts.Snapshot,
 		tunnel: tunnelDeps{
 			Enabled:  opts.Tunnel.Enabled,
 			Provider: opts.Tunnel.Provider,
@@ -366,13 +381,19 @@ func (s *Server) registerRoutes() {
 	// `http.ServeMux` resolves by specificity, so every real route above
 	// still wins over these two prefixes.
 	for _, prefix := range notFoundPrefixes {
+		if prefix == portalPrefix && s.portal != nil {
+			// The portal's own handler answers the same JSON 404 for any
+			// file it does not have.
+			s.mux.Handle(portalPrefix, s.portalHandler())
+			continue
+		}
 		s.mux.HandleFunc(prefix, handleAPINotFound)
 	}
 	// Last, and ungated. `http.ServeMux` resolves by pattern specificity, not
 	// registration order, so "/api/whoami" wins over "/" wherever this line
 	// sits — but keeping it last is how a reader sees that everything above
 	// is gated and this one thing is not.
-	s.mux.Handle("/", s.static)
+	s.mux.Handle("/", s.pages())
 }
 
 // writePlain sends a bare status line.

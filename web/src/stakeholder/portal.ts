@@ -172,3 +172,11 @@ export function renderMarkdown(markdown: string): string {
   const html = marked.parse(markdown, { async: false }) as string
   return DOMPurify.sanitize(html)
 }
+
+// snapshotURL is where the page reads its data: the file beside it, with the
+// shared link's token forwarded when there is one (a live dashboard gates
+// /stakeholder/data.json with it; a published folder ignores it).
+export function snapshotURL(search: string): string {
+  const token = new URLSearchParams(search).get("token")
+  return token ? `./data.json?token=${encodeURIComponent(token)}` : "./data.json"
+}
