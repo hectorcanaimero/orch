@@ -1,45 +1,37 @@
-import { useEffect, useState } from "react"
-import { formatEta } from "@/lib/eta"
-import { AlertTriangle, CheckCircle2 } from "lucide-react"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
+import { useEffect, useMemo, useState } from "react"
+import { ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, TriangleAlert } from "lucide-react"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/utils"
-import type { StakeholderSnapshot } from "./types"
+  copy,
+  currentPhase,
+  deliveriesSince,
+  formatDay,
+  langOf,
+  phaseName,
+  phaseState,
+  readAndRecordVisit,
+  statusLine,
+  type Lang,
+  type PhaseState,
+} from "./portal"
+import "./portal.css"
+import type { DeliverableStatus, StakeholderMilestone, StakeholderSnapshot } from "./types"
 
 declare global {
   interface Window {
-    // Populated by a `data.js` sibling file `orch publish` writes next to
-    // this HTML, wrapping the same document `data.json` carries. Reading
-    // this first (before the fetch fallback below) is what lets a
-    // downloaded zip opened straight from disk (file://) render without a
-    // server: a `<script src="data.js">` tag is not subject to the
-    // same-origin fetch restriction a bare `fetch('./data.json')` is
-    // under `file://`, since it's just script execution, not a network
-    // read.
+    // Set by the `data.js` sibling `orch publish` writes next to this HTML,
+    // wrapping the same document as `data.json`. Read first because a
+    // <script> tag works under file://, where fetch('./data.json') does not.
     __ORCH_SNAPSHOT__?: StakeholderSnapshot
   }
 }
 
 /**
- * Stakeholder snapshot — G6.2.
+ * Client portal — Phase B of the web review.
  *
- * No API, no login, no polling: this whole page reads a snapshot `orch
- * publish` writes next to this HTML at export time — everything it needs
- * to render is either baked into this bundle or in those sibling files.
- * Two ways to get it, tried in order: `window.__ORCH_SNAPSHOT__` (set by a
- * `data.js` sibling, works under `file://`) and, only if that's absent,
- * `fetch('./data.json')` (works when served over http, e.g. the operator
- * dashboard's own stakeholder profile route). Schema (schema: 1) is
- * internal/publish's (G6.1) — see ./types.ts and
- * docs/SNAPSHOT-SCHEMA.md for the exact, committed shape.
+ * What a client opens: where the project stands in a sentence, what arrived
+ * since their last visit, and the roadmap by name. No API, no login, no
+ * polling: it reads the snapshot `orch publish` writes beside it
+ * (docs/SNAPSHOT-SCHEMA.md). Never task ids, models, tokens or file paths.
  */
 
 type LoadState =
@@ -47,19 +39,20 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; data: StakeholderSnapshot }
 
+type Tab = "overview" | "roadmap"
+
+function tabFromHash(): Tab {
+  return typeof window !== "undefined" && window.location.hash === "#roadmap" ? "roadmap" : "overview"
+}
+
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" })
 
   useEffect(() => {
-    // window.__ORCH_SNAPSHOT__ is set synchronously by data.js, which is
-    // loaded via a <script> tag before this bundle in the exported HTML
-    // — so by the time this component mounts, it's already there if the
-    // exporter wrote one.
     if (window.__ORCH_SNAPSHOT__) {
       setState({ status: "ready", data: window.__ORCH_SNAPSHOT__ })
       return
     }
-
     let cancelled = false
     fetch("./data.json")
       .then((res) => {
@@ -71,21 +64,12 @@ export default function App() {
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        // A file:// page blocked by the browser's cross-origin policy
-        // throws a bare TypeError with no HTTP status to inspect —
-        // distinguish that from "the file is genuinely missing" so the
-        // message tells the viewer what to actually do about it. This
-        // path is now only reached when data.js is also missing or
-        // failed to set window.__ORCH_SNAPSHOT__ (an older export, or a
-        // build that skipped it) — a current export's file:// case is
-        // handled above, before any fetch is attempted.
-        const isLikelyCorsBlock =
-          err instanceof TypeError && window.location.protocol === "file:"
+        const blockedLocally = err instanceof TypeError && window.location.protocol === "file:"
         setState({
           status: "error",
-          message: isLikelyCorsBlock
-            ? "Your browser blocks a local file from reading another local file. Serve this folder over HTTP instead (e.g. `python3 -m http.server`) and open it from there."
-            : `Could not load data.json: ${err instanceof Error ? err.message : String(err)}`,
+          message: blockedLocally
+            ? "Your browser blocks a local file from reading another local file. Serve this folder over HTTP (for example `python3 -m http.server`) and open it from there."
+            : `data.json could not be loaded (${err instanceof Error ? err.message : String(err)}).`,
         })
       })
     return () => {
@@ -93,214 +77,322 @@ export default function App() {
     }
   }, [])
 
-  // Absent unless the operator configured it; every branch below treats that
-  // as "render exactly what we rendered before this feature existed".
-  const branding = state.status === "ready" ? state.data.branding : undefined
+  if (state.status !== "ready") {
+    return (
+      <div className="portal">
+        <main className="mx-auto max-w-[720px] px-5 py-16">
+          {state.status === "loading" ? (
+            <p className="text-[var(--portal-muted)]">Loading…</p>
+          ) : (
+            <div role="alert" className="flex gap-3 rounded-xl bg-[var(--portal-hold-soft)] p-5 text-[var(--portal-ink)]">
+              <TriangleAlert className="mt-1 h-5 w-5 shrink-0 text-[var(--portal-hold)]" aria-hidden />
+              <p>{state.message}</p>
+            </div>
+          )}
+        </main>
+      </div>
+    )
+  }
+  return <Portal data={state.data} />
+}
+
+function Portal({ data }: { data: StakeholderSnapshot }) {
+  const lang = langOf(data)
+  const t = copy[lang]
+  const [tab, setTab] = useState<Tab>(tabFromHash)
+  // Read once per page load: the previous visit is what "since" means.
+  const [lastVisit] = useState(() => readAndRecordVisit(data.project_name, new Date()))
+
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash())
+    window.addEventListener("hashchange", onHash)
+    return () => window.removeEventListener("hashchange", onHash)
+  }, [])
+
+  const accent = data.branding?.accent_color
+  const name = data.branding?.name?.trim() || data.project_name
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "overview", label: t.summary },
+    { id: "roadmap", label: t.roadmap },
+  ]
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-      <header className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          {branding?.logo ? (
-            // The logo is a data: URI by the time it reaches here — the
-            // builder embeds it, so nothing on this page fetches anything.
-            <img
-              src={branding.logo}
-              alt=""
-              className="h-10 w-auto max-w-[180px] object-contain"
-            />
-          ) : null}
-          <h1
-            className="text-2xl font-semibold tracking-tight"
-            style={branding?.accent_color ? { color: branding.accent_color } : undefined}
-          >
-            {headerTitle(state)}
-          </h1>
+    <div className="portal" lang={lang} style={accent ? ({ "--portal-accent": accent } as React.CSSProperties) : undefined}>
+      <header className="border-b border-[var(--portal-line)] bg-[var(--portal-surface)]">
+        <div className="mx-auto flex max-w-[720px] items-center justify-between gap-4 px-5 pt-5">
+          <div className="flex min-w-0 items-center gap-3">
+            {data.branding?.logo ? <img src={data.branding.logo} alt="" className="h-9 w-auto max-w-[160px] object-contain" /> : null}
+            <h1 className="portal-display truncate text-xl font-semibold">{name}</h1>
+          </div>
+          <span className="shrink-0 text-sm text-[var(--portal-muted)]" title={data.generated_at}>
+            {t.updated(relative(data.generated_at, lang))}
+          </span>
         </div>
-        {state.status === "ready" ? <Freshness generatedAt={state.data.generated_at} /> : null}
+        <nav aria-label={name} className="mx-auto hidden max-w-[720px] gap-6 px-5 sm:flex">
+          {tabs.map((x) => (
+            <TabLink key={x.id} tab={x.id} active={tab === x.id} label={x.label} />
+          ))}
+        </nav>
       </header>
 
-      {state.status === "loading" ? (
-        <div className="space-y-4">
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-32 w-full" />
-        </div>
-      ) : null}
+      <main className="mx-auto max-w-[720px] px-5 pb-28 pt-8 sm:pb-16">
+        {tab === "overview" ? <Overview data={data} lang={lang} lastVisit={lastVisit} /> : <Roadmap data={data} lang={lang} />}
+        {data.branding?.footer ? (
+          <footer className="mt-16 border-t border-[var(--portal-line)] pt-5 text-sm text-[var(--portal-muted)]">{data.branding.footer}</footer>
+        ) : null}
+      </main>
 
-      {state.status === "error" ? (
-        <Alert variant="destructive">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Couldn't load this snapshot</AlertTitle>
-          <AlertDescription>{state.message}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {state.status === "ready" ? (
-        <>
-          {state.data.executive_summary.text ? (
-            <p className="text-sm text-muted-foreground">
-              {state.data.executive_summary.text}
-            </p>
-          ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <SummaryCard summary={state.data.summary} />
-            {state.data.budget.enabled ? <BudgetCard budget={state.data.budget} /> : null}
-            <MilestonesCard milestones={state.data.milestones} />
-            <BlockersCard blockers={state.data.blockers} />
-          </div>
-        </>
-      ) : null}
-
-      {branding?.footer ? (
-        <footer className="border-t pt-4 text-xs text-muted-foreground">
-          {branding.footer}
-        </footer>
-      ) : null}
+      {/* Phones: the tabs sit under the thumb. */}
+      <nav
+        aria-label={`${name} (small screens)`}
+        className="fixed inset-x-0 bottom-0 z-10 flex border-t border-[var(--portal-line)] bg-[var(--portal-surface)] pb-[env(safe-area-inset-bottom)] sm:hidden"
+      >
+        {tabs.map((x) => (
+          <a
+            key={x.id}
+            href={`#${x.id}`}
+            aria-current={tab === x.id ? "page" : undefined}
+            className={`flex min-h-14 flex-1 items-center justify-center text-base font-medium no-underline ${
+              tab === x.id ? "text-[var(--portal-accent)]" : "text-[var(--portal-muted)]"
+            }`}
+          >
+            {x.label}
+          </a>
+        ))}
+      </nav>
     </div>
   )
 }
 
-function Freshness({ generatedAt }: { generatedAt: string }) {
+function TabLink({ tab, active, label }: { tab: Tab; active: boolean; label: string }) {
   return (
-    <span className="whitespace-nowrap text-xs text-muted-foreground" title={generatedAt}>
-      Generated {formatRelative(generatedAt)}
-    </span>
+    <a
+      href={`#${tab}`}
+      aria-current={active ? "page" : undefined}
+      className={`-mb-px border-b-2 py-3 text-base font-medium no-underline ${
+        active ? "border-[var(--portal-accent)] text-[var(--portal-ink)]" : "border-transparent text-[var(--portal-muted)] hover:text-[var(--portal-ink)]"
+      }`}
+    >
+      {label}
+    </a>
   )
 }
 
-function formatRelative(iso: string): string {
+function Overview({ data, lang, lastVisit }: { data: StakeholderSnapshot; lang: Lang; lastVisit: string | null }) {
+  const t = copy[lang]
+  const line = statusLine(data, lang)
+  const { summary } = data
+  const pct = summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0
+  const recent = useMemo(() => deliveriesSince(data.deliveries, lastVisit, new Date(data.generated_at)), [data, lastVisit])
+  const cur = currentPhase(data.milestones)
+  const [showAll, setShowAll] = useState(false)
+
+  return (
+    <div className="flex flex-col gap-12">
+      <section aria-labelledby="status" className="flex flex-col gap-5">
+        <h2 id="status" className="portal-display text-[2rem] font-semibold leading-tight sm:text-[2.35rem]">
+          {line.headline}
+        </h2>
+        {line.detail ? <p className="text-lg text-[var(--portal-muted)]">{line.detail}</p> : null}
+        <div className="flex flex-col gap-2">
+          <div
+            className="h-2.5 overflow-hidden rounded-full bg-[var(--portal-track)]"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct}
+            aria-label={t.progress(summary.done, summary.total)}
+          >
+            <div className="h-full rounded-full bg-[var(--portal-accent)]" style={{ width: `${pct}%` }} />
+          </div>
+          <p className="flex justify-between text-sm text-[var(--portal-muted)]">
+            <span>{t.progress(summary.done, summary.total)}</span>
+            <span>{pct}%</span>
+          </p>
+        </div>
+      </section>
+
+      {data.blockers.length > 0 ? (
+        <section aria-labelledby="hold" className="flex flex-col gap-4">
+          <h3 id="hold" className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--portal-muted)]">
+            {t.onHold}
+          </h3>
+          <ul className="flex flex-col gap-3">
+            {data.blockers.map((b, i) => (
+              <li key={`${b.phase}-${i}`} className="flex gap-3 rounded-xl bg-[var(--portal-hold-soft)] px-4 py-3">
+                <CirclePause className="mt-1 h-5 w-5 shrink-0 text-[var(--portal-hold)]" aria-hidden />
+                <div>
+                  <p className="font-medium">{b.title}</p>
+                  <p className="text-sm text-[var(--portal-muted)]">{b.reason}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {cur ? (
+        <section aria-labelledby="now" className="flex flex-col gap-4">
+          <h3 id="now" className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--portal-muted)]">
+            {t.now}
+          </h3>
+          <a href="#roadmap" className="flex items-center gap-4 rounded-xl bg-[var(--portal-surface)] px-5 py-4 text-[var(--portal-ink)] no-underline">
+            <div className="min-w-0 flex-1">
+              <p className="portal-display text-xl font-semibold">{phaseName(cur.name)}</p>
+              <p className="text-sm text-[var(--portal-muted)]">{t.progress(cur.done, cur.total)}</p>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--portal-muted)]" aria-hidden />
+          </a>
+        </section>
+      ) : null}
+
+      <section aria-labelledby="since" className="flex flex-col gap-4">
+        <h3 id="since" className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--portal-muted)]">
+          {lastVisit ? t.since : t.sinceFirst}
+        </h3>
+        {recent.length === 0 ? (
+          <p className="text-[var(--portal-muted)]">{t.nothingNew}</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-[var(--portal-line)] rounded-xl bg-[var(--portal-surface)]">
+            {(showAll ? recent : recent.slice(0, RECENT_SHOWN)).map((d, i) => (
+              <li key={`${d.finished_at}-${i}`} className="flex items-start gap-3 px-4 py-3">
+                <CircleCheck className="mt-1 h-5 w-5 shrink-0 text-[var(--portal-done)]" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{d.title}</p>
+                  <p className="text-sm text-[var(--portal-muted)]">{phaseName(d.phase)}</p>
+                </div>
+                <time dateTime={d.finished_at} className="shrink-0 text-sm text-[var(--portal-muted)]">
+                  {formatDay(d.finished_at, lang)}
+                </time>
+              </li>
+            ))}
+          </ul>
+        )}
+        {recent.length > RECENT_SHOWN ? (
+          <button
+            type="button"
+            onClick={() => setShowAll((v) => !v)}
+            aria-expanded={showAll}
+            className="self-start rounded-md py-1 text-base font-medium text-[var(--portal-accent)] hover:underline"
+          >
+            {showAll ? t.showLess : t.showAll(recent.length)}
+          </button>
+        ) : null}
+      </section>
+
+      {data.budget.enabled && data.budget.spend_usd != null ? (
+        <section aria-labelledby="budget" className="flex flex-col gap-2">
+          <h3 id="budget" className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--portal-muted)]">
+            {t.budget}
+          </h3>
+          <p className="text-lg">
+            {t.spent}: ${data.budget.spend_usd.toFixed(2)}
+          </p>
+        </section>
+      ) : null}
+
+    </div>
+  )
+}
+
+// How many recent deliveries the overview lists before "show all": the
+// newest few are the news; the rest is history the roadmap already holds.
+const RECENT_SHOWN = 5
+
+function Roadmap({ data, lang }: { data: StakeholderSnapshot; lang: Lang }) {
+  const t = copy[lang]
+  const phases = [...data.milestones].sort((a, b) => a.phase - b.phase)
+  const cur = currentPhase(phases)
+  return (
+    <section aria-label={t.roadmap}>
+      <ol className="flex flex-col">
+        {phases.map((m, i) => (
+          <PhaseRow key={m.phase} m={m} state={phaseState(m, cur)} lang={lang} last={i === phases.length - 1} />
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+const stateLabel = (s: PhaseState, lang: Lang) => ({ done: copy[lang].done, now: copy[lang].now, next: copy[lang].next })[s]
+
+function PhaseRow({ m, state, lang, last }: { m: StakeholderMilestone; state: PhaseState; lang: Lang; last: boolean }) {
+  const t = copy[lang]
+  const marker =
+    state === "done" ? (
+      <CircleCheck className="h-6 w-6 text-[var(--portal-done)]" aria-hidden />
+    ) : state === "now" ? (
+      <CircleDot className="h-6 w-6 text-[var(--portal-accent)]" aria-hidden />
+    ) : (
+      <Circle className="h-6 w-6 text-[var(--portal-muted)]" aria-hidden />
+    )
+  return (
+    <li className="relative flex gap-4">
+      <div className="flex flex-col items-center">
+        <div className="bg-[var(--portal-ground)] py-1">{marker}</div>
+        {last ? null : <div className="w-px flex-1 bg-[var(--portal-line)]" />}
+      </div>
+      <details open={state === "now"} className="mb-6 min-w-0 flex-1">
+        <summary className="flex items-start gap-3 py-1">
+          <div className="min-w-0 flex-1">
+            <p className="portal-display text-xl font-semibold leading-snug">{phaseName(m.name)}</p>
+            <p className="text-sm text-[var(--portal-muted)]">
+              {stateLabel(state, lang)} · {t.progress(m.done, m.total)}
+              {m.blocked > 0 ? ` · ${m.blocked} ${t.onHold.toLowerCase()}` : ""}
+            </p>
+          </div>
+          <ChevronRight className="portal-chevron mt-1.5 h-5 w-5 shrink-0 text-[var(--portal-muted)]" aria-hidden />
+        </summary>
+        <div className="mt-3 flex flex-col gap-5">
+          {(m.packages ?? []).map((p, i) => (
+            <div key={`${p.name}-${i}`} className="flex flex-col gap-2">
+              <p className="text-sm font-semibold text-[var(--portal-muted)]">
+                {p.name ? capitalize(p.name) : t.other} · {p.done}/{p.total}
+              </p>
+              <ul className="flex flex-col gap-1.5">
+                {p.deliverables.map((d, j) => (
+                  <li key={`${d.title}-${j}`} className="flex items-start gap-2.5">
+                    <StatusIcon status={d.status} lang={lang} />
+                    <span className={d.status === "done" ? "text-[var(--portal-muted)]" : ""}>{d.title}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </details>
+    </li>
+  )
+}
+
+function StatusIcon({ status, lang }: { status: DeliverableStatus; lang: Lang }) {
+  const t = copy[lang]
+  const common = "mt-1 h-4 w-4 shrink-0"
+  switch (status) {
+    case "done":
+      return <CircleCheck className={`${common} text-[var(--portal-done)]`} aria-label={t.done} />
+    case "in_progress":
+      return <CircleDot className={`${common} text-[var(--portal-accent)]`} aria-label={t.inProgress} />
+    case "blocked":
+      return <CirclePause className={`${common} text-[var(--portal-hold)]`} aria-label={t.blocked} />
+    default:
+      return <Circle className={`${common} text-[var(--portal-muted)]`} aria-label={t.pending} />
+  }
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function relative(iso: string, lang: Lang): string {
   const then = Date.parse(iso)
   if (Number.isNaN(then)) return iso
-  const diffMs = Date.now() - then
-  const minutes = Math.round(diffMs / 60_000)
-  if (minutes < 1) return "just now"
-  if (minutes < 60) return `${minutes}m ago`
+  const minutes = Math.round((Date.now() - then) / 60_000)
+  const es = lang === "es"
+  if (minutes < 1) return es ? "hace un momento" : "just now"
+  if (minutes < 60) return es ? `hace ${minutes} min` : `${minutes} min ago`
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return es ? `hace ${hours} h` : `${hours} h ago`
   const days = Math.round(hours / 24)
-  return `${days}d ago`
-}
-
-function SummaryCard({ summary }: { summary: StakeholderSnapshot["summary"] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Summary</CardTitle>
-        <CardDescription>
-          {summary.done}/{summary.total} tasks done ({summary.percent_done.toFixed(0)}%)
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-        <Stat label="In progress" value={summary.in_progress} />
-        <Stat label="Blocked" value={summary.blocked} />
-        <Stat label="Backlog" value={summary.backlog} />
-        <Stat label="Estimated finish" value={formatEta(summary).value} />
-      </CardContent>
-    </Card>
-  )
-}
-
-function BudgetCard({ budget }: { budget: StakeholderSnapshot["budget"] }) {
-  // Only rendered by the caller when budget.enabled is true, at which
-  // point the snapshot always carries both fields (docs/SNAPSHOT-SCHEMA.md)
-  // — they're optional in the type only because the schema omits them
-  // entirely when disabled. The fallbacks below are for a malformed or
-  // stale document, not the documented shape.
-  const spendByDay = budget.spend_by_day ?? []
-  const spendUsd = budget.spend_usd ?? 0
-  const last = spendByDay[spendByDay.length - 1]
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Budget</CardTitle>
-        <CardDescription>Last {spendByDay.length} day(s)</CardDescription>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-3 text-sm">
-        <Stat label="Total spend" value={`$${spendUsd.toFixed(2)}`} />
-        <Stat
-          label="Yesterday"
-          value={last ? `$${last.cost_usd.toFixed(2)}` : "—"}
-        />
-      </CardContent>
-    </Card>
-  )
-}
-
-function MilestonesCard({
-  milestones,
-}: {
-  milestones: StakeholderSnapshot["milestones"]
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Milestones</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {milestones.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No milestones.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {milestones.map((m) => (
-              <li key={m.phase} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5">
-                  {m.complete ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
-                  ) : null}
-                  {m.name}
-                </span>
-                <Badge variant={m.complete ? "success" : "muted"} className="font-mono text-[10px]">
-                  {m.done}/{m.total}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function BlockersCard({ blockers }: { blockers: StakeholderSnapshot["blockers"] }) {
-  return (
-    <Card className={cn(blockers.length > 0 && "border-amber-500/50")}>
-      <CardHeader>
-        <CardTitle>Blockers</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {blockers.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing blocked.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {blockers.map((b, i) => (
-              <li key={`${b.phase}-${i}`}>
-                <span className="font-medium">{b.title}</span>
-                <span className="block text-xs text-muted-foreground">{b.reason}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-/**
- * The client-facing name: the brand when there is one, the project's own name
- * otherwise, and a neutral placeholder before the document has loaded.
- */
-function headerTitle(state: LoadState): string {
-  if (state.status !== "ready") return "Project Snapshot"
-  return state.data.branding?.name?.trim() || state.data.project_name
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </div>
-      <div className="text-base">{value}</div>
-    </div>
-  )
+  return es ? `hace ${days} ${days === 1 ? "día" : "días"}` : `${days} ${days === 1 ? "day" : "days"} ago`
 }

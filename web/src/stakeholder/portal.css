@@ -1,0 +1,63 @@
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/source-sans-3";
+
+/* The client portal's own world: a calm, well-set status report. Tokens are
+   defined once for light, redefined for a dark OS; components read only
+   these. --portal-accent is overridden inline by presentation.branding. */
+.portal {
+  --portal-ground: #f6f7f9;
+  --portal-surface: #ffffff;
+  --portal-ink: #16181d;
+  --portal-muted: #5b6170;
+  --portal-line: #e2e5eb;
+  --portal-accent: #2f5d8a;
+  --portal-done: #1d7a4f;
+  --portal-done-soft: #e3f3ea;
+  --portal-hold: #9a5b00;
+  --portal-hold-soft: #fbf1de;
+  --portal-track: #e8ebf0;
+
+  font-family: "Source Sans 3 Variable", "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--portal-ground);
+  color: var(--portal-ink);
+  font-size: 17px;
+  line-height: 1.6;
+  min-height: 100vh;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-color-scheme: dark) {
+  .portal {
+    --portal-ground: #111317;
+    --portal-surface: #181b21;
+    --portal-ink: #e9ebf0;
+    --portal-muted: #a3a9b6;
+    --portal-line: #2a2f38;
+    --portal-accent: #8db4dc;
+    --portal-done: #6fcf9d;
+    --portal-done-soft: #15301f;
+    --portal-hold: #e8b35c;
+    --portal-hold-soft: #33260f;
+    --portal-track: #262a32;
+  }
+}
+
+/* In the base layer, so a Tailwind utility on an element still wins. */
+@layer base {
+  .portal ::selection { background: color-mix(in srgb, var(--portal-accent) 25%, transparent); }
+  .portal a { color: var(--portal-accent); text-underline-offset: 3px; }
+  .portal :focus-visible { outline: 2px solid var(--portal-accent); outline-offset: 3px; border-radius: 6px; }
+}
+
+.portal-display {
+  font-family: "Source Serif 4 Variable", "Source Serif 4", Georgia, "Times New Roman", serif;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.portal details > summary { list-style: none; cursor: pointer; }
+.portal details > summary::-webkit-details-marker { display: none; }
+.portal details[open] .portal-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: no-preference) {
+  .portal-chevron { transition: transform 160ms ease-out; }
+}

@@ -30,6 +30,30 @@ export interface StakeholderMilestone {
   backlog: number
   percent_done: number
   complete: boolean
+  // The phase's deliverables grouped by package (docs/SNAPSHOT-SCHEMA.md).
+  packages?: StakeholderPackage[]
+}
+
+export interface StakeholderPackage {
+  // "" for the group of tasks outside the atomizer's packages.
+  name: string
+  total: number
+  done: number
+  deliverables: StakeholderDeliverable[]
+}
+
+export type DeliverableStatus = "done" | "in_progress" | "blocked" | "pending"
+
+export interface StakeholderDeliverable {
+  title: string
+  status: DeliverableStatus
+  finished_at?: string
+}
+
+export interface StakeholderDelivery {
+  title: string
+  phase: string
+  finished_at: string
 }
 
 export interface StakeholderBlocker {
@@ -89,5 +113,7 @@ export interface StakeholderSnapshot {
   budget: StakeholderBudget
   executive_summary: StakeholderExecutiveSummary
   branding?: StakeholderBranding
+  // What finished in the last 30 days, newest first; absent when nothing did.
+  deliveries?: StakeholderDelivery[]
 }
 
