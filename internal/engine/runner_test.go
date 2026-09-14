@@ -13,6 +13,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/state"
+	"github.com/hectorcanaimero/orch/internal/vcs"
 )
 
 // newRunnerFixture builds a runner over a reap fixture, with the clock and
@@ -121,6 +122,46 @@ func TestRunLoopExitsWithNothingToDo(t *testing.T) {
 	}
 	if f.s.Dispatched() != 0 {
 		t.Errorf("dispatched %d with nothing to do", f.s.Dispatched())
+	}
+}
+
+// TestRunLoopWaitsOnPendingCI: #239. With every task either dispatched and
+// under review or waiting on those, the loop used to see nothing running and
+// nothing ready and exit, taking the CI poller with it: the PRs were never
+// finished and their dependents never dispatched. A PR waiting on CI is work.
+func TestRunLoopWaitsOnPendingCI(t *testing.T) {
+	url := "https://github.com/o/r/pull/1"
+	f := newRunnerFixture(t,
+		[]model.Task{
+			{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusInProgress, EstimateHours: 1},
+			{ID: "C-2", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusTodo, EstimateHours: 1, Dependencies: []string{"C-1"}},
+		},
+		map[string]fakeResponse{"C-2": okResponse()},
+		SchedulerOptions{})
+	v := &fakeVCS{status: map[string]vcs.CIState{url: vcs.CIPending}}
+	ci := &fakeCIBackend{rows: []state.TaskRuntime{pendingRow("C-1", url, 0)}, counters: map[string]int{}}
+	f.r.CI = &CIPoller{Provider: v, Backend: ci, PollInterval: time.Second}
+
+	// CI goes green a minute into the run, by the loop's own clock.
+	sleep := f.r.sleep
+	start := f.r.now()
+	f.r.sleep = func(d time.Duration) {
+		sleep(d)
+		if f.r.now().Sub(start) > time.Minute {
+			v.mu.Lock()
+			v.status[url] = vcs.CISuccess
+			v.mu.Unlock()
+		}
+	}
+
+	if code := f.runWithin(t, 30*time.Second); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+		t.Errorf("C-1 = %q, want done: the run exited before its CI resolved", got)
+	}
+	if got, _ := f.s.Queue.Status("C-2"); got != model.StatusDone {
+		t.Errorf("C-2 = %q, want done: its dependency's CI passed during the run", got)
 	}
 }
 

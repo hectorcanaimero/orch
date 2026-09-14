@@ -71,6 +71,9 @@ type Runner struct {
 
 	// sprintDone guards the one-per-run rule for the sprint_done event.
 	sprintDone bool
+	// ciWaiting is how many of this run's PRs were last seen waiting on CI,
+	// so the wait is logged when it changes rather than on every tick.
+	ciWaiting int
 
 	// tick, sleep and now are the loop's clock, injectable so the tests do
 	// not spend a real minute proving a sixty-second sweep.
@@ -183,7 +186,7 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 				strings.Join(stuck, ", "))
 		}
 
-		if r.workIsDone() {
+		if r.workIsDone(ctx) {
 			// Semi mode offers deferred tasks one more round before giving
 			// up on them, so "not now" does not silently become "never".
 			//
@@ -296,16 +299,51 @@ func (r *Runner) recordSprintDone(ctx context.Context) {
 }
 
 // workIsDone reports the termination condition: nothing running, nothing
-// ready, and no retry waiting out a backoff.
-func (r *Runner) workIsDone() bool {
+// ready, no retry waiting out a backoff, and no PR of this run waiting on CI.
+//
+// The last one is Go's, not Python's. Without it a run whose remaining work
+// was all under review exited, the CI poller with it, and nothing finished
+// those tasks or dispatched their dependents until someone ran `orch run`
+// again (#239).
+func (r *Runner) workIsDone(ctx context.Context) bool {
 	s := r.Scheduler
 	if len(s.InFlight()) > 0 || len(s.RetryQueue()) > 0 {
 		return false
 	}
-	return len(s.Queue.Ready(ReadyOpts{
+	if len(s.Queue.Ready(ReadyOpts{
 		Only:     s.Opts.Only,
 		Deferred: s.deferred,
-	})) == 0
+	})) > 0 {
+		return false
+	}
+	return !r.waitingOnCI(ctx)
+}
+
+// waitingOnCI reports whether a task of this run has a PR still waiting on
+// CI. Tasks outside this run's DAG are not waited on: the poller would not
+// re-dispatch them either. A read that fails answers no, so a broken database
+// ends the run the way it did before rather than holding it open blind.
+func (r *Runner) waitingOnCI(ctx context.Context) bool {
+	if r.CI == nil || r.CI.Provider == nil || r.CI.Backend == nil || r.Scheduler.Draining() {
+		return false
+	}
+	s := r.Scheduler
+	rows, err := r.CI.Backend.TasksWithPendingCI(ctx)
+	if err != nil {
+		s.logger().Warn("could not list tasks waiting on CI; not waiting for them", "err", err)
+		return false
+	}
+	n := 0
+	for _, row := range rows {
+		if _, ok := s.Queue.Task(row.ID); ok && row.PRURL != "" {
+			n++
+		}
+	}
+	if n != r.ciWaiting && n > 0 {
+		s.logger().Info("waiting on CI", "tasks", n)
+	}
+	r.ciWaiting = n
+	return n > 0
 }
 
 // permanentlyStuck names the ready tasks that can never be dispatched, when

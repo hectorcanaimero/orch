@@ -28,6 +28,27 @@ func (m *Manager) PurgeOrphanBranch(taskID string) error {
 	return m.runBestEffort(taskID, "git", "branch", "-D", m.BranchName(taskID))
 }
 
+// startPoint is what a new task branch starts from: the remote's base when
+// there is a remote to push to, freshly fetched, else the local base.
+//
+// A task dispatched right after its dependency's PR merged would otherwise
+// branch from a local base that never saw the merge; its PR then conflicts,
+// and GitHub runs no CI on a conflicting PR (#236). A fetch that fails (no
+// network, no such branch on origin) falls back to the local base with a
+// warning — a stale start is a conflict to resolve later, not a reason to
+// block the task now.
+func (m *Manager) startPoint(taskID, baseBranch string) string {
+	if !m.pushEnabled {
+		return baseBranch
+	}
+	if _, err := m.run(taskID, "git", "fetch", "origin", baseBranch); err != nil {
+		slog.Warn("worktree: fetching the base failed; branching from the local base",
+			"task_id", taskID, "base", baseBranch, "error", err)
+		return baseBranch
+	}
+	return "origin/" + baseBranch
+}
+
 // Create makes an isolated worktree for taskID branched off baseBranch. A
 // stale worktree directory left by a crashed prior run is removed first;
 // PurgeOrphanBranch then clears any branch ref a partial prior attempt left
@@ -67,7 +88,7 @@ func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 			"task_id", taskID, "error", purgeErr)
 	}
 
-	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, "-b", m.BranchName(taskID), baseBranch); err != nil {
+	if _, err := m.run(taskID, "git", "worktree", "add", wtPath, "-b", m.BranchName(taskID), m.startPoint(taskID, baseBranch)); err != nil {
 		return "", errors.Join(err, cleanupErr, purgeErr)
 	}
 
