@@ -169,6 +169,10 @@ func (w *fakeCIWorktree) Recreate(_ context.Context, taskID string) (string, err
 type strictBackend struct {
 	mu     sync.Mutex
 	status map[string]model.Status
+	// failTransitionTo makes a Transition call to that status fail outright,
+	// before legality is even checked — for exercising a write failure that
+	// is not itself an illegal move (e.g. a locked database).
+	failTransitionTo map[model.Status]error
 }
 
 func newStrictBackend(initial map[string]model.Status) *strictBackend {
@@ -200,6 +204,9 @@ func (b *strictBackend) TaskStatus(_ context.Context, taskID string) (model.Stat
 func (b *strictBackend) Transition(_ context.Context, taskID string, to model.Status, _ string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if err := b.failTransitionTo[to]; err != nil {
+		return err
+	}
 	from, ok := b.status[taskID]
 	if !ok {
 		from = model.StatusTodo
@@ -486,6 +493,32 @@ func TestCIBlockReopensATaskTheAgentAlreadyMarkedDone(t *testing.T) {
 	if got, err := strict.TaskStatus(context.Background(), "C-1"); err != nil || got != model.StatusBlocked {
 		t.Errorf("backend status = %q (err=%v), want blocked — a done task with failed "+
 			"CI must not stay done, releasing dependents onto rejected work", got, err)
+	}
+}
+
+// TestCIRedispatchSkippedWhenReopeningTheTaskFails: redispatch() must not
+// queue the retry (or bump the CI-attempts counter) when its own reopen of
+// the task to `todo` fails outright — spawning an agent while the backend
+// still calls the task `done` is the exact bug #251 was about.
+func TestCIRedispatchSkippedWhenReopeningTheTaskFails(t *testing.T) {
+	f := newCIFixture(t, pendingRow("C-1", "https://github.com/o/r/pull/1", 0))
+	f.vcs.status["https://github.com/o/r/pull/1"] = vcs.CIFailure
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	strict.failTransitionTo = map[model.Status]error{model.StatusTodo: errors.New("database is locked")}
+	f.s.Backend = strict
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if len(f.s.RetryQueue()) != 0 {
+		t.Errorf("re-dispatched despite failing to reopen the task in the backend")
+	}
+	if got, err := strict.TaskStatus(context.Background(), "C-1"); err != nil || got != model.StatusDone {
+		t.Errorf("backend status = %q (err=%v), want done — unchanged since the reopen failed", got, err)
+	}
+	if got := f.ci.incremented(); len(got) != 0 {
+		t.Errorf("incremented %v for a re-dispatch that was skipped", got)
 	}
 }
 
