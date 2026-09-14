@@ -52,10 +52,51 @@ export function AppLayout({ children }: AppLayoutProps) {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="min-h-screen bg-background md:flex">
+      {/* Small screens: a top bar with the same pages, scrolling sideways on
+          its own when they do not fit, so the page itself never does. */}
+      <header className="sticky top-0 z-30 border-b border-zinc-800 bg-zinc-950 text-zinc-100 md:hidden">
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <img src="/favicon.svg" alt="" className="h-7 w-7 shrink-0" />
+            <span className="text-base font-semibold tracking-tight">Orch</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Logout"
+            className="h-10 w-10 text-zinc-300 hover:bg-zinc-900 hover:text-white"
+            onClick={handleLogout}
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
+        <nav aria-label="Main (small screens)" className="flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {visibleNav.map((item) => {
+            const Icon = item.icon
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  cn(
+                    "flex min-h-10 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm transition-colors",
+                    isActive ? "bg-zinc-800 text-white" : "text-zinc-300 hover:bg-zinc-900 hover:text-white",
+                  )
+                }
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span>{item.label}</span>
+              </NavLink>
+            )
+          })}
+        </nav>
+      </header>
+
       <aside
         className={cn(
-          "fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100",
+          "fixed left-0 top-0 z-30 hidden h-screen flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 md:flex",
           "transition-[width] duration-200 ease-out",
           collapsed ? "w-16" : "w-60",
         )}
@@ -111,6 +152,7 @@ export function AppLayout({ children }: AppLayoutProps) {
 
         {/* Nav */}
         <nav
+          aria-label="Main"
           className={cn(
             "flex-1 space-y-1",
             collapsed ? "px-2" : "px-3",
@@ -166,11 +208,11 @@ export function AppLayout({ children }: AppLayoutProps) {
 
       <main
         className={cn(
-          "flex-1 transition-[margin-left] duration-200 ease-out",
-          collapsed ? "ml-16" : "ml-60",
+          "min-w-0 flex-1 transition-[margin-left] duration-200 ease-out",
+          collapsed ? "md:ml-16" : "md:ml-60",
         )}
       >
-        <div className="px-6 py-8 lg:px-8">{children}</div>
+        <div className="px-4 py-6 md:px-6 md:py-8 lg:px-8">{children}</div>
       </main>
     </div>
   )
