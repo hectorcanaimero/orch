@@ -495,3 +495,30 @@ func TestWriteReportsWhereItFailed(t *testing.T) {
 		t.Errorf("error %q does not say what failed and where", err)
 	}
 }
+
+// A project that opted into report_findings asks every dispatched agent, once
+// it has reported back, for what orch itself should do better or does not do.
+// Without the opt-in the prompt says nothing: the tool would only answer that
+// it is off, and a question the agent cannot act on is noise in every prompt.
+func TestFindingsInvitationFollowsTheOptIn(t *testing.T) {
+	task := model.Task{ID: "F1.T1", Title: "t", Model: "claude/sonnet"}
+	for _, tc := range []struct {
+		name string
+		opt  bool
+	}{{"opted in", true}, {"not opted in", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := Render(task, nil, "specs/a.md", Options{ProjectRoot: "/p", ReportFindings: tc.opt})
+			has := strings.Contains(body, "orch_report_finding")
+			if has != tc.opt {
+				t.Errorf("mentions orch_report_finding = %v, want %v:\n%s", has, tc.opt, body)
+			}
+			if tc.opt {
+				for _, want := range []string{"feature", "not this project", "after you report back"} {
+					if !strings.Contains(body, want) {
+						t.Errorf("the invitation is missing %q:\n%s", want, body)
+					}
+				}
+			}
+		})
+	}
+}

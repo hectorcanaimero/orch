@@ -132,7 +132,9 @@ what its dependencies reported), `orch_events`, `orch_budget`. See
 ## Reporting a problem with orch itself
 
 When **orch** (not the project) gets in your way — a wrong status, a refused
-tool, a message that misled you, a command that should exist — report it with
+tool, a message that misled you — or you notice what it should do better or
+does not do at all — a command or flag you looked for, a step you had to do by
+hand that orch could do — report it with
 `orch_report_finding` (`type` bug|improvement|feature, `title`, `summary`,
 optional `evidence`, `repro`, `suggested_fix`, `confidence`). It files an
 `auto-reported` issue on hectorcanaimero/orch, so keep it about orch: no

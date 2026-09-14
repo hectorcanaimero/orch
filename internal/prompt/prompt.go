@@ -75,6 +75,10 @@ type Options struct {
 	ProjectRoot string
 	// SpecRoot prefixes `specRef`. Empty means DefaultSpecRoot.
 	SpecRoot string
+	// ReportFindings adds the closing invitation to report what orch itself
+	// should do better (`report_findings.enabled`). Off, the prompt is
+	// byte-identical to the one without the feature.
+	ReportFindings bool
 }
 
 // Render returns the prompt body and any warnings worth showing an operator.
@@ -104,14 +108,15 @@ func Render(task model.Task, completedDeps []model.Task, specRef string, opts Op
 	}
 
 	return expand(template, map[string]string{
-		"id":            task.ID,
-		"title":         task.Title,
-		"description":   task.Description,
-		"files":         renderFiles(task.Files),
-		"spec_ref_line": specLine,
-		"deps_block":    renderDepsBlock(completedDeps),
-		"model":         task.Model,
-		"working_dir":   workingDir,
+		"id":             task.ID,
+		"title":          task.Title,
+		"description":    task.Description,
+		"files":          renderFiles(task.Files),
+		"spec_ref_line":  specLine,
+		"deps_block":     renderDepsBlock(completedDeps),
+		"model":          task.Model,
+		"working_dir":    workingDir,
+		"findings_block": findingsBlock(opts.ReportFindings),
 	}), warnings
 }
 
@@ -174,6 +179,24 @@ func Write(task model.Task, completedDeps []model.Task, specRef string, opts Opt
 		return "", warnings, fmt.Errorf("write prompt %s: %w", path, err)
 	}
 	return path, warnings, nil
+}
+
+// findingsBlock is the dogfooding invitation, or nothing. It comes last and
+// after the report-back step on purpose: the task is the job, and feedback
+// about orch must never compete with it.
+func findingsBlock(enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return `
+Feedback about orch itself (optional, after you report back):
+- If orch got in your way, or you noticed something orch should do better or does
+  not do at all (a missing command or flag, a step you had to do by hand, a
+  confusing message or status), report it once with orch_report_finding:
+  type "bug" | "improvement" | "feature", title, summary.
+- It is about orch, not this project: no secrets, no project code, no project or
+  customer names. Skip it if nothing comes to mind.
+`
 }
 
 // renderFiles is the `Files you may write:` value.
@@ -373,4 +396,4 @@ Constraints:
 - Do NOT edit tasks.json directly.
 - Do NOT touch files outside the list above unless the spec explicitly requires it.
 - Report progress through one of the two channels above only.
-`
+{findings_block}`
