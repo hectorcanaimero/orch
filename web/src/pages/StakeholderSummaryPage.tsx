@@ -401,7 +401,7 @@ export function StakeholderSummaryPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {spend_by_day?.length > 1 ? (
           <SpendChart days={spend_by_day} total={spend_rounded_usd} />
-        ) : (
+        ) : spend_rounded_usd == null ? null : (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardDescription className="text-xs uppercase tracking-wide">Spend</CardDescription>
