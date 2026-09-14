@@ -276,6 +276,25 @@ func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntim
 // ciFailed re-dispatches the task with the failing logs, or blocks it once
 // the attempts are used up.
 func (p *CIPoller) ciFailed(ctx context.Context, s *Scheduler, row state.TaskRuntime) {
+	// A re-dispatch does not push a new commit the instant it is queued: the
+	// PR head this poll just read is still describing the failure that
+	// caused the LAST re-dispatch until the agent it started finishes and
+	// pushes a fix. Nothing here tells a stale failure apart from a fresh one
+	// by itself (CIStatus reports only the current state, not which head it
+	// is for), so instead this skips the row entirely while that re-dispatch
+	// is still outstanding — either already running (s.inFlightIDs) or
+	// queued and waiting for the scheduler to fork it
+	// (s.retryQueueIDs) — rather than counting the same failure twice (#248).
+	if s.inFlightIDs()[row.ID] || s.retryQueueIDs()[row.ID] {
+		return
+	}
+	// While draining, Refill never runs, so a re-dispatch queued here could
+	// never actually start: it would just sit until the process exits. Same
+	// unresolved failure, so it is left pending CI for the next run rather
+	// than spending a retry — or blocking the task — on nothing (#248).
+	if s.Draining() {
+		return
+	}
 	if row.CIAttempts >= p.maxRetries() {
 		p.block(ctx, s, row, "CI failed")
 		return
