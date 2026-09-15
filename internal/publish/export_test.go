@@ -22,7 +22,7 @@ func fakeBundle() fs.FS {
 	return fstest.MapFS{
 		bundleIndexName: &fstest.MapFile{Data: []byte(
 			`<!doctype html><html><head><meta charset="UTF-8" />` +
-				`<script type="module" crossorigin src="./assets/stakeholder-abc123.js"></script>` +
+				`<script defer src="./assets/stakeholder-abc123.js"></script>` +
 				`</head><body><div id="root"></div></body></html>`)},
 		"assets/stakeholder-abc123.js": &fstest.MapFile{Data: []byte("console.log(1)\n")},
 		"favicon.svg":                  &fstest.MapFile{Data: []byte("<svg/>")},
@@ -81,6 +81,33 @@ func TestExportInjectsTheDataScriptBeforeTheBundle(t *testing.T) {
 	}
 	if appAt >= 0 && dataAt > appAt {
 		t.Errorf("data.js must come before the app bundle so the snapshot is there when it looks:\n%s", html)
+	}
+}
+
+// #293: a client opens the exported index.html straight off disk. Chromium
+// refuses a module script, and a crossorigin request, from a file:// page, so
+// either attribute on the real bundle's tags leaves the page blank. This reads
+// the embedded build, not fakeBundle, because the attributes are vite's.
+func TestExportedPageLoadsWithoutModuleSemantics(t *testing.T) {
+	b, err := Bundle()
+	if err != nil {
+		t.Fatalf("Bundle(): %v", err)
+	}
+	if _, err := fs.Stat(b, bundleIndexName); err != nil {
+		t.Skip("no stakeholder build to check — TestBundleRequiresABuild says so")
+	}
+	dir := t.TempDir()
+	if _, err := exportFrom(b, dir, testSnapshot(), Options{}); err != nil {
+		t.Fatalf("exportFrom: %v", err)
+	}
+	html := read(t, filepath.Join(dir, "index.html"))
+	if !strings.Contains(html, "<script") {
+		t.Fatalf("index.html loads no script:\n%s", html)
+	}
+	for _, bad := range []string{`type="module"`, "crossorigin"} {
+		if strings.Contains(html, bad) {
+			t.Errorf("index.html has %s, which Chromium refuses under file://:\n%s", bad, html)
+		}
 	}
 }
 
