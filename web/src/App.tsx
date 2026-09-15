@@ -12,6 +12,7 @@ import { MetricsPage } from "@/pages/MetricsPage"
 import { MilestonesPage } from "@/pages/MilestonesPage"
 import { PortfolioPage } from "@/pages/PortfolioPage"
 import { BudgetPage } from "@/pages/BudgetPage"
+import { CIPage } from "@/pages/CIPage"
 import { SprintPage } from "@/pages/SprintPage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
@@ -111,6 +112,16 @@ export default function App() {
               <ProtectedRoute>
                 <AppLayout>
                   <LogsPage />
+                </AppLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ci"
+            element={
+              <ProtectedRoute>
+                <AppLayout>
+                  <CIPage />
                 </AppLayout>
               </ProtectedRoute>
             }

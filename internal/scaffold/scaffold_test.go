@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/templates"
@@ -92,6 +93,42 @@ func TestScaffoldedProjectIsRunnable(t *testing.T) {
 			}
 			if len(res.Warnings) != 0 {
 				t.Errorf("warnings: %v", res.Warnings)
+			}
+		})
+	}
+}
+
+// #267: the config `orch init` writes documented the Python line's `findings:`
+// block and its `orch findings publish` command, which the Go binary does not
+// have — so the first `orch run` on a fresh project warned about the file init
+// had just written. A scaffolded config must carry no key the loader reports
+// as dropped.
+func TestScaffoldedConfigHasNoDroppedFindingsKey(t *testing.T) {
+	for _, name := range append(templates.Names(), "") {
+		label := name
+		if label == "" {
+			label = "blank"
+		}
+		t.Run(label, func(t *testing.T) {
+			res := scaffolded(t, name)
+			path := filepath.Join(res.Root, ".orchestrator", "config.yaml")
+
+			var raw map[string]any
+			if err := yaml.Unmarshal([]byte(readFile(t, res, ".orchestrator/config.yaml")), &raw); err != nil {
+				t.Fatalf("parse the scaffolded config: %v", err)
+			}
+			if _, ok := raw["findings"]; ok {
+				t.Error("the scaffolded config has a `findings:` block; that feature was removed")
+			}
+
+			loaded, err := config.Load(path, res.Root)
+			if err != nil {
+				t.Fatalf("the scaffolded config does not load: %v", err)
+			}
+			for _, w := range loaded.Warnings {
+				if strings.Contains(w, "`findings`") {
+					t.Errorf("loading the scaffolded config warns about itself: %s", w)
+				}
 			}
 		})
 	}
@@ -377,11 +414,15 @@ func TestSDDAddsTheOpenspecLayout(t *testing.T) {
 }
 
 // defaultsDivergedFromPython lists packaged defaults that are deliberately no
-// longer identical to the last Python release's, each with the reason. Empty
-// today. Changing a default is allowed; doing it without saying so here is
+// longer identical to the last Python release's, each with the reason.
+// Changing a default is allowed; doing it without saying so here is
 // not, because a project scaffolded by the last Python release and one
 // scaffolded by this binary must not differ by accident.
-var defaultsDivergedFromPython = map[string]string{}
+var defaultsDivergedFromPython = map[string]string{
+	"config.yaml": "#267: the `findings:` block documented `orch findings publish`, which the Go binary " +
+		"does not have, and made config.Load warn about the file init had just written; " +
+		"it is replaced by `report_findings:`, the dogfooding opt-in that exists",
+}
 
 // The three packaged defaults started as copies of Python's, so they get the
 // same guard `internal/templates` has: silent drift fails here.
