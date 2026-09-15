@@ -72,7 +72,7 @@ func (s *Server) ciView() (ciPayload, error) {
 
 	workflows, err := ci.ReadWorkflows(filepath.Join(s.paths.Root, ".github", "workflows"))
 	if err != nil {
-		return ciPayload{}, err
+		return ciPayload{}, fmt.Errorf("reading the project's CI workflows: %w", err)
 	}
 	out.Workflows = workflows
 	out.Warnings = ciWarnings(out.Config, workflows)
