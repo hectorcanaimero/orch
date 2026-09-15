@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, rememberLinkToken, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
+import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, qualityLine, rememberLinkToken, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
 import type { StakeholderMilestone, StakeholderSnapshot } from "@/stakeholder/types"
 
 function milestone(phase: number, name: string, done: number, total: number, extra: Partial<StakeholderMilestone> = {}): StakeholderMilestone {
@@ -149,5 +149,19 @@ describe("rememberLinkToken", () => {
       throw new Error("blocked")
     })
     expect(rememberLinkToken("")).toBeNull()
+  })
+})
+
+describe("qualityLine", () => {
+  const q = { gates: ["tests", "review"] as const, delivered: 44, verified: 31, first_pass: 25 }
+
+  it("says how delivered work fared, in the reader's language", () => {
+    expect(qualityLine({ ...q, gates: [...q.gates] }, "es")).toBe("31 de 44 entregas pasaron todas las verificaciones, 25 a la primera.")
+    expect(qualityLine({ ...q, gates: [...q.gates] }, "en")).toBe("31 of 44 deliveries passed every check, 25 on the first try.")
+  })
+
+  it("says nothing before anything is delivered, or without the block", () => {
+    expect(qualityLine({ ...q, gates: [...q.gates], delivered: 0, verified: 0, first_pass: 0 }, "es")).toBe("")
+    expect(qualityLine(undefined, "en")).toBe("")
   })
 })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { ArrowLeft, ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, FileText, TriangleAlert } from "lucide-react"
+import { ArrowLeft, ChevronRight, Circle, CircleCheck, CircleDot, CirclePause, FileText, ShieldCheck, TriangleAlert } from "lucide-react"
 import {
   copy,
   currentPhase,
@@ -17,6 +17,7 @@ import {
   type Lang,
   type PhaseState,
   type Tab,
+  qualityLine,
 } from "./portal"
 import "./portal.css"
 import type { DeliverableStatus, StakeholderDocument, StakeholderMilestone, StakeholderSnapshot } from "./types"
@@ -316,6 +317,23 @@ function Overview({ data, lang, lastVisit }: { data: StakeholderSnapshot; lang: 
           </button>
         ) : null}
       </section>
+
+      {data.quality ? (
+        <section aria-labelledby="quality" className="flex flex-col gap-4">
+          <h3 id="quality" className="text-sm font-semibold uppercase tracking-[0.08em] text-[var(--portal-muted)]">
+            {t.quality}
+          </h3>
+          <ul className="flex flex-col divide-y divide-[var(--portal-line)] rounded-xl bg-[var(--portal-surface)]">
+            {data.quality.gates.map((gate) => (
+              <li key={gate} className="flex items-center gap-3 px-4 py-3">
+                <ShieldCheck className="h-5 w-5 shrink-0 text-[var(--portal-done)]" aria-hidden />
+                <span>{t.gates[gate]}</span>
+              </li>
+            ))}
+          </ul>
+          {qualityLine(data.quality, lang) ? <p className="text-[var(--portal-muted)]">{qualityLine(data.quality, lang)}</p> : null}
+        </section>
+      ) : null}
 
       {data.budget.enabled && data.budget.spend_usd != null ? (
         <section aria-labelledby="budget" className="flex flex-col gap-2">

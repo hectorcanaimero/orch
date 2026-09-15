@@ -85,6 +85,11 @@ type Input struct {
 	// Documents are the project files the portal shows (portal.documents),
 	// already read by the caller.
 	Documents []Document
+	// Gates are the kinds of check every pull request goes through
+	// (internal/ci.Gates), nil when tasks do not go through PRs. CI is each
+	// task's pull-request CI result, by id. Together they make Quality.
+	Gates []string
+	CI    map[string]TaskCI
 }
 
 // VelocityWindowDays is the window DoneInVelocityWindow is counted over —
@@ -114,6 +119,9 @@ type Snapshot struct {
 	// Documents are the files the operator chose to share, by title and
 	// never by path. Omitted when there are none.
 	Documents []Document `json:"documents,omitempty"`
+	// Quality is how deliveries are checked, omitted when no check runs on
+	// pull requests.
+	Quality *Quality `json:"quality,omitempty"`
 }
 
 // Document is one shared project file: a stable id for linking, its title,
@@ -287,6 +295,7 @@ func Build(in Input) Snapshot {
 		Branding:   brandingOrNil(in.Branding),
 		Deliveries: buildDeliveries(in.Tasks, milestones, in.FinishedAt, in.Now),
 		Documents:  in.Documents,
+		Quality:    buildQuality(in.Tasks, in.Gates, in.CI),
 	}
 }
 

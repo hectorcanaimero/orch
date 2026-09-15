@@ -66,6 +66,7 @@ naming the key.
 | `executive_summary` | object | See below. |
 | `deliveries` | array of object | **Optional**, absent when nothing was finished in the last 30 days. See below. |
 | `documents` | array of object | **Optional**, absent when `portal.documents` matches nothing. See below. |
+| `quality` | object | **Optional**, absent unless tasks go through pull requests (`vcs.auto_pr` with `dispatch.worktree_mode`) and a workflow running on `pull_request` checks something. See below. |
 
 ## `summary`
 
@@ -132,6 +133,18 @@ the viewer's; the portal sanitises the HTML it produces.
 What was finished in the last 30 days, newest first, at most 30: `title`,
 `phase` (the phase's `name`) and `finished_at` (RFC 3339, UTC). The portal's
 "since your last visit". Absent when nothing was.
+
+## `quality`
+
+How every delivery is checked before it counts, in a client's terms. No model
+names, no costs, no ids. Additive, so still schema 1.
+
+| Field | Type | Notes |
+|---|---|---|
+| `gates` | array of string | The kinds of check the workflows running on `pull_request` amount to, in this order: `tests`, `typecheck`, `lint`, `build`, `review`. Read from job and step names (`internal/ci.Gates`); a job whose name says review counts as the review whatever its steps are called. |
+| `delivered` | integer | Done tasks that went through a pull request. |
+| `verified` | integer | Of those, the ones whose CI passed. A PR merged by hand over a red check is delivered but not verified. |
+| `first_pass` | integer | Of the verified, the ones that passed without a CI retry. |
 
 ## `blockers[]`
 
