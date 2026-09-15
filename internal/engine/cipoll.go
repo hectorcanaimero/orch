@@ -38,6 +38,9 @@ const (
 	EventPRAutoMergeFailed = "pr_auto_merge_failed"
 	// EventCINoChecks is Go only: a PR finished with no check ever reported.
 	EventCINoChecks = "ci_no_checks"
+	// EventPRMerged is Go only: the PR was merged outside orch while its CI
+	// was still being watched (#255).
+	EventPRMerged = "pr_merged"
 )
 
 // ciNoChecksGrace is how long a PR may report no check at all before orch
@@ -144,6 +147,10 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 			// asking `gh` about an empty URL is an error per tick forever.
 			continue
 		}
+		if p.prSettled(ctx, s, row) {
+			acted++
+			continue
+		}
 		state, err := p.Provider.CIStatus(row.PRURL)
 		if err != nil {
 			s.logger().Warn("reading CI status failed; will retry next poll",
@@ -174,6 +181,45 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 		}
 	}
 	return acted, nil
+}
+
+// prSettled finishes the task of a PR merged outside orch, and blocks the task
+// of one closed without merging. Reports whether it did. Either PR's CI is
+// stale or unreadable, and polling it would go on forever (#255).
+//
+// A state it cannot read, or a provider that cannot tell, leaves the row to
+// the CI verdict as before.
+func (p *CIPoller) prSettled(ctx context.Context, s *Scheduler, row state.TaskRuntime) bool {
+	// A CI retry running or queued for this task decides it at its reap, as
+	// in ciFailed (#248): settling it here would dispatch a finished task.
+	if s.inFlightIDs()[row.ID] || s.retryQueueIDs()[row.ID] {
+		return false
+	}
+	prState, err := p.Provider.PRState(row.PRURL)
+	if errors.Is(err, vcs.ErrPRStateUnsupported) {
+		return false
+	}
+	if err != nil {
+		s.logger().Warn("reading the PR state failed; asking CI instead",
+			"task", row.ID, "pr", row.PRURL, "err", err)
+		return false
+	}
+	switch prState {
+	case vcs.PRMerged:
+		delete(p.noChecksSince, row.ID)
+		s.logger().Info("the PR was merged outside orch; finishing the task", "task", row.ID, "pr", row.PRURL)
+		// success: the column has no "merged", and a merge is the change
+		// accepted. The event says it was a person, not CI.
+		p.finishTask(ctx, s, row, CIStatusSuccess, "PR merged: "+row.PRURL)
+		p.emit(ctx, s, EventPRMerged, row, map[string]any{"pr_url": row.PRURL})
+		return true
+	case vcs.PRClosed:
+		delete(p.noChecksSince, row.ID)
+		p.block(ctx, s, row, "PR closed without merging: "+row.PRURL)
+		return true
+	case vcs.PROpen:
+	}
+	return false
 }
 
 // noChecksFor is how long the task's PR has reported no checks, starting the
