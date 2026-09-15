@@ -22,6 +22,8 @@ type Options struct {
 	// BaseBranch is where pushes are also checked; "" means main.
 	BaseBranch string
 	Checks     Checks
+	// Review adds an AI review job after the checks; nil adds none.
+	Review *Review
 }
 
 // Job is one job of the pipeline, for one package.
@@ -114,11 +116,17 @@ func Render(jobs []Job, opts Options) ([]byte, error) {
 	b.WriteString("name: orch-ci\n\n")
 	b.WriteString("on:\n  pull_request:\n  push:\n    branches: [" + base + "]\n\n")
 	b.WriteString("jobs:\n")
+	ids := make([]string, 0, len(jobs))
 	for i, j := range jobs {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 		writeJob(&b, j)
+		ids = append(ids, j.ID)
+	}
+	if opts.Review != nil {
+		b.WriteString("\n")
+		writeReviewJob(&b, opts.Review, ids)
 	}
 	return []byte(b.String()), nil
 }
