@@ -80,6 +80,8 @@ func (s *Server) pages() http.Handler {
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
-		http.Redirect(w, r, target, http.StatusFound)
+		// The path is the constant portalPrefix; only the query is carried, and
+		// a query cannot change where the redirect goes.
+		http.Redirect(w, r, target, http.StatusFound) //nolint:gosec // G710: fixed same-origin path
 	})
 }
