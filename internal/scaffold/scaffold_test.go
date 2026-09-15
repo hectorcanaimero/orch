@@ -377,11 +377,14 @@ func TestSDDAddsTheOpenspecLayout(t *testing.T) {
 }
 
 // defaultsDivergedFromPython lists packaged defaults that are deliberately no
-// longer identical to the last Python release's, each with the reason. Empty
-// today. Changing a default is allowed; doing it without saying so here is
-// not, because a project scaffolded by the last Python release and one
-// scaffolded by this binary must not differ by accident.
-var defaultsDivergedFromPython = map[string]string{}
+// longer identical to the last Python release's, each with the reason.
+// Changing a default is allowed; doing it without saying so here is not,
+// because a project scaffolded by the last Python release and one scaffolded
+// by this binary must not differ by accident.
+var defaultsDivergedFromPython = map[string]string{
+	"config.yaml": "the dispatch comment named .worktrees/<task-id>/ inside the project; " +
+		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/ (#249)",
+}
 
 // The three packaged defaults started as copies of Python's, so they get the
 // same guard `internal/templates` has: silent drift fails here.
