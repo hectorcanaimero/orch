@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hectorcanaimero/orch/internal/ci"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/project"
@@ -181,6 +182,28 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		return snapshot.Snapshot{}, fmt.Errorf("counting recent completions: %w", err)
 	}
 
+	// What every pull request goes through, and how each delivered task
+	// fared: the portal's "how every delivery is checked". Only when tasks do
+	// go through pull requests.
+	var gates []string
+	taskCI := map[string]snapshot.TaskCI{}
+	if cfg.VCS.AutoPR && cfg.Dispatch.WorktreeMode {
+		workflows, err := ci.ReadWorkflows(filepath.Join(paths.Root, ".github", "workflows"))
+		if err != nil {
+			return snapshot.Snapshot{}, fmt.Errorf("reading the CI workflows: %w", err)
+		}
+		gates = ci.Gates(workflows)
+		rows, err := backend.Tasks(ctx, state.TaskFilter{})
+		if err != nil {
+			return snapshot.Snapshot{}, fmt.Errorf("reading the tasks' CI results: %w", err)
+		}
+		for _, r := range rows {
+			if r.PRURL != "" {
+				taskCI[r.ID] = snapshot.TaskCI{Status: r.CIStatus, Attempts: r.CIAttempts}
+			}
+		}
+	}
+
 	name := f.Meta.Project
 	if name == "" {
 		name = paths.ID
@@ -219,5 +242,7 @@ func buildStakeholderSnapshot(ctx context.Context, paths config.Paths, cfg confi
 		PackageTitles:        outline.Packages,
 		FinishedAt:           finishedAt,
 		Documents:            documents,
+		Gates:                gates,
+		CI:                   taskCI,
 	}), nil
 }

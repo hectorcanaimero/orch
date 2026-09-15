@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify"
 import { marked } from "marked"
-import type { StakeholderDelivery, StakeholderMilestone, StakeholderSnapshot } from "./types"
+import type { StakeholderDelivery, StakeholderMilestone, StakeholderQuality, StakeholderSnapshot } from "./types"
 
 export type Lang = "es" | "en"
 
@@ -37,6 +37,16 @@ export const copy = {
     allDocuments: "Todos los documentos",
     updatedOn: (day: string) => `Actualizado el ${day}`,
     noDocument: "Ese documento ya no está publicado.",
+    quality: "Cómo verificamos cada entrega",
+    gates: {
+      tests: "Pruebas automáticas",
+      typecheck: "Revisión de tipos",
+      lint: "Revisión de estilo del código",
+      build: "Compilación completa",
+      review: "Revisión automática del código",
+    },
+    verified: (verified: number, delivered: number, firstPass: number) =>
+      `${verified} de ${delivered} ${delivered === 1 ? "entrega pasó" : "entregas pasaron"} todas las verificaciones, ${firstPass} a la primera.`,
   },
   en: {
     summary: "Overview",
@@ -64,6 +74,16 @@ export const copy = {
     allDocuments: "All documents",
     updatedOn: (day: string) => `Updated ${day}`,
     noDocument: "That document is no longer published.",
+    quality: "How every delivery is checked",
+    gates: {
+      tests: "Automated tests",
+      typecheck: "Type checks",
+      lint: "Code style checks",
+      build: "A full build",
+      review: "Automated code review",
+    },
+    verified: (verified: number, delivered: number, firstPass: number) =>
+      `${verified} of ${delivered} ${delivered === 1 ? "delivery" : "deliveries"} passed every check, ${firstPass} on the first try.`,
   },
 } as const
 
@@ -197,4 +217,12 @@ export function rememberLinkToken(search: string): string | null {
   } catch {
     return null
   }
+}
+
+// qualityLine says how delivered work fared against the checks, or "" while
+// nothing has been delivered through them yet (the list of checks still
+// shows what every delivery will go through).
+export function qualityLine(q: StakeholderQuality | undefined, lang: Lang): string {
+  if (!q || q.delivered === 0) return ""
+  return copy[lang].verified(q.verified, q.delivered, q.first_pass)
 }

@@ -261,6 +261,8 @@ var allowedKeys = map[string]bool{
 	"text": true, "language": true,
 	// branding
 	"logo": true, "accent_color": true, "footer": true,
+	// quality
+	"quality": true, "gates": true, "delivered": true, "verified": true, "first_pass": true,
 }
 
 // A field this package emits and nobody documented fails here, which is what
@@ -271,6 +273,7 @@ func TestEveryEmittedKeyIsInTheSchema(t *testing.T) {
 	in.DoneInVelocityWindow = 7                                      // so eta_date and eta_confidence are emitted
 	in.FinishedAt = map[string]string{"T-1": "2026-09-11T08:30:00Z"} // so deliveries and finished_at are
 	in.Documents = []Document{{ID: "prd", Title: "PRD", UpdatedAt: "2026-09-10T00:00:00Z", Markdown: "# PRD\n"}}
+	in.Gates = []string{"tests", "review"} // so quality is emitted
 	in.Branding = Branding{
 		Name: "Acme", Logo: "data:image/png;base64," +
 			base64.StdEncoding.EncodeToString(onePixelPNG),

@@ -117,6 +117,17 @@ export interface StakeholderSnapshot {
   deliveries?: StakeholderDelivery[]
   // Files the operator shares (portal.documents); absent when none.
   documents?: StakeholderDocument[]
+  // How every delivery is checked; absent unless work goes through PRs with CI.
+  quality?: StakeholderQuality
+}
+
+export type QualityGate = "tests" | "typecheck" | "lint" | "build" | "review"
+
+export interface StakeholderQuality {
+  gates: QualityGate[]
+  delivered: number
+  verified: number
+  first_pass: number
 }
 
 export interface StakeholderDocument {
