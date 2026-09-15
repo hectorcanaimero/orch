@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/router"
@@ -24,6 +25,17 @@ func CheckRoutes(tasks []model.Task, r router.Router) Check {
 			Name: name, Status: StatusError,
 			Detail:      err.Error(),
 			Remediation: "Add the missing entries to model_router.yaml.",
+		}
+	}
+	// #266: resolving is not enough when the route names a model the CLI
+	// rejects — every dispatch would 404. Offline and a warning only; see
+	// router.CLIModelWarning.
+	if warnings := r.CLIModelWarnings(tasks); len(warnings) > 0 {
+		return Check{
+			Name: name, Status: StatusWarn,
+			Detail: fmt.Sprintf("%d task(s) resolve, but %s",
+				len(tasks), strings.Join(warnings, "; ")),
+			Remediation: "Fix the cli_model of each route named above in model_router.yaml.",
 		}
 	}
 	return Check{Name: name, Status: StatusOK, Detail: fmt.Sprintf("%d task(s) resolve", len(tasks))}

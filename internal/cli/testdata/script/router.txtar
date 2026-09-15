@@ -57,6 +57,43 @@ stderr 'Nothing can be auto-added'
 ! exec orch router add-missing --tier bogus --project-root routerproj --project-id routerproj
 stderr '\-\-tier must be one of premium, standard, cheap'
 
+# #266: a claude family written without its `claude-` prefix is mapped to
+# the id the CLI accepts, an alias passes through, and a suffix orch cannot
+# map is still written but warned about, naming the entry and the value.
+exec orch router add-missing --yes --project-root famproj --project-id famproj
+stdout '\+ claude/opus.*cli_model=opus,'
+stdout '\+ claude/sonnet-5.*cli_model=claude-sonnet-5,'
+stdout '\+ claude/sonnet-9.*cli_model=sonnet-9,'
+stdout 'warning: route ''claude/sonnet-9'' has cli_model ''sonnet-9'''
+! stdout 'warning: route ''claude/(opus|sonnet-5)'''
+stdout 'Added 3 entry\(ies\)'
+
+exec cat famproj/.orchestrator/model_router.yaml
+stdout 'cli_model: claude-sonnet-5$'
+
+# router validate still passes (every task has a route) but warns about the
+# one the claude CLI would reject, in text and in --json.
+exec orch router validate --project-root famproj --project-id famproj
+stdout 'model_router\.yaml covers every task model\.'
+stderr 'warning: route ''claude/sonnet-9'' has cli_model ''sonnet-9'''
+! stderr 'claude/(opus|sonnet-5)'
+
+exec orch router validate --json --project-root famproj --project-id famproj
+stdout '"ok":true,"warnings":\["route ''claude/sonnet-9'' has cli_model ''sonnet-9'''
+! stderr .
+
+-- famproj/tasks.json --
+{"meta":{},"phases":[],"tasks":[
+  {"id":"A","phase":0,"title":"A","model":"claude/sonnet-5","dependencies":[]},
+  {"id":"B","phase":0,"title":"B","model":"claude/opus","dependencies":[]},
+  {"id":"C","phase":0,"title":"C","model":"claude/sonnet-9","dependencies":[]}
+]}
+-- famproj/scripts/task-start.sh --
+#!/usr/bin/env bash
+exit 0
+-- famproj/.orchestrator/model_router.yaml --
+# empty router
+
 -- abort.txt --
 n
 -- routerproj/tasks.json --
