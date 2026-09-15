@@ -53,6 +53,11 @@ type DispatchReader interface {
 	ClearDispatch(ctx context.Context, runID, taskID string) error
 }
 
+// StatusReader reads one task's status from the source of truth.
+type StatusReader interface {
+	TaskStatus(ctx context.Context, taskID string) (model.Status, error)
+}
+
 // Runner drives one `orch run`: it alternates reaping and refilling until the
 // work is done or a signal arrives.
 type Runner struct {
@@ -64,6 +69,9 @@ type Runner struct {
 	// CI watches the pull requests this run opened. Nil disables it, which
 	// is every project not running worktree mode with auto-PR.
 	CI *CIPoller
+	// Statuses is the database's view of each task, which this run adopts
+	// where it changed behind the run's back. Nil disables it.
+	Statuses StatusReader
 
 	// Signals, when non-nil, is used instead of installing real handlers —
 	// the tests drive it directly rather than signalling the test binary.
@@ -187,6 +195,11 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 		}
 
 		if r.workIsDone(ctx) {
+			// Before giving up, look again: a task may have moved in the
+			// database behind this run's back and made more work ready.
+			if r.adoptStatuses(ctx) > 0 {
+				continue
+			}
 			// Semi mode offers deferred tasks one more round before giving
 			// up on them, so "not now" does not silently become "never".
 			//
@@ -207,6 +220,7 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 			if err := r.reconcile(ctx, "tick"); err != nil {
 				s.logger().Warn("tick reconcile failed; continuing", "err", err)
 			}
+			r.adoptStatuses(ctx)
 		}
 
 		r.sleep(tickInterval)
@@ -317,6 +331,58 @@ func (r *Runner) workIsDone(ctx context.Context) bool {
 		return false
 	}
 	return !r.waitingOnCI(ctx)
+}
+
+// adoptStatuses takes the database's status for every task this run is not
+// itself moving, and reports how many changed.
+//
+// The queue is this run's memory, and the database is where the truth lives:
+// a person unblocks or fixes a task with `orch task-status`, or a bookkeeping
+// write fails after the queue already moved. Left alone, the run idles or
+// exits with ready work (#255, #276). Skipped: tasks running, waiting out a
+// retry, or waiting on CI. Those are done in the database (the agent said so)
+// but not accepted yet, and adopting that would release their dependents onto
+// unreviewed work (#230).
+//
+// ponytail: one read per task per sweep, fine for hundreds of tasks; a bulk
+// read if a DAG ever gets far bigger.
+func (r *Runner) adoptStatuses(ctx context.Context) int {
+	if r.Statuses == nil {
+		return 0
+	}
+	s := r.Scheduler
+	skip := s.inFlightIDs()
+	for id := range s.retryQueueIDs() {
+		skip[id] = true
+	}
+	if r.CI != nil && r.CI.Backend != nil {
+		rows, err := r.CI.Backend.TasksWithPendingCI(ctx)
+		if err != nil {
+			s.logger().Warn("could not list tasks waiting on CI; not adopting statuses", "err", err)
+			return 0
+		}
+		for _, row := range rows {
+			skip[row.ID] = true
+		}
+	}
+
+	changed := map[string]model.Status{}
+	for _, t := range s.Queue.AllTasks() {
+		if skip[t.ID] {
+			continue
+		}
+		db, err := r.Statuses.TaskStatus(ctx, t.ID)
+		if err != nil {
+			continue // not in the database yet, or unreadable: keep the run's view
+		}
+		if cur, _ := s.Queue.Status(t.ID); cur != db {
+			s.logger().Info("adopting a status changed outside this run",
+				"task", t.ID, "run", cur, "database", db)
+			changed[t.ID] = db
+		}
+	}
+	s.Queue.Hydrate(changed)
+	return len(changed)
 }
 
 // waitingOnCI reports whether a task of this run has a PR still waiting on

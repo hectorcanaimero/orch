@@ -186,7 +186,9 @@ func newStrictBackend(initial map[string]model.Status) *strictBackend {
 func (b *strictBackend) RecordDispatchAndEvent(context.Context, string, Dispatch, *Spawned, int) error {
 	return nil
 }
-func (b *strictBackend) RecordFinish(context.Context, string, Dispatch, Outcome, int) error { return nil }
+func (b *strictBackend) RecordFinish(context.Context, string, Dispatch, Outcome, int) error {
+	return nil
+}
 func (b *strictBackend) AppendEngineEvent(context.Context, string, string, string, string, map[string]any) error {
 	return nil
 }
@@ -348,6 +350,10 @@ func TestCIFailureRedispatchesWithTheLogs(t *testing.T) {
 	// fresh, so there is no extra backoff.
 	if queued[0].EarliestAt.After(f.s.now()) {
 		t.Errorf("the CI retry was given a backoff: %v", queued[0].EarliestAt)
+	}
+	// The retry pushes to this PR, so its reap must watch it, not open one (#276).
+	if got := f.s.ciRetryPR["C-1"]; got != "https://github.com/o/r/pull/1" {
+		t.Errorf("remembered retry PR = %q, want the failing PR", got)
 	}
 
 	body, err := os.ReadFile(filepath.Join(f.wt.dir, "C-1", CIFeedbackFile)) // #nosec G304 -- a temp dir this test made

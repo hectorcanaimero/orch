@@ -153,6 +153,10 @@ type Scheduler struct {
 	// spentUSD accumulates each task's cost across attempts, for the
 	// escalation budget check (FR-D-8).
 	spentUSD map[string]float64
+	// ciRetryPR is the PR a CI re-dispatch works on, by task, from the
+	// poller's redispatch to the reap that follows it. The retry pushes to
+	// that PR's branch; asking the forge for a new PR there fails (#276).
+	ciRetryPR map[string]string
 	// now is the clock, injectable so the backoff tests do not wait.
 	now func() time.Time
 }
@@ -224,6 +228,7 @@ func NewScheduler(q *TaskQueue, routes map[string]model.RouteEntry, opts Schedul
 		deferReasons: make(map[string]string),
 		done:         make(chan completion, capacity),
 		spentUSD:     make(map[string]float64),
+		ciRetryPR:    make(map[string]string),
 		now:          time.Now,
 	}
 }
