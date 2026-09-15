@@ -1147,6 +1147,7 @@ type recordingNotifier struct {
 	mu       sync.Mutex
 	blocked  []string
 	ciBlocks []string
+	stalls   []string
 }
 
 func (n *recordingNotifier) Blocked(_ context.Context, taskID, reason string) {
@@ -1159,6 +1160,18 @@ func (n *recordingNotifier) CIBlocked(_ context.Context, taskID, prURL string, a
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.ciBlocks = append(n.ciBlocks, fmt.Sprintf("%s: %s x%d", taskID, prURL, attempts))
+}
+
+func (n *recordingNotifier) Stalled(_ context.Context, stalledFor time.Duration, waitingOn string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.stalls = append(n.stalls, fmt.Sprintf("%s: %s", stalledFor, waitingOn))
+}
+
+func (n *recordingNotifier) stallList() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.stalls...)
 }
 
 func (n *recordingNotifier) blockedList() []string {
