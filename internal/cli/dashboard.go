@@ -44,7 +44,11 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			"Reads the project's state and shows it; it never writes. The\n" +
 			"stakeholder profile gates every data route behind a token and an\n" +
 			"allow-list — see `profile` and `token` under `dashboard:` in\n" +
-			"config.yaml, which the flags below override.",
+			"config.yaml, which the flags below override.\n\n" +
+			"The stakeholder token is the exception: a token stored by\n" +
+			"`orch dashboard token rotate` wins over --token, which wins over\n" +
+			"dashboard.token. A token given while the database has one is\n" +
+			"ignored, with a warning at startup.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -85,8 +89,12 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			if cmd.Flags().Changed("profile") {
 				dashCfg.Profile = dashboard.Profile(profile)
 			}
+			// Where a token came from, for the warning below when the
+			// database overrides it.
+			tokenOrigin := "dashboard.token in config.yaml"
 			if cmd.Flags().Changed("token") {
 				dashCfg.Token = token
+				tokenOrigin = "--token"
 			}
 			if cmd.Flags().Changed("host") {
 				dashCfg.Host = host
@@ -115,6 +123,21 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			// already-running dashboard needs no restart to take effect.
 			if err := resolveTokenHash(ctx, backend, &dashCfg); err != nil {
 				return fmt.Errorf("resolving the stakeholder token: %w", err)
+			}
+			// The database winning is deliberate, but silent it reads as a
+			// broken flag (#275): the banner says `source: database` and the
+			// given token 401s. Printed before Validate so a refused start
+			// still says it. Never the token itself. Not under the operator
+			// profile, which uses no token at all.
+			if dashCfg.TokenSource == "database" && dashCfg.Token != "" &&
+				dashCfg.Profile != dashboard.ProfileOperator {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+					"[warn] %s is ignored: this project has a stakeholder token "+
+						"rotated into its database, which wins over --token and "+
+						"dashboard.token. Use the token `orch dashboard token rotate` "+
+						"printed (`orch dashboard token show` says when that was), or run "+
+						"`orch dashboard token rotate` again for a new one.\n",
+					tokenOrigin)
 			}
 			if err := dashCfg.Validate(); err != nil {
 				return err
@@ -183,7 +206,8 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		fmt.Sprintf("Access profile: %s, %s or %s (default: config.yaml)",
 			dashboard.ProfileOperator, dashboard.ProfileStakeholder, dashboard.ProfileBoth))
 	cmd.Flags().StringVar(&token, "token", "",
-		"Shared token a stakeholder session must present (default: config.yaml)")
+		"Shared token a stakeholder session must present (default: config.yaml; "+
+			"ignored once orch dashboard token rotate has stored one)")
 	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
 		"Also start the configured tunnel, and stop it on exit")
 	cmd.Flags().StringVar(&portfolio, "portfolio", "",
