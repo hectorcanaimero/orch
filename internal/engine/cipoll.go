@@ -116,6 +116,8 @@ type CIPoller struct {
 	lastPoll time.Time
 	// noChecksSince is when each task's PR was first seen with no checks.
 	noChecksSince map[string]time.Time
+	// prStateAt is when each task's PR state was last read (prStateDue).
+	prStateAt map[string]time.Time
 }
 
 // Poll asks CI about every task waiting on it, if enough time has passed.
@@ -147,11 +149,19 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 			// asking `gh` about an empty URL is an error per tick forever.
 			continue
 		}
-		if p.prSettled(ctx, s, row) {
-			acted++
-			continue
-		}
 		state, err := p.Provider.CIStatus(row.PRURL)
+		// Ask whether the PR itself was merged or closed only when CI alone
+		// cannot settle it: a red build (never re-dispatch against a merged
+		// PR), a conflict, or a PR still pending or unreadable, and those at
+		// most every prStateEvery. Asking on every poll doubled the gh calls.
+		settledByCI := err == nil && state == vcs.CISuccess
+		mustAsk := err == nil && (state == vcs.CIFailure || state == vcs.CIConflict)
+		if !settledByCI && (mustAsk || p.prStateDue(row.ID, now)) {
+			if p.prSettled(ctx, s, row) {
+				acted++
+				continue
+			}
+		}
 		if err != nil {
 			s.logger().Warn("reading CI status failed; will retry next poll",
 				"task", row.ID, "pr", row.PRURL, "err", err)
@@ -168,7 +178,7 @@ func (p *CIPoller) Poll(ctx context.Context, s *Scheduler) (int, error) {
 			p.ciFailed(ctx, s, row)
 			acted++
 		case vcs.CIConflict:
-			p.block(ctx, s, row, "the PR conflicts with its base branch, so CI will not run")
+			p.block(ctx, s, row, "the PR conflicts with its base branch, so CI will not run", false)
 			acted++
 		case vcs.CINone:
 			if p.noChecksFor(row.ID, now) >= ciNoChecksGrace {
@@ -215,11 +225,28 @@ func (p *CIPoller) prSettled(ctx context.Context, s *Scheduler, row state.TaskRu
 		return true
 	case vcs.PRClosed:
 		delete(p.noChecksSince, row.ID)
-		p.block(ctx, s, row, "PR closed without merging: "+row.PRURL)
+		p.block(ctx, s, row, "PR closed without merging: "+row.PRURL, false)
 		return true
 	case vcs.PROpen:
 	}
 	return false
+}
+
+// prStateEvery bounds how often a PR still waiting on CI is asked whether it
+// was merged or closed by hand.
+const prStateEvery = 5 * time.Minute
+
+// prStateDue reports whether the task's PR state is due to be read again, and
+// if so starts its clock.
+func (p *CIPoller) prStateDue(taskID string, now time.Time) bool {
+	if p.prStateAt == nil {
+		p.prStateAt = map[string]time.Time{}
+	}
+	if last, ok := p.prStateAt[taskID]; ok && now.Sub(last) < prStateEvery {
+		return false
+	}
+	p.prStateAt[taskID] = now
+	return true
 }
 
 // noChecksFor is how long the task's PR has reported no checks, starting the
@@ -301,7 +328,7 @@ func (p *CIPoller) finishTask(ctx context.Context, s *Scheduler, row state.TaskR
 
 // block is the CI verdict nothing more can change: a failure out of retries,
 // or a PR whose CI will never run.
-func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntime, reason string) {
+func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntime, reason string, retriesUsed bool) {
 	if err := p.Backend.SetTaskCIStatus(ctx, row.ID, CIStatusFailure); err != nil {
 		s.logger().Error("recording CI failure failed", "task", row.ID, "err", err)
 	}
@@ -314,8 +341,14 @@ func (p *CIPoller) block(ctx context.Context, s *Scheduler, row state.TaskRuntim
 	p.emit(ctx, s, EventCIBlocked, row, map[string]any{
 		"pr_url": row.PRURL, "attempts": row.CIAttempts, "reason": reason,
 	})
-	if s.Notify != nil {
+	// "Blocked after N CI attempts" only when that is what happened; a
+	// conflict or a closed PR is announced with its own reason.
+	switch {
+	case s.Notify == nil:
+	case retriesUsed:
 		s.Notify.CIBlocked(ctx, row.ID, row.PRURL, row.CIAttempts)
+	default:
+		s.Notify.Blocked(ctx, row.ID, reason)
 	}
 }
 
@@ -342,7 +375,7 @@ func (p *CIPoller) ciFailed(ctx context.Context, s *Scheduler, row state.TaskRun
 		return
 	}
 	if row.CIAttempts >= p.maxRetries() {
-		p.block(ctx, s, row, "CI failed")
+		p.block(ctx, s, row, "CI failed", true)
 		return
 	}
 
