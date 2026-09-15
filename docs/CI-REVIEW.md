@@ -365,6 +365,51 @@ cannot wait an hour, ask a Claude session directly.
 
 ---
 
+## `orch ci review` in your own project
+
+Everything above is orch's own repository: `review.yml` runs the Gemini CLI
+action and `.github/review/parse-review.py` reads its answer. `orch ci review`
+is the review orch offers **the projects it manages**, and it is a different
+thing: the project's workflow installs orch on the runner and runs one command,
+which builds the prompt, calls the provider, parses the verdict in Go and posts
+the comment.
+
+- **Any of four providers**, through orch's own CLI adapters: Claude
+  (`claude`), Gemini (`gemini`), OpenAI (`codex`) and OpenRouter (`opencode`
+  with an `openrouter/…` model). Each runs read-only in an empty directory.
+- **The project's checklist**, `.github/orch-review.md` by default, or a
+  built-in general one.
+- **Its own comment**, marked `<!-- orch:ci-review -->`, so it never edits the
+  Gemini reviewer's `<!-- orch:gemini-review -->` one.
+- **Advisory unless `--blocking`**: without it, a provider that fails is a
+  warning and the job passes.
+
+A job looks like this:
+
+```yaml
+review:
+  if: github.event.pull_request.head.repo.full_name == github.repository
+  runs-on: ubuntu-latest
+  permissions:
+    contents: read
+    pull-requests: write
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - run: curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+    - run: npm install -g @anthropic-ai/claude-code
+    - run: orch ci review --provider claude --model claude-sonnet-4-5 --post
+      env:
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        GH_TOKEN: ${{ github.token }}
+```
+
+The flags, the provider-to-secret table and the exit codes are in
+[`CLI.md`](CLI.md) under `ci review`.
+
+---
+
 ## Related
 
 - [`.github/review/CHECKLIST.md`](../.github/review/CHECKLIST.md) — the rules the reviewer applies

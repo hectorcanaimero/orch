@@ -28,6 +28,13 @@ being pinned, and it is `gh`'s to change.
 | `pr-checks-with-neutral.json` | the same for #208 — eight `SUCCESS` and one `NEUTRAL`, which is what proves the conclusion map is reached |
 | `pr-checks-conclusion-rejected.txt` | what `gh pr checks 209 --json state,conclusion` actually prints, and the field list it offers instead |
 | `issue-list.json` | `gh issue list --state all --limit 3 --json number,title,body,labels,state,url,createdAt` — three real issues of this repository |
+| `issue-comments-no-marker.json` | `gh api --paginate repos/hectorcanaimero/orch/issues/279/comments` — merged PR #279: the Gemini reviewer's comment (`<!-- orch:gemini-review -->`) and two replies, none with `<!-- orch:ci-review -->` |
+
+`issue-comments-no-marker.json` is the list `vcs.UpsertComment` reads. It holds
+one marked comment, so it serves both paths: looked up with the ci-review marker
+it finds none and POSTs, and with the Gemini reviewer's marker it finds comment
+`5677503661` and PATCHes it. One of the review findings quoted in it names
+`/home/u/.local/bin/orch`, a made-up path from a test, not anyone's home.
 
 `issue-list.json` is captured from **closed** issues, and says `"state":
 "CLOSED"` three times — not because `orch sync issues` reads closed issues by

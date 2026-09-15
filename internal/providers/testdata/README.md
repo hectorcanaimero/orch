@@ -14,6 +14,27 @@ what the parser used to have to cope with.
 
 ---
 
+## `claude/2.1.272/` — real capture
+
+Captured on 2026-09-15 on this VPS in an empty directory, with the argv
+`orch ci review` runs claude with (`ci.ReadOnlyArgv`: the adapter's flags with
+`--permission-mode default --tools "" --strict-mcp-config` in place of
+`acceptEdits`), prompt on stdin:
+
+```
+claude -p --output-format json --model claude-haiku-4-5-20251001 \
+    --add-dir . --permission-mode default --tools "" --strict-mcp-config < prompt.md
+```
+
+| File | How it was produced | Exit |
+|---|---|---|
+| `review-verdict.json` | the prompt `ci.BuildPrompt` builds from the built-in checklist and a two-commit demo repository whose second commit adds a `Load` that drops `os.ReadFile`'s error | 0 |
+
+Its `result` is the verdict JSON **inside a ` ```json ` fence**, not bare, even
+though the prompt asks for JSON only. That is what `ci.ParseVerdict` has to see
+through, and why the cli end-to-end test replays this file rather than a
+hand-written answer.
+
 ## `claude/2.1.270/` — real capture
 
 Captured on 2026-09-14 on this VPS in a fresh `git init` directory, with
