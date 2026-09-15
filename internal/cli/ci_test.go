@@ -97,13 +97,21 @@ func TestCISetupWritesAndProtectsTheWorkflow(t *testing.T) {
 	if _, err := runRoot(t, "dev", "ci", "setup", "--yes", "--project-root", root); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("existing workflow without --force: err = %v", err)
 	}
-	if b, _ := os.ReadFile(target); string(b) != "name: mine\n" { // #nosec G304 -- a temp dir this test made
+	b, err := os.ReadFile(target) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "name: mine\n" {
 		t.Errorf("the hand-edited workflow was replaced: %q", b)
 	}
 	if _, err := runRoot(t, "dev", "ci", "setup", "--force", "--project-root", root); err != nil {
 		t.Fatalf("--force: %v", err)
 	}
-	if b, _ := os.ReadFile(target); !strings.Contains(string(b), "name: orch-ci") { // #nosec G304 -- a temp dir this test made
+	b, err = os.ReadFile(target) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "name: orch-ci") {
 		t.Errorf("--force did not replace it: %q", b)
 	}
 }
@@ -191,7 +199,11 @@ func TestCISetupAddsAReview(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Kept the existing") {
 		t.Errorf("rerun: %v\n%s", err, out)
 	}
-	if b, _ := os.ReadFile(checklist); string(b) != "# ours\n" { // #nosec G304 -- a temp dir this test made
+	b, err := os.ReadFile(checklist) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "# ours\n" {
 		t.Errorf("the edited checklist was replaced: %q", b)
 	}
 }
@@ -231,5 +243,28 @@ func TestAskReview(t *testing.T) {
 	provider, _, _, err = askReview(bufio.NewReader(strings.NewReader("openrouter\n\n")), &bytes.Buffer{})
 	if err != nil || provider != "" {
 		t.Errorf("openrouter with no model = %q, %v; want no review", provider, err)
+	}
+}
+
+// A checklist path that cannot even be checked is an error, not a silent
+// skip: the review would run without the rules the team expects.
+func TestFinishReviewSetupReportsAnUncheckablePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory, so there is no permission error to provoke")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, ".github")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) }) // #nosec G302 -- restore so TempDir can clean up
+
+	review, err := ci.NewReview("gemini", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = finishReviewSetup(&bytes.Buffer{}, root, ci.Stack{}, review)
+	if err == nil || !strings.Contains(err.Error(), "checking") {
+		t.Errorf("err = %v, want one saying the checklist could not be checked", err)
 	}
 }
