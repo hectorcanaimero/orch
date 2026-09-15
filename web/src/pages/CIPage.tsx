@@ -304,6 +304,7 @@ function WorkflowCard({ workflow }: { workflow: CiWorkflow }) {
                   <span className="text-sm font-medium">{job.name || job.id}</span>
                   {job.needs.length ? <span className="text-xs text-muted-foreground">after {job.needs.join(", ")}</span> : null}
                 </div>
+                {job.parse_error ? <p className="mt-2 font-mono text-xs text-red-700">{job.parse_error}</p> : null}
                 <ol className="mt-2 space-y-1">
                   {job.steps.map((step, i) => (
                     <li key={`${i}-${step}`} className="flex gap-2 text-xs">

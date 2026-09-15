@@ -167,3 +167,36 @@ func TestCIIsNotAStakeholderRoute(t *testing.T) {
 		t.Errorf("stakeholder GET /api/ci = %d, want 403", rec.Code)
 	}
 }
+
+func TestCIWarnsAboutAutoMergeWithoutPRs(t *testing.T) {
+	s := ciServer(t, `dispatch:
+  worktree_mode: true
+vcs:
+  auto_pr: false
+github:
+  auto_merge: true
+`, map[string]string{"orch-ci.yml": orchCIWorkflow})
+
+	var got ciPayload
+	decode(t, get(t, s, "/api/ci"), &got)
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "github.auto_merge is on but vcs.auto_pr is off") {
+		t.Errorf("warnings = %q, want only the auto_merge one", got.Warnings)
+	}
+}
+
+// A job whose body GitHub cannot read is still listed, with the reason.
+func TestCIListsAJobItCannotRead(t *testing.T) {
+	s := ciServer(t, "vcs:\n  auto_pr: false\n", map[string]string{
+		"odd.yml": "on: pull_request\njobs:\n  test: just a string\n",
+	})
+
+	var got ciPayload
+	decode(t, get(t, s, "/api/ci"), &got)
+	if len(got.Workflows) != 1 || len(got.Workflows[0].Jobs) != 1 {
+		t.Fatalf("workflows = %+v", got.Workflows)
+	}
+	job := got.Workflows[0].Jobs[0]
+	if job.ID != "test" || !strings.Contains(job.ParseFailed, `job "test"`) {
+		t.Errorf("job = %+v, want it listed with its parse error", job)
+	}
+}

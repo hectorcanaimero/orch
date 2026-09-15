@@ -18,6 +18,7 @@ export interface CiJob {
   name: string
   needs: string[]
   steps: string[]
+  parse_error?: string
 }
 
 export interface CiWorkflow {

@@ -57,6 +57,9 @@ type ciJob struct {
 	Name  string   `json:"name"`
 	Needs []string `json:"needs"`
 	Steps []string `json:"steps"`
+	// ParseFailed says why a job's body could not be read, e.g. a job that is
+	// a string instead of a mapping. The job is still listed by its id.
+	ParseFailed string `json:"parse_error,omitempty"`
 }
 
 func (s *Server) handleCI(w http.ResponseWriter, _ *http.Request) {
@@ -176,7 +179,9 @@ func jobs(n *yaml.Node) []ciJob {
 			} `yaml:"steps"`
 		}
 		job := ciJob{ID: n.Content[i].Value, Needs: []string{}, Steps: []string{}}
-		if err := n.Content[i+1].Decode(&body); err == nil {
+		if err := n.Content[i+1].Decode(&body); err != nil {
+			job.ParseFailed = fmt.Errorf("job %q: %w", job.ID, err).Error()
+		} else {
 			job.Name = body.Name
 			job.Needs = triggers(&body.Needs)
 			for _, st := range body.Steps {
