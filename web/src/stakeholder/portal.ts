@@ -173,10 +173,28 @@ export function renderMarkdown(markdown: string): string {
   return DOMPurify.sanitize(html)
 }
 
-// snapshotURL is where the page reads its data: the file beside it, with the
-// shared link's token forwarded when there is one (a live dashboard gates
-// /stakeholder/data.json with it; a published folder ignores it).
-export function snapshotURL(search: string): string {
-  const token = new URLSearchParams(search).get("token")
+// snapshotURL is where the page reads its data: the file beside it, with a
+// token forwarded when there is one (a live dashboard gates
+// /stakeholder/data.json with it; a published folder ignores it). The link's
+// own token wins over the one this browser saved.
+export function snapshotURL(search: string, saved: string | null): string {
+  const token = new URLSearchParams(search).get("token") || saved
   return token ? `./data.json?token=${encodeURIComponent(token)}` : "./data.json"
+}
+
+// The key the operator dashboard keeps its token under (hooks/useAuth.ts).
+// Sharing it lets a session opened by the v0.12 dashboard, which moved the
+// token out of the address bar, keep working after the upgrade (#274).
+const TOKEN_KEY = "orch_token"
+
+// rememberLinkToken saves the link's token for visits without it, and
+// returns the one saved. Storage can be unavailable; then only the link works.
+export function rememberLinkToken(search: string): string | null {
+  const fromLink = new URLSearchParams(search).get("token")
+  try {
+    if (fromLink) window.localStorage.setItem(TOKEN_KEY, fromLink)
+    return window.localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
 }

@@ -113,8 +113,15 @@ describe("snapshotURL", () => {
   // Served live, the data sits behind the token the shared link carries; a
   // published folder has no token and reads the file beside it.
   it("forwards the link's token, and only that", () => {
-    expect(snapshotURL("?token=abc%2B1")).toBe("./data.json?token=abc%2B1")
-    expect(snapshotURL("")).toBe("./data.json")
-    expect(snapshotURL("?utm_source=mail")).toBe("./data.json")
+    expect(snapshotURL("?token=abc%2B1", null)).toBe("./data.json?token=abc%2B1")
+    expect(snapshotURL("", null)).toBe("./data.json")
+    expect(snapshotURL("?utm_source=mail", null)).toBe("./data.json")
+  })
+
+  // #274: the v0.12 dashboard kept the token in localStorage and took it out
+  // of the address bar, so its bookmarks and reloads carry none.
+  it("falls back to the token this browser saved, and the link's wins", () => {
+    expect(snapshotURL("", "saved")).toBe("./data.json?token=saved")
+    expect(snapshotURL("?token=fresh", "saved")).toBe("./data.json?token=fresh")
   })
 })

@@ -11,6 +11,7 @@ import {
   snapshotURL,
   phaseState,
   readAndRecordVisit,
+  rememberLinkToken,
   renderMarkdown,
   statusLine,
   type Lang,
@@ -57,8 +58,9 @@ export default function App() {
     }
     let cancelled = false
     let timer: number | undefined
+    const url = snapshotURL(window.location.search, rememberLinkToken(window.location.search))
     const load = () =>
-      fetch(snapshotURL(window.location.search), { cache: "no-store" })
+      fetch(url, { cache: "no-store" })
         .then((res) => {
           if (res.status === 401 || res.status === 403) throw new LinkError()
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
