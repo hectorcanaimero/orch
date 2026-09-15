@@ -109,7 +109,7 @@ func TestManagedBy(t *testing.T) {
 	if ManagedBy("/opt/homebrew/Cellar/orch/0.13.0/bin/orch") == "" {
 		t.Errorf("a Homebrew binary was treated as self-managed")
 	}
-	if ManagedBy("/home/u/.local/bin/orch") != "" {
+	if ManagedBy("/usr/local/bin/orch") != "" {
 		t.Errorf("an install.sh binary was treated as managed")
 	}
 }
