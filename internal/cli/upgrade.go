@@ -59,7 +59,11 @@ func criticalUpdateGate(cmd *cobra.Command, version string) error {
 	if !gatedCommands[cmd.CommandPath()] || !update.IsRelease(version) || os.Getenv(update.DisableEnv) != "" {
 		return nil
 	}
-	if skip, _ := cmd.Flags().GetBool(skipUpdateFlag); skip {
+	skip, err := cmd.Flags().GetBool(skipUpdateFlag)
+	if err != nil {
+		return fmt.Errorf("reading --%s: %w", skipUpdateFlag, err)
+	}
+	if skip {
 		return nil
 	}
 	path, err := updateCachePath()

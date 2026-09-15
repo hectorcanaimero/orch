@@ -106,7 +106,11 @@ func TestUpgradeInstallsTheVerifiedRelease(t *testing.T) {
 			t.Errorf("output is missing %q:\n%s", want, out)
 		}
 	}
-	if got, _ := os.ReadFile(target); string(got) != "#!orch v0.13.1" { // #nosec G304 -- a temp dir this test made
+	got, err := os.ReadFile(target) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "#!orch v0.13.1" {
 		t.Errorf("binary = %q, want the new release", got)
 	}
 }
