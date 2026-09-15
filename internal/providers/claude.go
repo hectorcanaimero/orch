@@ -93,6 +93,7 @@ func (c ClaudeProvider) Parse(exitCode int, output []byte) Result {
 		TokensIn:          tokensIn,
 		TokensOut:         tokensOut,
 		Stdout:            text,
+		Text:              asString(env["result"]),
 		ErrorMessage:      errMsg,
 		PermissionDenials: claudeDenials(env),
 	}

@@ -102,6 +102,14 @@ type Result struct {
 	// reads it so the engine can fill it in without touching this package.
 	Stderr string
 
+	// Text is the model's final answer, as the CLI reports it: claude's
+	// `result`, codex's last `agent_message`, opencode's text parts of the
+	// last message, agy's `response`, and gemini's whole stdout on success
+	// (gemini prints plain text, so nothing separates the answer from the
+	// CLI's own notices). Empty when the CLI reported none. The engine does
+	// not read it; `orch ci review` parses a verdict out of it.
+	Text string
+
 	// ErrorMessage is the operator-facing reason the dispatch failed, and is
 	// the first thing Classify looks at. Python types it `str | None`; the
 	// empty string is the None.
