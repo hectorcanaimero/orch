@@ -123,9 +123,32 @@ func (OpencodeProvider) Parse(exitCode int, output []byte) Result {
 		TokensIn:     tokensIn,
 		TokensOut:    tokensOut,
 		Stdout:       text,
+		Text:         opencodeText(events),
 		ErrorMessage: errMsg,
 		Estimated:    estimated,
 	}
+}
+
+// opencodeText joins the `text` parts of the last message that has any. A
+// message that called tools in between has several; earlier messages are the
+// model thinking aloud before its answer.
+func opencodeText(events []event) string {
+	var message string
+	var parts []string
+	for _, ev := range events {
+		if ev.eventType() != "text" {
+			continue
+		}
+		part, ok := asObject(ev.obj["part"])
+		if !ok {
+			continue
+		}
+		if id := asString(part["messageID"]); id != message {
+			message, parts = id, nil
+		}
+		parts = append(parts, asString(part["text"]))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // ExtractCost reports cost and token counts in a captured opencode log.

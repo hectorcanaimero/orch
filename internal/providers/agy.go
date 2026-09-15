@@ -118,6 +118,7 @@ func (AgyProvider) Parse(exitCode int, output []byte) Result {
 		TokensIn:     tokensIn,
 		TokensOut:    tokensOut,
 		Stdout:       text,
+		Text:         strings.TrimSpace(response),
 		ErrorMessage: errMsg,
 	}
 }

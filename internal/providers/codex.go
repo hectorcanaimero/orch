@@ -107,8 +107,23 @@ func (CodexProvider) Parse(exitCode int, output []byte) Result {
 		TokensIn:     tokensIn,
 		TokensOut:    tokensOut,
 		Stdout:       text,
+		Text:         codexText(events),
 		ErrorMessage: errMsg,
 	}
+}
+
+// codexText is the text of the last `item.completed` whose item is an
+// `agent_message`: the answer codex also writes to its `-o` file.
+func codexText(events []event) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].eventType() != "item.completed" {
+			continue
+		}
+		if item, ok := asObject(events[i].obj["item"]); ok && asString(item["type"]) == "agent_message" {
+			return asString(item["text"])
+		}
+	}
+	return ""
 }
 
 // ExtractCost reports the token counts in a captured codex log. Port of

@@ -46,19 +46,20 @@ func (GeminiProvider) Parse(exitCode int, output []byte) Result {
 	text := string(output)
 	success := exitCode == 0
 
-	var errMsg string
-	if !success {
-		if last := lastNonEmptyLine(text); last != "" {
-			errMsg = last
-		} else {
-			errMsg = fmt.Sprintf("gemini exited with code %d", exitCode)
-		}
+	var errMsg, answer string
+	if success {
+		answer = strings.TrimSpace(text)
+	} else if last := lastNonEmptyLine(text); last != "" {
+		errMsg = last
+	} else {
+		errMsg = fmt.Sprintf("gemini exited with code %d", exitCode)
 	}
 
 	return Result{
 		ExitCode:     exitCode,
 		Success:      success,
 		Stdout:       text,
+		Text:         answer,
 		ErrorMessage: errMsg,
 	}
 }
