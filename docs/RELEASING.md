@@ -78,6 +78,34 @@ Pushing the tag triggers `release-go.yml`, which:
    and `install.sh` works; `brew install` does not until a release runs
    with the secret set. `v0.12.0` shipped this way.
 
+### Release notes, and critical releases
+
+goreleaser fills the release body with GitHub's generated notes, one line
+per merged PR (`changelog.use: github-native`). Those notes are not only for
+people reading GitHub: every orch at a terminal shows the first items of each
+newer release's notes when it tells the user a release is out, and
+`orch upgrade` shows them before installing (`internal/update`). So:
+
+- Write PR titles as the change a user would notice. They become the notes.
+- For a release worth explaining, edit the notes after it publishes
+  (`gh release edit vX.Y.Z --notes-file notes.md`). Put the most important
+  items first as a `-` list; the notice shows the first three of each
+  release.
+- **Critical releases.** When a release fixes something users must not keep
+  running (a run that exits with work left, data loss), add this line
+  anywhere in its notes:
+
+  ```
+  <!-- orch:critical -->
+  ```
+
+  It does not render on GitHub. Every older orch then refuses to start
+  `orch run` and `orch dashboard` until the user runs `orch upgrade` (or
+  passes `--skip-update-check`). Other commands keep working. Use it rarely:
+  a gate that fires for every patch teaches people the flag. Clients cache
+  the release list for up to 24 hours, so the gate reaches everyone within a
+  day.
+
 Nothing publishes on an ordinary push or PR — only an actual `v*` tag
 push triggers a real release. Every other event (PR, push to `main`)
 only runs the dry-run job in `.github/workflows/go.yml`

@@ -61,10 +61,13 @@ checksum:
   name_template: 'checksums.txt'
 
 changelog:
-  # Off, not tuned: goreleaser's own changelog block would duplicate the
-  # release notes GitHub already generates from commits, and one source of
-  # release-notes text is the point.
-  disable: true
+  # GitHub's own generated notes: one "* <PR title> by @x in <PR URL>" line
+  # per merged PR. Nothing else wrote notes (v0.12.x shipped with none), and
+  # `orch upgrade` and the new-release notice show the first items of these
+  # notes to the user, so a release must never go out without them. Curate
+  # them by editing the release afterwards; mark a release critical by adding
+  # <!-- orch:critical --> there (docs/RELEASING.md).
+  use: github-native
 
 # Requires github.com/hectorcanaimero/homebrew-orch to exist — goreleaser
 # pushes a commit to it, it doesn't create it. NOT created by this PR:

@@ -123,6 +123,7 @@ internal/
   notify/            — Slack/Discord webhooks, digest
   tunnel/            — dashboard tunnel supervisor: autossh (Pinggy) and bore
   telemetry/         — opt-in anonymous telemetry (off by default)
+  update/            — new-release notice, critical-release gate for run/dashboard, and `orch upgrade` (docs/RELEASING.md)
 web/                 — SPA, embedded by internal/dashboard and internal/publish
 site/                — the public project page (static, no build), deployed to GitHub Pages by .github/workflows/pages.yml; site/architecture/ holds the five archify diagrams, whose sources and facts are in docs/architecture/ (update FACTS.md and re-render when the code they describe changes)
 ```
