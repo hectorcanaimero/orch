@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,13 +97,21 @@ func TestCISetupWritesAndProtectsTheWorkflow(t *testing.T) {
 	if _, err := runRoot(t, "dev", "ci", "setup", "--yes", "--project-root", root); err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("existing workflow without --force: err = %v", err)
 	}
-	if b, _ := os.ReadFile(target); string(b) != "name: mine\n" { // #nosec G304 -- a temp dir this test made
+	b, err := os.ReadFile(target) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "name: mine\n" {
 		t.Errorf("the hand-edited workflow was replaced: %q", b)
 	}
 	if _, err := runRoot(t, "dev", "ci", "setup", "--force", "--project-root", root); err != nil {
 		t.Fatalf("--force: %v", err)
 	}
-	if b, _ := os.ReadFile(target); !strings.Contains(string(b), "name: orch-ci") { // #nosec G304 -- a temp dir this test made
+	b, err = os.ReadFile(target) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "name: orch-ci") {
 		t.Errorf("--force did not replace it: %q", b)
 	}
 }
@@ -157,5 +166,113 @@ func TestAskYesNo(t *testing.T) {
 		if err != nil || got != c.want {
 			t.Errorf("askYesNo(%q, def %v) = %v, %v; want %v", c.in, c.def, got, err, c.want)
 		}
+	}
+}
+
+func TestCISetupAddsAReview(t *testing.T) {
+	root := ciRepo(t, pnpmApp)
+	out, err := runRoot(t, "dev", "ci", "setup", "--yes", "--review", "gemini", "--review-blocking", "--project-root", root)
+	if err != nil {
+		t.Fatalf("setup --review: %v\n%s", err, out)
+	}
+	wf, err := os.ReadFile(filepath.Join(root, workflowPath)) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wf), "orch ci review --provider gemini --model gemini-2.5-flash --post --blocking") {
+		t.Errorf("workflow has no blocking gemini review:\n%s", wf)
+	}
+	// A dev build pins no release: the job installs the latest one.
+	if !strings.Contains(string(wf), "gh release download --repo hectorcanaimero/orch") {
+		t.Errorf("a dev build's workflow does not install the latest release:\n%s", wf)
+	}
+	pinned, err := runRoot(t, "v0.14.0", "ci", "setup", "--dry-run", "--review", "gemini", "--project-root", root)
+	if err != nil || !strings.Contains(pinned, "gh release download v0.14.0 --repo hectorcanaimero/orch") {
+		t.Errorf("a release build's workflow does not pin its own version: %v\n%s", err, pinned)
+	}
+	checklist := filepath.Join(root, ".github", "orch-review.md")
+	body, err := os.ReadFile(checklist) // #nosec G304 -- a temp dir this test made
+	if err != nil || !strings.Contains(string(body), "## TypeScript / JavaScript") {
+		t.Errorf("checklist = %q, %v; want the node rules", body, err)
+	}
+	if !strings.Contains(out, "gh secret set GEMINI_API_KEY") {
+		t.Errorf("output does not name the secret:\n%s", out)
+	}
+
+	// A checklist the team edited is never overwritten.
+	if err := os.WriteFile(checklist, []byte("# ours\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runRoot(t, "dev", "ci", "setup", "--yes", "--review", "gemini", "--review-blocking", "--project-root", root)
+	if err != nil || !strings.Contains(out, "Kept the existing") {
+		t.Errorf("rerun: %v\n%s", err, out)
+	}
+	b, err := os.ReadFile(checklist) // #nosec G304 -- a temp dir this test made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "# ours\n" {
+		t.Errorf("the edited checklist was replaced: %q", b)
+	}
+}
+
+func TestCISetupRejectsABadReview(t *testing.T) {
+	root := ciRepo(t, pnpmApp)
+	for _, args := range [][]string{
+		{"--review", "copilot"},
+		{"--review", "openrouter"},
+	} {
+		_, err := runRoot(t, "dev", append([]string{"ci", "setup", "--dry-run", "--project-root", root}, args...)...)
+		var ee *exitError
+		if !errors.As(err, &ee) || ee.code != 2 {
+			t.Errorf("%v: err = %v, want exit 2", args, err)
+		}
+	}
+}
+
+func TestAskReview(t *testing.T) {
+	var out bytes.Buffer
+	// An unknown name is asked again; the model takes its default; not blocking.
+	provider, model, blocking, err := askReview(bufio.NewReader(strings.NewReader("copilot\nclaude\n\n\n")), &out)
+	if err != nil || provider != "claude" || model != "sonnet" || blocking {
+		t.Errorf("askReview = %q %q %v %v", provider, model, blocking, err)
+	}
+	if !strings.Contains(out.String(), `"copilot" is not one of`) {
+		t.Errorf("an unknown provider was not explained:\n%s", out.String())
+	}
+
+	// Enter is no review.
+	provider, _, _, err = askReview(bufio.NewReader(strings.NewReader("\n")), &bytes.Buffer{})
+	if err != nil || provider != "" {
+		t.Errorf("default answer = %q, %v; want no review", provider, err)
+	}
+
+	// OpenRouter has no default model: an empty one adds no review.
+	provider, _, _, err = askReview(bufio.NewReader(strings.NewReader("openrouter\n\n")), &bytes.Buffer{})
+	if err != nil || provider != "" {
+		t.Errorf("openrouter with no model = %q, %v; want no review", provider, err)
+	}
+}
+
+// A checklist path that cannot even be checked is an error, not a silent
+// skip: the review would run without the rules the team expects.
+func TestFinishReviewSetupReportsAnUncheckablePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory, so there is no permission error to provoke")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, ".github")
+	if err := os.Mkdir(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o750) }) // #nosec G302 -- restore so TempDir can clean up
+
+	review, err := ci.NewReview("gemini", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = finishReviewSetup(&bytes.Buffer{}, root, ci.Stack{}, review)
+	if err == nil || !strings.Contains(err.Error(), "checking") {
+		t.Errorf("err = %v, want one saying the checklist could not be checked", err)
 	}
 }
