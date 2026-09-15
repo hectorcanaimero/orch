@@ -91,6 +91,14 @@ func (n *Notifier) CIBlocked(ctx context.Context, taskID, prURL string, attempts
 		taskID, attempts, tail))
 }
 
+// Stalled announces a run that has made no progress for stalledFor, and what
+// it is waiting on, cut like a block reason. Go only: Python never noticed a
+// stall (#255).
+func (n *Notifier) Stalled(ctx context.Context, stalledFor time.Duration, waitingOn string) {
+	n.send(ctx, fmt.Sprintf(":hourglass: orch: no progress for %s — waiting on %s",
+		stalledFor, firstLine(waitingOn)))
+}
+
 // Test sends a one-off message and reports whether any channel accepted it.
 //
 // The one method that answers rather than swallowing: `orch notify test`

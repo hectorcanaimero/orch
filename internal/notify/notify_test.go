@@ -212,6 +212,25 @@ func TestFieldNamesMatchTheServices(t *testing.T) {
 	}
 }
 
+// TestStalledMessage: Go only (#255), so there is no Python capture to hold
+// it to. What it waits on is cut like a block reason: a long list in a team
+// channel is noise.
+func TestStalledMessage(t *testing.T) {
+	rec := newRecorder(t, 0)
+	n := &Notifier{SlackWebhook: rec.slackURL()}
+	n.Stalled(context.Background(), 30*time.Minute,
+		"CI on F1.T3 (https://github.com/o/r/pull/42)\nsecond line is dropped")
+
+	sent := rec.got()
+	if len(sent) != 1 {
+		t.Fatalf("posted %d times, want 1", len(sent))
+	}
+	want := ":hourglass: orch: no progress for 30m0s — waiting on CI on F1.T3 (https://github.com/o/r/pull/42)"
+	if got := messageOf(t, sent[0]); got != want {
+		t.Errorf("sent\n  %q\nwant\n  %q", got, want)
+	}
+}
+
 // ---- The reason line -----------------------------------------------------
 
 func TestFirstLine(t *testing.T) {
@@ -271,6 +290,7 @@ func TestDisabledNotifierDoesNothing(t *testing.T) {
 		}
 		n.Blocked(context.Background(), "T-1", "boom")
 		n.CIBlocked(context.Background(), "T-1", "", 1)
+		n.Stalled(context.Background(), time.Minute, "CI")
 		if n.Test(context.Background(), "x") {
 			t.Error("Test reported success with no channels")
 		}
@@ -285,6 +305,7 @@ func TestDisabledNotifierDoesNothing(t *testing.T) {
 		// project configured it.
 		n.Blocked(context.Background(), "T-1", "boom")
 		n.CIBlocked(context.Background(), "T-1", "", 1)
+		n.Stalled(context.Background(), time.Minute, "CI")
 		if n.Test(context.Background(), "x") {
 			t.Error("Test on nil reported success")
 		}
