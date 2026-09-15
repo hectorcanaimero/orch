@@ -96,7 +96,10 @@ func TestReplaceSwapsTheBinaryInPlace(t *testing.T) {
 	if err != nil || info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("the new orch is not executable: %v %v", info.Mode(), err)
 	}
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 1 {
 		t.Errorf("left %d files behind, want only orch", len(entries))
 	}

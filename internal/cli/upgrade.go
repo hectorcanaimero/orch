@@ -68,7 +68,12 @@ func criticalUpdateGate(cmd *cobra.Command, version string) error {
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), gateTimeout)
 	defer cancel()
-	releases, _ := update.Check(ctx, updateClient, path, time.Now())
+	releases, err := update.Check(ctx, updateClient, path, time.Now())
+	if err != nil && len(releases) == 0 {
+		// Nothing known about releases (offline, GitHub down): the gate is
+		// for a known problem, so not knowing lets the command start.
+		return nil
+	}
 	crit, ok := update.Critical(update.Newer(releases, version))
 	if !ok {
 		return nil
@@ -120,7 +125,12 @@ func printUpdateNotice(matched *cobra.Command, version string, stderr io.Writer)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), noticeTimeout)
 	defer cancel()
-	releases, _ := update.Check(ctx, updateClient, path, time.Now())
+	releases, err := update.Check(ctx, updateClient, path, time.Now())
+	if err != nil && len(releases) == 0 {
+		// Best effort by design: a notice that cannot be checked is not shown,
+		// and never turns a command's success into an error.
+		return
+	}
 	if notice := update.Notice(version, update.Newer(releases, version)); notice != "" {
 		_, _ = fmt.Fprint(stderr, "\n"+notice)
 	}
@@ -195,7 +205,10 @@ func newUpgradeCmd(version string) *cobra.Command {
 				if _, err := fmt.Fprintf(out, "Install %s over %s? [y/N] ", latest.Tag, target); err != nil {
 					return err
 				}
-				answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && !errors.Is(err, io.EOF) {
+					return fmt.Errorf("reading the answer: %w", err)
+				}
 				if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 					_, err := fmt.Fprintln(out, "Not installed.")
 					return err
