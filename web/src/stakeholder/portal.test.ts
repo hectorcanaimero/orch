@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest"
-import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, rememberLinkToken, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
 import type { StakeholderMilestone, StakeholderSnapshot } from "@/stakeholder/types"
 
 function milestone(phase: number, name: string, done: number, total: number, extra: Partial<StakeholderMilestone> = {}): StakeholderMilestone {
@@ -113,8 +113,41 @@ describe("snapshotURL", () => {
   // Served live, the data sits behind the token the shared link carries; a
   // published folder has no token and reads the file beside it.
   it("forwards the link's token, and only that", () => {
-    expect(snapshotURL("?token=abc%2B1")).toBe("./data.json?token=abc%2B1")
-    expect(snapshotURL("")).toBe("./data.json")
-    expect(snapshotURL("?utm_source=mail")).toBe("./data.json")
+    expect(snapshotURL("?token=abc%2B1", null)).toBe("./data.json?token=abc%2B1")
+    expect(snapshotURL("", null)).toBe("./data.json")
+    expect(snapshotURL("?utm_source=mail", null)).toBe("./data.json")
+  })
+
+  // #274: the v0.12 dashboard kept the token in localStorage and took it out
+  // of the address bar, so its bookmarks and reloads carry none.
+  it("falls back to the token this browser saved, and the link's wins", () => {
+    expect(snapshotURL("", "saved")).toBe("./data.json?token=saved")
+    expect(snapshotURL("?token=fresh", "saved")).toBe("./data.json?token=fresh")
+  })
+})
+
+describe("rememberLinkToken", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.localStorage.clear()
+  })
+
+  it("saves the link's token for later visits without it", () => {
+    expect(rememberLinkToken("?token=abc")).toBe("abc")
+    expect(window.localStorage.getItem("orch_token")).toBe("abc")
+    expect(rememberLinkToken("")).toBe("abc")
+  })
+
+  // The key the v0.12 dashboard wrote, read back as it left it (#274).
+  it("returns a token saved by the operator dashboard", () => {
+    window.localStorage.setItem("orch_token", "from-v012")
+    expect(rememberLinkToken("?utm_source=mail")).toBe("from-v012")
+  })
+
+  it("answers nothing when storage is unavailable", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked")
+    })
+    expect(rememberLinkToken("")).toBeNull()
   })
 })
