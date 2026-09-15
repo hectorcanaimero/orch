@@ -105,6 +105,16 @@ func newRootCmd(version string) (*cobra.Command, *projectFlags) {
 	root.AddCommand(newCloudCmd(flags))
 	root.AddCommand(newSyncCmd(flags))
 	root.AddCommand(newExportCmd(flags))
+	root.AddCommand(newUpgradeCmd(version))
+
+	for _, c := range root.Commands() {
+		if gatedCommands[root.Name()+" "+c.Name()] {
+			addSkipUpdateFlag(c)
+		}
+	}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		return criticalUpdateGate(cmd, version)
+	}
 	return root, flags
 }
 
@@ -118,6 +128,8 @@ func Run(version string, args []string) int {
 	start := time.Now()
 	matched, err := root.ExecuteC()
 	reportTelemetry(matched, flags, version, time.Since(start), err == nil)
+	// After everything the command printed, its error included.
+	defer printUpdateNotice(matched, version, os.Stderr)
 
 	if err != nil {
 		var ee *exitError
