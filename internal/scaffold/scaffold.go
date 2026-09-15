@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/ci"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/templates"
@@ -477,6 +478,24 @@ func (w *writer) workflow() {
 			return
 		}
 	}
+	// config.yaml's github.test_command follows the repo either way.
+	testCommand := w.testCommand()
+
+	// A repository that already has code gets the pipeline its files call for
+	// (lint, typecheck, test, build per package; internal/ci). A new one has
+	// nothing to read yet, and gets the template's single test job.
+	if st, err := ci.Detect(w.root); err == nil && st.HasChecks() {
+		body, err := ci.Render(ci.Jobs(st, ci.AllChecks), ci.Options{BaseBranch: w.baseBranch(), Checks: ci.AllChecks})
+		if err != nil {
+			w.fail("rendering the detected CI pipeline: %w", err)
+			return
+		}
+		w.write(rel, body, 0o600)
+		return
+	} else if err != nil {
+		w.fail("reading the repository to propose its CI: %w", err)
+		return
+	}
 	body, err := fs.ReadFile(templates.Files(), "github/orch-ci.yml.tmpl")
 	if err != nil {
 		w.fail("the embedded tree has no CI workflow: %w", err)
@@ -485,7 +504,6 @@ func (w *writer) workflow() {
 	// Python baked `pytest` and a Python toolchain into every repo (#233).
 	// The command is config.yaml's `github.test_command` — the template's, or
 	// the one the repo's files imply — and the setup steps follow it.
-	testCommand := w.testCommand()
 	wf := strings.ReplaceAll(string(body), "SETUP_STEPS", setupSteps(w.root, testCommand))
 	w.write(rel, []byte(strings.ReplaceAll(wf, "TEST_COMMAND", testCommand)), 0o600)
 }

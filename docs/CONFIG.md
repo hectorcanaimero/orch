@@ -236,13 +236,14 @@ so it belongs in a config file you do not commit — and orch never writes one t
 a log line, not even truncated, which is why a failed POST logs
 `channel=text` rather than the URL.
 
-Only the two things an operator would otherwise have to go looking for are
+Only the things an operator would otherwise have to go looking for are
 announced:
 
 | When | Message |
 |---|---|
 | a task is blocked | `:no_entry: orch: task ``F1.T3`` blocked — <first line of the reason>` |
 | a task is blocked after CI kept failing | `:warning: orch: task ``F1.T3`` blocked after 3 CI attempt(s) (<pr url>)` |
+| a live `orch run` made no progress for 30 minutes (Go only, #255), once per stall | `:hourglass: orch: no progress for 30m0s — waiting on CI on F1.T3 (<pr url>)` |
 
 Not successes, and not retries: a task that will try again has not given up,
 and a message per attempt is how a team mutes the channel — after which the

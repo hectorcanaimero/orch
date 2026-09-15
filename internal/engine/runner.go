@@ -36,6 +36,15 @@ const (
 	budgetSleepChunk = 30 * time.Second
 	// drainTimeout bounds the final wait for children after a signal.
 	drainTimeout = 5 * time.Minute
+	// stallThreshold is how long a live run may go without progress (nothing
+	// dispatched, reaped or decided by CI, and nothing running) before it
+	// warns and notifies, once per stall (#255).
+	//
+	// A budget pause is not counted: the loop sleeps through it and logs it.
+	//
+	// ponytail: a constant; a config key if a project's CI routinely takes
+	// longer than this.
+	stallThreshold = 30 * time.Minute
 )
 
 // BudgetWindow is the part of budget.Gate the loop needs beyond the
@@ -82,6 +91,10 @@ type Runner struct {
 	// ciWaiting is how many of this run's PRs were last seen waiting on CI,
 	// so the wait is logged when it changes rather than on every tick.
 	ciWaiting int
+	// lastProgress is when this run last moved anything, and stallWarned
+	// whether the stall since then was already reported.
+	lastProgress time.Time
+	stallWarned  bool
 
 	// tick, sleep and now are the loop's clock, injectable so the tests do
 	// not spend a real minute proving a sixty-second sweep.
@@ -124,6 +137,7 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 	}
 
 	lastReconcile := r.now()
+	r.lastProgress = r.now()
 	interrupted := false
 	reoffered := false
 
@@ -146,7 +160,8 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 		default:
 		}
 
-		if _, err := s.Reap(ctx); err != nil {
+		reaped, err := s.Reap(ctx)
+		if err != nil {
 			return 1, fmt.Errorf("reap: %w", err)
 		}
 
@@ -154,18 +169,22 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 		// opened a PR. A sweep that cannot happen is logged and the loop
 		// carries on: being briefly blind to CI is better than a poller
 		// that can end a run.
-		if _, err := r.CI.Poll(ctx, s); err != nil {
+		ciActed, err := r.CI.Poll(ctx, s)
+		if err != nil {
 			s.logger().Warn("CI poll failed; continuing", "err", err)
 		}
+		progressed := reaped+ciActed > 0
 
 		if s.Draining() && len(s.InFlight()) == 0 {
 			break
 		}
 
 		if !s.Draining() {
-			if _, err := s.Refill(ctx); err != nil {
+			started, err := s.Refill(ctx)
+			if err != nil {
 				return 1, fmt.Errorf("refill: %w", err)
 			}
+			progressed = progressed || started > 0
 		}
 
 		// Every provider capped and nothing running: sleep until the window
@@ -220,9 +239,10 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 			if err := r.reconcile(ctx, "tick"); err != nil {
 				s.logger().Warn("tick reconcile failed; continuing", "err", err)
 			}
-			r.adoptStatuses(ctx)
+			progressed = r.adoptStatuses(ctx) > 0 || progressed
 		}
 
+		r.checkStall(ctx, progressed)
 		r.sleep(tickInterval)
 	}
 
@@ -386,30 +406,101 @@ func (r *Runner) adoptStatuses(ctx context.Context) int {
 }
 
 // waitingOnCI reports whether a task of this run has a PR still waiting on
-// CI. Tasks outside this run's DAG are not waited on: the poller would not
-// re-dispatch them either. A read that fails answers no, so a broken database
-// ends the run the way it did before rather than holding it open blind.
+// CI. A read that fails answers no, so a broken database ends the run the way
+// it did before rather than holding it open blind.
 func (r *Runner) waitingOnCI(ctx context.Context) bool {
-	if r.CI == nil || r.CI.Provider == nil || r.CI.Backend == nil || r.Scheduler.Draining() {
+	if r.Scheduler.Draining() {
 		return false
 	}
 	s := r.Scheduler
-	rows, err := r.CI.Backend.TasksWithPendingCI(ctx)
+	rows, err := r.ciRows(ctx)
 	if err != nil {
 		s.logger().Warn("could not list tasks waiting on CI; not waiting for them", "err", err)
 		return false
 	}
-	n := 0
-	for _, row := range rows {
-		if _, ok := s.Queue.Task(row.ID); ok && row.PRURL != "" {
-			n++
-		}
-	}
+	n := len(rows)
 	if n != r.ciWaiting && n > 0 {
 		s.logger().Info("waiting on CI", "tasks", n)
 	}
 	r.ciWaiting = n
 	return n > 0
+}
+
+// ciRows lists this run's tasks with a PR waiting on CI. Tasks outside this
+// run's DAG are left out: the poller would not re-dispatch them either.
+func (r *Runner) ciRows(ctx context.Context) ([]state.TaskRuntime, error) {
+	if r.CI == nil || r.CI.Provider == nil || r.CI.Backend == nil {
+		return nil, nil
+	}
+	rows, err := r.CI.Backend.TasksWithPendingCI(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing tasks with pending CI: %w", err)
+	}
+	var out []state.TaskRuntime
+	for _, row := range rows {
+		if _, ok := r.Scheduler.Queue.Task(row.ID); ok && row.PRURL != "" {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+// checkStall says so when the run has gone stallThreshold without progress,
+// once per stall. progressed is whether this tick moved anything; a child
+// still running counts as progress too, since its own timeout bounds it.
+//
+// Before this, a run waiting on CI that never resolved, or on ready tasks it
+// would not dispatch, idled in silence (#255).
+func (r *Runner) checkStall(ctx context.Context, progressed bool) {
+	s := r.Scheduler
+	now := r.now()
+	if progressed || len(s.InFlight()) > 0 {
+		r.lastProgress, r.stallWarned = now, false
+		return
+	}
+	if r.stallWarned || now.Sub(r.lastProgress) < stallThreshold {
+		return
+	}
+	r.stallWarned = true
+	stalled := now.Sub(r.lastProgress).Round(time.Second)
+	waiting := r.stallSummary(ctx)
+	s.logger().Warn("orch run has made no progress",
+		"since", r.lastProgress.UTC().Format(time.RFC3339), "for", stalled, "waiting_on", waiting)
+	if s.Notify != nil {
+		s.Notify.Stalled(ctx, stalled, waiting)
+	}
+}
+
+// stallSummary names what a stalled run is waiting on.
+func (r *Runner) stallSummary(ctx context.Context) string {
+	s := r.Scheduler
+	var parts []string
+	rows, err := r.ciRows(ctx)
+	if err != nil {
+		parts = append(parts, "CI, unreadable: "+err.Error())
+	}
+	for _, row := range rows {
+		parts = append(parts, "CI on "+row.ID+" ("+row.PRURL+")")
+	}
+	for _, item := range s.RetryQueue() {
+		parts = append(parts, "a retry of "+item.Task.ID+" due "+item.EarliestAt.UTC().Format(time.RFC3339))
+	}
+	reasons := s.DeferReasons()
+	for _, t := range s.Queue.Ready(ReadyOpts{Only: s.Opts.Only, Deferred: s.deferred, Waiting: s.retryQueueIDs()}) {
+		reason := reasons[t.ID]
+		switch {
+		case reason != "":
+		case s.Opts.MaxTasks > 0 && s.dispatched >= s.Opts.MaxTasks:
+			reason = "--max-tasks reached"
+		default:
+			reason = "no reason recorded"
+		}
+		parts = append(parts, t.ID+" ready but not dispatched: "+reason)
+	}
+	if len(parts) == 0 {
+		return "nothing this run can name"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // permanentlyStuck names the ready tasks that can never be dispatched, when

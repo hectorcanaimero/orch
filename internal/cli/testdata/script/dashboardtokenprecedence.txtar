@@ -1,0 +1,52 @@
+# orch dashboard: a token given by --token or dashboard.token while the
+# database holds a rotated one (#275).
+#
+# The database wins, on purpose (resolveTokenHash): a stale --token must not
+# resurrect a rotated token. What this file checks is that the operator is
+# TOLD, and that the telling never prints the token it is talking about.
+#
+# Every run passes --port 70000 so the command stops at startup validation,
+# after the warning would print and before anything listens.
+
+# ---- the help states the precedence ---------------------------------------
+exec orch dashboard --help
+stdout 'wins over --token, which wins over'
+stdout 'ignored once orch dashboard token rotate has stored one'
+
+# ---- only a flag token: nothing is ignored, so no warning -----------------
+! exec orch dashboard --project-root proj --project-id proj --profile stakeholder --token flag-secret-275 --port 70000
+stderr 'not a port'
+! stderr 'ignored'
+
+# ---- only a database token: no warning -----------------------------------
+exec orch dashboard token rotate --project-root proj --project-id proj --yes
+! exec orch dashboard --project-root proj --project-id proj --profile stakeholder --port 70000
+stderr 'not a port'
+! stderr 'ignored'
+
+# ---- both, from the flag: warned, naming --token, never the value ---------
+! exec orch dashboard --project-root proj --project-id proj --profile stakeholder --token flag-secret-275 --port 70000
+stderr '\[warn\] --token is ignored'
+stderr 'orch dashboard token rotate'
+! stderr 'flag-secret-275'
+! stdout 'flag-secret-275'
+
+# ---- both, from config.yaml: warned, naming dashboard.token ---------------
+cp token-config.yaml proj/.orchestrator/config.yaml
+! exec orch dashboard --project-root proj --project-id proj --profile stakeholder --port 70000
+stderr '\[warn\] dashboard.token in config.yaml is ignored'
+! stderr 'config-secret-275'
+! stdout 'config-secret-275'
+
+# ---- both, under the operator profile: the token is unused, so no warning --
+! exec orch dashboard --project-root proj --project-id proj --profile operator --port 70000
+stderr 'not a port'
+! stderr 'ignored'
+
+-- token-config.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+budgets_preset: conservative
+dashboard:
+  token: config-secret-275

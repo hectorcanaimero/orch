@@ -1,181 +1,115 @@
-# orch findings — dogfooding loop
+# Dogfooding — agents report problems with orch
 
-Every agent running under orch — atomizers, dispatchers, dashboards, your
-own sub-agents — will notice bugs, missing features, and quirks of both
-orch itself and the project it's working on. `orch findings` is the paved
-path from "the agent noticed something" to "a real GitHub issue on the
-orch repo".
+Every agent running under orch will notice bugs, missing features and quirks
+of orch itself. The MCP tool **`orch_report_finding`** is the paved path from
+"the agent noticed something" to "a GitHub issue on the orch repo", without
+the operator copying it out by hand.
 
-Three verbs cover the whole flow:
-
-- **`orch findings capture`** — the agent writes it down.
-- **`orch findings review`** — a human reads it and checks for duplicates.
-- **`orch findings publish`** — a human ships it to GitHub.
-
-There are two more verbs for hygiene: `list` (see everything) and `dismiss`
-(mark noise so nobody publishes it later).
+It is one tool call, not a queue: there is no local capture, review or
+publish step, and no `orch findings` command. The Python line had one
+(`orch findings capture|list|review|publish|dismiss`); it was not ported, and
+its `findings:` config block is ignored with a warning (see
+[`CONFIG.md`](CONFIG.md#keys-that-are-ignored)).
 
 ---
 
-## When an agent should capture a finding
+## Turn it on
 
-- **`type: bug`** — orch or the project misbehaves. Include a repro / stack.
-- **`type: fix`** — a subtle regression risk or a small quality-of-life
-  correction. Not a full feature.
-- **`type: feature`** — a request or improvement.
+Off by default, because it files **public issues under your `gh` login**. In
+`.orchestrator/config.yaml`:
 
-Always classify **`about`**:
+```yaml
+report_findings:
+  enabled: true
+```
 
-- **`orch`** — the finding is about the orch tool itself. Publishable to
-  the orch repo.
-- **`project`** — the finding is about the user's own codebase. It stays
-  local and CANNOT be published to the orch repo (hard gate). The operator
-  moves those to their own tracker manually.
+It also needs:
 
-**`confidence`** guides the human reviewer:
+- orch's MCP server loaded by the agent CLI. `orch init` writes `.mcp.json`
+  for that; `orch doctor`'s `mcp.config` check says when it is missing (see
+  [`MCP.md`](MCP.md#setup)).
+- `gh` installed and authenticated (`gh auth status`). The tool runs it from
+  the MCP server process, so it works even when the agent's own Bash is
+  denied.
 
-- `low` — hunch / partial repro. Cannot publish unless `--force`.
-- `medium` — clear observation with evidence.
-- `high` — confirmed bug / well-scoped feature ask.
+With the key off, the tool is still listed, and a call answers with an error
+telling the agent to tell the operator instead.
 
 ---
 
-## Agent prompt snippet (copy-paste ready)
+## What agents are asked
 
-Drop this into an agent's system prompt so it knows when — and how — to
-call `orch findings`:
+With `report_findings.enabled: true`, every dispatch prompt ends with an
+optional block, after the report-back step:
 
 ```
-You are running under orch. Whenever you notice a bug in orch itself, a bug
-in this project, a missing feature that would have unblocked you, or a
-non-obvious quirk worth reporting — capture it BEFORE moving on:
-
-    orch findings capture \
-      --type <bug|fix|feature> \
-      --about <orch|project> \
-      --summary "one-line human title" \
-      --evidence "file:line refs, log excerpts, or repro steps" \
-      --confidence <low|medium|high>
-
-Rules:
-- summary must be ONE line, human-readable, no punctuation trickery.
-- use about=orch ONLY for issues with the orch tool. use about=project for
-  anything about the codebase you're working on.
-- if you're guessing, use confidence=low. don't inflate.
-- evidence is where you dump the actual evidence — paths, line numbers,
-  log excerpts, symptom strings, repro steps.
-- duplicates are refused automatically at the local hash level, so you
-  can re-run the command safely.
-
-Do NOT run `orch findings publish`. That's a human decision.
+Feedback about orch itself (optional, after you report back):
+- If orch got in your way, or you noticed something orch should do better or does
+  not do at all (a missing command or flag, a step you had to do by hand, a
+  confusing message or status), report it once with orch_report_finding:
+  type "bug" | "improvement" | "feature", title, summary.
+- It is about orch, not this project: no secrets, no project code, no project or
+  customer names. Skip it if nothing comes to mind.
 ```
+
+With the key off, the prompt is unchanged. An agent you run outside `orch run`
+(your own sub-agents, an interactive session in the project) can call the
+tool too, as long as it has orch's MCP server.
 
 ---
 
-## Operator workflow
+## The call
 
-### 1. See what's been captured
+`{type, title, summary, evidence?, repro?, suggested_fix?, confidence?, confirm_new?}`
 
-```bash
-orch findings list                          # everything
-orch findings list --status pending         # not yet decided
-orch findings list --about orch             # only publishable candidates
-orch findings list --json | jq .            # for pipelines
-```
+- **`type`** — `bug` (orch misbehaves; include a repro), `improvement` (a
+  quality-of-life correction, not a full feature) or `feature` (something
+  orch does not do).
+- **`title`** — one line naming the problem or the idea.
+- **`summary`** — what happens and what should happen instead.
+- **`evidence`**, **`repro`**, **`suggested_fix`** — optional sections of the
+  issue body: log lines, command output, `file:line` in orch, minimal steps.
+- **`confidence`** — `high`, `medium` or `low`, for whoever triages it. If
+  the agent is guessing, `low`. Recorded, not enforced.
 
-### 2. Review one
-
-```bash
-orch findings review <id>                   # id or unique prefix
-orch findings review a1b2c3 --json
-```
-
-Review shows the full finding AND runs `gh api search/issues` against the
-target repo, printing every match with a Jaccard word-overlap ratio.
-Anything ≥ 0.6 will be flagged again at publish time.
-
-### 3. Publish
-
-```bash
-# Dry-run first — inspect the guardrails without hitting GitHub for real
-orch findings publish <id> --dry-run
-
-# Actual publish (asks for TTY confirmation)
-orch findings publish <id>
-
-# Non-interactive (CI-style) — skips only the FINAL "y/N" prompt
-orch findings publish <id> --yes
-```
-
-### 4. Dismiss noise
-
-```bash
-orch findings dismiss <id> --reason "not actionable"
-```
+It is **only about orch**. A problem in the project's own code belongs on the
+project's tracker; the tool always files on `hectorcanaimero/orch`.
 
 ---
 
-## Guardrails (what publish enforces)
-
-`orch findings publish` runs every check before it opens an issue:
+## What the tool enforces
 
 | Check | Behavior |
 |---|---|
-| Not found | Exit 2 |
-| Already published | No-op, print existing URL |
-| `about: project` | Refuse. Exit 2. Belongs on your own tracker. |
-| `confidence: low` | Refuse unless `--force`. Exit 2. |
-| Rate limit (3/hour default) | Refuse. Exit 1. |
-| GitHub dedup (overlap ≥ 0.6) | Refuse. Exit 1. `--force` overrides. |
-| Not a TTY, no `--yes` | Refuse. Exit 130. |
-| User answers "N" | Refuse. Exit 130. |
-| `--dry-run` | Report only. No writes. |
-| Label `auto-reported` missing | Auto-create (idempotent). |
+| `report_findings.enabled` off | Error; nothing filed |
+| `type` not bug / improvement / feature | Error; nothing filed |
+| `title` or `summary` empty | Error; nothing filed |
+| An `auto-reported` issue (open or closed) with the same title, ignoring case and punctuation | Returns `duplicate`; nothing filed |
+| Other `auto-reported` issues match the title search | Returns `similar`; nothing filed unless the call sets `confirm_new: true` |
+| Project root or home directory in the title or body | Replaced with `<project>` and `~` |
 
-Every check has a test in `orchestrator/tests/test_findings_publish.py`
-that would catch its removal.
+Every filed issue gets the `auto-reported` label. `orch sync issues` refuses
+to ingest that label, so a report never loops back into a project as a task.
+The body records the type, confidence, capture time, orch version and OS, and
+ends with a line saying it came through `orch_report_finding`.
 
----
+The result is `{filed, url?, duplicate?, similar?, message}`.
 
-## Config knobs
-
-`orchestrator/config.yaml`:
-
-```yaml
-findings:
-  publish_repo: "hectorcanaimero/orch"      # default target
-  publish_rate_limit_per_hour: 3            # 0 disables
-  label: "auto-reported"                    # created on demand
-  min_publish_confidence: "medium"          # low can't publish (unless --force)
-```
-
-CLI flags override on a per-invocation basis: `--repo`, `--force`,
-`--yes`, `--dry-run`.
+Nothing else is filtered: the redaction knows the two paths, not what else in
+your project is private. That is why the prompt and the tool's description
+ask for no secrets, project code or names.
 
 ---
 
-## Storage layout
+## For the operator
 
-- **sqlite backend**: table `findings`, applied via migration
-  `002_findings.sql` (bumps `PRAGMA user_version` to 2).
-- **file backend**: `<state_dir>/findings.jsonl`, one row per line.
+- **See what was filed**:
+  `gh issue list --repo hectorcanaimero/orch --label auto-reported --author @me`.
+- **Stop it**: set `report_findings.enabled: false`. `orch run` and `orch mcp`
+  read the key when they start, so the next run's prompts drop the block and
+  the next MCP server refuses the call.
+- **Report by hand**: `gh issue create --repo hectorcanaimero/orch` works the
+  same without the tool.
 
-Both are multitenant by `project_id`.
-
----
-
-## Exit codes at a glance
-
-| Command | 0 | 1 | 2 | 3 | 130 |
-|---|---|---|---|---|---|
-| `capture` | ok | — | duplicate | validation error | — |
-| `list` | ok | — | — | — | — |
-| `review` | ok | — | not found | — | — |
-| `publish` | published / dry-run / already | rate-limit / dedup / gh error | refused (about=project or low confidence) | — | user cancelled |
-| `dismiss` | ok | error | not found | — | — |
-
----
-
-## Design details
-
-Full technical design: [docs/design/sprint-e-1-dogfooding-loop.md](design/sprint-e-1-dogfooding-loop.md).
+The tool's reference, with the rest of the MCP surface, is in
+[`MCP.md`](MCP.md#orch_report_finding).

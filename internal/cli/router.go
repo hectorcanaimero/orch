@@ -45,6 +45,9 @@ type routerValidatePayload struct {
 	Project   validateProjectJSON  `json:"project"`
 	Offenders []routerOffenderJSON `json:"offenders"`
 	OK        bool                 `json:"ok"`
+	// Warnings are routes whose cli_model is not a known id for their backend
+	// (#266). They do not change `ok` or the exit code.
+	Warnings []string `json:"warnings"`
 }
 
 // newRouterValidateCmd checks that every tasks.json `model` resolves to a
@@ -83,8 +86,16 @@ func newRouterValidateCmd(flags *projectFlags) *cobra.Command {
 				Project:   validateProjectJSON{ID: paths.ID, Root: paths.Root},
 				Offenders: offenders,
 				OK:        verr == nil,
+				Warnings:  append([]string{}, rtr.CLIModelWarnings(tf.Tasks)...),
 			}
 
+			if !asJSON {
+				for _, w := range payload.Warnings {
+					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+w); err != nil {
+						return err
+					}
+				}
+			}
 			if asJSON {
 				if err := printCompactJSON(cmd.OutOrStdout(), payload); err != nil {
 					return err
@@ -196,6 +207,13 @@ func newRouterAddMissingCmd(flags *projectFlags) *cobra.Command {
 					if _, err := fmt.Fprintf(out, "  + %s  →  backend=%s, cli_model=%s, tier=%s  (%d task(s))\n",
 						m, e.Backend, e.CLIModel, e.Tier, taskCounts[m]); err != nil {
 						return err
+					}
+					// #266: still written — the operator may know a model this
+					// binary does not — but never silently.
+					if w := router.CLIModelWarning(m, e); w != "" {
+						if _, err := fmt.Fprintf(out, "    warning: %s\n", w); err != nil {
+							return err
+						}
 					}
 				}
 			}

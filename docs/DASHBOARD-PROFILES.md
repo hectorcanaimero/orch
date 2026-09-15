@@ -87,7 +87,12 @@ process behind a tunnel or reverse proxy. Read on.
 > database-stored token **wins unconditionally** over both `--token` and
 > `dashboard.token` — ahead of the CLI-flag precedence below, which
 > otherwise still applies — specifically so a rotation can't be silently
-> undone by a stale `--token` left in a saved command or shell alias. It
+> undone by a stale `--token` left in a saved command or shell alias.
+> The Go precedence is database, then `--token`, then `dashboard.token`.
+> Ignoring a given token is not silent: under `stakeholder` or `both`,
+> startup prints `[warn] --token is ignored: …` (or `dashboard.token in
+> config.yaml is ignored`) with the way out — use the token `orch dashboard
+> token rotate` printed, or rotate again — and never either token. It
 > also takes effect on an already-running `orch dashboard` with no
 > restart: the server re-checks the database on every gated request. A
 > plain SHA-256 hash is only as strong as what it's hashing: `rotate`

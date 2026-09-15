@@ -176,6 +176,9 @@ type Scheduler struct {
 type Notifier interface {
 	Blocked(ctx context.Context, taskID, reason string)
 	CIBlocked(ctx context.Context, taskID, prURL string, attempts int)
+	// Stalled announces a live run that has made no progress for a while,
+	// and what it is waiting on (#255).
+	Stalled(ctx context.Context, stalledFor time.Duration, waitingOn string)
 }
 
 // PRRecorder writes a task's pull request URL. Separate from RecordBackend

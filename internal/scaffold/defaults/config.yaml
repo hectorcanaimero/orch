@@ -63,17 +63,14 @@ budgets_config: budgets.yaml
 budgets_preset: conservative
 typical_dispatch_tokens: 200000
 
-# Sprint E-1 — dogfooding loop (issue #17).
-# `findings.publish_repo` is the default GitHub target for `orch findings publish`.
-# `publish_rate_limit_per_hour` caps the number of publishes in the last rolling
-# hour (0 disables). `label` is created on demand and applied to every published
-# issue. `min_publish_confidence` refuses publish for lower-ranked findings
-# unless the caller passes `--force`.
-findings:
-  publish_repo: ""       # empty — `orch findings publish` requires --repo or derives it from `git remote get-url origin`
-  publish_rate_limit_per_hour: 3
-  label: "auto-reported"
-  min_publish_confidence: "medium"
+# Dogfooding — let agents report problems with orch itself.
+# `enabled: true` turns on the MCP tool `orch_report_finding`: an agent files a
+# bug, improvement or feature request as an `auto-reported` issue on
+# hectorcanaimero/orch with your own `gh` login, and every dispatch prompt ends
+# with an optional "Feedback about orch itself" block. Off by default because
+# it publishes under your account. See docs/DOGFOODING.md.
+report_findings:
+  enabled: false
 
 # Sprint E-2 / E-3 — dashboard client (SPA + FastAPI) knobs. All optional.
 # `profile` / `token` gate the middleware (operator|stakeholder|both — see
