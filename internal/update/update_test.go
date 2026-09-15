@@ -199,3 +199,15 @@ func TestNotice(t *testing.T) {
 		t.Errorf("critical notice:\n%s", got)
 	}
 }
+
+func TestCachePathIsUnderTheHomeOrchDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := CachePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".orch", "update-check.json"); got != want {
+		t.Errorf("CachePath = %q, want %q", got, want)
+	}
+}

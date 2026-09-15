@@ -24,14 +24,22 @@ var (
 	updateClient     = update.Client{}
 	updateDownloader = update.Downloader{}
 	updateCachePath  = update.CachePath
-	upgradeTarget    = func() (string, error) {
-		exe, err := os.Executable()
-		if err != nil {
-			return "", fmt.Errorf("finding this orch binary: %w", err)
-		}
-		return filepath.EvalSymlinks(exe)
-	}
+	upgradeTarget    = executablePath
 )
+
+// executablePath is the file this orch runs from, symlinks resolved, so the
+// upgrade replaces the binary and not a link to it.
+func executablePath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("finding this orch binary: %w", err)
+	}
+	path, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", exe, err)
+	}
+	return path, nil
+}
 
 const (
 	skipUpdateFlag  = "skip-update-check"
@@ -119,8 +127,12 @@ func wantsUpdateNotice(matched *cobra.Command, version string, stderrIsTerminal 
 // printUpdateNotice writes the new-release notice to stderr, after the
 // command's own output. Best effort: GitHub is asked at most once a day, for
 // at most noticeTimeout, and a failure prints nothing.
-func printUpdateNotice(matched *cobra.Command, version string, stderr io.Writer) {
-	if !wantsUpdateNotice(matched, version, isTerminal(os.Stderr)) {
+func printUpdateNotice(matched *cobra.Command, version string, stderr *os.File) {
+	writeUpdateNotice(matched, version, stderr, isTerminal(stderr))
+}
+
+func writeUpdateNotice(matched *cobra.Command, version string, stderr io.Writer, stderrIsTerminal bool) {
+	if !wantsUpdateNotice(matched, version, stderrIsTerminal) {
 		return
 	}
 	path, err := updateCachePath()

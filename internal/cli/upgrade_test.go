@@ -207,3 +207,41 @@ func TestUpdateNoticeOnlyForAPersonAtATerminal(t *testing.T) {
 		t.Errorf("a notice in CI")
 	}
 }
+
+func TestUpdateNoticeIsWrittenAfterTheCommand(t *testing.T) {
+	fakeGitHub(t, "v0.13.1", false, []byte("new"))
+	t.Setenv("CI", "")
+	root, _ := newRootCmd("v0.13.0")
+	status, _, err := root.Find([]string{"status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var at bytes.Buffer
+	writeUpdateNotice(status, "v0.13.0", &at, true)
+	for _, want := range []string{"A new orch is out: v0.13.1 (you have v0.13.0)", "• Fix: the retry keeps its PR"} {
+		if !strings.Contains(at.String(), want) {
+			t.Errorf("notice is missing %q:\n%s", want, at.String())
+		}
+	}
+
+	var piped bytes.Buffer
+	writeUpdateNotice(status, "v0.13.0", &piped, false)
+	if piped.Len() != 0 {
+		t.Errorf("wrote a notice to a non-terminal:\n%s", piped.String())
+	}
+}
+
+func TestExecutablePathIsTheRealBinary(t *testing.T) {
+	path, err := executablePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(path) || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		t.Errorf("executablePath = %q (%v), want an absolute regular file", path, info.Mode())
+	}
+}
