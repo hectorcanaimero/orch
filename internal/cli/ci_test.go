@@ -182,6 +182,14 @@ func TestCISetupAddsAReview(t *testing.T) {
 	if !strings.Contains(string(wf), "orch ci review --provider gemini --model gemini-2.5-flash --post --blocking") {
 		t.Errorf("workflow has no blocking gemini review:\n%s", wf)
 	}
+	// A dev build pins no release: the job installs the latest one.
+	if !strings.Contains(string(wf), "gh release download --repo hectorcanaimero/orch") {
+		t.Errorf("a dev build's workflow does not install the latest release:\n%s", wf)
+	}
+	pinned, err := runRoot(t, "v0.14.0", "ci", "setup", "--dry-run", "--review", "gemini", "--project-root", root)
+	if err != nil || !strings.Contains(pinned, "gh release download v0.14.0 --repo hectorcanaimero/orch") {
+		t.Errorf("a release build's workflow does not pin its own version: %v\n%s", err, pinned)
+	}
 	checklist := filepath.Join(root, ".github", "orch-review.md")
 	body, err := os.ReadFile(checklist) // #nosec G304 -- a temp dir this test made
 	if err != nil || !strings.Contains(string(body), "## TypeScript / JavaScript") {

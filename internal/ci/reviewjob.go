@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// Repo is where orch is released, for the review job's install step.
+const Repo = "hectorcanaimero/orch"
+
 // ChecklistPath is the review checklist `orch ci setup` writes and
 // `orch ci review` reads by default.
 const ChecklistPath = ".github/orch-review.md"
@@ -52,6 +55,9 @@ func ReviewProviderNames() []string {
 type Review struct {
 	Provider string // a ReviewProviders key
 	Model    string
+	// OrchVersion is the orch release the job installs, the one that wrote
+	// the workflow; "" installs the latest release (a dev build).
+	OrchVersion string
 	// Blocking fails the review job, and so the PR's checks, on a blocking
 	// finding.
 	Blocking bool
@@ -81,8 +87,21 @@ func NewReview(provider, model string, blocking bool) (*Review, error) {
 	return &Review{Provider: provider, Model: model, Blocking: blocking}, nil
 }
 
-// installOrch puts the released orch binary on the runner's PATH.
-const installOrch = `curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh && echo "$HOME/.local/bin" >> "$GITHUB_PATH"`
+// installOrch downloads orch's release archive for the runner with gh (already
+// on GitHub's runners, authenticated by GH_TOKEN), checks it against the
+// release's checksums.txt, and puts the binary on PATH. No script is piped
+// into a shell. version pins the release; "" takes the latest one.
+func installOrch(version string) string {
+	tag := ""
+	if version != "" {
+		tag = version + " "
+	}
+	return "gh release download " + tag + "--repo " + Repo +
+		` --pattern "orch_*_linux_amd64.tar.gz" --pattern checksums.txt --dir "$RUNNER_TEMP/orch"` +
+		` && cd "$RUNNER_TEMP/orch" && sha256sum --check --ignore-missing checksums.txt` +
+		` && mkdir -p "$HOME/.local/bin" && tar -xzf orch_*_linux_amd64.tar.gz -C "$HOME/.local/bin" orch` +
+		` && echo "$HOME/.local/bin" >> "$GITHUB_PATH"`
+}
 
 // writeReviewJob writes the review job. It runs on pull requests only, after
 // the checks pass (reviewing code that does not build spends tokens on
@@ -101,7 +120,7 @@ func writeReviewJob(b *strings.Builder, r *Review, needs []string) {
 	b.WriteString("      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n")
 	b.WriteString("      - uses: actions/setup-node@v4\n        with:\n          node-version: \"22\"\n")
 	fmt.Fprintf(b, "      - name: Install the review CLI\n        run: %s\n", scalar("npm install -g "+p.Package))
-	fmt.Fprintf(b, "      - name: Install orch\n        run: %s\n", scalar(installOrch))
+	fmt.Fprintf(b, "      - name: Install orch\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: %s\n", scalar(installOrch(r.OrchVersion)))
 	b.WriteString("      - name: Review\n        env:\n")
 	b.WriteString("          GH_TOKEN: ${{ github.token }}\n")
 	for _, s := range p.Secrets {

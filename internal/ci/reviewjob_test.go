@@ -45,11 +45,15 @@ func TestRenderWithAGeminiReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	review.OrchVersion = "v0.14.0"
 	out, err := Render(Jobs(st, AllChecks), Options{BaseBranch: "dev", Checks: AllChecks, Review: review})
 	if err != nil {
 		t.Fatal(err)
 	}
 	golden(t, "pnpm-gemini-review", out, "node", "review")
+	if strings.Contains(string(out), "curl") || strings.Contains(string(out), "| sh") {
+		t.Errorf("the workflow pipes a downloaded script into a shell:\n%s", out)
+	}
 	// The operator's CI page and the client portal read the generated job
 	// as a review, not only as its checks.
 	wfs, err := ReadWorkflows(writeWorkflows(t, map[string]string{"orch-ci.yml": string(out)}))
@@ -66,6 +70,10 @@ func TestRenderWithAGeminiReview(t *testing.T) {
 		"npm install -g @google/gemini-cli",
 		"GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}",
 		"orch ci review --provider gemini --model gemini-2.5-flash --post --blocking",
+		// orch comes pinned and checksum-verified from its release, not from
+		// a script piped into a shell.
+		"gh release download v0.14.0 --repo hectorcanaimero/orch",
+		"sha256sum --check --ignore-missing checksums.txt",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("workflow is missing %q", want)
@@ -110,5 +118,16 @@ func TestReviewChecklistFollowsTheStack(t *testing.T) {
 		if strings.Contains(got, absent) {
 			t.Errorf("checklist has %q for a repo without it", absent)
 		}
+	}
+}
+
+// A dev build has no release of its own to pin, so the job takes the latest.
+func TestInstallOrchWithoutAVersionTakesTheLatestRelease(t *testing.T) {
+	got := installOrch("")
+	if !strings.HasPrefix(got, "gh release download --repo hectorcanaimero/orch ") {
+		t.Errorf("installOrch(\"\") = %q, want the latest release", got)
+	}
+	if pinned := installOrch("v0.14.0"); !strings.HasPrefix(pinned, "gh release download v0.14.0 --repo") {
+		t.Errorf("installOrch(v0.14.0) = %q, want the pinned tag", pinned)
 	}
 }

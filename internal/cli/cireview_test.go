@@ -91,7 +91,7 @@ func runReview(t *testing.T, args ...string) (stdout, stderr string, code int) {
 			t.Setenv(k, "")
 		}
 	}
-	cmd := newCICmd(&projectFlags{})
+	cmd := newCICmd(&projectFlags{}, "dev")
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -211,7 +211,7 @@ func TestCIReviewDefaultBase(t *testing.T) {
 	}
 	// runReview clears GITHUB_BASE_REF, so this run builds the command itself.
 	t.Setenv("GITHUB_BASE_REF", "release")
-	cmd := newCICmd(&projectFlags{})
+	cmd := newCICmd(&projectFlags{}, "dev")
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	var errOut bytes.Buffer
 	cmd.SetOut(&bytes.Buffer{})
@@ -251,7 +251,7 @@ func TestCIReviewPost(t *testing.T) {
 	// runReview clears the Actions variables, which this test needs set.
 	post := func(args ...string) (string, int) {
 		t.Helper()
-		cmd := newCICmd(&projectFlags{})
+		cmd := newCICmd(&projectFlags{}, "dev")
 		cmd.SilenceErrors, cmd.SilenceUsage = true, true
 		var errOut bytes.Buffer
 		cmd.SetOut(&bytes.Buffer{})

@@ -15,12 +15,13 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/ci"
 	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/update"
 )
 
 // workflowPath is where the pipeline goes, the file orch init also writes.
 var workflowPath = filepath.Join(".github", "workflows", "orch-ci.yml")
 
-func newCICmd(flags *projectFlags) *cobra.Command {
+func newCICmd(flags *projectFlags, version string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ci",
 		Short: "Set up the repository's CI pipeline, and review pull requests inside it",
@@ -32,7 +33,7 @@ func newCICmd(flags *projectFlags) *cobra.Command {
 			"`orch ci review` runs inside that pipeline: an AI review of the pull\n" +
 			"request with a coding-agent CLI (see its --help).",
 	}
-	cmd.AddCommand(newCIDetectCmd(flags), newCISetupCmd(flags), newCIReviewCmd())
+	cmd.AddCommand(newCIDetectCmd(flags), newCISetupCmd(flags, version), newCIReviewCmd())
 	return cmd
 }
 
@@ -134,7 +135,7 @@ func printStack(w io.Writer, root string, st ci.Stack) error {
 	return err
 }
 
-func newCISetupCmd(flags *projectFlags) *cobra.Command {
+func newCISetupCmd(flags *projectFlags, version string) *cobra.Command {
 	var (
 		dryRun, yes, force               bool
 		noLint, noTypecheck, noTest, noB bool
@@ -194,6 +195,10 @@ func newCISetupCmd(flags *projectFlags) *cobra.Command {
 			review, err := ci.NewReview(reviewProvider, reviewModel, reviewBlocking)
 			if err != nil {
 				return withExitCode(2, err)
+			}
+			if review != nil && update.IsRelease(version) {
+				// The job installs the orch that wrote it; a dev build, the latest.
+				review.OrchVersion = version
 			}
 
 			if base == "" {
