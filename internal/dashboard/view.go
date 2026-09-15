@@ -11,6 +11,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/project"
+	"github.com/hectorcanaimero/orch/internal/state"
 )
 
 // projectView is what every task-shaped endpoint starts from: the DAG as
@@ -49,6 +50,9 @@ type projectView struct {
 	CriticalPath     map[string]bool
 	HumanHours       map[string]float64
 	LastUpdated      map[string]string
+	// PRs is each task's pull request and CI state, by id, for the tasks
+	// that have one.
+	PRs map[string]state.TaskRuntime
 }
 
 func (s *Server) loadView(ctx context.Context) (projectView, error) {
@@ -64,6 +68,16 @@ func (s *Server) loadView(ctx context.Context) (projectView, error) {
 	tasks, err := project.Hydrate(ctx, s.state, f.Tasks)
 	if err != nil {
 		return v, err
+	}
+	rows, err := s.state.Tasks(ctx, state.TaskFilter{})
+	if err != nil {
+		return v, fmt.Errorf("reading the tasks' PR and CI state: %w", err)
+	}
+	v.PRs = map[string]state.TaskRuntime{}
+	for _, r := range rows {
+		if r.PRURL != "" {
+			v.PRs[r.ID] = r
+		}
 	}
 	events, err := s.state.AllEvents(ctx, 0)
 	if err != nil {
@@ -106,6 +120,11 @@ type taskPayload struct {
 	LastUpdated   string            `json:"last_updated"`
 	Downstream    int               `json:"downstream_impact"`
 	OnCritical    bool              `json:"on_critical_path"`
+	// The task's pull request and its CI, absent until orch opens one — so
+	// a project without auto_pr reads exactly as before.
+	PRURL      string `json:"pr_url,omitempty"`
+	CIStatus   string `json:"ci_status,omitempty"`
+	CIAttempts int    `json:"ci_attempts,omitempty"`
 	// Parallelizable is only present on the single-task endpoint, which is
 	// where Python adds it.
 	Parallelizable *bool `json:"parallelizable,omitempty"`
@@ -130,6 +149,9 @@ func (v projectView) task(t model.Task) taskPayload {
 		LastUpdated:   v.LastUpdated[t.ID],
 		Downstream:    v.DownstreamImpact[t.ID],
 		OnCritical:    v.CriticalPath[t.ID],
+		PRURL:         v.PRs[t.ID].PRURL,
+		CIStatus:      v.PRs[t.ID].CIStatus,
+		CIAttempts:    v.PRs[t.ID].CIAttempts,
 	}
 }
 

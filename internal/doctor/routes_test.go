@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -23,10 +24,32 @@ func TestCheckRoutesSkipsWithNoRouter(t *testing.T) {
 
 func TestCheckRoutesOKWhenAllResolve(t *testing.T) {
 	tasks := []model.Task{{ID: "T1", Model: "claude/opus"}}
-	r := router.Router{"claude/opus": model.RouteEntry{Backend: model.BackendClaude}}
+	r := router.Router{"claude/opus": model.RouteEntry{Backend: model.BackendClaude, CLIModel: "opus"}}
 	c := CheckRoutes(tasks, r)
 	if c.Status != StatusOK {
 		t.Errorf("c = %+v, want ok", c)
+	}
+}
+
+// #266: a route that resolves but names a model the claude CLI rejects is a
+// warning, so preflight is not green while every dispatch 404s.
+func TestCheckRoutesWarnsOnAnUnknownClaudeModel(t *testing.T) {
+	tasks := []model.Task{{ID: "T1", Model: "claude/sonnet-5"}, {ID: "T2", Model: "codex/gpt-x"}}
+	r := router.Router{
+		"claude/sonnet-5": model.RouteEntry{Backend: model.BackendClaude, CLIModel: "sonnet-5"},
+		"codex/gpt-x":     model.RouteEntry{Backend: model.BackendCodex, CLIModel: "gpt-x"},
+	}
+	c := CheckRoutes(tasks, r)
+	if c.Status != StatusWarn {
+		t.Fatalf("c = %+v, want warn", c)
+	}
+	for _, want := range []string{"'claude/sonnet-5'", "'sonnet-5'", "'claude-sonnet-5'"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("detail %q does not name %s", c.Detail, want)
+		}
+	}
+	if strings.Contains(c.Detail, "gpt-x") {
+		t.Errorf("detail %q warns about codex, whose ids orch does not know", c.Detail)
 	}
 }
 

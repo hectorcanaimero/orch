@@ -335,6 +335,48 @@ func TestRefillDispatchesOnlyWhatIsReady(t *testing.T) {
 	}
 }
 
+// #249: worktrees live outside the project now, so a child's working
+// directory no longer says which project it belongs to. Every child is told
+// in its environment, replacing whatever the operator's shell carried.
+// run-worktree-child.txtar checks the same from inside a real child.
+func TestChildEnvNamesTheProject(t *testing.T) {
+	routes := map[string]model.RouteEntry{"claude/opus": route(model.BackendClaude, "opus", false)}
+	t.Setenv("ORCH_PROJECT_ROOT", "/somewhere/else")
+	f := newSchedulerFixture(t, []model.Task{task("A-1", 1, "claude/opus")}, routes, SchedulerOptions{
+		Mode: ModeAuto, GlobalMax: 1, PerProvider: map[string]int{"claude": 1}, ProjectID: "usebot",
+	})
+
+	if _, err := f.s.Refill(context.Background()); err != nil {
+		t.Fatalf("Refill: %v", err)
+	}
+	for _, e := range f.s.InFlight() {
+		for _, kv := range []string{"ORCH_PROJECT_ROOT=" + f.s.Opts.Cwd, "ORCH_PROJECT_ID=usebot"} {
+			if !contains(e.Dispatch.Env, kv) {
+				t.Errorf("dispatch env is missing %s", kv)
+			}
+		}
+		if contains(e.Dispatch.Env, "ORCH_PROJECT_ROOT=/somewhere/else") {
+			t.Error("the inherited ORCH_PROJECT_ROOT survived next to the project's")
+		}
+	}
+	if len(f.s.InFlight()) != 1 {
+		t.Fatalf("in flight = %d, want 1", len(f.s.InFlight()))
+	}
+}
+
+// An id the root already implies is not exported: a child's own test suite
+// inherits it, and every test deriving an id from its temp dir would read it.
+func TestChildEnvLeavesTheDerivedIDUnset(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "usebot")
+	env := childEnv([]string{"ORCH_PROJECT_ID=stale", "HOME=/h"}, root, "usebot")
+	if contains(env, "ORCH_PROJECT_ID=usebot") || contains(env, "ORCH_PROJECT_ID=stale") {
+		t.Errorf("env = %v, want no ORCH_PROJECT_ID for the id %s implies", env, root)
+	}
+	if !contains(env, "ORCH_PROJECT_ROOT="+root) || !contains(env, "HOME=/h") {
+		t.Errorf("env = %v, want the root added and the rest kept", env)
+	}
+}
+
 func TestRefillRespectsMaxTasks(t *testing.T) {
 	routes := map[string]model.RouteEntry{"claude/opus": route(model.BackendClaude, "opus", false)}
 	var tasks []model.Task

@@ -668,19 +668,75 @@ func TestWorktreeResolvesToItsProject(t *testing.T) {
 	}
 }
 
-// A `.worktrees/` directory that is not orch's (no .orchestrator/ above it)
-// is left alone.
-func TestUnrelatedWorktreesDirIsNotRewritten(t *testing.T) {
-	wt := filepath.Join(t.TempDir(), ".worktrees", "x")
+// #249 moved worktrees out of the checkout, to `<project>.worktrees/<ID>`
+// beside it. A person who cds into one, and `scripts/task-*.sh`, which pass
+// `--project-root .`, still reach the project's database.
+func TestSiblingWorktreeResolvesToItsProject(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "usebot")
+	if err := os.MkdirAll(filepath.Join(root, ".orchestrator"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(root+".worktrees", "F1.T1")
 	if err := os.MkdirAll(wt, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	p, err := ResolvePaths(wt, "", "")
+
+	t.Setenv("ORCH_PROJECT_ROOT", "")
+	t.Setenv("ORCH_PROJECT_ID", "")
+	for name, arg := range map[string]string{"cwd": "", "explicit": wt, "dot": "."} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(wt)
+			p, err := ResolvePaths(arg, "", "")
+			if err != nil {
+				t.Fatalf("ResolvePaths: %v", err)
+			}
+			if p.Root != root {
+				t.Errorf("Root = %q, want the worktree's project %q", p.Root, root)
+			}
+			if p.ID != "usebot" {
+				t.Errorf("ID = %q, want usebot", p.ID)
+			}
+		})
+	}
+}
+
+// A dispatched child gets ORCH_PROJECT_ROOT from the engine, so it resolves
+// the project from wherever it runs, even a directory no path rule knows.
+func TestProjectRootEnvWinsOverTheWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ORCH_PROJECT_ROOT", root)
+	t.Chdir(t.TempDir())
+	p, err := ResolvePaths("", "", "")
 	if err != nil {
 		t.Fatalf("ResolvePaths: %v", err)
 	}
-	if p.Root != wt {
-		t.Errorf("Root = %q, want %q unchanged", p.Root, wt)
+	if p.Root != root {
+		t.Errorf("Root = %q, want ORCH_PROJECT_ROOT's %q", p.Root, root)
+	}
+}
+
+// A `.worktrees/` directory that is not orch's (no .orchestrator/ above it)
+// is left alone, in either layout.
+func TestUnrelatedWorktreesDirIsNotRewritten(t *testing.T) {
+	base := t.TempDir()
+	// A sibling layout whose "project" exists but is not orch's.
+	if err := os.MkdirAll(filepath.Join(base, "app"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for _, wt := range []string{
+		filepath.Join(base, ".worktrees", "x"),
+		filepath.Join(base, "app.worktrees", "x"),
+	} {
+		if err := os.MkdirAll(wt, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		p, err := ResolvePaths(wt, "", "")
+		if err != nil {
+			t.Fatalf("ResolvePaths: %v", err)
+		}
+		if p.Root != wt {
+			t.Errorf("Root = %q, want %q unchanged", p.Root, wt)
+		}
 	}
 }
 

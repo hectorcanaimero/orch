@@ -253,7 +253,8 @@ orch run --no-push
 **Ctrl-C** drains in-flight work before exiting, with exit code **130**. A
 **second** Ctrl-C SIGKILLs every child process group immediately.
 
-**Worktree mode**: each task gets its own git worktree and branch; on
+**Worktree mode**: each task gets its own git worktree and branch, in
+`<project>.worktrees/<task-id>/` next to the project (see `CONFIG.md`); on
 success `orch` commits, pushes, and — if `vcs.auto_pr` is on — opens a PR
 into `dispatch.base_branch`, then leaves the task `in-progress` for the CI
 poller. A green CI check marks it `done` (and merges it too, if

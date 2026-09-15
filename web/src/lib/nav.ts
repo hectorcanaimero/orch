@@ -10,6 +10,7 @@ import {
   Radio,
   ScrollText,
   Wallet,
+  Workflow,
 } from "lucide-react"
 
 export interface NavItem {
@@ -36,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/budget", label: "Budget", icon: Wallet, route: "api_budget_summary" },
   { to: "/sprint", label: "Sprint", icon: CalendarClock, route: "api_sprint" },
   { to: "/graph", label: "Graph", icon: GitFork, route: "api_graph", operatorOnly: true },
+  { to: "/ci", label: "CI", icon: Workflow, route: "api_ci", operatorOnly: true },
   { to: "/tunnel", label: "Tunnel", icon: Radio, route: "api_tunnel_status", operatorOnly: true },
   { to: "/metrics", label: "Metrics", icon: BarChart3, route: "api_metrics", operatorOnly: true },
   { to: "/logs", label: "Logs", icon: ScrollText, route: "api_events", operatorOnly: true },

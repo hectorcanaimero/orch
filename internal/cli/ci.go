@@ -1,226 +1,317 @@
 package cli
 
 import (
-	"encoding/json"
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
-	"slices"
+	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/ci"
-	"github.com/hectorcanaimero/orch/internal/model"
-	"github.com/hectorcanaimero/orch/internal/vcs"
+	"github.com/hectorcanaimero/orch/internal/config"
 )
 
-func newCICmd() *cobra.Command {
+// workflowPath is where the pipeline goes, the file orch init also writes.
+var workflowPath = filepath.Join(".github", "workflows", "orch-ci.yml")
+
+func newCICmd(flags *projectFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ci",
-		Short: "What orch does inside a project's CI",
+		Short: "Set up the repository's CI pipeline, and review pull requests inside it",
+		Long: "Detect what the repository is built with and set up the GitHub Actions\n" +
+			"pipeline orch's auto-PR loop waits on.\n\n" +
+			"Detection reads files and runs nothing: lockfiles name the package manager,\n" +
+			"scripts and tool config sections name the checks. A check the repository does\n" +
+			"not have is left out rather than guessed.\n\n" +
+			"`orch ci review` runs inside that pipeline: an AI review of the pull\n" +
+			"request with a coding-agent CLI (see its --help).",
 	}
-	cmd.AddCommand(newCIReviewCmd())
+	cmd.AddCommand(newCIDetectCmd(flags), newCISetupCmd(flags), newCIReviewCmd())
 	return cmd
 }
 
-// postReviewComment is where --post goes. A variable so tests can stand in
-// for gh.
-var postReviewComment = vcs.UpsertComment
-
-type ciReviewOptions struct {
-	provider  string
-	model     string
-	checklist string
-	base      string
-	pr        int
-	post      bool
-	blocking  bool
-	asJSON    bool
-	maxDiff   int
-	timeout   time.Duration
+// ciRoot is the repository to read: --project-root, else ORCH_PROJECT_ROOT,
+// else the working directory. It needs no orch project: CI can be set up
+// before `orch init`.
+func ciRoot(f *projectFlags) (string, error) {
+	root := f.root
+	if root == "" {
+		root = os.Getenv("ORCH_PROJECT_ROOT")
+	}
+	if root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("finding the working directory: %w", err)
+		}
+		root = wd
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", root, err)
+	}
+	return abs, nil
 }
 
-const ciReviewLong = `Review a pull request's diff with a coding-agent CLI, from inside the
-project's CI job. orch builds a prompt from a checklist and the diff, runs the
-provider read-only in an empty scratch directory, parses its JSON verdict and
-prints it as markdown.
+type ciPackageJSON struct {
+	Dir       string `json:"dir"`
+	Language  string `json:"language"`
+	Manager   string `json:"manager"`
+	Version   string `json:"version,omitempty"`
+	Install   string `json:"install,omitempty"`
+	Lint      string `json:"lint,omitempty"`
+	Typecheck string `json:"typecheck,omitempty"`
+	Test      string `json:"test,omitempty"`
+	Build     string `json:"build,omitempty"`
+}
 
-Providers, and the secret each CLI reads:
-  claude    Claude             ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN (subscription)
-  gemini    Gemini             GEMINI_API_KEY
-  codex     OpenAI             OPENAI_API_KEY
-  opencode  OpenRouter         OPENROUTER_API_KEY, with --model openrouter/<vendor>/<model>
-
-The diff is 'git diff --merge-base BASE'. BASE defaults to origin/$GITHUB_BASE_REF,
-else origin/main; the base branch must be fetched (actions/checkout with
-fetch-depth: 0). The checklist defaults to .github/orch-review.md, and a
-built-in general one is used when that file does not exist.
-
---post creates or edits one comment on the pull request, the one marked
-<!-- orch:ci-review -->. It needs gh, GH_TOKEN, GITHUB_REPOSITORY, and --pr or
-GITHUB_EVENT_PATH.
-
-Exit codes:
-  0  the review ran; or it did not complete, without --blocking (a warning)
-  1  with --blocking: a blocking finding, a request_changes verdict, or a
-     review that did not complete (provider failure, unreadable answer)
-  2  usage error`
-
-func newCIReviewCmd() *cobra.Command {
-	var o ciReviewOptions
+func newCIDetectCmd(flags *projectFlags) *cobra.Command {
+	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "review",
-		Short: "Review a pull request with a coding-agent CLI, from inside CI",
-		Long:  ciReviewLong,
-		Args: func(c *cobra.Command, args []string) error {
-			if err := cobra.NoArgs(c, args); err != nil {
-				return withExitCode(2, err)
-			}
-			return nil
-		},
+		Use:   "detect",
+		Short: "Show what the repository is built with and which checks it has",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCIReview(cmd, o)
+			root, err := ciRoot(flags)
+			if err != nil {
+				return err
+			}
+			st, err := ci.Detect(root)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if asJSON {
+				pkgs := []ciPackageJSON{}
+				for _, p := range st.Packages {
+					pkgs = append(pkgs, ciPackageJSON{
+						Dir: p.Dir, Language: string(p.Language), Manager: p.Manager, Version: p.Version,
+						Install: p.Install, Lint: p.Lint, Typecheck: p.Typecheck, Test: p.Test, Build: p.Build,
+					})
+				}
+				workflows := st.Workflows
+				if workflows == nil {
+					workflows = []string{}
+				}
+				return printCompactJSON(out, map[string]any{"root": root, "packages": pkgs, "workflows": workflows})
+			}
+			return printStack(out, root, st)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the detection as JSON")
+	return cmd
+}
+
+func printStack(w io.Writer, root string, st ci.Stack) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", root)
+	if len(st.Packages) == 0 {
+		b.WriteString("  no Go, Node, Python, Rust or Makefile project found\n")
+	}
+	for _, p := range st.Packages {
+		version := ""
+		if p.Version != "" {
+			version = " " + p.Version
+		}
+		fmt.Fprintf(&b, "  %s  %s (%s%s)\n", p.Dir, p.Language, p.Manager, version)
+		for _, c := range [][2]string{{"install", p.Install}, {"lint", p.Lint}, {"typecheck", p.Typecheck}, {"test", p.Test}, {"build", p.Build}} {
+			value := c[1]
+			if value == "" {
+				value = "—"
+			}
+			fmt.Fprintf(&b, "    %-10s %s\n", c[0], value)
+		}
+	}
+	if len(st.Workflows) > 0 {
+		fmt.Fprintf(&b, "  existing workflows: %s\n", strings.Join(st.Workflows, ", "))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+func newCISetupCmd(flags *projectFlags) *cobra.Command {
+	var (
+		dryRun, yes, force               bool
+		noLint, noTypecheck, noTest, noB bool
+		base                             string
+	)
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Propose a CI pipeline from the repository's files and write it",
+		Long: "Propose a CI pipeline from the repository's files and write it to\n" +
+			".github/workflows/orch-ci.yml.\n\n" +
+			"One job per package (the root, a web app in a subdirectory, a service in\n" +
+			"apps/ or services/), each running only the checks the package has: install,\n" +
+			"lint, typecheck, test, build. At a terminal it asks which checks to run and\n" +
+			"shows the workflow before writing it. An existing orch-ci.yml is only\n" +
+			"replaced with --force (or a yes at the prompt).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := ciRoot(flags)
+			if err != nil {
+				return err
+			}
+			st, err := ci.Detect(root)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if !st.HasChecks() {
+				if err := printStack(out, root, st); err != nil {
+					return err
+				}
+				return withExitCode(1, errors.New("found nothing to check: no lint, typecheck, test or build script, tool config or Makefile target"))
+			}
+
+			checks := ci.Checks{Lint: !noLint, Typecheck: !noTypecheck, Test: !noTest, Build: !noB}
+			interactive := !dryRun && !yes && isTerminal(cmd.InOrStdin())
+			in := bufio.NewReader(cmd.InOrStdin())
+			if interactive {
+				if err := printStack(out, root, st); err != nil {
+					return err
+				}
+				if checks, err = askChecks(in, out, st, checks); err != nil {
+					return err
+				}
+			}
+
+			if base == "" {
+				base = projectBaseBranch(root, flags)
+			}
+			body, err := ci.Render(ci.Jobs(st, checks), ci.Options{BaseBranch: base, Checks: checks})
+			if err != nil {
+				return withExitCode(1, err)
+			}
+			if dryRun {
+				_, err := out.Write(body)
+				return err
+			}
+
+			target := filepath.Join(root, workflowPath)
+			current, err := os.ReadFile(target) // #nosec G304 -- the workflow this command manages
+			switch {
+			case err == nil && bytes.Equal(current, body):
+				_, err := fmt.Fprintf(out, "%s is already up to date.\n", workflowPath)
+				return err
+			case err == nil && !force:
+				if !interactive {
+					return withExitCode(1, fmt.Errorf("%s already exists and differs; pass --force to replace it (see the proposal with --dry-run)", workflowPath))
+				}
+				if _, err := fmt.Fprintf(out, "\n%s\n", body); err != nil {
+					return err
+				}
+				ok, err := askYesNo(in, out, fmt.Sprintf("%s already exists. Replace it?", workflowPath), false)
+				if err != nil || !ok {
+					return err
+				}
+			case err != nil && !errors.Is(err, fs.ErrNotExist):
+				return fmt.Errorf("reading %s: %w", target, err)
+			case !yes && !interactive && !force:
+				return withExitCode(2, errors.New("not a terminal: pass --yes to write the workflow, or --dry-run to see it"))
+			case interactive:
+				if _, err := fmt.Fprintf(out, "\n%s\n", body); err != nil {
+					return err
+				}
+				ok, err := askYesNo(in, out, "Write "+workflowPath+"?", true)
+				if err != nil || !ok {
+					return err
+				}
+			}
+
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+				return fmt.Errorf("creating %s: %w", filepath.Dir(target), err)
+			}
+			if err := os.WriteFile(target, body, 0o600); err != nil {
+				return fmt.Errorf("writing %s: %w", target, err)
+			}
+			_, err = fmt.Fprintf(out, "Wrote %s. Commit it: pull requests run it from then on, and orch's auto-PR loop waits on its checks.\n", workflowPath)
+			return err
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.provider, "provider", "", "claude, gemini, codex or opencode (required)")
-	f.StringVar(&o.model, "model", "", "model id the provider's CLI takes (required)")
-	f.StringVar(&o.checklist, "checklist", ".github/orch-review.md", "markdown checklist the review applies")
-	f.StringVar(&o.base, "base", "", "ref to diff against (default origin/$GITHUB_BASE_REF, else origin/main)")
-	f.IntVar(&o.pr, "pr", 0, "pull request number for --post (default: from GITHUB_EVENT_PATH)")
-	f.BoolVar(&o.post, "post", false, "create or update the review comment on the pull request")
-	f.BoolVar(&o.blocking, "blocking", false, "exit 1 on blocking findings, or when the review does not complete")
-	f.BoolVar(&o.asJSON, "json", false, "print the parsed verdict as JSON instead of markdown")
-	f.IntVar(&o.maxDiff, "max-diff-bytes", 200_000, "cut the diff, file by file, beyond this size")
-	f.DurationVar(&o.timeout, "timeout", 10*time.Minute, "how long the provider may take")
-	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return withExitCode(2, err) })
+	f.BoolVar(&dryRun, "dry-run", false, "Print the proposed workflow and write nothing")
+	f.BoolVarP(&yes, "yes", "y", false, "Write without asking")
+	f.BoolVar(&force, "force", false, "Replace an existing orch-ci.yml")
+	f.BoolVar(&noLint, "no-lint", false, "Leave lint out")
+	f.BoolVar(&noTypecheck, "no-typecheck", false, "Leave typecheck out")
+	f.BoolVar(&noTest, "no-test", false, "Leave tests out")
+	f.BoolVar(&noB, "no-build", false, "Leave build out")
+	f.StringVar(&base, "base", "", "Branch whose pushes are checked too (default: dispatch.base_branch, else main)")
 	return cmd
 }
 
-func runCIReview(cmd *cobra.Command, o ciReviewOptions) error {
-	backend := model.Backend(o.provider)
-	if !slices.Contains(ci.ReviewBackends, backend) {
-		return withExitCode(2, fmt.Errorf("--provider %q: expected claude, gemini, codex or opencode", o.provider))
-	}
-	if o.model == "" {
-		return withExitCode(2, errors.New("--model is required"))
-	}
-	if o.maxDiff <= 0 || o.timeout <= 0 {
-		return withExitCode(2, errors.New("--max-diff-bytes and --timeout must be positive"))
-	}
-
-	// Everything --post needs is checked before the provider is paid for.
-	var repo string
-	pr := o.pr
-	if o.post {
-		repo = os.Getenv("GITHUB_REPOSITORY")
-		if repo == "" {
-			return withExitCode(2, errors.New("--post needs GITHUB_REPOSITORY (owner/name)"))
-		}
-		if pr == 0 {
-			event := os.Getenv("GITHUB_EVENT_PATH")
-			if event == "" {
-				return withExitCode(2, errors.New("--post needs --pr or GITHUB_EVENT_PATH"))
-			}
-			n, err := ci.PRFromEvent(event)
-			if err != nil {
-				return withExitCode(2, err)
-			}
-			pr = n
-		}
-	}
-
-	// A review that does not complete fails the job only with --blocking.
-	incomplete := func(err error) error {
-		if ci.ExitCode(ci.Verdict{}, err, o.blocking) != 0 {
-			return withExitCode(1, fmt.Errorf("orch ci review: %w", err))
-		}
-		// Best effort: a warning that cannot be written must not turn an
-		// advisory review into a failed job.
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: orch ci review did not complete (not failing the job without --blocking): %v\n", err)
-		return nil
-	}
-
-	base := o.base
-	if base == "" {
-		base = "origin/main"
-		if ref := os.Getenv("GITHUB_BASE_REF"); ref != "" {
-			base = "origin/" + ref
-		}
-	}
-	wd, err := os.Getwd()
+// projectBaseBranch is the orch project's dispatch.base_branch when the
+// repository is one, "" otherwise.
+func projectBaseBranch(root string, flags *projectFlags) string {
+	paths, err := config.ResolvePaths(root, flags.id, flags.configPath)
 	if err != nil {
-		return incomplete(fmt.Errorf("finding the working directory: %w", err))
+		return ""
 	}
-	diff, err := ci.Diff(cmd.Context(), wd, base)
+	res, err := config.Load(paths.ConfigYAML, paths.Root)
 	if err != nil {
-		return incomplete(err)
+		return ""
 	}
-	if strings.TrimSpace(diff) == "" {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Nothing to review: no changes against %s.\n", base); err != nil {
-			return fmt.Errorf("writing the review: %w", err)
-		}
-		return nil
-	}
+	return res.Config.Dispatch.BaseBranch
+}
 
-	var notes []string
-	checklist, err := os.ReadFile(o.checklist) // #nosec G304 -- the operator's own checklist path
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		checklist = []byte(ci.BuiltinChecklist)
-		notes = append(notes, fmt.Sprintf("No checklist at %s: the built-in general checklist was used.", o.checklist))
-	case err != nil:
-		return incomplete(fmt.Errorf("reading the checklist: %w", err))
-	}
-	diff, cut := ci.TruncateDiff(diff, o.maxDiff)
-	if len(cut) > 0 {
-		notes = append(notes, fmt.Sprintf("The diff is over %d bytes and was cut short in: %s.", o.maxDiff, strings.Join(cut, ", ")))
-	}
-
-	answer, err := ci.Ask(cmd.Context(), backend, o.model, ci.BuildPrompt(string(checklist), diff, cut), o.timeout)
-	if err != nil {
-		return incomplete(err)
-	}
-	verdict, err := ci.ParseVerdict(answer)
-	if err != nil {
-		return incomplete(fmt.Errorf("unreadable answer from %s: %w", backend, err))
-	}
-
-	markdown := verdict.Markdown(o.provider+", "+o.model, notes)
-	if o.asJSON {
-		for _, n := range notes {
-			if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "note: "+n); err != nil {
-				return fmt.Errorf("writing the review: %w", err)
+// askChecks asks, for each kind of check the repository has, whether to run
+// it. Kinds it does not have are not asked about.
+func askChecks(in *bufio.Reader, out io.Writer, st ci.Stack, checks ci.Checks) (ci.Checks, error) {
+	has := func(get func(ci.Package) string) []string {
+		var cmds []string
+		for _, p := range st.Packages {
+			if c := get(p); c != "" {
+				cmds = append(cmds, c)
 			}
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(verdict); err != nil {
-			return fmt.Errorf("writing the verdict: %w", err)
-		}
-	} else if _, err := fmt.Fprint(cmd.OutOrStdout(), markdown); err != nil {
-		return fmt.Errorf("writing the review: %w", err)
+		return cmds
 	}
-
-	if o.post {
-		url, created, err := postReviewComment(repo, pr, ci.CommentMarker, ci.CommentBody(markdown))
+	for _, q := range []struct {
+		label string
+		cmds  []string
+		on    *bool
+	}{
+		{"lint", has(func(p ci.Package) string { return p.Lint }), &checks.Lint},
+		{"typecheck", has(func(p ci.Package) string { return p.Typecheck }), &checks.Typecheck},
+		{"tests", has(func(p ci.Package) string { return p.Test }), &checks.Test},
+		{"build", has(func(p ci.Package) string { return p.Build }), &checks.Build},
+	} {
+		if len(q.cmds) == 0 || !*q.on {
+			continue
+		}
+		ok, err := askYesNo(in, out, fmt.Sprintf("Run %s (%s)?", q.label, strings.Join(q.cmds, "; ")), true)
 		if err != nil {
-			return incomplete(err)
+			return checks, err
 		}
-		action := "Updated"
-		if created {
-			action = "Posted"
-		}
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s the review comment: %s\n", action, url); err != nil {
-			return fmt.Errorf("writing the review: %w", err)
-		}
+		*q.on = ok
 	}
+	return checks, nil
+}
 
-	if ci.ExitCode(verdict, nil, o.blocking) != 0 {
-		return withExitCode(1, fmt.Errorf("orch ci review: %s with --blocking", verdict.Verdict))
+// askYesNo reads one answer; an empty line takes the default.
+func askYesNo(in *bufio.Reader, out io.Writer, question string, def bool) (bool, error) {
+	hint := "[y/N]"
+	if def {
+		hint = "[Y/n]"
 	}
-	return nil
+	if _, err := fmt.Fprintf(out, "%s %s ", question, hint); err != nil {
+		return false, err
+	}
+	line, err := in.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("reading the answer: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "":
+		return def, nil
+	case "y", "yes", "s", "si", "sí":
+		return true, nil
+	default:
+		return false, nil
+	}
 }

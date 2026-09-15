@@ -111,6 +111,7 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				MaxTasks:          maxTasks,
 				StateDir:          paths.StateDir(),
 				Cwd:               paths.Root,
+				ProjectID:         paths.ID,
 				RunID:             runID,
 			})
 			scheduler.Backend = engine.NewStateRecorder(backend)

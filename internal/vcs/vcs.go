@@ -64,6 +64,21 @@ const (
 	CIConflict CIState = "conflict"
 )
 
+// PRState is whether a PR/MR is still open, or settled one way or the other.
+// Go only: Python never asked, and polled a merged or closed PR's CI forever
+// (#255).
+type PRState string
+
+const (
+	PROpen   PRState = "open"
+	PRMerged PRState = "merged"
+	PRClosed PRState = "closed" // closed without merging
+)
+
+// ErrPRStateUnsupported is PRState's error for a provider that cannot tell
+// yet. The caller treats it as "unknown" and carries on as before.
+var ErrPRStateUnsupported = errors.New("vcs: reading a PR's state is not supported for this provider")
+
 // Provider opens, polls, and merges a PR (GitHub) or MR (GitLab).
 type Provider interface {
 	// CreatePR opens a PR/MR from head into base and returns its URL.
@@ -75,6 +90,10 @@ type Provider interface {
 	// CIStatus reports head's current CI state for the PR/MR at prURL. A
 	// single poll — see the package doc comment's "Polling contract".
 	CIStatus(prURL string) (CIState, error)
+
+	// PRState reports whether the PR/MR at prURL is open, merged or closed
+	// without merging. ErrPRStateUnsupported when the provider cannot tell.
+	PRState(prURL string) (PRState, error)
 
 	// CILogs returns failed CI job logs as plain text, truncated to 8000
 	// chars, or "" when there is nothing failed to show.

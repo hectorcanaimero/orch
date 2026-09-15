@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -72,8 +73,12 @@ type SchedulerOptions struct {
 	MaxTasks int
 	// StateDir is where logs and task locks live.
 	StateDir string
-	// Cwd is the project root the children run in.
+	// Cwd is the project root. Children run in it, or in their worktree
+	// when WorktreeMode is on.
 	Cwd string
+	// ProjectID is the project's id, handed to every child with Cwd as
+	// ORCH_PROJECT_ID / ORCH_PROJECT_ROOT: see childEnv.
+	ProjectID string
 	// RunID ties every event and dispatch row to this run.
 	RunID string
 
@@ -171,6 +176,9 @@ type Scheduler struct {
 type Notifier interface {
 	Blocked(ctx context.Context, taskID, reason string)
 	CIBlocked(ctx context.Context, taskID, prURL string, attempts int)
+	// Stalled announces a live run that has made no progress for a while,
+	// and what it is waiting on (#255).
+	Stalled(ctx context.Context, stalledFor time.Duration, waitingOn string)
 }
 
 // PRRecorder writes a task's pull request URL. Separate from RecordBackend
@@ -524,6 +532,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		PromptPath: promptPath,
 		LogPath:    LogPathFor(s.Opts.StateDir, task.ID),
 		Cwd:        workdir,
+		Env:        childEnv(os.Environ(), s.Opts.Cwd, s.Opts.ProjectID),
 		Timeout:    TimeoutFor(task.EstimateHours, s.Opts.TimeoutMultiplier),
 	}
 
@@ -533,6 +542,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 		PromptPath: d.PromptPath,
 		LogPath:    d.LogPath,
 		Cwd:        d.Cwd,
+		Env:        d.Env,
 	})
 	if err != nil {
 		release()

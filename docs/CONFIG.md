@@ -85,6 +85,25 @@ dispatch:
 With `worktree_mode` on and no git repo — or no remote — orch **degrades and
 says so** rather than failing: see `orch doctor`.
 
+**Where worktrees live.** Each task gets `<project>.worktrees/<task-id>/`, a
+directory *next to* the project, on branch `orch/<task-id>`:
+`/work/usebot` dispatches into `/work/usebot.worktrees/F1.T1`. Not inside the
+checkout, because Node, TypeScript and pnpm look for `node_modules` and
+`pnpm-workspace.yaml` in every ancestor directory, and a worktree under the
+project found the project's own (#249). So the project's parent directory must
+be writable, and a project at the filesystem root or one whose name ends in
+`.worktrees` is refused: move it, or turn `worktree_mode` off.
+
+- A dispatched agent gets `ORCH_PROJECT_ROOT` and `ORCH_PROJECT_ID` in its
+  environment, so every `orch` it runs (`orch mcp`, the task scripts) reaches
+  the project's database rather than bootstrapping one in the worktree. Running
+  `orch` yourself from inside `<project>.worktrees/<task-id>/` also resolves
+  the project, as long as it holds `.orchestrator/`.
+- Worktrees an older orch left inside the project, in `.worktrees/<task-id>/`,
+  still resolve the same way. `orch run` removes one when it dispatches that
+  task again, and `orch doctor` lists the rest (`worktree.orphans`). The
+  scaffolded `.gitignore` keeps ignoring `.worktrees/` for them.
+
 **Claude permissions in a worktree.** `claude` runs with
 `--permission-mode acceptEdits`: every tool that is not allow-listed (Bash,
 WebFetch, `mcp__orch__*`…) is refused without a prompt, and the run still ends
@@ -217,13 +236,14 @@ so it belongs in a config file you do not commit — and orch never writes one t
 a log line, not even truncated, which is why a failed POST logs
 `channel=text` rather than the URL.
 
-Only the two things an operator would otherwise have to go looking for are
+Only the things an operator would otherwise have to go looking for are
 announced:
 
 | When | Message |
 |---|---|
 | a task is blocked | `:no_entry: orch: task ``F1.T3`` blocked — <first line of the reason>` |
 | a task is blocked after CI kept failing | `:warning: orch: task ``F1.T3`` blocked after 3 CI attempt(s) (<pr url>)` |
+| a live `orch run` made no progress for 30 minutes (Go only, #255), once per stall | `:hourglass: orch: no progress for 30m0s — waiting on CI on F1.T3 (<pr url>)` |
 
 Not successes, and not retries: a task that will try again has not given up,
 and a message per attempt is how a team mutes the channel — after which the

@@ -23,9 +23,12 @@ type fakeVCS struct {
 	// status is what CIStatus answers per PR URL.
 	status    map[string]vcs.CIState
 	statusErr error
-	logs      string
-	logsErr   error
-	mergeErr  error
+	// prState is what PRState answers per PR URL; a URL not in it is open.
+	prState    map[string]vcs.PRState
+	prStateErr error
+	logs       string
+	logsErr    error
+	mergeErr   error
 	// merged records every MergePR call, so "did not merge" is assertable.
 	merged []string
 
@@ -57,6 +60,18 @@ func (v *fakeVCS) CIStatus(prURL string) (vcs.CIState, error) {
 		return "", v.statusErr
 	}
 	return v.status[prURL], nil
+}
+
+func (v *fakeVCS) PRState(prURL string) (vcs.PRState, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.prStateErr != nil {
+		return "", v.prStateErr
+	}
+	if st, ok := v.prState[prURL]; ok {
+		return st, nil
+	}
+	return vcs.PROpen, nil
 }
 
 func (v *fakeVCS) CILogs(string) (string, error) {
@@ -775,6 +790,166 @@ func TestCIConflictBlocksTheTask(t *testing.T) {
 	}
 	if got := n.ciBlockedList(); len(got) != 1 {
 		t.Errorf("announced %d CI blocks, want 1", len(got))
+	}
+}
+
+// ---- A PR settled outside orch -------------------------------------------
+
+// TestMergedPRFinishesTheTask: #255. A PR merged by hand is the change
+// accepted, whatever its checks still say. The poller used to go on reading
+// them, and a stale red one re-dispatched an agent against a merged PR.
+func TestMergedPRFinishesTheTask(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	f := newCIFixture(t, pendingRow("C-1", url, 0))
+	f.vcs.status[url] = vcs.CIFailure // stale: the PR merged anyway
+	f.vcs.prState = map[string]vcs.PRState{url: vcs.PRMerged}
+	f.poller.AutoMerge = true
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusInProgress})
+	f.s.Backend = strict
+
+	acted, err := f.poller.Poll(context.Background(), f.s)
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if acted != 1 {
+		t.Errorf("acted on %d tasks, want 1", acted)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusDone {
+		t.Errorf("queue status = %q, want done", got)
+	}
+	if got, _ := strict.TaskStatus(context.Background(), "C-1"); got != model.StatusDone {
+		t.Errorf("backend status = %q, want done", got)
+	}
+	if got := f.ci.statuses(); !equalStrings(got, []string{"C-1=" + CIStatusSuccess}) {
+		t.Errorf("ci status writes = %v, want success", got)
+	}
+	if len(f.s.RetryQueue()) != 0 {
+		t.Error("re-dispatched an agent against a merged PR")
+	}
+	if got := f.vcs.mergedPRs(); len(got) != 0 {
+		t.Errorf("tried to merge %v, which is already merged", got)
+	}
+}
+
+// TestMergedPRIsRecorded: the event, on the recording backend (the strict one
+// above keeps none).
+func TestMergedPRIsRecorded(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	f := newCIFixture(t, pendingRow("C-1", url, 0))
+	f.vcs.prState = map[string]vcs.PRState{url: vcs.PRMerged}
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if got := f.backend.eventTypes("C-1"); !equalStrings(got, []string{EventPRMerged}) {
+		t.Errorf("events = %v, want just pr_merged", got)
+	}
+}
+
+// TestClosedPRBlocksTheTask: #255. A PR closed without merging has no CI to
+// wait on (gh errors on one closed with no commits), so the task is blocked
+// with a reason naming the PR, instead of being polled forever.
+func TestClosedPRBlocksTheTask(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	f := newCIFixture(t, pendingRow("C-1", url, 0))
+	f.vcs.statusErr = errors.New("gh pr checks: no commits")
+	f.vcs.prState = map[string]vcs.PRState{url: vcs.PRClosed}
+	n := &recordingNotifier{}
+	f.s.Notify = n
+
+	acted, err := f.poller.Poll(context.Background(), f.s)
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if acted != 1 {
+		t.Errorf("acted on %d tasks, want 1", acted)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusBlocked {
+		t.Errorf("status = %q, want blocked", got)
+	}
+	if got := f.ci.statuses(); !equalStrings(got, []string{"C-1=" + CIStatusFailure}) {
+		t.Errorf("ci status writes = %v, want failure", got)
+	}
+	f.backend.mu.Lock()
+	events := append([]recordedEvent(nil), f.backend.events...)
+	f.backend.mu.Unlock()
+	if len(events) != 1 || events[0].eventType != EventCIBlocked ||
+		events[0].extra["reason"] != "PR closed without merging: "+url {
+		t.Errorf("events = %+v, want ci_blocked with the closed PR as its reason", events)
+	}
+	if got := n.ciBlockedList(); len(got) != 1 {
+		t.Errorf("announced %d CI blocks, want 1", len(got))
+	}
+}
+
+// TestClosedPRBlocksATaskTheAgentMarkedDone: the agent reported the task done
+// before the PR opened, and done -> blocked goes through todo (#251).
+func TestClosedPRBlocksATaskTheAgentMarkedDone(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	f := newCIFixture(t, pendingRow("C-1", url, 0))
+	f.vcs.prState = map[string]vcs.PRState{url: vcs.PRClosed}
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	f.s.Backend = strict
+
+	if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if got, _ := strict.TaskStatus(context.Background(), "C-1"); got != model.StatusBlocked {
+		t.Errorf("backend status = %q, want blocked", got)
+	}
+}
+
+// TestUnknownPRStateLeavesTheTaskToCI: a provider that cannot tell (GitLab),
+// or a read that fails, changes nothing. CI still decides, as before.
+func TestUnknownPRStateLeavesTheTaskToCI(t *testing.T) {
+	for name, stateErr := range map[string]error{
+		"unsupported":  vcs.ErrPRStateUnsupported,
+		"read failure": errors.New("gh: connection reset"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			const url = "https://github.com/o/r/pull/1"
+			f := newCIFixture(t, pendingRow("C-1", url, 0))
+			f.vcs.prStateErr = stateErr
+			f.vcs.status[url] = vcs.CISuccess
+
+			if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+				t.Fatalf("Poll: %v", err)
+			}
+			if got := f.backend.eventTypes("C-1"); !equalStrings(got, []string{EventCISuccess}) {
+				t.Errorf("events = %v, want CI to decide: ci_success", got)
+			}
+		})
+	}
+}
+
+// TestSettledPRIgnoredWhileARetryIsOutstanding: a CI retry running or queued
+// for the task is settled at its reap (#248). Finishing the task here would
+// leave a queued retry dispatching a done task.
+func TestSettledPRIgnoredWhileARetryIsOutstanding(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	for name, setup := range map[string]func(f *ciFixture, task model.Task){
+		"running": func(f *ciFixture, task model.Task) { f.s.inFlight[12345] = &InFlight{Task: task} },
+		"queued": func(f *ciFixture, task model.Task) {
+			f.s.retryQueue = append(f.s.retryQueue, RetryItem{Task: task, Attempt: 1, EarliestAt: f.s.now()})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCIFixture(t, pendingRow("C-1", url, 1))
+			f.vcs.status[url] = vcs.CIPending
+			f.vcs.prState = map[string]vcs.PRState{url: vcs.PRMerged}
+			task, _ := f.s.Queue.Task("C-1")
+			setup(f, task)
+
+			if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+				t.Fatalf("Poll: %v", err)
+			}
+			if got := f.backend.eventTypes("C-1"); len(got) != 0 {
+				t.Errorf("events = %v, want none while the retry is outstanding", got)
+			}
+			if got, _ := f.s.Queue.Status("C-1"); got == model.StatusDone {
+				t.Error("finished a task whose CI retry is still outstanding")
+			}
+		})
 	}
 }
 

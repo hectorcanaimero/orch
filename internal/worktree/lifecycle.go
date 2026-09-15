@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -63,7 +62,7 @@ func (m *Manager) startPoint(taskID, baseBranch string) string {
 func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 	wtPath := m.WorktreePath(taskID)
 	var cleanupErr error
-	if pathExists(wtPath) {
+	if pathExists(wtPath) || pathExists(filepath.Join(LegacyDir(m.root), taskID)) {
 		cleanupErr = m.Remove(taskID)
 	}
 	if pathExists(wtPath) {
@@ -77,9 +76,8 @@ func (m *Manager) Create(taskID, baseBranch string) (string, error) {
 		)
 	}
 
-	worktreesDir := filepath.Join(m.root, ".worktrees")
-	if err := os.MkdirAll(worktreesDir, 0o750); err != nil {
-		return "", errors.Join(fmt.Errorf("worktree: create %s: %w", worktreesDir, err), cleanupErr)
+	if _, err := m.worktreesDir(); err != nil {
+		return "", errors.Join(err, cleanupErr)
 	}
 
 	purgeErr := m.PurgeOrphanBranch(taskID)
@@ -173,23 +171,29 @@ func (m *Manager) Push(taskID string) error {
 	return err
 }
 
-// Remove deletes taskID's worktree directory. A no-op if it's already
-// absent. Uses --force so a dirty tree (untracked files left by a failed
-// agent) is removed without complaint. A git failure here is best-effort —
-// matching Python, removal must never block a caller cleaning up after a
-// task that already failed for its own reason — but is logged (never
-// silenced, rule 19) and returned: a non-nil error means "removed with
+// Remove deletes taskID's worktree directory, and the one an orch from
+// before #249 left inside the checkout for the same task, which would
+// otherwise keep orch/<taskID> checked out and make every later Create fail.
+// A no-op if both are absent. Uses --force so a dirty tree (untracked files
+// left by a failed agent) is removed without complaint. A git failure here is
+// best-effort — matching Python, removal must never block a caller cleaning
+// up after a task that already failed for its own reason — but is logged
+// (never silenced, rule 19) and returned: a non-nil error means "removed with
 // warnings" (the active-worktree bookkeeping is cleared either way), not
 // that the task itself should be treated as failed.
 func (m *Manager) Remove(taskID string) error {
-	wtPath := m.WorktreePath(taskID)
-	var err error
-	if pathExists(wtPath) {
+	var errs []error
+	for _, wtPath := range []string{m.WorktreePath(taskID), filepath.Join(LegacyDir(m.root), taskID)} {
+		if !pathExists(wtPath) {
+			continue
+		}
 		args := []string{"git", "worktree", "remove", "--force", wtPath}
-		if err = m.runBestEffort(taskID, args...); err != nil {
+		if err := m.runBestEffort(taskID, args...); err != nil {
 			logGitWarning(taskID, args, err)
+			errs = append(errs, err)
 		}
 	}
+	err := errors.Join(errs...)
 	m.mu.Lock()
 	delete(m.active, taskID)
 	m.mu.Unlock()
@@ -220,6 +224,9 @@ func (m *Manager) Recreate(taskID string) (string, error) {
 	wtPath := m.WorktreePath(taskID)
 	remoteBranch := "origin/" + branch
 
+	if _, err := m.worktreesDir(); err != nil {
+		return "", errors.Join(err, cleanupErr)
+	}
 	if _, err := m.run(taskID, "git", "fetch", "origin", branch); err != nil {
 		return "", errors.Join(err, cleanupErr)
 	}

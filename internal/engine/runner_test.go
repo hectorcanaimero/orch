@@ -1003,3 +1003,164 @@ func TestSprintDoneIsWrittenOnlyOnce(t *testing.T) {
 		t.Errorf("two calls wrote %d events, want 1", len(events))
 	}
 }
+
+// ---- Stalls --------------------------------------------------------------
+
+// TestRunLoopWarnsOnceWhenItStalls: #255. A live run waiting on CI that does
+// not resolve used to idle in silence. Past stallThreshold it says so, naming
+// the PR, and only once however long the stall lasts.
+func TestRunLoopWarnsOnceWhenItStalls(t *testing.T) {
+	url := "https://github.com/o/r/pull/1"
+	f := newRunnerFixture(t,
+		[]model.Task{
+			{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusInProgress, EstimateHours: 1},
+			{ID: "C-2", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusTodo, EstimateHours: 1, Dependencies: []string{"C-1"}},
+		},
+		map[string]fakeResponse{"C-2": okResponse()},
+		SchedulerOptions{})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+	v := &fakeVCS{status: map[string]vcs.CIState{url: vcs.CIPending}}
+	ci := &fakeCIBackend{rows: []state.TaskRuntime{pendingRow("C-1", url, 0)}, counters: map[string]int{}}
+	f.r.CI = &CIPoller{Provider: v, Backend: ci, PollInterval: time.Minute}
+
+	// CI stays pending for two thresholds, then goes green.
+	sleep := f.r.sleep
+	start := f.r.now()
+	f.r.sleep = func(d time.Duration) {
+		sleep(d)
+		if f.r.now().Sub(start) > 2*stallThreshold+time.Minute {
+			v.mu.Lock()
+			v.status[url] = vcs.CISuccess
+			v.mu.Unlock()
+		}
+	}
+
+	if code := f.runWithin(t, 60*time.Second); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	stalls := n.stallList()
+	if len(stalls) != 1 {
+		t.Fatalf("announced %d stalls, want 1: %v", len(stalls), stalls)
+	}
+	if want := "30m0s: CI on C-1 (" + url + ")"; stalls[0] != want {
+		t.Errorf("stall = %q, want %q", stalls[0], want)
+	}
+}
+
+// TestStallWarningResetsOnProgress: a stall is reported when it reaches the
+// threshold, not before, once, and progress starts the count again.
+func TestStallWarningResetsOnProgress(t *testing.T) {
+	f := newRunnerFixture(t, []model.Task{task("C-1", 1, "claude/opus")}, nil, SchedulerOptions{})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+	ctx := context.Background()
+	f.r.lastProgress = f.r.now()
+
+	step := func(advance time.Duration, progressed bool, want int) {
+		t.Helper()
+		f.r.sleep(advance)
+		f.r.checkStall(ctx, progressed)
+		if got := len(n.stallList()); got != want {
+			t.Fatalf("after %v more (progressed=%v): %d stalls announced, want %d", advance, progressed, got, want)
+		}
+	}
+	step(stallThreshold-time.Second, false, 0)
+	step(time.Second, false, 1)
+	step(stallThreshold, false, 1) // still the same stall
+	step(time.Minute, true, 1)     // progress
+	step(stallThreshold-time.Second, false, 1)
+	step(time.Second, false, 2)
+}
+
+// TestARunningChildIsNotAStall: a long agent is work, bounded by its own
+// timeout.
+func TestARunningChildIsNotAStall(t *testing.T) {
+	f := newRunnerFixture(t, []model.Task{task("C-1", 1, "claude/opus")}, nil, SchedulerOptions{})
+	n := &recordingNotifier{}
+	f.s.Notify = n
+	task, _ := f.s.Queue.Task("C-1")
+	f.s.inFlight[12345] = &InFlight{Task: task}
+	f.r.lastProgress = f.r.now()
+
+	f.r.sleep(2 * stallThreshold)
+	f.r.checkStall(context.Background(), false)
+	if got := n.stallList(); len(got) != 0 {
+		t.Errorf("announced %v while a child was running", got)
+	}
+}
+
+// TestStallSummaryNamesWhatTheRunWaitsOn: one case per thing a stalled run
+// can be waiting on.
+func TestStallSummaryNamesWhatTheRunWaitsOn(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+	inProgress := model.Task{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusInProgress, EstimateHours: 1}
+	done := model.Task{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusDone, EstimateHours: 1}
+	tests := []struct {
+		name  string
+		task  model.Task
+		opts  SchedulerOptions
+		setup func(f *runnerFixture)
+		want  string
+	}{
+		{
+			name: "a PR waiting on CI",
+			task: inProgress,
+			setup: func(f *runnerFixture) {
+				f.r.CI = &CIPoller{Provider: &fakeVCS{}, Backend: &fakeCIBackend{rows: []state.TaskRuntime{pendingRow("C-1", url, 0)}}}
+			},
+			want: "CI on C-1 (" + url + ")",
+		},
+		{
+			name: "CI that cannot be read",
+			task: inProgress,
+			setup: func(f *runnerFixture) {
+				f.r.CI = &CIPoller{Provider: &fakeVCS{}, Backend: &fakeCIBackend{listErr: errors.New("database is locked")}}
+			},
+			want: "CI, unreadable: listing tasks with pending CI: database is locked",
+		},
+		{
+			name: "a retry on its backoff",
+			task: task("C-1", 1, "claude/opus"),
+			setup: func(f *runnerFixture) {
+				tk, _ := f.s.Queue.Task("C-1")
+				f.s.retryQueue = append(f.s.retryQueue, RetryItem{Task: tk, Attempt: 2, EarliestAt: f.now.Add(time.Hour)})
+			},
+			want: "a retry of C-1 due 2026-09-12T13:00:00Z",
+		},
+		{
+			name:  "a ready task with a defer reason",
+			task:  task("C-1", 1, "claude/opus"),
+			setup: func(f *runnerFixture) { f.s.deferReasons["C-1"] = "blocked-by-budget:claude" },
+			want:  "C-1 ready but not dispatched: blocked-by-budget:claude",
+		},
+		{
+			name:  "a ready task past --max-tasks",
+			task:  task("C-1", 1, "claude/opus"),
+			opts:  SchedulerOptions{MaxTasks: 1},
+			setup: func(f *runnerFixture) { f.s.dispatched = 1 },
+			want:  "C-1 ready but not dispatched: --max-tasks reached",
+		},
+		{
+			name:  "a ready task with no reason",
+			task:  task("C-1", 1, "claude/opus"),
+			setup: func(*runnerFixture) {},
+			want:  "C-1 ready but not dispatched: no reason recorded",
+		},
+		{
+			name:  "nothing",
+			task:  done,
+			setup: func(*runnerFixture) {},
+			want:  "nothing this run can name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newRunnerFixture(t, []model.Task{tt.task}, nil, tt.opts)
+			tt.setup(f)
+			if got := f.r.stallSummary(context.Background()); got != tt.want {
+				t.Errorf("summary = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

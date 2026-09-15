@@ -312,6 +312,68 @@ func TestGitHubCIStatusReturnsCLIErrorWhenBinaryMissing(t *testing.T) {
 	}
 }
 
+// ---- PRState ------------------------------------------------------------
+
+// TestGitHubPRStateReadsRealCaptures: one real PR of this repository per
+// state, from gh 2.100.0 (#255).
+func TestGitHubPRStateReadsRealCaptures(t *testing.T) {
+	cases := []struct {
+		file string
+		want PRState
+	}{
+		{"pr-view-state-open.json", PROpen},
+		{"pr-view-state-merged.json", PRMerged},
+		{"pr-view-state-closed.json", PRClosed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			withFakeBin(t)
+			log := ghLog(t)
+			t.Setenv("FAKE_GH_VIEW_STDOUT", realChecks(t, tc.file))
+
+			got, err := NewGitHubProvider().PRState("https://github.com/org/repo/pull/1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if argv := readLog(t, log); !strings.Contains(argv, "pr view https://github.com/org/repo/pull/1 --json state") {
+				t.Errorf("gh invocation = %q", argv)
+			}
+		})
+	}
+}
+
+func TestGitHubPRStateReportsFailures(t *testing.T) {
+	cases := map[string]map[string]string{
+		"gh fails":           {"FAKE_GH_VIEW_EXIT": "1"},
+		"malformed JSON":     {"FAKE_GH_VIEW_STDOUT": "not json"},
+		"an unknown state":   {"FAKE_GH_VIEW_STDOUT": `{"state":"DRAFT"}`},
+		"no state in answer": {"FAKE_GH_VIEW_STDOUT": `{}`},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			withFakeBin(t)
+			for k, v := range env {
+				t.Setenv(k, v)
+			}
+			if got, err := NewGitHubProvider().PRState("https://github.com/org/repo/pull/1"); err == nil {
+				t.Errorf("got %q with no error", got)
+			}
+		})
+	}
+}
+
+func TestGitHubPRStateReturnsCLIErrorWhenBinaryMissing(t *testing.T) {
+	withNoBin(t)
+	_, err := NewGitHubProvider().PRState("https://github.com/org/repo/pull/1")
+	var cliErr *CLIError
+	if !errors.As(err, &cliErr) {
+		t.Fatalf("err = %v (%T), want *CLIError", err, err)
+	}
+}
+
 // ---- CILogs ---------------------------------------------------------------
 
 func TestGitHubCILogsReturnsFailedRunOutput(t *testing.T) {

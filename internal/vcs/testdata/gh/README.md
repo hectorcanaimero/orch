@@ -27,6 +27,9 @@ being pinned, and it is `gh`'s to change.
 | `pr-checks-all-pass.json` | `gh pr checks 209 --json name,state,bucket,event,workflow` — nine checks, every `state` is `SUCCESS` |
 | `pr-checks-with-neutral.json` | the same for #208 — eight `SUCCESS` and one `NEUTRAL`, which is what proves the conclusion map is reached |
 | `pr-checks-conclusion-rejected.txt` | what `gh pr checks 209 --json state,conclusion` actually prints, and the field list it offers instead |
+| `pr-view-state-merged.json` | `gh pr view <PR 277's URL> --json state` — a merged PR, `"MERGED"` (#255) |
+| `pr-view-state-closed.json` | the same for #50, the one PR of this repository closed without merging, `"CLOSED"` |
+| `pr-view-state-open.json` | the same for #281 while it was open, `"OPEN"`: the capture is a snapshot, so the PR merging later does not change it |
 | `issue-list.json` | `gh issue list --state all --limit 3 --json number,title,body,labels,state,url,createdAt` — three real issues of this repository |
 | `issue-comments-no-marker.json` | `gh api --paginate repos/hectorcanaimero/orch/issues/279/comments` — merged PR #279: the Gemini reviewer's comment (`<!-- orch:gemini-review -->`) and two replies, none with `<!-- orch:ci-review -->` |
 | `issue-comments-with-marker.json` | `gh api --paginate repos/hectorcanaimero/orch/issues/290/comments`, captured right after a real `orch ci review --provider claude --post --pr 290` had created its comment there and a second run had edited it. Holds that `<!-- orch:ci-review -->` comment (id `5678662484`) and the Gemini reviewer's |
@@ -66,6 +69,10 @@ binaries have been turning into "pending" since the feature was written.
 ```bash
 gh pr checks <a merged PR> --json name,state,bucket,event,workflow \
   > 2.100.0/pr-checks-all-pass.json
+```
+
+```bash
+gh pr view <a merged PR's URL> --json state > 2.100.0/pr-view-state-merged.json
 ```
 
 ```bash

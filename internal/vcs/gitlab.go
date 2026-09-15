@@ -103,6 +103,15 @@ func (p *GitLabProvider) CIStatus(prURL string) (CIState, error) {
 	return CIPending, nil
 }
 
+// PRState is not implemented for GitLab: `glab mr view --output json` does
+// carry the MR's `state`, but this package has no real glab capture to pin its
+// spelling to (testdata/fakebin/glab is hand-written), and a guessed parser
+// that misreads "merged" would finish tasks nobody accepted. The poller treats
+// ErrPRStateUnsupported as "unknown" and keeps polling CI as before.
+func (p *GitLabProvider) PRState(string) (PRState, error) {
+	return "", ErrPRStateUnsupported
+}
+
 type gitlabJob struct {
 	ID     json.Number `json:"id"`
 	Status string      `json:"status"`

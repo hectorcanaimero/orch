@@ -179,6 +179,35 @@ func (p *GitHubProvider) noChecks(prURL string) (CIState, error) {
 	return CINone, nil
 }
 
+// githubPRStates maps `gh pr view --json state`'s UPPERCASE values. Captured
+// from gh 2.100.0 — testdata/gh/2.100.0/pr-view-state-*.json.
+var githubPRStates = map[string]PRState{
+	"OPEN":   PROpen,
+	"MERGED": PRMerged,
+	"CLOSED": PRClosed,
+}
+
+func (p *GitHubProvider) PRState(prURL string) (PRState, error) {
+	if err := checkBinary("gh"); err != nil {
+		return "", err
+	}
+	out, err := run("gh", nil, "pr", "view", prURL, "--json", "state")
+	if err != nil {
+		return "", fmt.Errorf("gh pr view %s --json state: %w", prURL, err)
+	}
+	var view struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		return "", fmt.Errorf("parsing gh pr view output for %s: %w", prURL, err)
+	}
+	st, ok := githubPRStates[view.State]
+	if !ok {
+		return "", fmt.Errorf("gh pr view %s: unrecognized state %q", prURL, view.State)
+	}
+	return st, nil
+}
+
 type githubPRView struct {
 	StatusCheckRollup []struct {
 		Conclusion string `json:"conclusion"`
