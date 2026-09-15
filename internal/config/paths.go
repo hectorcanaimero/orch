@@ -120,17 +120,29 @@ func ResolvePaths(rootArg, idArg, configArg string) (Paths, error) {
 	return p, nil
 }
 
-// worktreeProject maps `<project>/.worktrees/<task>` back to `<project>`.
-// A dispatched agent runs `orch mcp` and the task scripts from its worktree,
-// where `.orchestrator/` does not exist (it is gitignored), so resolving the
+// worktreeProject maps a task worktree back to its project:
+// `<project>.worktrees/<task>`, where orch puts them since #249, and
+// `<project>/.worktrees/<task>`, where older runs left them. A dispatched
+// agent runs `orch mcp` and the task scripts from its worktree, where
+// `.orchestrator/` does not exist (it is gitignored), so resolving the
 // worktree itself bootstraps a second database nobody reads — issue #229.
-// Only a `.worktrees/` sitting next to an `.orchestrator/` is orch's.
+// The engine also hands every child ORCH_PROJECT_ROOT; this covers the
+// scripts' explicit `--project-root .` and a person who cds into one.
+// Only a worktree directory whose project holds an `.orchestrator/` is orch's.
 func worktreeProject(dir string) string {
+	// The layout worktree.Dir and worktree.LegacyDir build, spelled out
+	// because config imports nothing internal.
+	const suffix = ".worktrees"
 	parent := filepath.Dir(dir)
-	if filepath.Base(parent) != ".worktrees" {
+	var project string
+	switch base := filepath.Base(parent); {
+	case base == suffix:
+		project = filepath.Dir(parent)
+	case strings.HasSuffix(base, suffix):
+		project = strings.TrimSuffix(parent, suffix)
+	default:
 		return dir
 	}
-	project := filepath.Dir(parent)
 	// #nosec G703 -- only stats a path derived from the caller's own root.
 	if info, err := os.Stat(filepath.Join(project, ".orchestrator")); err == nil && info.IsDir() {
 		return project

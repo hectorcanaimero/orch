@@ -1,0 +1,77 @@
+# #249: task worktrees live NEXT TO the project, in <project>.worktrees/<id>,
+# so the project's node_modules and pnpm-workspace.yaml are not among a
+# worktree's ancestors. The agent orch dispatches there still has to reach
+# the project when it runs orch: `orch mcp` with no flags, the task scripts
+# with `--project-root .`, or anything from another directory.
+#
+# The coding CLI is the usual ORCH_FAKE_PROVIDER, whose script runs `sleep`
+# first. bin/sleep stands in for it, so a real child of a real `orch run`,
+# started in its worktree with the environment the engine gave it, runs orch
+# the way an agent would and writes down what each invocation resolved.
+
+[!exec:git] skip
+[!exec:sh] skip
+
+chmod 0755 $WORK/bin/sleep
+env PATH=$WORK/bin:$PATH
+env ORCH_FAKE_PROVIDER=$WORK/fake
+env CHILD_OUT=$WORK/child
+mkdir $WORK/child
+
+cd $WORK/wtproj
+exec git init --initial-branch=main .
+exec git config user.email orch@example.com
+exec git config user.name orch
+exec git config commit.gpgsign false
+exec git add -A
+exec git commit -q -m 'initial'
+
+exec orch run --no-push
+
+# The child ran in the sibling directory, not inside the checkout.
+grep '/wtproj\.worktrees/T-1$' $WORK/child/pwd
+! exists $WORK/wtproj/.worktrees
+
+# From the worktree with no flags (orch mcp), with the scripts'
+# `--project-root .`, from an unrelated directory (ORCH_PROJECT_ROOT), and
+# with that variable removed (the path alone): always the project.
+grep '"root": *"[^"]*/wtproj"' $WORK/child/cwd.json
+grep '"root": *"[^"]*/wtproj"' $WORK/child/dot.json
+grep '"root": *"[^"]*/wtproj"' $WORK/child/elsewhere.json
+grep '"root": *"[^"]*/wtproj"' $WORK/child/path-only.json
+
+-- wtproj/tasks.json --
+{"tasks":[{"id":"T-1","phase":1,"title":"do the thing","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"specs/a.md#T1","reason":"because"}]}
+-- wtproj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 1
+  per_provider:
+    claude: 1
+dispatch:
+  worktree_mode: true
+  base_branch: main
+vcs:
+  auto_pr: false
+-- wtproj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+-- wtproj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- wtproj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- fake/claude/_default.out --
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0,"usage":{"input_tokens":1,"output_tokens":1}}
+-- bin/sleep --
+#!/bin/sh
+# The fake provider's first command, run by the dispatched child itself.
+pwd > "$CHILD_OUT/pwd"
+orch validate --json > "$CHILD_OUT/cwd.json" 2>&1
+orch validate --json --project-root . > "$CHILD_OUT/dot.json" 2>&1
+(cd / && orch validate --json > "$CHILD_OUT/elsewhere.json" 2>&1)
+(unset ORCH_PROJECT_ROOT ORCH_PROJECT_ID; orch validate --json > "$CHILD_OUT/path-only.json" 2>&1)
+exit 0

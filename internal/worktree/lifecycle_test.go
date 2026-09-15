@@ -493,7 +493,105 @@ func TestBranchNameAndWorktreePathFormat(t *testing.T) {
 	if got, want := m.BranchName("F2.1.T3"), "orch/F2.1.T3"; got != want {
 		t.Errorf("BranchName = %q, want %q", got, want)
 	}
-	if got, want := m.WorktreePath("F2.1.T3"), filepath.Join("/repo", ".worktrees", "F2.1.T3"); got != want {
+	if got, want := m.WorktreePath("F2.1.T3"), filepath.Join("/repo.worktrees", "F2.1.T3"); got != want {
 		t.Errorf("WorktreePath = %q, want %q", got, want)
+	}
+}
+
+// ---- Where worktrees live (#249) -------------------------------------------
+
+// #249: a worktree inside the checkout sits below the project's own
+// node_modules and pnpm-workspace.yaml, and Node, TypeScript and pnpm all
+// walk up the ancestors looking for them. No ancestor of a worktree may be
+// the project, or hold what the project holds.
+func TestWorktreeHasNoProjectAncestor(t *testing.T) {
+	root := newTestRepo(t)
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "left-pad"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pnpm-workspace.yaml"), []byte("packages: [\".\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(root, false)
+
+	wt, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := filepath.Dir(wt), root+".worktrees"; got != want {
+		t.Errorf("worktree parent = %q, want the sibling %q", got, want)
+	}
+	// Walk up to the directory holding the project; above it is the
+	// machine's, not the test's.
+	for dir := filepath.Dir(wt); dir != filepath.Dir(root); dir = filepath.Dir(dir) {
+		if dir == root {
+			t.Fatalf("the project %s is an ancestor of the worktree %s", root, wt)
+		}
+		for _, name := range []string{"node_modules", "pnpm-workspace.yaml"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				t.Errorf("%s holds %s, which module resolution from %s would find", dir, name, wt)
+			}
+		}
+	}
+}
+
+// A project whose sibling cannot be created fails with the path in the
+// error, not with whatever git says about a missing parent.
+func TestCreateNamesTheSiblingItCannotCreate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := newTestRepo(t)
+	parent := filepath.Dir(root)
+	if err := os.Chmod(parent, 0o500); err != nil { // #nosec G302 -- a test making its own temp dir read-only
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) }) // #nosec G302 -- restores the temp dir so it can be cleaned up
+
+	_, err := NewManager(root, false).Create("F1.T1", "main")
+	if err == nil {
+		t.Fatal("Create succeeded in a read-only parent")
+	}
+	if !strings.Contains(err.Error(), root+".worktrees") || !errors.Is(err, os.ErrPermission) {
+		t.Errorf("err = %v, want a permission error naming %s.worktrees", err, root)
+	}
+}
+
+// Two layouts have no sibling to put worktrees in: a project at the
+// filesystem root, whose "sibling" would sit inside it again, and a project
+// whose own name ends in .worktrees, which would read as another project's
+// worktree directory. Both are refused before git runs.
+func TestCreateRefusesAProjectWithNoUsableSibling(t *testing.T) {
+	for name, root := range map[string]string{
+		"filesystem root":     string(filepath.Separator),
+		"name ends in suffix": filepath.Join(t.TempDir(), "app.worktrees"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewManager(root, false).Create("F1.T1", "main")
+			if err == nil || !strings.Contains(err.Error(), "dispatch.worktree_mode") {
+				t.Errorf("err = %v, want a refusal that says how to get out of it", err)
+			}
+		})
+	}
+}
+
+// A worktree an older orch left inside the checkout still holds orch/<id>
+// checked out, which would make `git worktree add -b` fail for that task
+// forever. Create clears it, and the new one lands outside.
+func TestCreateClearsAWorktreeLeftInsideTheCheckout(t *testing.T) {
+	root := newTestRepo(t)
+	legacy := filepath.Join(root, ".worktrees", "F1.T1")
+	runGit(t, root, "worktree", "add", legacy, "-b", "orch/F1.T1", "main")
+	m := NewManager(root, false)
+
+	wt, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatalf("Create over a leftover in the old layout: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("the old worktree %s is still there: %v", legacy, err)
+	}
+	if wt == legacy {
+		t.Errorf("Create reused the old layout %s", wt)
 	}
 }

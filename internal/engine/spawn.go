@@ -18,10 +18,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/providers"
 )
 
@@ -223,6 +225,31 @@ func withoutPWD(env []string) []string {
 			continue
 		}
 		out = append(out, kv)
+	}
+	return out
+}
+
+// childEnv is env with ORCH_PROJECT_ROOT and ORCH_PROJECT_ID set to the
+// project a dispatched child belongs to, replacing any the operator's shell
+// carried. A child in worktree mode runs in `<project>.worktrees/<id>`,
+// outside the project (#249), so when it runs `orch mcp` or any orch command
+// without --project-root, its working directory would name the wrong project;
+// config.ResolvePaths reads these instead. An empty root is left unset, and
+// so is an id the root already implies: every child inherits these, test
+// suites included, and a project's own tests that derive ids from their temp
+// directories would all read one stray id.
+func childEnv(env []string, root, id string) []string {
+	out := make([]string, 0, len(env)+2)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "ORCH_PROJECT_ROOT=") && !strings.HasPrefix(kv, "ORCH_PROJECT_ID=") {
+			out = append(out, kv)
+		}
+	}
+	if root != "" {
+		out = append(out, "ORCH_PROJECT_ROOT="+root)
+	}
+	if id != "" && id != config.DefaultProjectID(root) {
+		out = append(out, "ORCH_PROJECT_ID="+id)
 	}
 	return out
 }
