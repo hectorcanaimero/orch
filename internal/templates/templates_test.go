@@ -131,6 +131,9 @@ func TestEveryTemplateModelIsInferable(t *testing.T) {
 				if got := string(entry.Backend) + "/" + entry.CLIModel; got != task.Model {
 					t.Errorf("%s: inferred %q from %q", task.ID, got, task.Model)
 				}
+				if w := router.CLIModelWarning(task.Model, entry); w != "" {
+					t.Errorf("%s: %s", task.ID, w)
+				}
 			}
 		})
 	}
