@@ -110,6 +110,30 @@ func TestUpsertCommentEditsTheMarkedComment(t *testing.T) {
 	}
 }
 
+// TestUpsertCommentFindsItsOwnComment reads the list of #290 captured after a
+// real `orch ci review --post` had created its comment there: the marker is
+// found among the other comments, and the next run edits that one.
+func TestUpsertCommentFindsItsOwnComment(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "gh", "2.100.0", "issue-comments-with-marker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := string(b)
+	calls := stubGHAPI(t, list, nil, firstComment(t, list), nil)
+
+	url, created, err := UpsertComment("hectorcanaimero/orch", 290, "<!-- orch:ci-review -->", "<!-- orch:ci-review -->\nagain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created || url != "https://github.com/hectorcanaimero/orch/pull/290#issuecomment-5678662484" {
+		t.Errorf("created=%v url=%q", created, url)
+	}
+	want := []string{"-X", "PATCH", "repos/hectorcanaimero/orch/issues/comments/5678662484", "-f", "body=<!-- orch:ci-review -->\nagain"}
+	if len(*calls) != 2 || !slices.Equal((*calls)[1], want) {
+		t.Errorf("calls = %q", *calls)
+	}
+}
+
 func TestUpsertCommentErrors(t *testing.T) {
 	down := errors.New("gh: HTTP 502")
 	stubGHAPI(t, "", down, "", nil)
