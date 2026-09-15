@@ -66,7 +66,7 @@ Participants: operator, orch run (engine Scheduler), state (orch.db), budget, wo
 10. Reap: release slots and lock; providers Parse output; Classify failure; RecordSpend.
 11. Success: CommitPending → Push → Remove worktree → gh CreatePR → SetTaskPR (ci_status pending).
     Failure: DecideRetry → retry (back to todo, backoff, escalate model on 3rd attempt) or block (+ notify Blocked).
-12. CIPoller: gh pr checks → green: done (and merge if auto_merge) ; red: redispatch with CI logs (.orch-ci-feedback.md) up to ci_max_retries. A PR merged outside orch finishes the task; one closed without merging blocks it (gh pr view --json state).
+12. CIPoller: gh pr checks → green: done (and merge if auto_merge) ; red: redispatch with CI logs (.orch-ci-feedback.md) up to ci_max_retries. A PR merged outside orch finishes the task; one closed without merging blocks it (gh pr view --json state). The PR state is read only when CI cannot settle it: at once for a red or conflicting PR, at most every 5 minutes for one pending or unreadable, never for a green one.
 13. Queue empty → sprint_done event; SIGINT drains and exits 130.
 
 ## 4. Task lifecycle (internal/model/status.go — legal transitions)

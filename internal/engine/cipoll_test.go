@@ -26,9 +26,11 @@ type fakeVCS struct {
 	// prState is what PRState answers per PR URL; a URL not in it is open.
 	prState    map[string]vcs.PRState
 	prStateErr error
-	logs       string
-	logsErr    error
-	mergeErr   error
+	// prStateCalls counts PRState reads, for the cadence test.
+	prStateCalls int
+	logs         string
+	logsErr      error
+	mergeErr     error
 	// merged records every MergePR call, so "did not merge" is assertable.
 	merged []string
 
@@ -65,6 +67,7 @@ func (v *fakeVCS) CIStatus(prURL string) (vcs.CIState, error) {
 func (v *fakeVCS) PRState(prURL string) (vcs.PRState, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.prStateCalls++
 	if v.prStateErr != nil {
 		return "", v.prStateErr
 	}
@@ -788,8 +791,12 @@ func TestCIConflictBlocksTheTask(t *testing.T) {
 	if got := f.backend.eventTypes("C-1"); !equalStrings(got, []string{EventCIBlocked}) {
 		t.Errorf("events = %v, want ci_blocked", got)
 	}
-	if got := n.ciBlockedList(); len(got) != 1 {
-		t.Errorf("announced %d CI blocks, want 1", len(got))
+	// Announced with its own reason, not as "blocked after N CI attempts".
+	if got := n.ciBlockedList(); len(got) != 0 {
+		t.Errorf("announced a conflict as a CI retry block: %v", got)
+	}
+	if got := n.blockedList(); len(got) != 1 || !strings.Contains(got[0], "conflicts with its base branch") {
+		t.Errorf("block announcements = %v, want one naming the conflict", got)
 	}
 }
 
@@ -877,8 +884,12 @@ func TestClosedPRBlocksTheTask(t *testing.T) {
 		events[0].extra["reason"] != "PR closed without merging: "+url {
 		t.Errorf("events = %+v, want ci_blocked with the closed PR as its reason", events)
 	}
-	if got := n.ciBlockedList(); len(got) != 1 {
-		t.Errorf("announced %d CI blocks, want 1", len(got))
+	// The webhook says why: a closed PR, not "blocked after N CI attempts".
+	if got := n.ciBlockedList(); len(got) != 0 {
+		t.Errorf("announced a closed PR as a CI retry block: %v", got)
+	}
+	if got := n.blockedList(); len(got) != 1 || !strings.Contains(got[0], "PR closed without merging: "+url) {
+		t.Errorf("block announcements = %v, want one naming the closed PR", got)
 	}
 }
 
@@ -896,6 +907,55 @@ func TestClosedPRBlocksATaskTheAgentMarkedDone(t *testing.T) {
 	}
 	if got, _ := strict.TaskStatus(context.Background(), "C-1"); got != model.StatusBlocked {
 		t.Errorf("backend status = %q, want blocked", got)
+	}
+}
+
+// TestPRStateIsReadOnlyWhenCIcannotSettleIt: a green PR is finished by CI
+// alone, a pending one is asked about at most every prStateEvery, and a red
+// one is asked at once, before any re-dispatch against a PR that may be
+// merged. Asking on every poll doubled the gh calls.
+func TestPRStateIsReadOnlyWhenCIcannotSettleIt(t *testing.T) {
+	const url = "https://github.com/o/r/pull/1"
+
+	green := newCIFixture(t, pendingRow("C-1", url, 0))
+	green.vcs.status[url] = vcs.CISuccess
+	if _, err := green.poller.Poll(context.Background(), green.s); err != nil {
+		t.Fatal(err)
+	}
+	if green.vcs.prStateCalls != 0 {
+		t.Errorf("a green PR read its state %d times, want 0", green.vcs.prStateCalls)
+	}
+
+	f := newCIFixture(t, pendingRow("C-1", url, 0))
+	f.vcs.status[url] = vcs.CIPending
+	now := f.s.now()
+	f.s.now = func() time.Time { return now }
+	poll := func(after time.Duration) {
+		t.Helper()
+		now = now.Add(after)
+		if _, err := f.poller.Poll(context.Background(), f.s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	poll(0)
+	poll(time.Minute)
+	poll(time.Minute)
+	if f.vcs.prStateCalls != 1 {
+		t.Errorf("a pending PR read its state %d times in 2 minutes, want 1", f.vcs.prStateCalls)
+	}
+	poll(prStateEvery)
+	if f.vcs.prStateCalls != 2 {
+		t.Errorf("after %s, state reads = %d, want 2", prStateEvery, f.vcs.prStateCalls)
+	}
+
+	f.vcs.status[url] = vcs.CIFailure
+	f.vcs.prState = map[string]vcs.PRState{url: vcs.PRMerged}
+	poll(time.Minute)
+	if f.vcs.prStateCalls != 3 {
+		t.Errorf("a red PR within the window read its state %d times in total, want 3", f.vcs.prStateCalls)
+	}
+	if len(f.s.RetryQueue()) != 0 {
+		t.Error("re-dispatched against a PR that was merged")
 	}
 }
 
