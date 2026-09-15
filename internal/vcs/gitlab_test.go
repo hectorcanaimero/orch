@@ -182,6 +182,15 @@ func TestGitLabCIStatusSkippedMapsToSuccess(t *testing.T) {
 	}
 }
 
+// TestGitLabPRStateIsUnsupported: without a real glab capture the MR state
+// is not parsed, and the poller keeps its old behaviour on this error.
+func TestGitLabPRStateIsUnsupported(t *testing.T) {
+	_, err := NewGitLabProvider("gitlab.com").PRState("https://gitlab.com/o/r/-/merge_requests/1")
+	if !errors.Is(err, ErrPRStateUnsupported) {
+		t.Errorf("err = %v, want ErrPRStateUnsupported", err)
+	}
+}
+
 // ---- iidFromURL -----------------------------------------------------------
 
 func TestIIDFromURLExtractsIID(t *testing.T) {

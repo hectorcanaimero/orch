@@ -310,6 +310,20 @@ func TestInferEntry(t *testing.T) {
 		{name: "an explicit tier", key: "codex/gpt", tier: model.TierPremium,
 			backend: model.BackendCodex, cliModel: "gpt", wantTier: model.TierPremium},
 
+		// #266: the claude CLI rejects `sonnet-5` with a 404; the family
+		// people write maps to the id it accepts.
+		{name: "a claude family without its prefix", key: "claude/sonnet-5",
+			backend: model.BackendClaude, cliModel: "claude-sonnet-5", wantTier: model.TierStandard},
+		{name: "a dated claude id without its prefix", key: "claude/haiku-4-5-20251001",
+			backend: model.BackendClaude, cliModel: "claude-haiku-4-5-20251001", wantTier: model.TierStandard},
+		{name: "a claude alias passes through", key: "claude/opus",
+			backend: model.BackendClaude, cliModel: "opus", wantTier: model.TierStandard},
+		{name: "a full claude id passes through", key: "claude/claude-fable-5-1",
+			backend: model.BackendClaude, cliModel: "claude-fable-5-1", wantTier: model.TierStandard},
+		// Nothing to map it to: written as is, and CLIModelWarning says so.
+		{name: "an unknown claude model is left alone", key: "claude/sonnet-9",
+			backend: model.BackendClaude, cliModel: "sonnet-9", wantTier: model.TierStandard},
+
 		// A wrong route is worse than no route: it dispatches somewhere.
 		{name: "a bare model name", key: "claude-sonnet-4-6", wantErr: true},
 		{name: "an unknown backend", key: "openai/gpt-4", wantErr: true},
@@ -336,6 +350,70 @@ func TestInferEntry(t *testing.T) {
 				t.Errorf("is_premium = %v for tier %s", got.IsPremium, got.Tier)
 			}
 		})
+	}
+}
+
+func TestCLIModelWarning(t *testing.T) {
+	claude := func(m string) model.RouteEntry {
+		return model.RouteEntry{Backend: model.BackendClaude, CLIModel: m}
+	}
+	for _, m := range []string{"sonnet", "claude-sonnet-5", "claude-haiku-4-5-20251001"} {
+		if w := CLIModelWarning("claude/x", claude(m)); w != "" {
+			t.Errorf("known id %q warned: %s", m, w)
+		}
+	}
+	// No list for codex (or opencode, gemini, agy): never warned about.
+	if w := CLIModelWarning("codex/x", model.RouteEntry{Backend: model.BackendCodex, CLIModel: "whatever"}); w != "" {
+		t.Errorf("codex warned: %s", w)
+	}
+
+	w := CLIModelWarning("claude/sonnet-5", claude("sonnet-5"))
+	want := "route 'claude/sonnet-5' has cli_model 'sonnet-5', which is not a known claude model id " +
+		"and will likely fail at dispatch — set it to 'claude-sonnet-5' in model_router.yaml"
+	if w != want {
+		t.Errorf("got  %q\nwant %q", w, want)
+	}
+	// Nothing to suggest: the known ids are listed instead.
+	if w := CLIModelWarning("claude/sonnet-9", claude("sonnet-9")); !strings.Contains(w, "'sonnet-9'") ||
+		!strings.Contains(w, "one of opus, sonnet, haiku, claude-fable-5-1") {
+		t.Errorf("got %q", w)
+	}
+}
+
+func TestCLIModelWarningsCoverOnlyRoutesTasksUse(t *testing.T) {
+	r := Router{
+		"claude/b": {Backend: model.BackendClaude, CLIModel: "b"},
+		"claude/a": {Backend: model.BackendClaude, CLIModel: "a"},
+		"claude/z": {Backend: model.BackendClaude, CLIModel: "z"}, // unused
+		"claude/s": {Backend: model.BackendClaude, CLIModel: "sonnet"},
+	}
+	tasks := []model.Task{{Model: "claude/b"}, {Model: "claude/a"}, {Model: "claude/b"},
+		{Model: "claude/s"}, {Model: "claude/unrouted"}}
+	got := r.CLIModelWarnings(tasks)
+	if len(got) != 2 || !strings.HasPrefix(got[0], "route 'claude/a'") || !strings.HasPrefix(got[1], "route 'claude/b'") {
+		t.Errorf("got %q, want one warning each for claude/a then claude/b", got)
+	}
+}
+
+// The packaged router must not route to a claude id orch itself would warn
+// about — `orch init` users would see a warning on day one. The templates get
+// the same check in internal/templates.
+func TestEveryPackagedClaudeModelIsKnown(t *testing.T) {
+	r, err := Load(filepath.Join("..", "scaffold", "defaults", "model_router.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, key := range r.Keys() {
+		e := r[key]
+		if w := CLIModelWarning(key, e); w != "" {
+			t.Error(w)
+		}
+		if e.FallbackCLIModel != nil {
+			e.CLIModel = *e.FallbackCLIModel
+			if w := CLIModelWarning(key+" (fallback)", e); w != "" {
+				t.Error(w)
+			}
+		}
 	}
 }
 

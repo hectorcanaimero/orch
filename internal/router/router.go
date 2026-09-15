@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -239,7 +240,10 @@ var ErrCannotInfer = errors.New("cannot infer a route")
 
 // InferEntry guesses a route from a `<backend>/<cli_model>` key.
 //
-// `backend` and `cli_model` fall out of the key. `tier` does not: it is a
+// `backend` and `cli_model` fall out of the key, the latter mapped to an id the
+// CLI accepts where orch knows the backend's ids (`claude/sonnet-5` →
+// `claude-sonnet-5`). A model it cannot map is kept as written; callers show
+// CLIModelWarning for it. `tier` does not: it is a
 // business decision about cost and capability that no model name reveals, so
 // it defaults to standard — non-premium, and therefore not tripping the semi
 // gate. Whatever writes these must tell the operator to review the tiers.
@@ -257,10 +261,85 @@ func InferEntry(key string, defaultTier model.Tier) (model.RouteEntry, error) {
 	}
 	return model.RouteEntry{
 		Backend:   model.Backend(backend),
-		CLIModel:  cliModel,
+		CLIModel:  knownCLIModel(model.Backend(backend), cliModel),
 		Tier:      defaultTier,
 		IsPremium: defaultTier == model.TierPremium,
 	}, nil
+}
+
+// knownCLIModels lists, per backend, the model ids its CLI accepts — as far as
+// orch knows. It exists because of #266: `claude/sonnet-5` inferred
+// `cli_model: sonnet-5`, which the claude CLI rejects with a 404, and every
+// task using it died at dispatch while validate and doctor were green.
+//
+// Only claude is listed. The repo holds no reliable list for codex, opencode,
+// gemini or agy: their CLIs take provider-prefixed or gateway-specific ids that
+// change release to release, so checking them would only raise false warnings.
+// A backend missing from this map is never mapped or warned about.
+//
+// Keep it current when a model ships. An id missing here costs a warning, not a
+// failed dispatch. TestEveryPackagedClaudeModelIsKnown (here) and
+// TestEveryTemplateModelIsInferable (internal/templates) fail if the packaged
+// router or a template routes to one that is not listed.
+var knownCLIModels = map[model.Backend][]string{
+	model.BackendClaude: {
+		// Aliases the CLI resolves to the current model of the family.
+		"opus", "sonnet", "haiku",
+		// Current ids.
+		"claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+		// Earlier ids the packaged model_router.yaml and the templates route to.
+		"claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
+		"claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5",
+	},
+}
+
+// knownCLIModel maps the model half of a route key to an id the backend's CLI
+// accepts: a known id or alias is kept, and a claude family written without
+// its `claude-` prefix (`sonnet-5`) gains it. Anything else comes back
+// unchanged, for CLIModelWarning to flag.
+func knownCLIModel(backend model.Backend, name string) string {
+	if backend == model.BackendClaude && slices.Contains(knownCLIModels[backend], "claude-"+name) {
+		return "claude-" + name
+	}
+	return name
+}
+
+// CLIModelWarning describes a route whose cli_model is not a known id for its
+// backend, or returns "" when it is known or the backend has no list.
+//
+// A warning and not an error: the list is orch's knowledge, not the CLI's, and
+// a model newer than this binary must still dispatch. No network call either —
+// preflight stays offline.
+func CLIModelWarning(key string, e model.RouteEntry) string {
+	known, listed := knownCLIModels[e.Backend]
+	if !listed || slices.Contains(known, e.CLIModel) {
+		return ""
+	}
+	fix := fmt.Sprintf("one of %s", strings.Join(known, ", "))
+	if mapped := knownCLIModel(e.Backend, e.CLIModel); mapped != e.CLIModel {
+		fix = pyfmt.Quote(mapped)
+	}
+	return fmt.Sprintf("route %s has cli_model %s, which is not a known %s model id "+
+		"and will likely fail at dispatch — set it to %s in model_router.yaml",
+		pyfmt.Quote(key), pyfmt.Quote(e.CLIModel), e.Backend, fix)
+}
+
+// CLIModelWarnings returns CLIModelWarning for every route the tasks use,
+// once per route, sorted by key. Routes no task uses are not reported.
+func (r Router) CLIModelWarnings(tasks []model.Task) []string {
+	used := Router{}
+	for _, t := range tasks {
+		if e, ok := r[t.Model]; ok {
+			used[t.Model] = e
+		}
+	}
+	var out []string
+	for _, key := range used.Keys() {
+		if w := CLIModelWarning(key, used[key]); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // AddMissing appends inferred routes for every model in `keys` the file does

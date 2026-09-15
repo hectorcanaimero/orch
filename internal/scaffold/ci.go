@@ -10,6 +10,21 @@ import (
 // defaultTestCommand is the packaged config's `github.test_command`.
 const defaultTestCommand = "pytest"
 
+var reBaseBranch = regexp.MustCompile(`(?m)^\s*base_branch:[ \t]*([^#\s]+)`)
+
+// baseBranch is config.yaml's `dispatch.base_branch` as this scaffold wrote
+// it, "" when it has none.
+func (w *writer) baseBranch() string {
+	raw, err := os.ReadFile(w.path(filepath.Join(".orchestrator", "config.yaml"))) // #nosec G304 -- the file this scaffold just wrote
+	if err != nil {
+		return ""
+	}
+	if m := reBaseBranch.FindSubmatch(raw); m != nil {
+		return strings.Trim(string(m[1]), `"'`)
+	}
+	return ""
+}
+
 var reTestCommand = regexp.MustCompile(`(?m)^(\s*test_command:[ \t]*)([^#\n]*?)[ \t]*(#.*)?$`)
 
 // testCommand is config.yaml's `github.test_command`, after replacing the
