@@ -415,13 +415,15 @@ func TestSDDAddsTheOpenspecLayout(t *testing.T) {
 
 // defaultsDivergedFromPython lists packaged defaults that are deliberately no
 // longer identical to the last Python release's, each with the reason.
-// Changing a default is allowed; doing it without saying so here is
-// not, because a project scaffolded by the last Python release and one
-// scaffolded by this binary must not differ by accident.
+// Changing a default is allowed; doing it without saying so here is not,
+// because a project scaffolded by the last Python release and one scaffolded
+// by this binary must not differ by accident.
 var defaultsDivergedFromPython = map[string]string{
 	"config.yaml": "#267: the `findings:` block documented `orch findings publish`, which the Go binary " +
 		"does not have, and made config.Load warn about the file init had just written; " +
-		"it is replaced by `report_findings:`, the dogfooding opt-in that exists",
+		"it is replaced by `report_findings:`, the dogfooding opt-in that exists. " +
+		"#249: the dispatch comment named .worktrees/<task-id>/ inside the project; " +
+		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/",
 }
 
 // The three packaged defaults started as copies of Python's, so they get the

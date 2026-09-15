@@ -118,9 +118,9 @@ dashboard:
 
 # Sprint F-2 — git worktree isolation per task.
 # When worktree_mode is true, each dispatched task runs in a dedicated
-# git worktree (.worktrees/<task-id>/) on branch orch/<task-id>, branched
-# off base_branch. On agent success the branch is pushed to origin with
-# --force-with-lease. On failure the branch is NOT pushed. The worktree
+# git worktree (../<project>.worktrees/<task-id>/, next to the project, not
+# inside it) on branch orch/<task-id>, branched off base_branch. On agent
+# success the branch is pushed to origin with --force-with-lease. On failure the branch is NOT pushed. The worktree
 # directory is always cleaned up after the task exits (success or failure).
 dispatch:
   worktree_mode: true    # on by default — set to false to run agents in-place

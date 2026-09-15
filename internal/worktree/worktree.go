@@ -92,10 +92,41 @@ func NewManager(root string, pushEnabled bool) *Manager {
 	}
 }
 
+// dirSuffix names the directory holding a project's task worktrees: it sits
+// NEXT TO the project, as `<project>.worktrees/`, never inside it. Inside the
+// checkout, a worktree had the project's own node_modules and
+// pnpm-workspace.yaml among its ancestors, and Node, TypeScript and pnpm all
+// walk up to find them (#249).
+const dirSuffix = ".worktrees"
+
+// Dir returns the directory holding root's task worktrees:
+// `/work/app` → `/work/app.worktrees`.
+func Dir(root string) string { return filepath.Clean(root) + dirSuffix }
+
+// LegacyDir is where orch before #249 put them, `<project>/.worktrees`. Only
+// read, to clean up and report what an older run left behind.
+func LegacyDir(root string) string { return filepath.Join(root, dirSuffix) }
+
 // WorktreePath returns the on-disk path for taskID's worktree, whether or
 // not it currently exists.
 func (m *Manager) WorktreePath(taskID string) string {
-	return filepath.Join(m.root, ".worktrees", taskID)
+	return filepath.Join(Dir(m.root), taskID)
+}
+
+// worktreesDir creates Dir(m.root), refusing the two layouts that have no
+// usable sibling: a project at the filesystem root, whose sibling would be
+// inside it again, and a project named `*.worktrees`, which would read as
+// another project's worktree directory to config.ResolvePaths.
+func (m *Manager) worktreesDir() (string, error) {
+	dir := Dir(m.root)
+	if filepath.Dir(m.root) == m.root || strings.HasSuffix(filepath.Base(m.root), dirSuffix) {
+		return "", fmt.Errorf("worktree: the project %s has no sibling directory for its worktrees (%s); "+
+			"move or rename the project, or set dispatch.worktree_mode: false", m.root, dir)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("worktree: create %s, the directory next to the project that holds its worktrees: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // BranchName returns the branch a task's worktree is checked out on.

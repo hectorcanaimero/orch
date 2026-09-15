@@ -20,7 +20,7 @@ Real import edges (non-cli):
 - publish → publish/snapshot ; report → publish/snapshot
 - publish/snapshot → graph, model, project, providers, state
 - project → model, state
-- doctor → budget, model, router, state, vcs
+- doctor → budget, model, router, state, vcs, worktree
 - explain → budget, graph, model, pyfmt
 - export → graph, model          (orch export multica)
 - scaffold → model, router, templates   (orch init)

@@ -257,7 +257,8 @@ orch run --no-push
 **130**. Um **segundo** Ctrl-C manda SIGKILL para todos os grupos de
 processos filhos imediatamente.
 
-**Modo worktree**: cada task ganha seu próprio git worktree e branch;
+**Modo worktree**: cada task ganha seu próprio git worktree e branch, em
+`<projeto>.worktrees/<task-id>/` ao lado do projeto (veja `CONFIG.md`);
 quando tem sucesso, `orch` faz commit, push, e — se `vcs.auto_pr`
 estiver ativo — abre um PR para `dispatch.base_branch`, e deixa a task
 `in-progress` para o poller de CI terminar. Um check de CI verde a marca
