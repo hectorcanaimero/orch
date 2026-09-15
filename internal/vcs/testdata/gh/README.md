@@ -31,6 +31,23 @@ being pinned, and it is `gh`'s to change.
 | `pr-view-state-closed.json` | the same for #50, the one PR of this repository closed without merging, `"CLOSED"` |
 | `pr-view-state-open.json` | the same for #281 while it was open, `"OPEN"`: the capture is a snapshot, so the PR merging later does not change it |
 | `issue-list.json` | `gh issue list --state all --limit 3 --json number,title,body,labels,state,url,createdAt` — three real issues of this repository |
+| `issue-comments-no-marker.json` | `gh api --paginate repos/hectorcanaimero/orch/issues/279/comments` — merged PR #279: the Gemini reviewer's comment (`<!-- orch:gemini-review -->`) and two replies, none with `<!-- orch:ci-review -->` |
+| `issue-comments-with-marker.json` | `gh api --paginate repos/hectorcanaimero/orch/issues/290/comments`, captured right after a real `orch ci review --provider claude --post --pr 290` had created its comment there and a second run had edited it. Holds that `<!-- orch:ci-review -->` comment (id `5678662484`) and the Gemini reviewer's |
+
+`issue-comments-no-marker.json` is the list `vcs.UpsertComment` reads. It holds
+one marked comment, so it serves both paths: looked up with the ci-review marker
+it finds none and POSTs, and with the Gemini reviewer's marker it finds comment
+`5677503661` and PATCHes it.
+
+`issue-comments-with-marker.json` is from an **open** PR, since no merged PR had an `orch ci review`
+comment yet. Both of its comments may be edited later on GitHub, but the
+file keeps what gh returned at capture time.
+
+**Redacted in both files:** review findings quoted in the comment bodies named
+`/home/u/.local/bin/orch`, a made-up path from a test, and the checklist's
+`/home/<name>` pattern. Those strings were rewritten to `<home>/` and
+`<home dir>` so the files never match the personal-path check. Nothing else was
+touched, and no test reads those bodies.
 
 `issue-list.json` is captured from **closed** issues, and says `"state":
 "CLOSED"` three times — not because `orch sync issues` reads closed issues by

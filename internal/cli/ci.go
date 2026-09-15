@@ -23,14 +23,16 @@ var workflowPath = filepath.Join(".github", "workflows", "orch-ci.yml")
 func newCICmd(flags *projectFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ci",
-		Short: "Detect the repository's stack and set up its CI pipeline",
+		Short: "Set up the repository's CI pipeline, and review pull requests inside it",
 		Long: "Detect what the repository is built with and set up the GitHub Actions\n" +
 			"pipeline orch's auto-PR loop waits on.\n\n" +
 			"Detection reads files and runs nothing: lockfiles name the package manager,\n" +
 			"scripts and tool config sections name the checks. A check the repository does\n" +
-			"not have is left out rather than guessed.",
+			"not have is left out rather than guessed.\n\n" +
+			"`orch ci review` runs inside that pipeline: an AI review of the pull\n" +
+			"request with a coding-agent CLI (see its --help).",
 	}
-	cmd.AddCommand(newCIDetectCmd(flags), newCISetupCmd(flags))
+	cmd.AddCommand(newCIDetectCmd(flags), newCISetupCmd(flags), newCIReviewCmd())
 	return cmd
 }
 
