@@ -161,6 +161,9 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 			// run left behind, so a crashed orch's rows do not hold tasks
 			// in-progress forever.
 			runner.Dispatches = backend
+			// And adopts statuses a person or a failed write changed in the
+			// database while this run held another view (#255).
+			runner.Statuses = engine.StateRecorder{Backend: backend}
 
 			// The CI poller only has something to watch when a PR can exist.
 			if provider != nil {

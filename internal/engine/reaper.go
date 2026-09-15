@@ -193,7 +193,10 @@ func (s *Scheduler) tidyWorktree(ctx context.Context, entry *InFlight, out Outco
 				noPR = "the agent exited cleanly but its work was not pushed, so no PR was opened: " + err.Error()
 			}
 		} else if s.prExpected() {
-			noPR = s.openPR(ctx, entry)
+			// A CI retry's PR is kept until a push reaches it, so a retry
+			// whose agent failed first still finds it on the next attempt.
+			noPR = s.openPR(ctx, entry, s.ciRetryPR[id])
+			delete(s.ciRetryPR, id)
 			prOpened = noPR == ""
 		}
 	}
@@ -211,12 +214,14 @@ func (s *Scheduler) prExpected() bool {
 }
 
 // openPR opens a pull request for a task whose work is pushed, and records
-// the URL so the CI poller starts watching it.
+// the URL so the CI poller starts watching it. A CI retry passes the PR it
+// pushed to as existing: that PR is watched again instead of opening another,
+// which the forge refuses for a branch that already has one (#276).
 //
 // Returns "" when a PR is now open and being watched, otherwise why not.
 // Every failure counts: without a recorded PR URL nothing would ever poll
 // it, so a task that thinks it is waiting on CI would wait forever.
-func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) string {
+func (s *Scheduler) openPR(ctx context.Context, entry *InFlight, existing string) string {
 	task := entry.Task
 
 	spec := task.SpecRef
@@ -229,7 +234,11 @@ func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) string {
 	}
 	body := strings.TrimSpace(fmt.Sprintf("Task: `%s`\nSpec: %s\n\n%s", task.ID, spec, task.Reason))
 
-	prURL, err := s.VCS.CreatePR(s.Worktree.BranchName(task.ID), s.Opts.BaseBranch, title, body)
+	prURL, created := existing, existing == ""
+	var err error
+	if created {
+		prURL, err = s.VCS.CreatePR(s.Worktree.BranchName(task.ID), s.Opts.BaseBranch, title, body)
+	}
 	if err != nil {
 		s.logger().Error("opening the PR failed", "task", task.ID, "err", err)
 		return "the agent exited cleanly but opening the PR failed: " + err.Error()
@@ -252,6 +261,10 @@ func (s *Scheduler) openPR(ctx context.Context, entry *InFlight) string {
 		s.logger().Error("recording the PR failed; CI will not be polled",
 			"task", task.ID, "pr", prURL, "err", err)
 		return "a PR was opened but recording it failed (" + prURL + "): " + err.Error()
+	}
+	if !created {
+		s.logger().Info("the CI retry pushed to its PR; waiting on CI again", "task", task.ID, "pr", prURL)
+		return ""
 	}
 	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventPRCreated, task.ID,
 		string(entry.Route.Backend), map[string]any{"pr_url": prURL}); err != nil {
@@ -390,8 +403,12 @@ func (s *Scheduler) blockTask(ctx context.Context, entry *InFlight, reason strin
 	if err := s.Queue.MarkBlocked(entry.Task.ID); err != nil {
 		s.logger().Error("mark blocked failed", "task", entry.Task.ID, "err", err)
 	}
-	if err := s.transition(ctx, entry.Task.ID, model.StatusBlocked, reason); err != nil {
-		s.logger().Error("recording blocked failed", "task", entry.Task.ID, "err", err)
+	// Through todo when needed: the agent may already have reported the task
+	// done, and a PR that could not be opened still blocks it (#276).
+	if s.Backend != nil {
+		if err := transitionThroughTodo(ctx, s.Backend, entry.Task.ID, model.StatusBlocked, reason); err != nil {
+			s.logger().Error("recording blocked failed", "task", entry.Task.ID, "err", err)
+		}
 	}
 	// Last, and after the state is already written: the webhook is a nudge,
 	// and a slow one must not sit between a task being blocked and the

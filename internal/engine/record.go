@@ -245,5 +245,7 @@ func (r StateRecorder) TaskComments(ctx context.Context, taskID string) ([]json.
 
 // Transition moves a task, recording who moved it and why.
 func (r StateRecorder) Transition(ctx context.Context, taskID string, to model.Status, note string) error {
-	return r.Backend.Transition(ctx, taskID, to, state.Note{Author: "orch", Body: note})
+	// KeepPR: the engine's only move to todo is the CI retry, which works on
+	// the PR the task already has (#276).
+	return r.Backend.Transition(ctx, taskID, to, state.Note{Author: "orch", Body: note, KeepPR: true})
 }

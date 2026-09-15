@@ -67,6 +67,11 @@ type Note struct {
 	// At is the timestamp. Zero means "now", resolved by the backend so a
 	// caller never has to reach for a clock.
 	At time.Time
+	// KeepPR keeps the task's PR, CI status and CI attempts on a move to
+	// todo. Only the engine sets it: its CI retry reopens the task to work on
+	// the SAME PR (#276). Everyone else resetting a task means the old PR is
+	// no longer its work, and the move clears it (#255).
+	KeepPR bool
 }
 
 // Dispatch is one in-flight subprocess.

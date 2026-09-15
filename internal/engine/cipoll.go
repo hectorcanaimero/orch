@@ -398,6 +398,7 @@ func (p *CIPoller) redispatch(ctx context.Context, s *Scheduler, row state.TaskR
 		// fix in front of the agent while the logs are fresh.
 		EarliestAt: s.now(),
 	})
+	s.ciRetryPR[row.ID] = row.PRURL
 	p.emit(ctx, s, EventCIRedispatch, row, map[string]any{"pr_url": row.PRURL})
 	return true
 }

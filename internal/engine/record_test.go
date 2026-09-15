@@ -407,3 +407,38 @@ func numericEquals(got any, want float64) bool {
 		return false
 	}
 }
+
+// TestCIRetryReopenKeepsThePR pins #276. The CI poller reopens a done task to
+// todo to re-dispatch it against the PR it already has. When that reopen also
+// dropped the PR, the retry's push could not open a second PR for the same
+// branch, orch concluded "no PR was opened", reset the attempt counter that
+// bounds CI retries, and left the run nothing to wait on, so it exited.
+func TestCIRetryReopenKeepsThePR(t *testing.T) {
+	ctx := context.Background()
+	b := openBackend(t)
+	rec := StateRecorder{Backend: b}
+	const pr = "https://github.com/o/r/pull/33"
+
+	for _, to := range []model.Status{model.StatusInProgress, model.StatusDone} {
+		if err := rec.Transition(ctx, "B-020", to, "setup"); err != nil {
+			t.Fatalf("setup %s: %v", to, err)
+		}
+	}
+	if err := b.SetTaskPR(ctx, "B-020", pr); err != nil {
+		t.Fatalf("SetTaskPR: %v", err)
+	}
+	if _, err := b.IncrementCIAttempts(ctx, "B-020"); err != nil {
+		t.Fatalf("IncrementCIAttempts: %v", err)
+	}
+
+	if err := rec.Transition(ctx, "B-020", model.StatusTodo, "CI failed; re-dispatching with logs"); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got, err := b.Task(ctx, "B-020")
+	if err != nil {
+		t.Fatalf("Task: %v", err)
+	}
+	if got.PRURL != pr || got.CIAttempts != 1 {
+		t.Errorf("after the CI reopen: PRURL=%q CIAttempts=%d, want %q and 1", got.PRURL, got.CIAttempts, pr)
+	}
+}

@@ -182,6 +182,61 @@ func TestRunLoopStopsWhenEverythingIsBlocked(t *testing.T) {
 	}
 }
 
+// TestRunLoopAdoptsStatusesChangedOutsideIt pins #255 and the exit in #276.
+// This run holds C-1 as blocked while the database has it done: a failed
+// bookkeeping write, or a person fixing it by hand. With nothing else ready
+// the loop used to exit and leave C-2, whose dependency is done, undispatched.
+func TestRunLoopAdoptsStatusesChangedOutsideIt(t *testing.T) {
+	f := newRunnerFixture(t,
+		[]model.Task{
+			{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusBlocked, EstimateHours: 1},
+			task("C-2", 1, "claude/opus", "C-1"),
+		},
+		map[string]fakeResponse{"C-2": okResponse()},
+		SchedulerOptions{})
+	f.r.Statuses = statusMap{"C-1": model.StatusDone}
+
+	if code := f.runWithin(t, 30*time.Second); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if got, _ := f.s.Queue.Status("C-2"); got != model.StatusDone {
+		t.Errorf("C-2 = %q, want done: its dependency is done in the database", got)
+	}
+}
+
+// TestAdoptingStatusesSkipsTasksUnderReview: a task waiting on its PR's CI is
+// done in the database (the agent said so) but not accepted yet. Adopting
+// that would release its dependents onto unreviewed work (#230).
+func TestAdoptingStatusesSkipsTasksUnderReview(t *testing.T) {
+	url := "https://github.com/o/r/pull/1"
+	f := newRunnerFixture(t,
+		[]model.Task{{ID: "C-1", Phase: 1, Title: "t", Model: "claude/opus", Status: model.StatusInProgress, EstimateHours: 1}},
+		nil, SchedulerOptions{})
+	f.r.Statuses = statusMap{"C-1": model.StatusDone}
+	f.r.CI = &CIPoller{
+		Provider: &fakeVCS{status: map[string]vcs.CIState{url: vcs.CIPending}},
+		Backend:  &fakeCIBackend{rows: []state.TaskRuntime{pendingRow("C-1", url, 0)}, counters: map[string]int{}},
+	}
+
+	if n := f.r.adoptStatuses(context.Background()); n != 0 {
+		t.Errorf("adopted %d statuses, want 0", n)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusInProgress {
+		t.Errorf("C-1 = %q, want in-progress until its CI passes", got)
+	}
+}
+
+// statusMap is a StatusReader over a fixed map; a task not in it is unknown.
+type statusMap map[string]model.Status
+
+func (m statusMap) TaskStatus(_ context.Context, id string) (model.Status, error) {
+	st, ok := m[id]
+	if !ok {
+		return "", state.ErrTaskNotFound
+	}
+	return st, nil
+}
+
 // TestRunLoopWaitsOutARetry: the loop must not decide the work is done while
 // a retry is sitting in the queue on a backoff.
 func TestRunLoopWaitsOutARetry(t *testing.T) {

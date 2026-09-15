@@ -896,6 +896,50 @@ func TestSuccessfulPushOpensAPRAndWaitsForCI(t *testing.T) {
 	}
 }
 
+// TestCIRetryPushesToTheExistingPR pins #276. A CI retry pushes its fix to
+// the branch that already has a PR, so asking the forge for a new one fails
+// ("a pull request already exists"). That used to read as "no PR was
+// opened": the task was blocked while its updated PR was still in CI.
+func TestCIRetryPushesToTheExistingPR(t *testing.T) {
+	f, _, v, pr := prFixture(t)
+	const existing = "https://github.com/o/r/pull/3"
+	f.s.ciRetryPR["C-1"] = existing
+	v.createdPR = "" // what gh answers for a branch that already has a PR
+
+	f.runOnce(t)
+
+	if v.created != 0 {
+		t.Errorf("asked the forge for %d new PRs on a CI retry", v.created)
+	}
+	if got := pr.get("C-1"); got != existing {
+		t.Errorf("recorded PR = %q, want the existing %q waiting on CI again", got, existing)
+	}
+	if got, _ := f.s.Queue.Status("C-1"); got != model.StatusInProgress {
+		t.Errorf("status = %q, want it in-progress while the updated PR runs CI", got)
+	}
+	if _, left := f.s.ciRetryPR["C-1"]; left {
+		t.Errorf("the retry's PR is still remembered after the reap")
+	}
+}
+
+// TestBlockingATaskTheAgentMarkedDone pins the second half of #276: the
+// agent reports its task done before orch opens the PR, so when no PR could
+// be opened the block is done -> blocked, which the transition table refuses.
+// The refusal left the database at done while this run had blocked the task.
+func TestBlockingATaskTheAgentMarkedDone(t *testing.T) {
+	f, _, _, _ := prFixture(t)
+	strict := newStrictBackend(map[string]model.Status{"C-1": model.StatusDone})
+	f.s.Backend = strict
+	task, _ := f.s.Queue.Task("C-1")
+
+	if err := f.s.blockTask(context.Background(), &InFlight{Task: task}, "no PR was opened", Outcome{}); err != nil {
+		t.Fatalf("blockTask: %v", err)
+	}
+	if got, _ := strict.TaskStatus(context.Background(), "C-1"); got != model.StatusBlocked {
+		t.Errorf("backend status = %q, want blocked like this run's queue", got)
+	}
+}
+
 // TestNoPRWithoutASuccessfulPush: a PR opened from a branch that never
 // reached the remote cannot be reviewed, and the task would wait on CI that
 // will never run.
