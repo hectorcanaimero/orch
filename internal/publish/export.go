@@ -254,11 +254,12 @@ var dataScriptTag = []byte(`<script src="./` + dataJSName + `"></script>`)
 // by whoever produces the artefact that has a data.js next to it, which is
 // this function.
 //
-// Placed before the first <script>, which in a vite build is the module tag in
-// <head>. Order is belt and braces — a module script is deferred, so a classic
-// one anywhere in the document runs first either way — but "the data is there
+// Placed before the first <script>, which in a vite build is the bundle's
+// `defer` tag in <head> (a classic script, not a module: #293, see
+// web/vite.stakeholder.config.ts). Order is belt and braces — a deferred script
+// runs after every parser-blocking one either way — but "the data is there
 // before the app looks for it" should be visible in the HTML rather than be a
-// fact about module semantics somebody has to know.
+// fact about script loading somebody has to know.
 func injectDataScript(html []byte) ([]byte, error) {
 	at := strings.Index(string(html), "<script")
 	if at < 0 {

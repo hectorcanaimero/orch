@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
@@ -16,9 +16,29 @@ import path from 'path'
 // `publicDir` points at a bundle-local folder (not the operator
 // dashboard's `public/`) so its dev-only example data.json never leaks
 // into the operator SPA's build, and vice versa.
+//
+// The bundle is ONE classic script, not an ES module (#293). `orch publish
+// --to dir` promises a page that renders when a client double-clicks
+// index.html, and Chromium refuses `<script type="module">` and any
+// `crossorigin` request from a file:// page (its origin is null), leaving it
+// blank. So rollup emits an IIFE with no code splitting, and the plugin below
+// takes the module/crossorigin attributes vite always writes off the tags.
+// `defer` keeps what module gave for free: the script runs after #root
+// exists, and after the data.js tag orch publish puts in front of it.
+const classicScript: Plugin = {
+  name: 'orch-classic-script',
+  transformIndexHtml: {
+    order: 'post',
+    handler: (html) =>
+      html
+        .replace(/<script type="module" crossorigin/g, '<script defer')
+        .replace(/ crossorigin(?=[\s>])/g, ''),
+  },
+}
+
 export default defineConfig(() => ({
   base: './',
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), classicScript],
   publicDir: path.resolve(__dirname, './src/stakeholder/public'),
   build: {
     // Settled in G6.3, not a placeholder any more: internal/publish/
@@ -30,8 +50,14 @@ export default defineConfig(() => ({
     // keeps the package compiling before either has run.
     outDir: '../internal/publish/dist/stakeholder',
     emptyOutDir: true,
+    // No modulepreload polyfill: there is nothing to preload in one file.
+    modulePreload: false,
+    // Without this an IIFE build folds the CSS into the JS, injected at run
+    // time: a flash of unstyled page, and font URLs no longer beside the CSS.
+    cssCodeSplit: false,
     rollupOptions: {
       input: path.resolve(__dirname, './stakeholder.html'),
+      output: { format: 'iife' as const, inlineDynamicImports: true },
     },
   },
   resolve: {
