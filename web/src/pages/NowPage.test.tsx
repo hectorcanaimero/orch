@@ -3,7 +3,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Now } from "@/hooks/useNow"
-import { NowPage, formatElapsed } from "@/pages/NowPage"
+import { formatElapsed } from "@/lib/time"
+import { NowPage } from "@/pages/NowPage"
 
 const NOW = Date.parse("2026-09-16T12:00:00Z")
 const state: { now: Now | undefined } = { now: undefined }
