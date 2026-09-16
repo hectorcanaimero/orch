@@ -203,7 +203,9 @@ func TestBudgetSummaryLabelsCostAndListsWaitingTasks(t *testing.T) {
 	reset := now.Add(2 * time.Hour).Format("2006-01-02T15:04:05Z")
 	f := &fakeState{
 		spends: []state.Spend{
-			{Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 900, CostUSD: 0.5, TS: ts, TaskID: "T-1"},
+			// 1400 raw, 500 of them cache reads at 10%: 950 weighted, over the 800 cap.
+			{Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 1400, CacheReadTokens: 500,
+				CostUSD: 0.5, TS: ts, TaskID: "T-1"},
 			{Backend: "codex", Model: "gpt-5", TokensIn: 1_000_000, TS: ts, TaskID: "T-2"},
 			{Backend: "gemini", Model: "gemini-2.5-pro", Estimated: true, TS: ts, TaskID: "T-3"},
 		},
@@ -230,6 +232,10 @@ func TestBudgetSummaryLabelsCostAndListsWaitingTasks(t *testing.T) {
 		t.Fatalf("rows = %+v", got.Rows)
 	}
 	claude, codex, gemini := got.Rows[0], got.Rows[1], got.Rows[2]
+	if claude.TokensUsed != 950 || claude.RawTokensUsed != 1400 {
+		t.Errorf("claude tokens used/raw = %d/%d, want the weighted 950 and the reported 1400",
+			claude.TokensUsed, claude.RawTokensUsed)
+	}
 	if claude.CostSource != "reported" || claude.WindowHours != 5 || claude.ResetAt == nil {
 		t.Errorf("claude = %+v, want reported, a 5h window and a reset (it is capped)", claude)
 	}

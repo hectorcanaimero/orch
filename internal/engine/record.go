@@ -101,15 +101,17 @@ func RecordFinish(ctx context.Context, b state.Backend, runID string, d Dispatch
 	ts := utcSecond(o.StartedAt.Add(o.Duration))
 
 	if err := b.RecordSpend(ctx, state.Spend{
-		TS:        ts,
-		TaskID:    d.Req.TaskID,
-		Backend:   string(d.Req.Route.Backend),
-		Model:     d.Req.Route.CLIModel,
-		TokensIn:  o.Result.TokensIn,
-		TokensOut: o.Result.TokensOut,
-		CostUSD:   o.Result.CostUSD,
-		DurationS: o.Duration.Seconds(),
-		Estimated: o.Result.Estimated,
+		TS:                  ts,
+		TaskID:              d.Req.TaskID,
+		Backend:             string(d.Req.Route.Backend),
+		Model:               d.Req.Route.CLIModel,
+		TokensIn:            o.Result.TokensIn,
+		TokensOut:           o.Result.TokensOut,
+		CacheReadTokens:     o.Result.CacheReadTokens,
+		CacheCreationTokens: o.Result.CacheCreationTokens,
+		CostUSD:             o.Result.CostUSD,
+		DurationS:           o.Duration.Seconds(),
+		Estimated:           o.Result.Estimated,
 	}); err != nil {
 		return fmt.Errorf("record spend for %s: %w", d.Req.TaskID, err)
 	}

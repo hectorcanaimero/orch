@@ -87,15 +87,17 @@ func (c ClaudeProvider) Parse(exitCode int, output []byte) Result {
 	}
 
 	return Result{
-		ExitCode:          exitCode,
-		Success:           success,
-		CostUSD:           cost,
-		TokensIn:          tokensIn,
-		TokensOut:         tokensOut,
-		Stdout:            text,
-		Text:              asString(env["result"]),
-		ErrorMessage:      errMsg,
-		PermissionDenials: claudeDenials(env),
+		ExitCode:            exitCode,
+		Success:             success,
+		CostUSD:             cost,
+		TokensIn:            tokensIn,
+		CacheReadTokens:     usageInt(env, "cache_read_input_tokens"),
+		CacheCreationTokens: usageInt(env, "cache_creation_input_tokens"),
+		TokensOut:           tokensOut,
+		Stdout:              text,
+		Text:                asString(env["result"]),
+		ErrorMessage:        errMsg,
+		PermissionDenials:   claudeDenials(env),
 	}
 }
 
@@ -173,6 +175,16 @@ func claudeCost(env map[string]any) (cost float64, tokensIn, tokensOut int) {
 		toInt(usage["cache_creation_input_tokens"]) +
 		toInt(usage["cache_read_input_tokens"])
 	return cost, tokensIn, toInt(usage["output_tokens"])
+}
+
+// usageInt reads one integer out of the envelope's `usage` object, 0 when
+// either is missing.
+func usageInt(env map[string]any, key string) int {
+	usage, ok := asObject(env["usage"])
+	if !ok {
+		return 0
+	}
+	return toInt(usage[key])
 }
 
 // ExtractCost reports the spend and token counts in a captured claude log,

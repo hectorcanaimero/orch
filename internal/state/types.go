@@ -98,10 +98,16 @@ type Spend struct {
 	TaskID    string
 	Backend   string
 	Model     string
+	// TokensIn is every input token the dispatch processed, cache included.
 	TokensIn  int
 	TokensOut int
-	CostUSD   float64
-	DurationS float64
+	// CacheReadTokens and CacheCreationTokens are the part of TokensIn that
+	// was read from or written to the prompt cache. The budget gate weights
+	// them; everything else reports TokensIn as is.
+	CacheReadTokens     int
+	CacheCreationTokens int
+	CostUSD             float64
+	DurationS           float64
 	// Estimated marks a row whose token counts orch inferred because the
 	// provider reported none. Downstream surfaces flag it so nobody reads
 	// an invented number as telemetry.

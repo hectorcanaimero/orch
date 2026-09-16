@@ -2,6 +2,7 @@ package budget
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -11,12 +12,16 @@ import (
 // from `/api/budgets` today and a rename here is a broken panel, not a
 // refactor.
 type ProviderSnapshot struct {
-	TokensUsed   int     `json:"tokens_used"`
-	TokenBudget  int     `json:"token_budget"`
-	UsagePct     float64 `json:"usage_pct"`
-	ThresholdPct float64 `json:"threshold_pct"`
-	WindowHours  float64 `json:"window_hours"`
-	Capped       bool    `json:"capped"`
+	// TokensUsed is what the gate compares with the cap: cache tokens
+	// weighted (see weightedCacheDelta). RawTokensUsed is the same window
+	// as the CLIs reported it. They differ only when rows carry cache usage.
+	TokensUsed    int     `json:"tokens_used"`
+	RawTokensUsed int     `json:"raw_tokens_used"`
+	TokenBudget   int     `json:"token_budget"`
+	UsagePct      float64 `json:"usage_pct"`
+	ThresholdPct  float64 `json:"threshold_pct"`
+	WindowHours   float64 `json:"window_hours"`
+	Capped        bool    `json:"capped"`
 	// ResetAt is null unless the provider is capped AND has rows in its
 	// window. See the note in Snapshot about why those are not the same
 	// condition as CanDispatch's.
@@ -74,13 +79,14 @@ func (g *Gate) Snapshot(ctx context.Context) (map[string]ProviderSnapshot, error
 		}
 
 		out[provider] = ProviderSnapshot{
-			TokensUsed:   w.tokens,
-			TokenBudget:  pb.TokenBudget,
-			UsagePct:     usagePct,
-			ThresholdPct: pb.ThresholdPct,
-			WindowHours:  pb.WindowHours,
-			Capped:       capped,
-			ResetAt:      resetAt,
+			TokensUsed:    int(math.Round(w.tokens)),
+			RawTokensUsed: w.raw,
+			TokenBudget:   pb.TokenBudget,
+			UsagePct:      usagePct,
+			ThresholdPct:  pb.ThresholdPct,
+			WindowHours:   pb.WindowHours,
+			Capped:        capped,
+			ResetAt:       resetAt,
 		}
 	}
 	return out, nil
