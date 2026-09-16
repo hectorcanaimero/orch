@@ -56,6 +56,11 @@ func TestGeminiParseRealSuccess(t *testing.T) {
 		t.Errorf("cost/tokens = (%v,%d,%d), want all zero",
 			res.CostUSD, res.TokensIn, res.TokensOut)
 	}
+	// Those zeros are "not reported", not "free": the spend row must say so,
+	// or the budget and cost views read a real run as costing nothing.
+	if !res.Estimated {
+		t.Error("Estimated = false; gemini reports no usage, so its zeros are unknown")
+	}
 	// The real capture opens with a tool notice ("Ripgrep is not available…")
 	// and only then the answer. A hand-written fixture would have been the
 	// answer alone, and would have hidden that gemini's stdout is a

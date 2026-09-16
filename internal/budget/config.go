@@ -34,6 +34,7 @@ package budget
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -68,6 +69,13 @@ func (p ProviderBudget) Cap() float64 {
 // an operator turns the guardrail off without deleting the file.
 type Config struct {
 	Providers map[string]ProviderBudget
+
+	// UnreportedDispatchTokens is what a spend row marked Estimated with no
+	// token counts weighs in the window: config.yaml's
+	// `typical_dispatch_tokens`, set by the caller. Such a row is a real
+	// dispatch whose provider reported no usage (gemini, a silent opencode),
+	// and counting it as zero would let that provider run unrationed.
+	UnreportedDispatchTokens int
 }
 
 // Names returns the configured provider names in sorted order.
@@ -170,6 +178,36 @@ func LoadConfig(path, preset string) (*Config, error) {
 		providers[name] = pb
 	}
 	return &Config{Providers: providers}, nil
+}
+
+// ResolvePath is where a project's budgets.yaml lives: `budgets_config` from
+// config.yaml, absolute as written, or relative to the directory config.yaml
+// sits in (`.orchestrator/`, where `orch init` writes it) and then to the
+// project root, where older projects keep it. The first that exists wins;
+// with neither, the config-dir candidate is returned so a message can name
+// where the file is expected.
+//
+// One lookup for `orch run`, `orch doctor`, MCP and the dashboard. They used
+// to resolve it three ways — root only, the process's working directory, and
+// an env-var preset — so the panel could describe a guardrail the run was not
+// enforcing. Empty `budgetsConfig` returns "" (explicitly no guardrail).
+func ResolvePath(root, configYAML, budgetsConfig string) string {
+	if budgetsConfig == "" {
+		return ""
+	}
+	if filepath.IsAbs(budgetsConfig) {
+		return budgetsConfig
+	}
+	candidates := []string{filepath.Join(root, budgetsConfig)}
+	if configYAML != "" {
+		candidates = append([]string{filepath.Join(filepath.Dir(configYAML), budgetsConfig)}, candidates...)
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return candidates[0]
 }
 
 // rawProvider is the on-disk shape, with every field a pointer so a missing

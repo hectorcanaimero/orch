@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -31,10 +32,17 @@ func TestCheckBudgetPresetSkipsWhenNotConfigured(t *testing.T) {
 	}
 }
 
-func TestCheckBudgetPresetSkipsWhenFileMissing(t *testing.T) {
-	checks := CheckBudgetPreset(filepath.Join(t.TempDir(), "missing.yaml"), "default", 1000)
-	if checks[0].Status != StatusSkip {
-		t.Errorf("checks[0] = %+v, want skip", checks[0])
+// A configured budgets_config whose file is missing is the guardrail being
+// silently off — every project `orch init` made before it wrote the file.
+// That is worth a warning, not a skip.
+func TestCheckBudgetPresetWarnsWhenFileMissing(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	checks := CheckBudgetPreset(missing, "default", 1000)
+	if checks[0].Status != StatusWarn {
+		t.Errorf("checks[0] = %+v, want warn", checks[0])
+	}
+	if !strings.Contains(checks[0].Detail, missing) || !strings.Contains(checks[0].Detail, "disabled") {
+		t.Errorf("detail = %q, want the path and that the guardrail is disabled", checks[0].Detail)
 	}
 }
 

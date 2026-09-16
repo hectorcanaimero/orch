@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -226,13 +225,11 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 // Read failures are reported and treated as "no gate" rather than failing the
 // run: a guardrail that cannot be loaded must not be able to stop work, the
 // same fail-open the per-dispatch check takes when the window is unreadable.
+// The path is budget.ResolvePath's, the one doctor and the dashboard read too.
 func newBudgetGate(paths config.Paths, cfg config.Config, backend state.Backend) *budget.Gate {
-	path := cfg.BudgetsConfig
+	path := budget.ResolvePath(paths.Root, paths.ConfigYAML, cfg.BudgetsConfig)
 	if path == "" {
 		return nil
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(paths.Root, path)
 	}
 	bcfg, err := budget.LoadConfig(path, cfg.BudgetsPreset)
 	if err != nil {
@@ -242,5 +239,6 @@ func newBudgetGate(paths config.Paths, cfg config.Config, backend state.Backend)
 	if bcfg == nil {
 		return nil
 	}
+	bcfg.UnreportedDispatchTokens = cfg.TypicalDispatchToken
 	return budget.NewGate(backend, bcfg)
 }

@@ -61,6 +61,9 @@ func (GeminiProvider) Parse(exitCode int, output []byte) Result {
 		Stdout:       text,
 		Text:         answer,
 		ErrorMessage: errMsg,
+		// The zeros above are "not reported", not "free": the spend row says
+		// so, and the budget gate weighs it as a typical dispatch.
+		Estimated: true,
 	}
 }
 
