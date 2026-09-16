@@ -35,6 +35,7 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		withTunnel  bool
 		portfolio   string
 		allowRemote bool
+		withDemo    bool
 	)
 
 	cmd := &cobra.Command{
@@ -52,6 +53,14 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
+
+			if withDemo {
+				cleanup, err := prepareDemo(cmd, flags, withTunnel, portfolio)
+				if err != nil {
+					return err
+				}
+				defer cleanup()
+			}
 
 			// The portfolio is a different process shape — N projects, no
 			// single `paths` — so it forks before any of the single-project
@@ -216,6 +225,9 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&allowRemote, "allow-remote", false,
 		"With --portfolio: allow a non-loopback --host, exposing every "+
 			"project's counters on an unauthenticated /api/portfolio")
+	cmd.Flags().BoolVar(&withDemo, "demo", false,
+		"Serve a synthetic project with realistic history instead of this one; "+
+			"nothing is dispatched")
 	cmd.AddCommand(newDashboardTokenCmd(flags))
 	return cmd
 }

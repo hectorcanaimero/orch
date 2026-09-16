@@ -1,0 +1,21 @@
+# orch dashboard --demo — the flag and its refusals, through the real CLI.
+#
+# Serving the demo is not tested here for the same reason dashboard.txtar does
+# not start a server; internal/demo checks what the demo seeds.
+
+exec orch dashboard --help
+stdout '--demo'
+
+# Demo data must never be published.
+! exec orch dashboard --demo --tunnel
+stderr 'cannot be combined with --tunnel'
+
+! exec orch dashboard --demo --portfolio 'proj*'
+stderr 'cannot be combined with --portfolio'
+
+# The demo builds its own project; pointing it at one is a mistake to name.
+! exec orch dashboard --demo --project-root proj
+stderr 'builds its own project'
+
+! exec orch dashboard --demo --project-id proj
+stderr 'builds its own project'
