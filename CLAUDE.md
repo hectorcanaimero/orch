@@ -58,7 +58,9 @@ under `docs/brainstorm/go-migration-notes/` are history.
   it. A new test is seen failing against the bug it is for before it is trusted
   (review checklist rule 24).
 - **Lint**: `make lint` — golangci-lint v2 (falls back to `go vet` with a warning
-  if it is not installed; CI runs the real one). 0 issues.
+  if it is not installed; CI runs the real one), then `pnpm lint` (oxlint) in
+  `web/` when `web/node_modules` exists; CI's `go-test` job runs it too.
+  golangci-lint 0 issues; oxlint 0 errors (its warnings are reported, not fatal).
 - **Never build after changes.** Test / lint only (`make build` is for releases
   and manual checks).
 - **Never use `cat` / `grep` / `find` / `sed` / `ls`.** Use `bat` / `rg` / `fd` / `sd` / `eza`. Install via `brew` if missing.

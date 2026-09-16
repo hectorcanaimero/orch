@@ -37,6 +37,7 @@ lint:
 		echo "golangci-lint not installed locally; falling back to go vet (CI runs the real linter)"; \
 		go vet ./...; \
 	fi
+	@if [ -d web/node_modules ]; then cd web && pnpm lint; else echo "web/node_modules missing; skipping web lint (run make web)"; fi
 
 clean:
 	rm -rf bin/ coverage.out
