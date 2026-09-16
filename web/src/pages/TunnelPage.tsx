@@ -16,16 +16,19 @@ import { useTunnelCapabilities } from "@/hooks/useTunnelCapabilities"
 import { useTunnelStatus } from "@/hooks/useTunnelStatus"
 import { startTunnel, stopTunnel } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { Explain } from "@/components/Explain"
+import { t, type MessageKey } from "@/i18n"
 import type { TunnelCapabilities, TunnelState, TunnelStatus } from "@/lib/types"
 
 type BadgeVariant = "success" | "warning" | "danger" | "muted" | "info"
 
-const STATE_META: Record<TunnelState, { label: string; badge: BadgeVariant; dotClass: string }> = {
-  idle: { label: "Off", badge: "muted", dotClass: "text-zinc-400" },
-  starting: { label: "Starting", badge: "info", dotClass: "text-sky-500" },
-  running: { label: "Running", badge: "success", dotClass: "text-emerald-500" },
-  stopping: { label: "Stopping", badge: "warning", dotClass: "text-amber-500" },
-  error: { label: "Stopped with an error", badge: "danger", dotClass: "text-red-500" },
+// The dot takes the badge's own status color, so the pair can never disagree.
+const STATE_META: Record<TunnelState, { label: MessageKey; badge: BadgeVariant }> = {
+  idle: { label: "tunnel.state.idle", badge: "muted" },
+  starting: { label: "tunnel.state.starting", badge: "info" },
+  running: { label: "tunnel.state.running", badge: "success" },
+  stopping: { label: "tunnel.state.stopping", badge: "warning" },
+  error: { label: "tunnel.state.error", badge: "danger" },
 }
 
 /**
@@ -43,12 +46,11 @@ export function TunnelPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Tunnel</h1>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Share this dashboard over a Cloudflare quick tunnel: a public
-          https://…trycloudflare.com address, with no Cloudflare account
-          needed. Anyone who opens it needs the token that comes in the link.
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("tunnel.title")}</h1>
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          {t("tunnel.intro_before")} <Explain term="quick_tunnel">{t("tunnel.intro_term")}</Explain>
+          {t("tunnel.intro_after")}
         </p>
       </header>
 
@@ -57,8 +59,8 @@ export function TunnelPage() {
       {caps.isError ? (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Could not ask the dashboard about the tunnel</AlertTitle>
-          <AlertDescription>{caps.error?.message ?? "Unknown error"}</AlertDescription>
+          <AlertTitle>{t("tunnel.caps_failed")}</AlertTitle>
+          <AlertDescription>{caps.error?.message ?? t("common.unknown_error")}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -90,10 +92,10 @@ function TunnelBody({
       return (
         <Card>
           <CardHeader>
-            <CardTitle>The tunnel is off for this project</CardTitle>
+            <CardTitle>{t("tunnel.disabled_title")}</CardTitle>
             <CardDescription>
-              Add this to <code className="font-mono text-xs">.orchestrator/config.yaml</code>,
-              then restart <code className="font-mono text-xs">orch dashboard</code>:
+              {t("tunnel.disabled_before")} <code className="font-mono text-xs">.orchestrator/config.yaml</code>
+              {t("tunnel.disabled_middle")} <code className="font-mono text-xs">orch dashboard</code>:
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -103,19 +105,14 @@ function TunnelBody({
       )
     case "profile_gate":
       return (
-        <Notice title="Only the operator dashboard can share itself">
-          This dashboard runs with a stakeholder profile. Start the tunnel from
-          the operator dashboard (<code className="font-mono text-xs">orch dashboard</code>{" "}
-          without <code className="font-mono text-xs">--profile</code>).
+        <Notice title={t("tunnel.profile_title")}>
+          {t("tunnel.profile_before")} (<code className="font-mono text-xs">orch dashboard</code>{" "}
+          {t("tunnel.profile_without")} <code className="font-mono text-xs">--profile</code>).
         </Notice>
       )
     case "host_gate":
       return (
-        <Notice title="Open this page on the machine running orch">
-          The tunnel can only be controlled from http://127.0.0.1 or
-          http://localhost, so nobody reaching the dashboard another way can
-          publish it.
-        </Notice>
+        <Notice title={t("tunnel.host_title")}>{t("tunnel.host_detail")}</Notice>
       )
     case "binary_missing":
       return <InstallGuide caps={caps} checking={checking} onCheck={onCheck} />
@@ -123,19 +120,18 @@ function TunnelBody({
       return (
         <div className="space-y-6">
           {caps.config_blocker ? (
-            <Alert>
+            <Alert className="border-status-blocked/40 bg-status-blocked/10 [&>svg]:text-status-blocked">
               <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>A cloudflared config file will stop the tunnel</AlertTitle>
+              <AlertTitle>{t("tunnel.blocker_title")}</AlertTitle>
               <AlertDescription className="space-y-2">
                 <p>
-                  Cloudflare quick tunnels do not start while{" "}
-                  <code className="font-mono text-xs">{caps.config_blocker}</code> exists.
-                  Rename it while you share the dashboard, then check again:
+                  {t("tunnel.blocker_before")} <code className="font-mono text-xs">{caps.config_blocker}</code>{" "}
+                  {t("tunnel.blocker_after")}
                 </p>
                 <CommandBlock command={`mv ${caps.config_blocker} ${caps.config_blocker}.bak`} />
                 <Button type="button" size="sm" variant="outline" onClick={onCheck} disabled={checking}>
                   <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", checking && "animate-spin")} aria-hidden />
-                  Check again
+                  {t("tunnel.check_again")}
                 </Button>
               </AlertDescription>
             </Alert>
@@ -174,16 +170,14 @@ function InstallGuide({
   return (
     <Card>
       <CardHeader className="gap-1">
-        <CardTitle>Install cloudflared to share this dashboard</CardTitle>
+        <CardTitle>{t("tunnel.install_title")}</CardTitle>
         <CardDescription className="max-w-2xl">
-          The tunnel is Cloudflare&apos;s <code className="font-mono text-xs">cloudflared</code>{" "}
-          program, and it is not on this machine&apos;s PATH yet. It takes a
-          minute: no Cloudflare account, login or domain is needed. Run these
-          steps in a terminal, then check again — no restart needed.
+          {t("tunnel.install_before")} <code className="font-mono text-xs">cloudflared</code>{" "}
+          {t("tunnel.install_after")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Installation method">
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t("tunnel.install_method")}>
           {guides.map((g) => (
             <Button
               key={g.id}
@@ -194,7 +188,7 @@ function InstallGuide({
               onClick={() => setSelected(g.id)}
             >
               {g.label}
-              {g.id === recommended ? " · this machine" : ""}
+              {g.id === recommended ? ` · ${t("tunnel.this_machine")}` : ""}
             </Button>
           ))}
         </div>
@@ -218,7 +212,7 @@ function InstallGuide({
         <div className="flex flex-wrap items-center gap-3 border-t pt-4">
           <Button type="button" onClick={onCheck} disabled={checking}>
             <RefreshCw className={cn("mr-1.5 h-4 w-4", checking && "animate-spin")} aria-hidden />
-            {checking ? "Checking…" : "Check again"}
+            {checking ? t("tunnel.checking") : t("tunnel.check_again")}
           </Button>
           {caps.docs_url ? (
             <a
@@ -227,7 +221,7 @@ function InstallGuide({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:underline"
             >
-              Other systems: Cloudflare&apos;s download page
+              {t("tunnel.other_systems")}
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
             </a>
           ) : null}
@@ -264,20 +258,20 @@ function TunnelControl({ caps, status }: { caps: TunnelCapabilities; status: Tun
       <CardHeader className="gap-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2">
-            Sharing
+            {t("tunnel.sharing")}
             <Badge variant={meta.badge} className="gap-1.5">
-              <Circle className={cn("h-2 w-2 fill-current", meta.dotClass)} aria-hidden />
-              {meta.label}
+              <Circle className="h-2 w-2 fill-current" aria-hidden />
+              {t(meta.label)}
             </Badge>
             {state === "running" && status?.started_at ? <Uptime since={status.started_at} /> : null}
           </CardTitle>
           {up ? (
             <Button type="button" variant="outline" disabled={busy} onClick={() => void act(stopTunnel)}>
-              {busy ? "Stopping…" : "Stop sharing"}
+              {busy ? t("tunnel.stopping") : t("tunnel.stop")}
             </Button>
           ) : (
             <Button type="button" disabled={busy || state === "stopping"} onClick={() => void act(startTunnel)}>
-              {busy ? "Starting…" : "Start the tunnel"}
+              {busy ? t("tunnel.starting") : t("tunnel.start")}
             </Button>
           )}
         </div>
@@ -289,44 +283,37 @@ function TunnelControl({ caps, status }: { caps: TunnelCapabilities; status: Tun
         {status?.share_url && status.portal_url ? (
           <div className="space-y-3">
             <LinkRow
-              label="Client portal"
-              hint="What to send a client: progress and deliveries, read-only."
+              label={t("tunnel.link.portal")}
+              hint={t("tunnel.link.portal_hint")}
+              copyLabel={t("tunnel.link.portal_copy")}
               url={status.portal_url}
             />
             <LinkRow
-              label="Full dashboard"
-              hint="Everything you see here. Only for yourself or your team."
+              label={t("tunnel.link.dashboard")}
+              hint={t("tunnel.link.dashboard_hint")}
+              copyLabel={t("tunnel.link.dashboard_copy")}
               url={status.share_url}
             />
           </div>
         ) : up && status?.url ? (
-          <p className="text-sm text-muted-foreground">
-            This tunnel ({status.url}) was started by an earlier dashboard
-            process, so there is no link with a token for it. Stop it and start
-            it again to get one.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("tunnel.orphan", { url: status.url })}</p>
         ) : up ? (
-          <p className="text-sm text-muted-foreground">
-            Waiting for Cloudflare to assign an address — usually a few seconds.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("tunnel.waiting_address")}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Starting the tunnel gives you two links: one for a client, one for
-            the full dashboard.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("tunnel.two_links")}</p>
         )}
 
         {actionError ? (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>The tunnel did not {up ? "stop" : "start"}</AlertTitle>
+            <AlertTitle>{t(up ? "tunnel.did_not_stop" : "tunnel.did_not_start")}</AlertTitle>
             <AlertDescription className="font-mono text-xs">{actionError}</AlertDescription>
           </Alert>
         ) : null}
         {!actionError && status?.last_error ? (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>cloudflared reported a problem</AlertTitle>
+            <AlertTitle>{t("tunnel.cloudflared_problem")}</AlertTitle>
             <AlertDescription className="font-mono text-xs">{status.last_error}</AlertDescription>
           </Alert>
         ) : null}
@@ -339,29 +326,22 @@ function Limits() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Good to know</CardTitle>
+        <CardTitle className="text-base">{t("tunnel.limits_title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-          <li>The address changes every time the tunnel starts, and so does the token: send the new link.</li>
-          <li>Anyone with the link can open it until you stop sharing. Stopping revokes it.</li>
-          <li>
-            Through the tunnel the dashboard refreshes every 15 seconds instead
-            of live: Cloudflare quick tunnels do not carry live streams.
-          </li>
-          <li>
-            Quick tunnels are meant for sharing and testing — Cloudflare limits
-            them to 200 requests at a time and gives no uptime guarantee.
-          </li>
+          {(["tunnel.limit.address", "tunnel.limit.revoke", "tunnel.limit.polling", "tunnel.limit.testing"] as const).map((key) => (
+            <li key={key}>{t(key)}</li>
+          ))}
         </ul>
       </CardContent>
     </Card>
   )
 }
 
-function LinkRow({ label, hint, url }: { label: string; hint: string; url: string }) {
+function LinkRow({ label, hint, copyLabel, url }: { label: string; hint: string; copyLabel: string; url: string }) {
   return (
-    <div className="rounded-md border px-3 py-2">
+    <div className="rounded-lg border px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">{label}</span>
         <span className="text-xs text-muted-foreground">{hint}</span>
@@ -376,7 +356,7 @@ function LinkRow({ label, hint, url }: { label: string; hint: string; url: strin
           <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">{url}</span>
         </a>
-        <CopyButton text={url} label={`Copy the ${label.toLowerCase()} link`} />
+        <CopyButton text={url} label={copyLabel} />
       </div>
     </div>
   )
@@ -384,9 +364,9 @@ function LinkRow({ label, hint, url }: { label: string; hint: string; url: strin
 
 function CommandBlock({ command }: { command: string }) {
   return (
-    <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2">
+    <div className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2">
       <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre font-mono text-xs leading-5">{command}</pre>
-      <CopyButton text={command} label="Copy the command" />
+      <CopyButton text={command} label={t("tunnel.copy_command")} />
     </div>
   )
 }
@@ -406,7 +386,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   return (
     <Button type="button" size="sm" variant="outline" onClick={() => void copy()} aria-label={label} className="ml-auto shrink-0 gap-1.5">
       <Copy className="h-3.5 w-3.5" aria-hidden />
-      {copied ? "Copied" : "Copy"}
+      {copied ? t("common.copied") : t("common.copy")}
     </Button>
   )
 }
@@ -417,14 +397,18 @@ function Uptime({ since }: { since: string }) {
     const id = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(id)
   }, [])
-  return <span className="text-xs font-normal text-muted-foreground">up {formatUptime(Date.parse(since), now)}</span>
+  return (
+    <span className="text-xs font-normal text-muted-foreground tabular-nums">
+      {t("tunnel.uptime", { duration: formatUptime(Date.parse(since), now) })}
+    </span>
+  )
 }
 
 /** "< 1 min", "12 min", "1 h 5 min". */
 function formatUptime(startMs: number, nowMs: number): string {
   const minutes = Math.floor(Math.max(0, nowMs - startMs) / 60_000)
-  if (!Number.isFinite(minutes) || minutes < 1) return "< 1 min"
+  if (!Number.isFinite(minutes) || minutes < 1) return t("tunnel.under_minute")
   const h = Math.floor(minutes / 60)
   const m = minutes % 60
-  return h > 0 ? `${h} h ${m} min` : `${m} min`
+  return h > 0 ? t("tunnel.hours_minutes", { h, m }) : t("tunnel.minutes", { m })
 }

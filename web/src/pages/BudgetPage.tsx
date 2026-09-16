@@ -1,94 +1,60 @@
+import type { ReactNode } from "react"
 import { AlertTriangle } from "lucide-react"
 import { describeLoadError } from "@/lib/errors"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { BudgetChart } from "@/components/charts/BudgetChart"
-import {
-  useBudgetSummary,
-  type BudgetRow,
-  type BudgetSummary,
-} from "@/hooks/useBudgetSummary"
+import { Explain } from "@/components/Explain"
+import { useBudgetSummary, type BudgetRow, type BudgetSummary } from "@/hooks/useBudgetSummary"
+import { fmt, t } from "@/i18n"
 
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-const INT = new Intl.NumberFormat("en-US")
-
-/** "2026-09-12T15:00:00Z" → "Sep 12, 15:00" in the viewer's time zone. */
-function formatReset(iso: string | null): string {
-  if (!iso) return "—"
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+function Code({ children }: { children: ReactNode }) {
+  return <code className="font-mono text-[0.9em] break-all">{children}</code>
 }
 
 function Explanation() {
   return (
-    <p className="max-w-3xl text-sm text-muted-foreground">
-      The guardrail counts the tokens each provider used in its rolling window:
-      input and output at full weight, prompt-cache reads at 10% and cache
-      writes at 125%, as Anthropic bills them. When a provider
-      reaches its threshold, orch stops sending it new tasks until older usage
-      leaves the window; tasks routed elsewhere keep running.{" "}
-      <code className="font-mono">budget.per_dispatch_usd</code> is separate:
-      it decides whether a failing task may escalate to a pricier model, and,
-      only when written in config.yaml, caps each claude dispatch (
-      <code className="font-mono">--max-budget-usd</code>).
-    </p>
+    <div className="max-w-3xl space-y-2 text-sm text-muted-foreground">
+      <p>
+        {t("budget.explain_window_before")} <Explain term="budget_window">{t("budget.explain_window_term")}</Explain>{" "}
+        {t("budget.explain_window_middle")} <Explain term="weighted_tokens">{t("budget.explain_weighted_term")}</Explain>
+        {t("budget.explain_window_after")}
+      </p>
+      <p>
+        <Code>budget.per_dispatch_usd</Code> {t("budget.explain_per_dispatch")} <Code>--max-budget-usd</Code>.
+      </p>
+    </div>
   )
 }
 
 function NotConfigured({ data }: { data?: BudgetSummary }) {
-  let detail: React.ReactNode
+  let detail: ReactNode
   switch (data?.reason) {
     case "not_configured":
       detail = (
         <>
-          <code className="font-mono">budgets_config</code> is empty in
-          config.yaml, so no budgets file is read.
+          <Code>budgets_config</Code> {t("budget.off_not_configured")}
         </>
       )
       break
     case "invalid":
-      detail = (
-        <>
-          The budgets file could not be read: {data.error}
-        </>
-      )
+      detail = t("budget.off_invalid", { error: data.error ?? "" })
       break
     default:
       detail = (
         <>
-          There is no file at{" "}
-          <code className="font-mono break-all">{data?.path || "budgets.yaml"}</code>
-          . New projects get it from <code className="font-mono">orch init</code>;
-          for an existing one, copy a presets file there or point{" "}
-          <code className="font-mono">budgets_config</code> at one.
+          {t("budget.off_missing_before")} <Code>{data?.path || "budgets.yaml"}</Code>. {t("budget.off_missing_init")}{" "}
+          <Code>orch init</Code>; {t("budget.off_missing_existing")} <Code>budgets_config</Code>{" "}
+          {t("budget.off_missing_after")}
         </>
       )
   }
   return (
-    <Alert className="border-amber-300 bg-amber-50 text-amber-900">
+    <Alert className="border-status-blocked/40 bg-status-blocked/10 [&>svg]:text-status-blocked">
       <AlertTriangle className="h-4 w-4" />
-      <AlertTitle>Budget guardrail is off — runs are not rationed</AlertTitle>
+      <AlertTitle>{t("budget.off_title")}</AlertTitle>
       <AlertDescription>{detail}</AlertDescription>
     </Alert>
   )
@@ -98,33 +64,36 @@ function CostCell({ row }: { row: BudgetRow }) {
   switch (row.cost_source) {
     case "reported":
       return (
-        <span className="inline-flex items-center gap-2">
-          {USD.format(row.cost_usd)}
-          <Badge variant="success">reported</Badge>
+        <span className="inline-flex items-center gap-2 tabular-nums">
+          {fmt.usd(row.cost_usd)}
+          <Badge variant="success">{t("budget.source.reported")}</Badge>
         </span>
       )
     case "estimated":
       return (
-        <span
-          className="inline-flex items-center gap-2"
-          title="The CLI reports tokens but no price; priced from pricing.yaml"
-        >
-          ~{USD.format(row.estimated_cost_usd)}
-          <Badge variant="info">estimated</Badge>
+        <span className="inline-flex items-center gap-2 tabular-nums" title={t("budget.source.estimated_hint")}>
+          ~{fmt.usd(row.estimated_cost_usd)}
+          <Badge variant="info">{t("budget.source.estimated")}</Badge>
         </span>
       )
     case "no_data":
       return (
-        <span
-          className="inline-flex items-center gap-2"
-          title="The CLI reports neither tokens nor cost; each dispatch counts as typical_dispatch_tokens in the window"
-        >
-          —<Badge variant="warning">no data</Badge>
+        <span className="inline-flex items-center gap-2" title={t("budget.source.no_data_hint")}>
+          —<Badge variant="warning">{t("budget.source.no_data")}</Badge>
         </span>
       )
     default:
-      return <span className="text-muted-foreground">nothing today</span>
+      return <span className="text-muted-foreground">{t("budget.source.none")}</span>
   }
+}
+
+function Header({ children }: { children?: ReactNode }) {
+  return (
+    <header className="space-y-2">
+      <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("budget.title")}</h1>
+      {children}
+    </header>
+  )
 }
 
 export function BudgetPage() {
@@ -132,9 +101,9 @@ export function BudgetPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Budget</h1>
-        <Skeleton className="h-48 w-full" />
+      <div className="space-y-6">
+        <Header />
+        <Skeleton className="h-48 w-full rounded-xl" />
       </div>
     )
   }
@@ -143,7 +112,7 @@ export function BudgetPage() {
     return (
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
-        <AlertTitle>Failed to load budget</AlertTitle>
+        <AlertTitle>{t("budget.load_failed")}</AlertTitle>
         <AlertDescription>{describeLoadError(error)}</AlertDescription>
       </Alert>
     )
@@ -151,8 +120,8 @@ export function BudgetPage() {
 
   if (!data || !data.available) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Budget</h1>
+      <div className="space-y-6">
+        <Header />
         <NotConfigured data={data} />
         <Explanation />
       </div>
@@ -160,46 +129,49 @@ export function BudgetPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Budget</h1>
+    <div className="space-y-8">
+      <Header>
         <p className="text-sm text-muted-foreground">
-          Preset <span className="font-medium text-foreground">{data.preset}</span>{" "}
-          from <code className="font-mono break-all">{data.path}</code>
+          {t("budget.preset")} <span className="font-medium text-foreground">{data.preset}</span> {t("budget.from")}{" "}
+          <Code>{data.path}</Code>
         </p>
         <Explanation />
-      </div>
+      </Header>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">
-            Tokens used in the window, per provider
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <BudgetChart rows={data.rows} />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Bars compare tokens used against{" "}
-            <code className="font-mono">token_budget</code>; the dashed line
-            is <code className="font-mono">threshold_pct</code>, where
-            dispatching stops.
-          </p>
-        </CardContent>
-      </Card>
+      <section className="space-y-3 rounded-xl border bg-card p-5" aria-labelledby="window-heading">
+        <h2 id="window-heading" className="text-base font-semibold">
+          {t("budget.chart_title")}
+        </h2>
+        <div className="overflow-x-auto">
+          <div className="min-w-[36rem]">
+            <BudgetChart rows={data.rows} />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("budget.chart_bars")} <Code>token_budget</Code>; {t("budget.chart_line")} <Code>threshold_pct</Code>,{" "}
+          {t("budget.chart_line_after")}
+        </p>
+      </section>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Providers</CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
+      <section className="space-y-3" aria-labelledby="providers-heading">
+        <h2 id="providers-heading" className="text-lg font-semibold">
+          {t("budget.providers")}
+        </h2>
+        <div className="overflow-x-auto rounded-xl border bg-card [&_th]:whitespace-nowrap">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Provider</TableHead>
-                <TableHead>Window</TableHead>
-                <TableHead className="text-right">Used / cap</TableHead>
-                <TableHead>Resets</TableHead>
-                <TableHead>Spend today (UTC)</TableHead>
+                <TableHead>{t("budget.col.provider")}</TableHead>
+                <TableHead>
+                  <Explain term="budget_window">{t("budget.col.window")}</Explain>
+                </TableHead>
+                <TableHead className="text-right">
+                  <Explain term="weighted_tokens">{t("budget.col.used")}</Explain>
+                </TableHead>
+                <TableHead>{t("budget.col.resets")}</TableHead>
+                <TableHead>
+                  <Explain term="cost_source">{t("budget.col.spend")}</Explain>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -210,22 +182,20 @@ export function BudgetPage() {
                     <TableCell className="font-medium">
                       <span className="inline-flex items-center gap-2">
                         {r.provider}
-                        {r.over_threshold ? (
-                          <Badge variant="danger">paused</Badge>
-                        ) : null}
+                        {r.over_threshold ? <Badge variant="warning">{t("budget.paused")}</Badge> : null}
                       </span>
                     </TableCell>
-                    <TableCell>{r.window_hours}h</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {INT.format(r.tokens_used)} / {INT.format(cap)}
+                    <TableCell className="whitespace-nowrap tabular-nums">{t("budget.hours", { hours: r.window_hours })}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">
+                      {fmt.number(r.tokens_used)} / {fmt.number(cap)}
                       {r.raw_tokens_used !== r.tokens_used ? (
                         <span className="block text-xs text-muted-foreground">
-                          {INT.format(r.raw_tokens_used)} raw
+                          {t("budget.raw", { tokens: fmt.number(r.raw_tokens_used) })}
                         </span>
                       ) : null}
                     </TableCell>
-                    <TableCell>{formatReset(r.reset_at)}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">{r.reset_at ? fmt.dateTime(r.reset_at) : "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <CostCell row={r} />
                     </TableCell>
                   </TableRow>
@@ -233,38 +203,31 @@ export function BudgetPage() {
               })}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Waiting for budget</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.waiting.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No task is waiting for a provider's window to reset.
-            </p>
-          ) : (
-            <ul className="divide-y text-sm">
-              {data.waiting.map((w) => (
-                <li
-                  key={w.task_id}
-                  className="flex flex-wrap items-baseline justify-between gap-2 py-2"
-                >
-                  <span>
-                    <span className="font-mono">{w.task_id}</span> waits on{" "}
-                    <span className="font-medium">{w.provider}</span>
-                  </span>
-                  <span className="text-muted-foreground">
-                    until {formatReset(w.reset_at)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <section className="space-y-3" aria-labelledby="waiting-heading">
+        <h2 id="waiting-heading" className="text-lg font-semibold">
+          {t("budget.waiting")}
+        </h2>
+        {data.waiting.length === 0 ? (
+          <p className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">{t("budget.waiting_none")}</p>
+        ) : (
+          <ul className="divide-y rounded-xl border bg-card px-5 text-sm">
+            {data.waiting.map((w) => (
+              <li key={w.task_id} className="flex flex-wrap items-baseline justify-between gap-2 py-3">
+                <span>
+                  <span className="font-mono">{w.task_id}</span> {t("budget.waits_on")}{" "}
+                  <span className="font-medium">{w.provider}</span>
+                </span>
+                <span className="text-muted-foreground tabular-nums">
+                  {t("budget.until", { time: fmt.dateTime(w.reset_at) })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

@@ -12,6 +12,11 @@ export type GlossaryTerm =
   | "agent_time"
   | "eta"
   | "spend"
+  | "velocity"
+  | "budget_window"
+  | "weighted_tokens"
+  | "cost_source"
+  | "quick_tunnel"
 
 export interface GlossaryEntry {
   title: string
@@ -70,5 +75,41 @@ export const glossary: Record<GlossaryTerm, GlossaryEntry> = {
     definition: "What the providers reported costing for the runs.",
     computed: "Sum of the cost recorded per day. A provider that reports no cost adds $0.",
     source: "spend table in orch.db",
+  },
+  velocity: {
+    title: "Pace",
+    definition: "How many tasks the project finishes per day, measured over the whole project.",
+    computed: "Tasks that reached done in the last 7 days ÷ 7. orch has no sprints; the window rolls forward every day.",
+    source: "task status history in orch.db (internal/dashboard/sprint.go)",
+  },
+  budget_window: {
+    title: "Budget window",
+    definition:
+      "The rolling hours over which a provider's token use is added up. The preset in budgets.yaml sets its length, the token budget and the threshold.",
+    computed:
+      "Tokens recorded for the provider within the last window_hours. At threshold_pct of token_budget orch stops sending it new tasks; it resumes when older usage leaves the window, which is the reset time shown.",
+    source: "budgets.yaml preset, spend table in orch.db",
+  },
+  weighted_tokens: {
+    title: "Weighted tokens",
+    definition: "Tokens counted the way the provider bills them, which is what the guardrail compares with the cap.",
+    computed:
+      "Input and output at full weight, prompt-cache reads at 10%, cache writes at 125%. The raw figure is the unweighted sum the CLI reported.",
+    source: "spend table in orch.db (token and cache columns)",
+  },
+  cost_source: {
+    title: "Where a cost comes from",
+    definition: "Whether a spend figure was reported by the provider's CLI or worked out by orch.",
+    computed:
+      "Reported: the CLI gave a price. Estimated: the CLI gave tokens only, priced from pricing.yaml. No data: it gave neither, so each dispatch counts as typical_dispatch_tokens in the window.",
+    source: "spend table in orch.db, pricing.yaml",
+  },
+  quick_tunnel: {
+    title: "Quick tunnel",
+    definition:
+      "A temporary public https address from Cloudflare that forwards to this dashboard. No Cloudflare account, login or domain.",
+    computed:
+      "orch runs cloudflared tunnel --url against the dashboard's port. The address is random, changes on every start, carries no live streams and is limited to 200 requests at a time.",
+    source: "cloudflared, supervised by orch dashboard (internal/tunnel)",
   },
 }
