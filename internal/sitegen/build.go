@@ -37,6 +37,9 @@ type TaskRow struct {
 // run: parse, merge into an empty tasks.json, validate the graph.
 func Build(spec string) Result {
 	parse := atomize.ParseText(spec, "spec.md", ".", "")
+	// MergeTasks returns no error: its second value is the MergeDiff against
+	// the existing tasks.json. There is none here, so every task is new and
+	// the diff's DepWarnings repeat what graph.Validate reports as dep.missing.
 	merged, _ := atomize.MergeTasks(model.TasksFile{}, parse.Tasks)
 	tasks := merged.Tasks
 
