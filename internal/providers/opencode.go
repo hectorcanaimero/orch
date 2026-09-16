@@ -220,7 +220,13 @@ func sumStepFinishCosts(events []event) (cost float64, tokensIn, tokensOut int) 
 		if !ok {
 			continue
 		}
+		// Cache reads and writes are input the model processed, and opencode
+		// reports them outside `input`: in the 1.18.30 capture `total` is
+		// input + output + cache.read. Python counted `input` only.
 		tokensIn += toInt(tokens["input"])
+		if cache, ok := asObject(tokens["cache"]); ok {
+			tokensIn += toInt(cache["read"]) + toInt(cache["write"])
+		}
 		tokensOut += toInt(tokens["output"])
 	}
 	return cost, tokensIn, tokensOut
