@@ -1,41 +1,74 @@
 package dashboard
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"net"
 	"net/http"
-	"os/exec"
+	"net/url"
+	"strconv"
+	"sync"
 
 	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
 
-// The two tunnel routes the trimmed SPA consumes, ported from
-// `orchestrator/dashboard/server.py` and `dashboard/tunnel/deps.py`.
+// The dashboard tunnel: a Cloudflare quick tunnel the operator raises from the
+// Tunnel page (or `orch dashboard --tunnel`) to share this dashboard.
 //
-// `/start`, `/stop` and `/logs` are NOT here. G5.5 made the operator SPA
-// read-only, so they have no consumer — and this server takes a read-only
-// `StateReader` by construction (CHECKLIST rule 13). Serving a lever nothing
-// pulls is how a surface grows an attacker's way.
+// # The gates, in a fixed order
 //
-// # The three gates, in a fixed order
+// config enabled → operator profile → local caller, and PATH is consulted
+// only after all three pass. Each gate's failure reveals less than the next
+// one's: answering "cloudflared is missing" to someone on a shared URL would
+// tell them what the box runs before establishing they may ask.
 //
-// config enabled → operator profile → loopback host, and PATH is consulted
-// only after all three pass. The order is TUN-3/TUN-4's and it is not
-// cosmetic: each gate's failure reveals less than the next one's. Answering
-// "autossh is missing" to a stakeholder on a shared URL would tell them what
-// the box runs before establishing they may ask.
+// # Who may reach the dashboard while the tunnel is up
+//
+// cloudflared connects to this listener from 127.0.0.1, so the internet
+// arrives looking local by address. What gives it away is the Host header
+// (the trycloudflare hostname) and the headers Cloudflare adds. While the
+// tunnel is up, every gated route asks a request that is not local (see
+// isLocalRequest) for a token, and the token decides how far it gets:
+//
+//   - the dashboard link token (minted on each start) opens everything, and
+//     is for the operator's own use;
+//   - the portal link token (minted alongside it) and the project's
+//     stakeholder token reach only the stakeholder allow-list — what the
+//     client portal needs. A client handed the portal link cannot turn it
+//     into the operator's view by editing the path.
+//
+// The operator profile, which gates nothing for the person at the keyboard,
+// is never what a stranger holding the URL gets.
+//
+// # Why start/stop do not break the read-only rule
+//
+// The dashboard takes a read-only StateReader (CHECKLIST rule 13) because a
+// second writer to orch.db is the risk. Start and stop write no row: they
+// drive a child process whose files live under state/tunnel/. They are
+// local-only and refuse a cross-site Origin, so a web page elsewhere cannot
+// press them through the operator's browser.
 
-// tunnelDeps is what the routes need from the process: whether the tunnel is
-// configured at all, and the manager when it is.
+// tunnelDeps is what the routes need from the process.
 //
 // A nil Manager with Enabled true is a wiring bug, not a config state, and
 // `/status` says so with a 500 rather than pretending the tunnel is idle.
 type tunnelDeps struct {
-	Enabled  bool
-	Provider string
-	// Command is the binary the provider spawns, looked up on PATH for the
-	// capabilities answer.
-	Command string
-	Manager *tunnel.Manager
+	Enabled bool
+	// Command overrides the binary, for tests; empty means cloudflared.
+	Command          string
+	URLParseTimeoutS int
+	Manager          *tunnel.Manager
+
+	mu sync.Mutex
+	// The link tokens are minted on each start and dropped on stop, so a
+	// shared link dies with the tunnel it was made for. Kept in plaintext only
+	// to render the links for a local caller; requests compare the hashes.
+	dashboardToken, dashboardHash string
+	portalToken, portalHash       string
 }
+
+var errTunnelNotConfigured = errors.New("the tunnel is not enabled (tunnel.enabled in config.yaml)")
 
 func (s *Server) tunnelRoutes() []route {
 	return []route{
@@ -43,120 +76,319 @@ func (s *Server) tunnelRoutes() []route {
 			handler: s.handleTunnelCapabilities},
 		{pattern: "GET /api/tunnel/status", name: "api_tunnel_status",
 			handler: s.handleTunnelStatus},
+		{pattern: "POST /api/tunnel/start", name: "api_tunnel_start",
+			handler: s.handleTunnelStart},
+		{pattern: "POST /api/tunnel/stop", name: "api_tunnel_stop",
+			handler: s.handleTunnelStop},
 	}
+}
+
+// relayHeaders are set by Cloudflare or any reverse proxy in front of the
+// dashboard, and by no browser talking to it directly.
+var relayHeaders = []string{"Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "X-Forwarded-Host", "Forwarded"}
+
+// isLocalRequest reports whether the caller is on this machine and talking
+// to the dashboard directly: a loopback peer, a loopback Host, and no header
+// a relay adds. All three, because each alone is forgeable or ambiguous —
+// cloudflared's peer address is loopback, a LAN client on a 0.0.0.0 bind
+// can send `Host: 127.0.0.1`, and a proxy may rewrite Host.
+func isLocalRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	if !tunnel.IsLoopbackHost(tunnel.ExtractHost(r.Host)) {
+		return false
+	}
+	for _, h := range relayHeaders {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// sameOriginLocal refuses a browser request sent from another site. A
+// browser always sends Origin on a POST; a missing one is curl or a test,
+// which isLocalRequest has already confined to this machine.
+func sameOriginLocal(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && tunnel.IsLoopbackHost(tunnel.ExtractHost(u.Host))
+}
+
+// tunnelUp reports whether a tunnel may be forwarding to this listener.
+// Error means the child exited; idle means none was started.
+func (s *Server) tunnelUp() bool {
+	m := s.tunnel.Manager
+	if m == nil {
+		return false
+	}
+	st := m.Status().State
+	return st != tunnel.StateIdle && st != tunnel.StateError
+}
+
+// tunnelledVerdict is the extra gate for a non-local request while the tunnel
+// is up: 401 without a token this tunnel knows, 403 for a portal-level token
+// on a route outside the stakeholder allow-list.
+func (s *Server) tunnelledVerdict(r *http.Request, routeName string) Verdict {
+	supplied := tokenFrom(r)
+	if supplied == "" {
+		return Unauthorized
+	}
+	hash := HashToken(supplied)
+	s.tunnel.mu.Lock()
+	dashboardHash, portalHash := s.tunnel.dashboardHash, s.tunnel.portalHash
+	s.tunnel.mu.Unlock()
+	if dashboardHash != "" && constantTimeEqual(hash, dashboardHash) {
+		return Allow
+	}
+	portalLevel := portalHash != "" && constantTimeEqual(hash, portalHash)
+	if !portalLevel {
+		expected := s.expectedTokenHash(r.Context())
+		portalLevel = expected != "" && constantTimeEqual(hash, expected)
+	}
+	switch {
+	case !portalLevel:
+		return Unauthorized
+	case !s.cfg.routeAllowed(r.URL.Path, routeName):
+		return Forbidden
+	}
+	return Allow
+}
+
+func newLinkToken() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// StartTunnel raises the quick tunnel to this server's bound port and mints a
+// fresh link token. The URL arrives asynchronously; TunnelLinks has it once
+// cloudflared prints it.
+func (s *Server) StartTunnel() (tunnel.State, error) {
+	if !s.tunnel.Enabled {
+		return tunnel.State{}, errTunnelNotConfigured
+	}
+	if s.tunnel.Manager == nil {
+		return tunnel.State{}, errNoTunnelManager
+	}
+	port := s.cfg.Port
+	if _, p, err := net.SplitHostPort(s.BoundAddr()); err == nil {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+	dashboardToken, err := newLinkToken()
+	if err != nil {
+		return tunnel.State{}, err
+	}
+	portalToken, err := newLinkToken()
+	if err != nil {
+		return tunnel.State{}, err
+	}
+
+	st, err := s.tunnel.Manager.Start(tunnel.ManagerConfig{
+		Command: s.tunnel.Command, Port: port, URLParseTimeoutS: s.tunnel.URLParseTimeoutS,
+	})
+	if err != nil {
+		return st, err
+	}
+	s.tunnel.mu.Lock()
+	s.tunnel.dashboardToken, s.tunnel.dashboardHash = dashboardToken, HashToken(dashboardToken)
+	s.tunnel.portalToken, s.tunnel.portalHash = portalToken, HashToken(portalToken)
+	s.tunnel.mu.Unlock()
+	return st, nil
+}
+
+// StopTunnel stops the tunnel and invalidates its link tokens.
+func (s *Server) StopTunnel() (tunnel.State, error) {
+	if s.tunnel.Manager == nil {
+		return tunnel.State{}, tunnel.ErrNotRunning
+	}
+	st, err := s.tunnel.Manager.Stop()
+	if err == nil || errors.Is(err, tunnel.ErrNotRunning) {
+		s.tunnel.mu.Lock()
+		s.tunnel.dashboardToken, s.tunnel.dashboardHash = "", ""
+		s.tunnel.portalToken, s.tunnel.portalHash = "", ""
+		s.tunnel.mu.Unlock()
+	}
+	return st, err
+}
+
+// TunnelLinks returns the full-dashboard and client-portal links, each with
+// its own token, once the tunnel has a URL. Empty when there is no URL yet,
+// or no tokens (a tunnel adopted from a previous process: restart it).
+func (s *Server) TunnelLinks() (dashboard, portal string) {
+	if s.tunnel.Manager == nil {
+		return "", ""
+	}
+	st := s.tunnel.Manager.Status()
+	s.tunnel.mu.Lock()
+	dashboardToken, portalToken := s.tunnel.dashboardToken, s.tunnel.portalToken
+	s.tunnel.mu.Unlock()
+	if st.URL == nil || dashboardToken == "" {
+		return "", ""
+	}
+	return *st.URL + "/?token=" + url.QueryEscape(dashboardToken),
+		*st.URL + StakeholderPathPrefix + "/?token=" + url.QueryEscape(portalToken)
 }
 
 // capabilitiesPayload is `/api/tunnel/capabilities`'s body.
 //
-// `reason` is the FIRST failing gate, never a list — TUN-4 is explicit about
-// that. `reasons` is the short-form list the SPA renders as chips, and it
-// holds at most two entries: the first failing gate's short name, plus
-// `autossh_missing` when every gate passed and only the binary was absent.
+// `reason` is the FIRST failing gate, never a list. `reasons` is the
+// short-form list the SPA renders as chips: at most one entry. Binary, Host,
+// Guides, DocsURL and ConfigBlocker are only filled for a caller who passed
+// the first three gates — the local operator.
 type capabilitiesPayload struct {
-	Enabled    bool     `json:"enabled"`
-	Provider   *string  `json:"provider"`
-	CanControl bool     `json:"can_control"`
-	Reason     string   `json:"reason"`
-	Reasons    []string `json:"reasons"`
+	Enabled       bool                  `json:"enabled"`
+	Provider      *string               `json:"provider"`
+	CanControl    bool                  `json:"can_control"`
+	Reason        string                `json:"reason"`
+	Reasons       []string              `json:"reasons"`
+	Binary        *tunnel.Binary        `json:"binary,omitempty"`
+	Host          *tunnel.Host          `json:"host,omitempty"`
+	Guides        []tunnel.InstallGuide `json:"guides,omitempty"`
+	DocsURL       string                `json:"docs_url,omitempty"`
+	ConfigBlocker string                `json:"config_blocker,omitempty"`
 }
 
-// shortReason maps a gate's reason to the chip the SPA draws. Three of the
-// four have one; `autossh_missing` is already short and is appended verbatim.
+// shortReason maps a gate's reason to the chip the SPA draws.
 var shortReason = map[string]string{
 	tunnel.ReasonConfigDisabled: "disabled",
 	tunnel.ReasonProfileGate:    "not_operator",
 	tunnel.ReasonHostGate:       "not_loopback",
 }
 
-// handleTunnelCapabilities is deliberately auth-free and always 200.
-//
-// It is the one route on the stakeholder allow-list that also skips the token
-// check (see noTokenRoutes), and the reason is in the SPA's boot order: it
-// decides whether to draw the tunnel panel BEFORE it has asked anybody for a
-// token. A 401 here would mean the panel could never appear, even for someone
-// holding a valid one.
-//
-// What it discloses is bounded by design: three booleans about the server's
-// own configuration and which gate stopped you. Never the token, never the
-// URL, never the state.
+// handleTunnelCapabilities always answers 200, and for a stakeholder needs no
+// token (see noTokenRoutes): the SPA decides whether to draw the tunnel page
+// before it has asked anybody for one.
 func (s *Server) handleTunnelCapabilities(w http.ResponseWriter, r *http.Request) {
-	deps := s.tunnel
 	gates := tunnel.Gates{
-		Enabled:         deps.Enabled,
+		Enabled:         s.tunnel.Enabled,
 		OperatorProfile: s.cfg.Profile == ProfileOperator,
-		LoopbackHost:    tunnel.IsLoopbackHost(tunnel.ExtractHost(r.Host)),
+		LoopbackHost:    isLocalRequest(r),
+	}
+	payload := capabilitiesPayload{Enabled: s.tunnel.Enabled, Reasons: []string{}}
+	if s.tunnel.Enabled {
+		p := tunnel.Provider
+		payload.Provider = &p
 	}
 
-	// PATH is only consulted once every other gate has passed — the gate-order
-	// guarantee. Checking it first would be cheaper and would leak what the
-	// box has installed to a caller who is not allowed to ask.
-	binaryOnPath := false
+	// PATH is only consulted once every other gate has passed — checking it
+	// first would leak what the box has installed to a caller who may not ask.
+	var bin tunnel.Binary
 	if gates.Enabled && gates.OperatorProfile && gates.LoopbackHost {
-		binaryOnPath = commandOnPath(deps.Command)
+		bin = tunnel.LookupBinary(s.tunnel.Command)
+		host := tunnel.DetectHost()
+		payload.Binary = &bin
+		payload.Host = &host
+		payload.Guides = tunnel.InstallGuides(host.Arch)
+		payload.DocsURL = tunnel.DocsURL
+		payload.ConfigBlocker = tunnel.ConfigBlocker()
 	}
-	canControl, reason := tunnel.EvaluateCapabilities(gates, binaryOnPath)
-
-	reasons := []string{}
-	if !canControl {
-		if short, ok := shortReason[reason]; ok {
-			reasons = append(reasons, short)
+	payload.CanControl, payload.Reason = tunnel.EvaluateCapabilities(gates, bin.Found)
+	if !payload.CanControl {
+		if short, ok := shortReason[payload.Reason]; ok {
+			payload.Reasons = append(payload.Reasons, short)
 		} else {
-			// autossh_missing has no short form; Python appends it as-is.
-			reasons = append(reasons, reason)
+			payload.Reasons = append(payload.Reasons, payload.Reason)
 		}
 	}
-
-	var provider *string
-	if deps.Enabled && deps.Provider != "" {
-		p := deps.Provider
-		provider = &p
-	}
-
-	writeJSON(w, http.StatusOK, capabilitiesPayload{
-		Enabled:    deps.Enabled,
-		Provider:   provider,
-		CanControl: canControl,
-		Reason:     reason,
-		Reasons:    reasons,
-	})
+	writeJSON(w, http.StatusOK, payload)
 }
 
-// handleTunnelStatus answers the manager's state, behind all three gates.
-//
-// The status codes are Python's and each says something different: 404 when
-// the tunnel is not configured (the route may as well not exist), 403 for a
-// profile or host that may not ask. `can_control`, not `enabled`, is what the
-// SPA gates its panel on — a contract inherited from Python (D#9).
-func (s *Server) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
-	deps := s.tunnel
-	if !deps.Enabled {
+// tunnelStatusPayload is the manager's State plus the share links.
+type tunnelStatusPayload struct {
+	tunnel.State
+	ShareURL  *string `json:"share_url"`
+	PortalURL *string `json:"portal_url"`
+}
+
+// controlGate answers the three gates for status/start/stop and reports
+// whether the handler may continue. The status codes each say something
+// different: 404 when the tunnel is not configured (the route may as well not
+// exist), 403 for a profile or caller who may not ask.
+func (s *Server) controlGate(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case !s.tunnel.Enabled:
 		writeJSON(w, http.StatusNotFound, errorPayload{Detail: "not found"})
-		return
-	}
-	if s.cfg.Profile != ProfileOperator {
+	case s.cfg.Profile != ProfileOperator:
 		writeJSON(w, http.StatusForbidden, errorPayload{Detail: "operator only"})
-		return
-	}
-	if !tunnel.IsLoopbackHost(tunnel.ExtractHost(r.Host)) {
+	case !isLocalRequest(r):
 		writeJSON(w, http.StatusForbidden, errorPayload{Detail: "loopback only"})
-		return
-	}
-	if deps.Manager == nil {
-		// Enabled with no manager is a wiring bug, not a config state. Saying
-		// "idle" would be a lie the operator cannot act on.
+	case s.tunnel.Manager == nil:
 		s.failRead(w, "tunnel status", errNoTunnelManager)
-		return
+	default:
+		return true
 	}
-	writeJSON(w, http.StatusOK, deps.Manager.Status())
+	return false
 }
 
-// commandOnPath is `shutil.which`. An empty command is not on PATH — a
-// provider with no binary configured cannot be spawned, and reporting it as
-// available would move the failure to the moment somebody presses start.
-func commandOnPath(name string) bool {
-	if name == "" {
-		return false
+func (s *Server) writeTunnelStatus(w http.ResponseWriter, status int) {
+	payload := tunnelStatusPayload{State: s.tunnel.Manager.Status()}
+	if operator, portal := s.TunnelLinks(); operator != "" {
+		payload.ShareURL, payload.PortalURL = &operator, &portal
 	}
-	_, err := exec.LookPath(name)
-	return err == nil
+	writeJSON(w, status, payload)
+}
+
+func (s *Server) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.controlGate(w, r) {
+		return
+	}
+	s.writeTunnelStatus(w, http.StatusOK)
+}
+
+// handleTunnelStart refuses, with the reason as `detail`, what would only fail
+// a moment later inside cloudflared: a missing binary or a config file that
+// blocks quick tunnels.
+func (s *Server) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
+	if !s.controlGate(w, r) {
+		return
+	}
+	if !sameOriginLocal(r) {
+		writeJSON(w, http.StatusForbidden, errorPayload{Detail: "cross-origin request refused"})
+		return
+	}
+	if !tunnel.LookupBinary(s.tunnel.Command).Found {
+		writeJSON(w, http.StatusConflict, errorPayload{Detail: tunnel.ReasonBinaryMissing})
+		return
+	}
+	if path := tunnel.ConfigBlocker(); path != "" {
+		writeJSON(w, http.StatusConflict, errorPayload{Detail: tunnel.BlockerMessage(path)})
+		return
+	}
+	if _, err := s.StartTunnel(); err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, tunnel.ErrAlreadyRunning) || errors.Is(err, tunnel.ErrLocked) {
+			code = http.StatusConflict
+		}
+		writeJSON(w, code, errorPayload{Detail: err.Error()})
+		return
+	}
+	s.writeTunnelStatus(w, http.StatusOK)
+}
+
+func (s *Server) handleTunnelStop(w http.ResponseWriter, r *http.Request) {
+	if !s.controlGate(w, r) {
+		return
+	}
+	if !sameOriginLocal(r) {
+		writeJSON(w, http.StatusForbidden, errorPayload{Detail: "cross-origin request refused"})
+		return
+	}
+	if _, err := s.StopTunnel(); err != nil && !errors.Is(err, tunnel.ErrNotRunning) {
+		writeJSON(w, http.StatusInternalServerError, errorPayload{Detail: err.Error()})
+		return
+	}
+	s.writeTunnelStatus(w, http.StatusOK)
 }

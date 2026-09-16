@@ -108,15 +108,14 @@ type StateReader interface {
 }
 
 // TunnelOptions is the tunnel half of Options, kept as its own type so a
-// caller that has no tunnel says so by leaving one field alone rather than by
-// leaving four.
+// caller that has no tunnel says so by leaving one field alone.
 type TunnelOptions struct {
-	Enabled  bool
-	Provider string
-	// Command is the binary the provider spawns, looked up on PATH when the
-	// capabilities route is asked and every other gate has passed.
+	Enabled bool
+	// Command overrides the binary (tests); empty means cloudflared.
 	Command string
-	Manager *tunnel.Manager
+	// URLParseTimeoutS is tunnel.url_parse_timeout_s.
+	URLParseTimeoutS int
+	Manager          *tunnel.Manager
 }
 
 // Options are what New needs beyond the config.
@@ -168,10 +167,10 @@ func New(cfg Config, opts Options) (*Server, error) {
 
 		snapshot: opts.Snapshot,
 		tunnel: tunnelDeps{
-			Enabled:  opts.Tunnel.Enabled,
-			Provider: opts.Tunnel.Provider,
-			Command:  opts.Tunnel.Command,
-			Manager:  opts.Tunnel.Manager,
+			Enabled:          opts.Tunnel.Enabled,
+			Command:          opts.Tunnel.Command,
+			URLParseTimeoutS: opts.Tunnel.URLParseTimeoutS,
+			Manager:          opts.Tunnel.Manager,
 		},
 		fallbackTokenHash: HashToken(cfg.Token),
 		ready:             make(chan struct{}),
@@ -280,6 +279,19 @@ type route struct {
 // list in another file.
 func (s *Server) gated(r route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// While the tunnel is up the internet can reach this listener, and
+		// no profile's rules were written for that: a relayed request needs a
+		// token before anything else is decided (tunnelroutes.go).
+		if s.tunnelUp() && !isLocalRequest(req) {
+			switch s.tunnelledVerdict(req, r.name) {
+			case Unauthorized:
+				writePlain(w, http.StatusUnauthorized, "unauthorized")
+				return
+			case Forbidden:
+				writePlain(w, http.StatusForbidden, "forbidden")
+				return
+			}
+		}
 		var expectedHash string
 		// The operator profile never gates anything (decide's own first
 		// check), so there is nothing to resolve — skipping the database
