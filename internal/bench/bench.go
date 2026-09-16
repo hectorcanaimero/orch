@@ -100,9 +100,12 @@ func Prepare(src, dst, provider string, models map[string]string) error {
 		return fmt.Errorf("copy %s: %w", src, err)
 	}
 	if err := resetTasks(filepath.Join(dst, "tasks.json")); err != nil {
-		return err
+		return fmt.Errorf("reset the copy's tasks: %w", err)
 	}
-	return routeAll(filepath.Join(dst, ".orchestrator", "model_router.yaml"), provider, models[provider])
+	if err := routeAll(filepath.Join(dst, ".orchestrator", "model_router.yaml"), provider, models[provider]); err != nil {
+		return fmt.Errorf("route the copy to %s: %w", provider, err)
+	}
+	return nil
 }
 
 // skipDirs are never copied: runtime state, git history, and what a build
@@ -127,7 +130,7 @@ func copyProject(src, dst string) error {
 
 	return fs.WalkDir(from.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("walk %s: %w", rel, err)
 		}
 		if d.IsDir() && slices.Contains(skipDirs, filepath.FromSlash(rel)) {
 			return fs.SkipDir
@@ -182,7 +185,10 @@ func resetTasks(path string) error {
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
-	return os.WriteFile(path, out, 0o600)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // routeAll points every route at provider, keeping the route keys (tasks and
@@ -218,7 +224,10 @@ func routeAll(path, provider, cliModel string) error {
 	if err != nil {
 		return fmt.Errorf("encode the router: %w", err)
 	}
-	return os.WriteFile(path, body, 0o600)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // modelFor is the cli_model of a route already on backend: the same tier if
@@ -286,8 +295,11 @@ func Collect(ctx context.Context, db receipt.Reader, runID string, prices pricin
 // the cap and the reported cost are the same number.
 func SpentUSD(ctx context.Context, db receipt.Reader, runID string, prices pricing.Table) (float64, error) {
 	rc, err := receipt.Load(ctx, db, runID, nil, prices)
-	if err != nil || rc == nil {
-		return 0, err
+	if err != nil {
+		return 0, fmt.Errorf("read the run's receipt: %w", err)
+	}
+	if rc == nil {
+		return 0, nil
 	}
 	return rc.TotalCostUSD, nil
 }
