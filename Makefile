@@ -1,7 +1,7 @@
 BINARY := bin/orch
 VERSION := $(shell git describe --tags --always)
 
-.PHONY: build web test lint clean
+.PHONY: build web test lint clean site-templates site-wasm
 
 build: web
 	go build -ldflags="-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/orch
@@ -41,3 +41,14 @@ lint:
 
 clean:
 	rm -rf bin/ coverage.out
+
+# The site's template gallery is committed HTML (site/ has no build);
+# TestTemplateGalleryIsCurrent fails when it falls behind internal/templates.
+site-templates:
+	go run ./cmd/sitegen
+
+# The playground's engine: atomize + graph compiled to WebAssembly. Built at
+# deploy time by .github/workflows/pages.yml and gitignored, never committed.
+site-wasm:
+	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o site/playground/orch.wasm ./cmd/orch-wasm
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" site/playground/wasm_exec.js

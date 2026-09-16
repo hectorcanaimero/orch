@@ -78,3 +78,8 @@ internal/publish/dist/stakeholder/
 # Go build output
 bin/
 coverage.out
+
+# Site playground engine — built by `make site-wasm` and at deploy time
+# (.github/workflows/pages.yml), never committed.
+site/playground/orch.wasm
+site/playground/wasm_exec.js
