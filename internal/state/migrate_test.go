@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,66 @@ func copyPythonFixture(t *testing.T) string {
 		t.Fatalf("copy the fixture: %v", err)
 	}
 	return path
+}
+
+// A migration that fails partway must leave the database as it was. Each file
+// sets `PRAGMA user_version = N` before its statements and was Exec'd outside
+// a transaction, so a second ALTER failing left user_version at N with the
+// first column added: the next open skipped the migration and never added
+// the second column, and re-running the first ALTER would fail on the
+// duplicate. Each migration now runs in a transaction; user_version is
+// transactional in SQLite, so both roll back together.
+func TestAFailedMigrationLeavesVersionAndSchemaUnchanged(t *testing.T) {
+	ctx := context.Background()
+	db, _, err := Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := len(base) + 1
+
+	broken := migration{version: next, name: "broken.sql", sql: fmt.Sprintf(`
+PRAGMA user_version = %d;
+ALTER TABLE spend ADD COLUMN probe_a INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE no_such_table ADD COLUMN probe_b INTEGER;
+`, next)}
+	if _, err := applyMigrations(ctx, db.write, append(base, broken)); err == nil {
+		t.Fatal("the broken migration applied")
+	}
+	if v, _ := db.SchemaVersion(ctx); v != len(base) {
+		t.Errorf("user_version = %d after a failed migration, want %d", v, len(base))
+	}
+	if hasColumn(t, db, "spend", "probe_a") {
+		t.Error("probe_a was added by a migration that failed")
+	}
+
+	fixed := broken
+	fixed.sql = fmt.Sprintf(`
+PRAGMA user_version = %d;
+ALTER TABLE spend ADD COLUMN probe_a INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE spend ADD COLUMN probe_b INTEGER NOT NULL DEFAULT 0;
+`, next)
+	applied, err := applyMigrations(ctx, db.write, append(base, fixed))
+	if err != nil || applied != 1 {
+		t.Fatalf("re-run after the fix: applied=%d err=%v, want 1 and no error", applied, err)
+	}
+	if !hasColumn(t, db, "spend", "probe_a") || !hasColumn(t, db, "spend", "probe_b") {
+		t.Error("the fixed migration did not add both columns")
+	}
+}
+
+func hasColumn(t *testing.T, db *DB, table, column string) bool {
+	t.Helper()
+	var n int
+	if err := db.read.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
 }
 
 func TestLoadMigrationsIsAContiguousRun(t *testing.T) {

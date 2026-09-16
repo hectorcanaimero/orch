@@ -11,15 +11,9 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver: cross-compiles without cgo (ADR-G1)
 )
 
-// queryer and execQueryer keep the migration code testable against either a
-// *sql.DB or a *sql.Tx without dragging the whole DB type into it.
+// queryer lets schemaVersion read from either a *sql.DB or a *sql.Tx.
 type queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-type execQueryer interface {
-	queryer
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // DB is a handle on one project's orch.db.
