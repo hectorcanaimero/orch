@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { fmt, t } from "@/i18n"
 
 export interface BarChartByDayDatum {
   date: string
@@ -35,12 +36,6 @@ function shortDate(iso: string): string {
   return iso.slice(5, 10)
 }
 
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
 
 // SVG geometry — viewBox is fixed, the outer <svg> stretches to container
 // width. Padding leaves room for y-axis labels (left) and rotated x-labels
@@ -70,7 +65,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
   if (data.length === 0) {
     return (
       <div className="flex h-60 items-center justify-center">
-        <p className="text-sm text-muted-foreground">No spend recorded yet.</p>
+        <p className="text-sm text-muted-foreground">{t("metrics.no_spend")}</p>
       </div>
     )
   }
@@ -90,7 +85,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
         width="100%"
         height={240}
         role="img"
-        aria-label="Cost by day, last 14 days"
+        aria-label={t("metrics.by_day_label")}
         onMouseLeave={() => setHover(null)}
       >
         {/* Gridlines + y-axis labels */}
@@ -210,7 +205,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
             {data[hover.index]?.date}
           </div>
           <div className="font-medium tabular-nums">
-            {USD.format(data[hover.index]?.cost_usd ?? 0)}
+            {fmt.usd(data[hover.index]?.cost_usd ?? 0)}
           </div>
         </div>
       ) : null}

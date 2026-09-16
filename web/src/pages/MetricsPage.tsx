@@ -23,15 +23,8 @@ import { KpiCard } from "@/components/charts/KpiCard"
 import { LiveStatusPill } from "@/components/LiveStatusPill"
 import { useEventStream } from "@/hooks/useEventStream"
 import { useMetrics } from "@/hooks/useMetrics"
+import { fmt, t } from "@/i18n"
 
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-
-const INT = new Intl.NumberFormat("en-US")
 
 export function MetricsPage() {
   const queryClient = useQueryClient()
@@ -59,14 +52,14 @@ export function MetricsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-[-0.02em]">Metrics</h1>
+          <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("metrics.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground tabular-nums">
             {data
-              ? `Total cost: ${USD.format(data.total_cost_usd)} across ${modelsCount} model${modelsCount === 1 ? "" : "s"}` +
+              ? t("metrics.total", { cost: fmt.usd(data.total_cost_usd), count: modelsCount }) +
                 (data.estimated_cost_usd > 0
-                  ? ` — ${USD.format(data.estimated_cost_usd)} of it estimated from pricing.yaml for CLIs that report no price`
+                  ? ` — ${t("metrics.total_estimated", { estimated: fmt.usd(data.estimated_cost_usd) })}`
                   : "")
-              : "Loading metrics…"}
+              : t("metrics.loading")}
           </p>
         </div>
         <LiveStatusPill status={streamStatus} lastEventAt={lastEventAt} />
@@ -75,9 +68,9 @@ export function MetricsPage() {
       {isError ? (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Failed to load metrics</AlertTitle>
+          <AlertTitle>{t("metrics.load_failed")}</AlertTitle>
           <AlertDescription>
-            {error?.message ?? "Unknown error"}
+            {error?.message ?? t("common.unknown_error")}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -94,23 +87,23 @@ export function MetricsPage() {
         ) : (
           <>
             <KpiCard
-              label={data.estimated_cost_usd > 0 ? "Total spend (partly estimated)" : "Total spend"}
-              value={USD.format(data.total_cost_usd)}
+              label={data.estimated_cost_usd > 0 ? t("metrics.kpi.spend_estimated") : t("metrics.kpi.spend")}
+              value={fmt.usd(data.total_cost_usd)}
               icon={DollarSign}
             />
             <KpiCard
-              label="Tokens (in+out)"
-              value={INT.format(totalTokens)}
+              label={t("metrics.kpi.tokens")}
+              value={fmt.number(totalTokens)}
               icon={Activity}
             />
             <KpiCard
-              label="Models used"
+              label={t("metrics.kpi.models")}
               value={modelsCount}
               icon={Cpu}
             />
             <KpiCard
-              label="Estimate hours"
-              value={`${data.estimate_hours_total}h`}
+              label={t("metrics.kpi.hours")}
+              value={t("task.hours", { hours: data.estimate_hours_total })}
               icon={Clock}
             />
           </>
@@ -121,7 +114,7 @@ export function MetricsPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Cost by day (last 14)</CardTitle>
+            <CardTitle className="text-base">{t("metrics.by_day")}</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading || !data ? (
@@ -133,7 +126,7 @@ export function MetricsPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Cost by model</CardTitle>
+            <CardTitle className="text-base">{t("metrics.by_model")}</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading || !data ? (
@@ -148,17 +141,17 @@ export function MetricsPage() {
       {/* Detailed table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">By model</CardTitle>
+          <CardTitle className="text-base">{t("metrics.table")}</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Model</TableHead>
-                <TableHead className="text-right">Tasks</TableHead>
-                <TableHead className="text-right">Tokens in</TableHead>
-                <TableHead className="text-right">Tokens out</TableHead>
-                <TableHead className="text-right">Cost (USD)</TableHead>
+                <TableHead>{t("metrics.col.model")}</TableHead>
+                <TableHead className="text-right">{t("metrics.col.tasks")}</TableHead>
+                <TableHead className="text-right">{t("metrics.col.tokens_in")}</TableHead>
+                <TableHead className="text-right">{t("metrics.col.tokens_out")}</TableHead>
+                <TableHead className="text-right">{t("metrics.col.cost")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -176,7 +169,7 @@ export function MetricsPage() {
                     colSpan={5}
                     className="py-8 text-center text-sm text-muted-foreground"
                   >
-                    No model spend yet — run some tasks to populate this view.
+                    {t("metrics.none")}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -189,13 +182,13 @@ export function MetricsPage() {
                       {row.tasks_total}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {INT.format(row.tokens_in)}
+                      {fmt.number(row.tokens_in)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {INT.format(row.tokens_out)}
+                      {fmt.number(row.tokens_out)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {USD.format(row.cost_usd)}
+                      {fmt.usd(row.cost_usd)}
                     </TableCell>
                   </TableRow>
                 ))

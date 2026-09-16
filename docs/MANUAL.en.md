@@ -327,6 +327,13 @@ place. **⌘K** (Ctrl+K) searches pages, tasks and filters and copies CLI
 commands; `g` then `n`/`w`/`c`/`d` changes destination, `/` searches the task
 list and `?` lists every shortcut.
 
+The dashboard speaks English, Spanish and Portuguese (Brazil). It starts in
+your browser's language and falls back to English; the language button at the
+bottom of the sidebar (or ⌘K → *Change language*) switches it and this browser
+remembers the choice. `dashboard.language` in `config.yaml` is a different
+setting: it picks what the **client** reads (portal, executive summary, PDF),
+not the operator's screens. Commands, flags and config keys stay in English.
+
 `--profile operator` (the default) shows everything: tasks, spend per
 model, logs. `--profile stakeholder` gates every data route behind the
 `--token` and an allow-list of stakeholder-safe routes — no log lines, no

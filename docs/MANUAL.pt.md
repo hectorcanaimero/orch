@@ -328,6 +328,13 @@ antigos (`/kanban`, `/budget`, `/tunnel`…) redirecionam para o novo lugar.
 depois `n`/`w`/`c`/`d` troca de destino, `/` busca na lista de tasks e `?`
 mostra todos os atalhos.
 
+O dashboard está em inglês, espanhol e português (Brasil). Ele começa no idioma
+do seu navegador e, se não for nenhum desses, em inglês; o botão de idioma no
+rodapé da barra lateral (ou ⌘K → *Mudar idioma*) troca o idioma e este
+navegador lembra a escolha. `dashboard.language` no `config.yaml` é outra
+coisa: escolhe o que o **cliente** lê (portal, resumo executivo, PDF), não as
+telas do operador. Comandos, flags e chaves de config ficam em inglês.
+
 `--profile operator` (o padrão) mostra tudo: tasks, gasto por modelo,
 logs. `--profile stakeholder` protege cada rota de dados atrás do
 `--token` e de uma allow-list de rotas seguras para o stakeholder — sem

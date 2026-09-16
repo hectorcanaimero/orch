@@ -1,3 +1,4 @@
+import { t } from "@/i18n"
 import type { CiStatus, Task } from "@/lib/types"
 
 // /api/ci: how the project's pipeline is set up (internal/dashboard/ciroute.go).
@@ -65,11 +66,11 @@ export function pipelineStages({ config, workflows }: CiResponse): Stage[] {
   return [
     {
       key: "branch",
-      title: "Own branch",
+      title: t("ci.branch.title"),
       state: config.worktree_mode ? "on" : "off",
       detail: config.worktree_mode
-        ? `Each task works in its own worktree on orch/<task>, branched from ${base}.`
-        : "Agents work in the project checkout directly; there is no branch to review.",
+        ? t("ci.branch.on", { base })
+        : t("ci.branch.off"),
       settings: [
         { label: "dispatch.worktree_mode", value: String(config.worktree_mode) },
         { label: "dispatch.base_branch", value: base },
@@ -77,11 +78,11 @@ export function pipelineStages({ config, workflows }: CiResponse): Stage[] {
     },
     {
       key: "pr",
-      title: "Pull request",
+      title: t("ci.pr.title"),
       state: prs ? "on" : "off",
       detail: prs
-        ? `A finished task pushes its branch and opens a PR into ${base}.`
-        : "No PR is opened: a finished task is done as soon as its agent exits.",
+        ? t("ci.pr.on", { base })
+        : t("ci.pr.off"),
       settings: [
         { label: "vcs.auto_pr", value: String(config.auto_pr) },
         { label: "vcs.provider", value: config.provider || "github" },
@@ -89,37 +90,41 @@ export function pipelineStages({ config, workflows }: CiResponse): Stage[] {
     },
     {
       key: "checks",
-      title: "Checks",
+      title: t("ci.checks.title"),
       state: !prs ? "off" : prWorkflows.length > 0 ? "on" : "missing",
       detail: !prs
-        ? "Nothing to check without a PR."
+        ? t("ci.checks.off")
         : prWorkflows.length > 0
-          ? `orch waits on ${plural(jobs.length, "job")} from ${plural(prWorkflows.length, "workflow")}, asking every ${poll}s.`
-          : "No workflow runs on pull_request, so no check ever reports.",
+          ? t("ci.checks.on", {
+              jobs: t("ci.checks.jobs", { count: jobs.length }),
+              workflows: t("ci.checks.workflows", { count: prWorkflows.length }),
+              poll,
+            })
+          : t("ci.checks.missing"),
       settings: [
-        { label: "workflows on PRs", value: prWorkflows.map((w) => w.name || w.file).join(", ") || "none" },
+        { label: t("ci.checks.setting"), value: prWorkflows.map((w) => w.name || w.file).join(", ") || t("ci.checks.none") },
         { label: "vcs.ci_poll_interval_s", value: `${poll}s` },
       ],
     },
     {
       key: "retry",
-      title: "Retry on failure",
+      title: t("ci.retry.title"),
       state: prs ? "on" : "off",
       detail: prs
-        ? `A red check sends the agent back with the logs, up to ${plural(retries, "time")}; then the task is blocked.`
-        : "Only failed dispatches are retried.",
+        ? t("ci.retry.on", { times: t("ci.retry.times", { count: retries }) })
+        : t("ci.retry.off"),
       settings: [{ label: "vcs.ci_max_retries", value: String(retries) }],
     },
     {
       key: "merge",
-      title: "Merge",
+      title: t("ci.merge.title"),
       state: prs && config.auto_merge ? "on" : "off",
       detail:
         prs && config.auto_merge
-          ? "A green PR is merged by orch and the task is done."
+          ? t("ci.merge.auto")
           : prs
-            ? "A green PR finishes the task and waits for a person to merge it."
-            : "Nothing to merge.",
+            ? t("ci.merge.manual")
+            : t("ci.merge.off"),
       settings: [{ label: "github.auto_merge", value: String(config.auto_merge) }],
     },
   ]
@@ -155,8 +160,4 @@ export function prLabel(url: string): string {
 
 export function maxRetries(config: CiConfig): number {
   return config.ci_max_retries > 0 ? config.ci_max_retries : DEFAULT_MAX_RETRIES
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`
 }

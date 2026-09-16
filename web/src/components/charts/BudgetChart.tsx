@@ -1,3 +1,4 @@
+import { t } from "@/i18n"
 import type { BudgetRow } from "@/hooks/useBudgetSummary"
 
 export interface BudgetChartProps {
@@ -38,7 +39,7 @@ export function BudgetChart({ rows }: BudgetChartProps) {
       viewBox={`0 0 ${VB_WIDTH} ${height}`}
       width="100%"
       role="img"
-      aria-label="Budget vs actual by provider"
+      aria-label={t("budget.chart_label")}
     >
       {rows.map((r, i) => {
         const rowY = PAD_TOP + i * ROW_H

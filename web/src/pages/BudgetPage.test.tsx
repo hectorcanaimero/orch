@@ -2,6 +2,8 @@ import "@testing-library/jest-dom/vitest"
 import { render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { BudgetRow, BudgetSummary } from "@/hooks/useBudgetSummary"
+import { setLanguage } from "@/i18n"
+import { englishLeaks, visibleText } from "@/i18n/leaks"
 import { BudgetPage } from "@/pages/BudgetPage"
 
 const mockUseBudgetSummary = vi.fn()
@@ -68,5 +70,24 @@ describe("BudgetPage", () => {
     render(<BudgetPage />)
     expect(screen.getByRole("alert")).toHaveTextContent("Budget guardrail is off")
     expect(screen.getByText("/p/budgets.yaml")).toBeInTheDocument()
+  })
+
+  it("leaves no English on the page in Portuguese", () => {
+    loaded({
+      rows: [
+        row("claude", { cost_source: "reported", cost_usd: 0.63, tokens_used: 83_003, raw_tokens_used: 139_500 }),
+        row("codex", { cost_source: "estimated", estimated_cost_usd: 0.16 }),
+        row("gemini", { cost_source: "no_data", over_threshold: true }),
+      ],
+      waiting: [{ task_id: "F3.T1", provider: "codex", reset_at: "2026-09-16T14:00:00Z" }] as BudgetSummary["waiting"],
+    })
+    setLanguage("pt")
+    try {
+      const { container } = render(<BudgetPage />)
+      expect(screen.getByText("Informado")).toBeInTheDocument()
+      expect(englishLeaks(visibleText(container), "pt")).toEqual([])
+    } finally {
+      setLanguage("en")
+    }
   })
 })

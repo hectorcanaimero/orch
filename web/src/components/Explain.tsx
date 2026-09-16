@@ -1,8 +1,8 @@
 import type { ReactNode } from "react"
 import { Info } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { glossary, type GlossaryTerm } from "@/i18n/glossary"
-import { t } from "@/i18n"
+import { glossaryFor, type GlossaryTerm } from "@/i18n/glossary"
+import { getLanguage, t } from "@/i18n"
 import { cn } from "@/lib/utils"
 
 /**
@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
  * (a sortable table header, a clickable card).
  */
 export function Explain({ term, children, className }: { term: GlossaryTerm; children?: ReactNode; className?: string }) {
-  const entry = glossary[term]
+  const entry = glossaryFor(getLanguage())[term]
   return (
     <span className={cn("inline-flex items-center gap-1", className)}>
       {children ?? entry.title}
