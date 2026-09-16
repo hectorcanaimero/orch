@@ -50,9 +50,10 @@ const (
 )
 
 // gatedCommands refuse to start while a critical release is out. They are
-// the long-running ones: a run or a dashboard started on a version with a
-// known critical bug keeps living with it for hours.
-var gatedCommands = map[string]bool{"orch run": true, "orch dashboard": true}
+// the long-running ones: a run, a bench (which is runs) or a dashboard
+// started on a version with a known critical bug keeps living with it for
+// hours.
+var gatedCommands = map[string]bool{"orch run": true, "orch dashboard": true, "orch bench": true}
 
 func addSkipUpdateFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool(skipUpdateFlag, false,

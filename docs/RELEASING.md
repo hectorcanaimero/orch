@@ -100,7 +100,7 @@ newer release's notes when it tells the user a release is out, and
   ```
 
   It does not render on GitHub. Every older orch then refuses to start
-  `orch run` and `orch dashboard` until the user runs `orch upgrade` (or
+  `orch run`, `orch bench` and `orch dashboard` until the user runs `orch upgrade` (or
   passes `--skip-update-check`). Other commands keep working. Use it rarely:
   a gate that fires for every patch teaches people the flag. Clients cache
   the release list for up to 24 hours, so the gate reaches everyone within a

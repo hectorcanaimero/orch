@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -30,191 +32,218 @@ import (
 // a flag or key that promises a behaviour nothing implements. They arrive in
 // the PR that makes them do something. `docs/CLI.md` records the gap.
 func newRunCmd(flags *projectFlags) *cobra.Command {
-	var (
-		mode         string
-		maxTasks     int
-		only         string
-		taskLocks    bool
-		worktreeMode bool
-		noPush       bool
-	)
+	var opts runOptions
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Walk the DAG, dispatching ready tasks to their CLI agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch engine.Mode(mode) {
-			case engine.ModeAuto, engine.ModeSemi:
-			default:
-				return withExitCode(1, fmt.Errorf(
-					"--mode %q: expected %q or %q", mode, engine.ModeAuto, engine.ModeSemi))
-			}
-
-			paths, cfg, err := loadProjectConfig(flags)
-			if err != nil {
-				return withExitCode(1, err)
-			}
-
-			ctx := cmd.Context()
-			backend, closeBackend, err := openBackend(ctx, paths, cfg)
-			if err != nil {
-				return withExitCode(1, err)
-			}
-			defer func() {
-				if cerr := closeBackend(); cerr != nil {
-					fmt.Fprintf(os.Stderr, "closing the state backend: %v\n", cerr)
-				}
-			}()
-
-			tasks := loadDAG(paths)
-			if len(tasks) == 0 {
-				return withExitCode(1, fmt.Errorf("no tasks in %s", paths.TasksJSON()))
-			}
-			if err := backend.Bootstrap(ctx, tasks); err != nil {
-				return withExitCode(1, fmt.Errorf("bootstrap: %w", err))
-			}
-
-			queue, err := engine.NewTaskQueue(tasks)
-			if err != nil {
-				return withExitCode(1, err)
-			}
-			// The database owns runtime status since F-12, so the queue
-			// starts from what it says rather than from tasks.json's seed.
-			if rows, rerr := backend.Tasks(ctx, state.TaskFilter{}); rerr != nil {
-				fmt.Fprintf(os.Stderr, "reading task status; starting from tasks.json: %v\n", rerr)
-			} else {
-				runtime := make(map[string]model.Status, len(rows))
-				for _, r := range rows {
-					runtime[r.ID] = r.Status
-				}
-				queue.Hydrate(runtime)
-			}
-
-			rtr := loadRouterTolerant(paths)
-			runID := providers.NewSessionID()
-			if err := backend.StartRun(ctx, runID, mode); err != nil {
-				return withExitCode(1, fmt.Errorf("starting the run: %w", err))
-			}
-
-			scheduler := engine.NewScheduler(queue, rtr, engine.SchedulerOptions{
-				Mode:              engine.Mode(mode),
-				GlobalMax:         cfg.Concurrency.GlobalMax,
-				PerProvider:       cfg.Concurrency.PerProvider,
-				TimeoutMultiplier: cfg.DefaultTimeoutMult,
-				Cfg:               cfg,
-				UseTaskLocks:      taskLocks,
-				WorktreeMode:      worktreeMode || cfg.Dispatch.WorktreeMode,
-				BaseBranch:        cfg.Dispatch.BaseBranch,
-				AutoPR:            cfg.VCS.AutoPR,
-				Only:              only,
-				MaxTasks:          maxTasks,
-				StateDir:          paths.StateDir(),
-				Cwd:               paths.Root,
-				ProjectID:         paths.ID,
-				RunID:             runID,
-				BudgetUSD:         perDispatchCap(cfg),
-			})
-			scheduler.Backend = engine.NewStateRecorder(backend)
-			// The same adapter, named separately because it answers a
-			// different question: what a finished dependency reported, for
-			// the prompt's context block.
-			scheduler.Comments = engine.NewStateRecorder(backend)
-			// Built unconditionally: with no webhook configured it is a
-			// working no-op, so the engine never has to ask whether the
-			// operator wanted notifications.
-			notifier := newNotifier(cfg)
-			scheduler.Notify = notifier
-			if engine.Mode(mode) == engine.ModeSemi {
-				scheduler.Gate = engine.TerminalGate{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
-			}
-			// Worktree isolation, and the auto-PR + CI chain that rides on
-			// it. All three are off unless the project asked: a project with
-			// worktree_mode off runs exactly as it did before, in its own
-			// root.
-			var wtManager engine.WorktreeManager
-			if worktreeMode || cfg.Dispatch.WorktreeMode {
-				wtManager = engine.NewWorktreeManager(worktree.NewManager(paths.Root, !noPush))
-				scheduler.Worktree = wtManager
-			}
-
-			var provider vcs.Provider
-			if cfg.VCS.AutoPR {
-				if wtManager == nil {
-					// Python's main() builds the provider only when BOTH are
-					// on, for the good reason that there is no branch to open
-					// a PR from without a worktree.
-					return withExitCode(1, errors.New(
-						"vcs.auto_pr needs dispatch.worktree_mode: there is no branch to open a PR from"))
-				}
-				provider = vcs.NewProvider(vcs.Config{
-					Provider: cfg.VCS.Provider,
-					Host:     cfg.VCS.Host,
-				})
-				scheduler.VCS = provider
-				scheduler.CIRecorder = backend
-			}
-
-			runner := engine.NewRunner(scheduler)
-			// Resume: the same backend answers which dispatches a previous
-			// run left behind, so a crashed orch's rows do not hold tasks
-			// in-progress forever.
-			runner.Dispatches = backend
-			// And adopts statuses a person or a failed write changed in the
-			// database while this run held another view (#255).
-			runner.Statuses = engine.StateRecorder{Backend: backend}
-
-			// The CI poller only has something to watch when a PR can exist.
-			if provider != nil {
-				runner.CI = &engine.CIPoller{
-					Provider:     provider,
-					Backend:      backend,
-					Worktree:     wtManager,
-					PollInterval: time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
-					MaxRetries:   cfg.VCS.CIMaxRetries,
-					AutoMerge:    cfg.GitHub.AutoMerge,
-					// Python's `gh pr merge --squash --auto`. Without a
-					// method gh refuses to merge non-interactively (#232).
-					Squash:           true,
-					MergeWhenPassing: true,
-				}
-			}
-			// One gate, shared: the scheduler asks it per dispatch and the
-			// loop asks it whether every provider is capped. Building two
-			// would read the same window twice and let them disagree inside
-			// a single tick.
-			if gate := newBudgetGate(paths, cfg, backend); gate != nil {
-				scheduler.Budget = gate
-				runner.Budget = gate
-				runner.Alerts = newBudgetAlerts(cfg, notifier, gate, backend, runID)
-			}
-
-			code, err := runner.Run(ctx)
-			if err != nil {
-				return withExitCode(1, err)
-			}
-			if code != 0 {
-				// The loop already said what it was doing on its way out;
-				// a second line here would be noise.
-				return withSilentExitCode(code)
-			}
-			return nil
+			return runProject(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), flags, opts)
 		},
 	}
 
-	cmd.Flags().StringVar(&mode, "mode", string(engine.ModeAuto),
+	cmd.Flags().StringVar(&opts.mode, "mode", string(engine.ModeAuto),
 		"auto dispatches everything ready; semi asks before each critical task")
-	cmd.Flags().IntVar(&maxTasks, "max-tasks", 0,
+	cmd.Flags().IntVar(&opts.maxTasks, "max-tasks", 0,
 		"Stop after dispatching this many tasks; 0 means no limit")
-	cmd.Flags().StringVar(&only, "only", "",
+	cmd.Flags().StringVar(&opts.only, "only", "",
 		"Only dispatch tasks whose id matches this glob (dependencies still resolve across the whole DAG)")
-	cmd.Flags().BoolVar(&taskLocks, "task-locks", false,
+	cmd.Flags().BoolVar(&opts.taskLocks, "task-locks", false,
 		"Take a per-task lock, so several orch instances can share one project")
-	cmd.Flags().BoolVar(&worktreeMode, "worktree-mode", false,
+	cmd.Flags().BoolVar(&opts.worktreeMode, "worktree-mode", false,
 		"Give each task its own git worktree and branch (also settable as dispatch.worktree_mode)")
-	cmd.Flags().BoolVar(&noPush, "no-push", false,
+	cmd.Flags().BoolVar(&opts.noPush, "no-push", false,
 		"Skip pushing task branches — for a project with no remote")
 
 	return cmd
+}
+
+// runOptions are `orch run`'s flags, as runProject takes them.
+type runOptions struct {
+	mode         string
+	maxTasks     int
+	only         string
+	taskLocks    bool
+	worktreeMode bool
+	noPush       bool
+	// runID names the run; empty means a fresh session id. `orch bench`
+	// picks it up front so it can read the run's receipt while it is going.
+	runID string
+	// isolated is `orch bench`'s run: no worktrees, no pushes, no PRs, no CI
+	// polling and no notifications, whatever the project's config says. A
+	// benchmark copy has no git history of its own, must never open a PR on
+	// the real remote, and is not news for the project's Slack channel.
+	isolated bool
+}
+
+// runProject is `orch run` minus cobra: the one code path that walks a
+// project's DAG. `orch bench` calls it too, so a benchmark measures exactly
+// what `orch run` does.
+func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *projectFlags, opts runOptions) error {
+	switch engine.Mode(opts.mode) {
+	case engine.ModeAuto, engine.ModeSemi:
+	default:
+		return withExitCode(1, fmt.Errorf(
+			"--mode %q: expected %q or %q", opts.mode, engine.ModeAuto, engine.ModeSemi))
+	}
+
+	paths, cfg, err := loadProjectConfig(flags)
+	if err != nil {
+		return withExitCode(1, err)
+	}
+
+	backend, closeBackend, err := openBackend(ctx, paths, cfg)
+	if err != nil {
+		return withExitCode(1, err)
+	}
+	defer func() {
+		if cerr := closeBackend(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "closing the state backend: %v\n", cerr)
+		}
+	}()
+
+	tasks := loadDAG(paths)
+	if len(tasks) == 0 {
+		return withExitCode(1, fmt.Errorf("no tasks in %s", paths.TasksJSON()))
+	}
+	if err := backend.Bootstrap(ctx, tasks); err != nil {
+		return withExitCode(1, fmt.Errorf("bootstrap: %w", err))
+	}
+
+	queue, err := engine.NewTaskQueue(tasks)
+	if err != nil {
+		return withExitCode(1, err)
+	}
+	// The database owns runtime status since F-12, so the queue
+	// starts from what it says rather than from tasks.json's seed.
+	if rows, rerr := backend.Tasks(ctx, state.TaskFilter{}); rerr != nil {
+		fmt.Fprintf(os.Stderr, "reading task status; starting from tasks.json: %v\n", rerr)
+	} else {
+		runtime := make(map[string]model.Status, len(rows))
+		for _, r := range rows {
+			runtime[r.ID] = r.Status
+		}
+		queue.Hydrate(runtime)
+	}
+
+	worktreeMode := (opts.worktreeMode || cfg.Dispatch.WorktreeMode) && !opts.isolated
+	autoPR := cfg.VCS.AutoPR && !opts.isolated
+
+	rtr := loadRouterTolerant(paths)
+	runID := opts.runID
+	if runID == "" {
+		runID = providers.NewSessionID()
+	}
+	if err := backend.StartRun(ctx, runID, opts.mode); err != nil {
+		return withExitCode(1, fmt.Errorf("starting the run: %w", err))
+	}
+
+	scheduler := engine.NewScheduler(queue, rtr, engine.SchedulerOptions{
+		Mode:              engine.Mode(opts.mode),
+		GlobalMax:         cfg.Concurrency.GlobalMax,
+		PerProvider:       cfg.Concurrency.PerProvider,
+		TimeoutMultiplier: cfg.DefaultTimeoutMult,
+		Cfg:               cfg,
+		UseTaskLocks:      opts.taskLocks,
+		WorktreeMode:      worktreeMode,
+		BaseBranch:        cfg.Dispatch.BaseBranch,
+		AutoPR:            autoPR,
+		Only:              opts.only,
+		MaxTasks:          opts.maxTasks,
+		StateDir:          paths.StateDir(),
+		Cwd:               paths.Root,
+		ProjectID:         paths.ID,
+		RunID:             runID,
+		BudgetUSD:         perDispatchCap(cfg),
+	})
+	scheduler.Backend = engine.NewStateRecorder(backend)
+	// The same adapter, named separately because it answers a
+	// different question: what a finished dependency reported, for
+	// the prompt's context block.
+	scheduler.Comments = engine.NewStateRecorder(backend)
+	// Built unconditionally: with no webhook configured it is a
+	// working no-op, so the engine never has to ask whether the
+	// operator wanted notifications.
+	notifyCfg := cfg
+	if opts.isolated {
+		notifyCfg.Notifications.SlackWebhook, notifyCfg.Notifications.DiscordWebhook = "", ""
+	}
+	notifier := newNotifier(notifyCfg)
+	scheduler.Notify = notifier
+	if engine.Mode(opts.mode) == engine.ModeSemi {
+		scheduler.Gate = engine.TerminalGate{In: in, Out: out}
+	}
+	// Worktree isolation, and the auto-PR + CI chain that rides on
+	// it. All three are off unless the project asked: a project with
+	// worktree_mode off runs exactly as it did before, in its own
+	// root.
+	var wtManager engine.WorktreeManager
+	if worktreeMode {
+		wtManager = engine.NewWorktreeManager(worktree.NewManager(paths.Root, !opts.noPush))
+		scheduler.Worktree = wtManager
+	}
+
+	var provider vcs.Provider
+	if autoPR {
+		if wtManager == nil {
+			// Python's main() builds the provider only when BOTH are
+			// on, for the good reason that there is no branch to open
+			// a PR from without a worktree.
+			return withExitCode(1, errors.New(
+				"vcs.auto_pr needs dispatch.worktree_mode: there is no branch to open a PR from"))
+		}
+		provider = vcs.NewProvider(vcs.Config{
+			Provider: cfg.VCS.Provider,
+			Host:     cfg.VCS.Host,
+		})
+		scheduler.VCS = provider
+		scheduler.CIRecorder = backend
+	}
+
+	runner := engine.NewRunner(scheduler)
+	// Resume: the same backend answers which dispatches a previous
+	// run left behind, so a crashed orch's rows do not hold tasks
+	// in-progress forever.
+	runner.Dispatches = backend
+	// And adopts statuses a person or a failed write changed in the
+	// database while this run held another view (#255).
+	runner.Statuses = engine.StateRecorder{Backend: backend}
+
+	// The CI poller only has something to watch when a PR can exist.
+	if provider != nil {
+		runner.CI = &engine.CIPoller{
+			Provider:     provider,
+			Backend:      backend,
+			Worktree:     wtManager,
+			PollInterval: time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
+			MaxRetries:   cfg.VCS.CIMaxRetries,
+			AutoMerge:    cfg.GitHub.AutoMerge,
+			// Python's `gh pr merge --squash --auto`. Without a
+			// method gh refuses to merge non-interactively (#232).
+			Squash:           true,
+			MergeWhenPassing: true,
+		}
+	}
+	// One gate, shared: the scheduler asks it per dispatch and the
+	// loop asks it whether every provider is capped. Building two
+	// would read the same window twice and let them disagree inside
+	// a single tick.
+	if gate := newBudgetGate(paths, cfg, backend); gate != nil {
+		scheduler.Budget = gate
+		runner.Budget = gate
+		runner.Alerts = newBudgetAlerts(notifyCfg, notifier, gate, backend, runID)
+	}
+
+	code, err := runner.Run(ctx)
+	if err != nil {
+		return withExitCode(1, err)
+	}
+	if code != 0 {
+		// The loop already said what it was doing on its way out;
+		// a second line here would be noise.
+		return withSilentExitCode(code)
+	}
+	return nil
 }
 
 // perDispatchCap is budget.per_dispatch_usd as the per-attempt cap claude
