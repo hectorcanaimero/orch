@@ -304,6 +304,10 @@ orch dashboard
 # (nothing is dispatched; the data is deleted when you stop it)
 orch dashboard --demo
 
+# The last finished run as Markdown to paste into a PR or a chat: tasks done
+# and blocked, wall and agent time, spend per provider, PRs (--json for scripts)
+orch report receipt
+
 # A link to hand a client, over a Cloudflare quick tunnel (needs
 # `tunnel: enabled: true` in config.yaml and cloudflared on PATH — the
 # Tunnel page shows how to install it). Prints the client-portal link, with

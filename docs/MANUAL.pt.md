@@ -304,6 +304,11 @@ orch dashboard
 # (nada é despachado; os dados são apagados ao parar)
 orch dashboard --demo
 
+# A última execução concluída em Markdown, para colar num PR ou num chat:
+# tarefas feitas e bloqueadas, tempo real e dos agentes, gasto por provedor,
+# PRs (--json para scripts)
+orch report receipt
+
 # Um link para passar a um cliente, por um túnel rápido da Cloudflare
 # (precisa de `tunnel: enabled: true` no config.yaml e do cloudflared no
 # PATH — a página Tunnel mostra como instalar). Imprime o link do portal do
