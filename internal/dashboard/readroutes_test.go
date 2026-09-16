@@ -55,6 +55,27 @@ type fakeState struct {
 	stakeholderTokenHash string
 	stakeholderTokenOK   bool
 	stakeholderTokenErr  error
+
+	// runs and inFlight back /api/now; runsErr is also how a test says "never
+	// ran" (state.ErrNoRuns).
+	runs        []state.Run
+	runsErr     error
+	inFlight    []state.Dispatch
+	inFlightErr error
+}
+
+func (f *fakeState) LatestRun(context.Context) (state.Run, error) {
+	if f.runsErr != nil {
+		return state.Run{}, f.runsErr
+	}
+	if len(f.runs) == 0 {
+		return state.Run{}, state.ErrNoRuns
+	}
+	return f.runs[0], nil
+}
+
+func (f *fakeState) InFlightDispatches(context.Context) ([]state.Dispatch, error) {
+	return f.inFlight, f.inFlightErr
 }
 
 func (f *fakeState) Tasks(context.Context, state.TaskFilter) ([]state.TaskRuntime, error) {

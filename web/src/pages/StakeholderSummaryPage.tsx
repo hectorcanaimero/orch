@@ -21,7 +21,7 @@ import type { SpendByDay, StakeholderMilestone, StakeholderPhase } from "@/lib/t
  * One segment per task, colored by status, so a phase reads as "how many of
  * its tasks are where" — length never doubles as effort.
  */
-function PhaseSegments({ phase }: { phase: StakeholderPhase }) {
+export function PhaseSegments({ phase }: { phase: StakeholderPhase }) {
   const todo = Math.max(0, phase.total - phase.done - phase.in_progress - phase.blocked)
   const segments: StatusKey[] = [
     ...Array<StatusKey>(phase.done).fill("done"),

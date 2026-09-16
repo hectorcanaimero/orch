@@ -1,26 +1,27 @@
 import {
+  Activity,
   BarChart3,
+  BriefcaseBusiness,
   CalendarClock,
+  FileText,
   GitFork,
   KanbanSquare,
-  LayoutDashboard,
   LayoutGrid,
   ListIcon,
   Milestone,
   Radio,
-  ScrollText,
+  Send,
   Wallet,
   Workflow,
 } from "lucide-react"
+import type { MessageKey } from "@/i18n"
 
-export interface NavItem {
+export interface NavTab {
   to: string
-  label: string
-  icon: typeof LayoutDashboard
-  end?: boolean
+  label: MessageKey
   // The server route the page reads its data from, by the name the Go
   // dashboard registers it under. A stakeholder sees a page only when this
-  // route is on the allow-list /api/whoami returns, so the sidebar and the
+  // route is on the allow-list /api/whoami returns, so the navigation and the
   // gate share one rule instead of two copies that drift apart.
   route: string
   // Used only when a server sends no allow-list (an older binary).
@@ -29,27 +30,95 @@ export interface NavItem {
   portfolioGated?: boolean
 }
 
-export const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "Summary", icon: LayoutDashboard, end: true, route: "stakeholder_summary_json" },
-  { to: "/list", label: "Tasks", icon: ListIcon, route: "api_tasks" },
-  { to: "/kanban", label: "Kanban", icon: KanbanSquare, route: "api_tasks" },
-  { to: "/milestones", label: "Milestones", icon: Milestone, route: "api_milestones" },
-  { to: "/budget", label: "Budget", icon: Wallet, route: "api_budget_summary" },
-  { to: "/pace", label: "Pace", icon: CalendarClock, route: "api_sprint" },
-  { to: "/graph", label: "Graph", icon: GitFork, route: "api_graph", operatorOnly: true },
-  { to: "/ci", label: "CI", icon: Workflow, route: "api_ci", operatorOnly: true },
-  { to: "/tunnel", label: "Tunnel", icon: Radio, route: "api_tunnel_status", operatorOnly: true },
-  { to: "/metrics", label: "Metrics", icon: BarChart3, route: "api_metrics", operatorOnly: true },
-  { to: "/logs", label: "Logs", icon: ScrollText, route: "api_events", operatorOnly: true },
+export interface NavDestination {
+  id: "now" | "work" | "cost" | "delivery"
+  label: MessageKey
+  icon: typeof Activity
+  tabs: NavTab[]
+}
+
+/**
+ * Four places, each answering one question: what is happening now, where the
+ * work stands, what it costs, and what has been delivered. Every page is a tab
+ * of exactly one of them.
+ */
+export const DESTINATIONS: NavDestination[] = [
   {
-    to: "/portfolio",
-    label: "Portfolio",
-    icon: LayoutGrid,
-    route: "api_portfolio",
-    operatorOnly: true,
-    portfolioGated: true,
+    id: "now",
+    label: "nav.now",
+    icon: Activity,
+    tabs: [
+      { to: "/", label: "nav.now", route: "api_now", operatorOnly: true },
+      { to: "/now/portfolio", label: "nav.portfolio", route: "api_portfolio", operatorOnly: true, portfolioGated: true },
+    ],
+  },
+  {
+    id: "work",
+    label: "nav.work",
+    icon: BriefcaseBusiness,
+    tabs: [
+      { to: "/work/list", label: "nav.list", route: "api_tasks" },
+      { to: "/work/kanban", label: "nav.kanban", route: "api_tasks" },
+      { to: "/work/graph", label: "nav.graph", route: "api_graph", operatorOnly: true },
+      { to: "/work/phases", label: "nav.phases", route: "api_milestones" },
+      { to: "/work/pace", label: "nav.pace", route: "api_sprint" },
+    ],
+  },
+  {
+    id: "cost",
+    label: "nav.cost",
+    icon: Wallet,
+    tabs: [
+      { to: "/cost/budget", label: "nav.budget", route: "api_budget_summary" },
+      { to: "/cost/metrics", label: "nav.metrics", route: "api_metrics", operatorOnly: true },
+    ],
+  },
+  {
+    id: "delivery",
+    label: "nav.delivery",
+    icon: Send,
+    tabs: [
+      { to: "/delivery/summary", label: "nav.summary", route: "stakeholder_summary_json" },
+      { to: "/delivery/ci", label: "nav.ci", route: "api_ci", operatorOnly: true },
+      { to: "/delivery/share", label: "nav.share", route: "api_tunnel_status", operatorOnly: true },
+    ],
   },
 ]
+
+/** Icons for tabs, keyed by path; the destination icon stands for the group. */
+export const TAB_ICONS: Record<string, typeof Activity> = {
+  "/": Activity,
+  "/now/portfolio": LayoutGrid,
+  "/work/list": ListIcon,
+  "/work/kanban": KanbanSquare,
+  "/work/graph": GitFork,
+  "/work/phases": Milestone,
+  "/work/pace": CalendarClock,
+  "/cost/budget": Wallet,
+  "/cost/metrics": BarChart3,
+  "/delivery/summary": FileText,
+  "/delivery/ci": Workflow,
+  "/delivery/share": Radio,
+}
+
+/**
+ * Every address the dashboard answered before it had four destinations, and
+ * where it lives now. Bookmarks and shared links keep working.
+ */
+export const LEGACY_REDIRECTS: Record<string, string> = {
+  "/list": "/work/list",
+  "/kanban": "/work/kanban",
+  "/graph": "/work/graph",
+  "/milestones": "/work/phases",
+  "/pace": "/work/pace",
+  "/sprint": "/work/pace",
+  "/budget": "/cost/budget",
+  "/metrics": "/cost/metrics",
+  "/ci": "/delivery/ci",
+  "/tunnel": "/delivery/share",
+  "/portfolio": "/now/portfolio",
+  "/summary": "/delivery/summary",
+}
 
 interface Access {
   isStakeholder: boolean
@@ -57,24 +126,40 @@ interface Access {
   allowedRoutes?: string[]
 }
 
-function stakeholderMaySee(item: NavItem, allowedRoutes?: string[]): boolean {
-  if (!allowedRoutes) return !item.operatorOnly
-  return allowedRoutes.includes(item.route)
+function maySee(tab: NavTab, { isStakeholder, allowedRoutes, portfolioAvailable }: Access & { portfolioAvailable: boolean }) {
+  if (isStakeholder) return allowedRoutes ? allowedRoutes.includes(tab.route) : !tab.operatorOnly
+  return !tab.portfolioGated || portfolioAvailable
 }
 
-export function visibleNavItems({
-  isStakeholder,
-  allowedRoutes,
-  portfolioAvailable,
-}: Access & { portfolioAvailable: boolean }): NavItem[] {
-  if (isStakeholder) return NAV_ITEMS.filter((item) => stakeholderMaySee(item, allowedRoutes))
-  return NAV_ITEMS.filter((item) => !item.portfolioGated || portfolioAvailable)
+/** The destinations this session may see, each holding only its visible tabs. */
+export function visibleDestinations(access: Access & { portfolioAvailable: boolean }): NavDestination[] {
+  return DESTINATIONS.map((d) => ({ ...d, tabs: d.tabs.filter((tab) => maySee(tab, access)) })).filter(
+    (d) => d.tabs.length > 0,
+  )
+}
+
+/** The tab a path belongs to: an exact match, or the tab whose path it extends. */
+export function findTab(pathname: string): { destination: NavDestination; tab: NavTab } | undefined {
+  for (const destination of DESTINATIONS) {
+    for (const tab of destination.tabs) {
+      if (tab.to === "/" ? pathname === "/" : pathname === tab.to || pathname.startsWith(`${tab.to}/`)) {
+        return { destination, tab }
+      }
+    }
+  }
+  return undefined
+}
+
+/** Where a session lands: its first visible page. */
+export function homePath(destinations: NavDestination[]): string {
+  return destinations[0]?.tabs[0]?.to ?? "/login"
 }
 
 // isPathAllowed answers whether a page opened by URL should render, or send
-// a stakeholder back to the summary instead of a 403.
+// a stakeholder to their home page instead of a 403.
 export function isPathAllowed(pathname: string, { isStakeholder, allowedRoutes }: Access): boolean {
-  if (!isStakeholder || !allowedRoutes) return true
-  const item = NAV_ITEMS.find((i) => i.to === pathname)
-  return !item || allowedRoutes.includes(item.route)
+  if (!isStakeholder) return true
+  const found = findTab(pathname)
+  if (!found) return true
+  return allowedRoutes ? allowedRoutes.includes(found.tab.route) : !found.tab.operatorOnly
 }

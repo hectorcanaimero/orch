@@ -13,7 +13,7 @@ import {
   TaskFiltersBar,
   toTaskFilters,
   useDebouncedValue,
-  type TaskFiltersBarValue,
+  useTaskFilterParams,
 } from "@/components/TaskFiltersBar"
 import { useEventStream } from "@/hooks/useEventStream"
 import { useTableSort, type SortGetters } from "@/hooks/useTableSort"
@@ -50,12 +50,7 @@ function shortModel(model: string): string {
 }
 
 export function ListPage() {
-  const [filters, setFilters] = useState<TaskFiltersBarValue>({
-    phase: "",
-    model: "",
-    search: "",
-    status: "",
-  })
+  const [filters, setFilters] = useTaskFilterParams()
   // A phone gets cards: nine table columns only fit by scrolling sideways.
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     typeof window !== "undefined" && window.matchMedia?.("(max-width: 767px)").matches ? "card" : "list",

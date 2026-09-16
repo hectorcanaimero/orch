@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest"
 import { fireEvent, render, screen, within } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 import { AppLayout } from "@/components/AppLayout"
 
@@ -10,28 +10,72 @@ vi.mock("@/hooks/usePortfolio", () => ({
   isPortfolioNavVisible: () => false,
 }))
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ clearToken: vi.fn() }) }))
+vi.mock("@/pages/LogsPage", () => ({ LogsPage: () => <p>event log</p> }))
 
-// At 390px the fixed sidebar stayed and pushed the page 68px past the screen
-// ("Export", "Copy" and "86%" cut off). Below md the sidebar gives way to a
-// top bar whose menu carries the same pages — a menu, because a sideways strip
-// of eleven labels cut "Milestones" in half with no hint it scrolled. jsdom
-// applies no media queries, so this checks the structure; the breakpoint
-// classes are what switch between the two.
+function Where() {
+  const { pathname, search } = useLocation()
+  return <output aria-label="location">{pathname + search}</output>
+}
+
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route
+          path="*"
+          element={
+            <AppLayout>
+              <Where />
+            </AppLayout>
+          }
+        />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+const hrefs = (nav: HTMLElement) => within(nav).getAllByRole("link").map((a) => a.getAttribute("href"))
+
 describe("AppLayout", () => {
-  it("offers the same pages in a top bar for small screens as in the sidebar", () => {
-    render(
-      <MemoryRouter>
-        <AppLayout>
-          <p>page</p>
-        </AppLayout>
-      </MemoryRouter>,
-    )
+  // At 390px a sideways strip of eleven labels cut "Milestones" in half. The
+  // phone gets the same four destinations as the sidebar, as a bottom bar.
+  // jsdom applies no media queries, so this checks the structure; the
+  // breakpoint classes are what switch between the two.
+  it("offers the same four destinations in the sidebar and the phone's bottom bar", () => {
+    renderAt("/")
     const sidebar = screen.getByRole("navigation", { name: "Main" })
-    fireEvent.click(screen.getByRole("button", { name: "Menu" }))
-    const topbar = screen.getByRole("navigation", { name: "Main (small screens)" })
-    const names = (nav: HTMLElement) => within(nav).getAllByRole("link").map((a) => a.getAttribute("href"))
-    expect(names(topbar)).toEqual(names(sidebar))
-    expect(screen.getByRole("button", { name: "Menu" }).closest("header")).toHaveClass("md:hidden")
+    const bottom = screen.getByRole("navigation", { name: "Main (small screens)" })
+    expect(hrefs(sidebar)).toEqual(["/", "/work/list", "/cost/budget", "/delivery/summary"])
+    expect(hrefs(bottom)).toEqual(hrefs(sidebar))
+    expect(bottom).toHaveClass("md:hidden")
     expect(sidebar.closest("aside")).toHaveClass("hidden", "md:flex")
+  })
+
+  it("shows a destination's pages as tabs that keep the filters in the query string", () => {
+    renderAt("/work/kanban?status=blocked&logs=1")
+    const tabs = screen.getByRole("navigation", { name: "Sections" })
+    expect(hrefs(tabs)).toEqual([
+      "/work/list?status=blocked",
+      "/work/kanban?status=blocked",
+      "/work/graph?status=blocked",
+      "/work/phases?status=blocked",
+      "/work/pace?status=blocked",
+    ])
+    expect(within(tabs).getByRole("link", { current: "page" })).toHaveTextContent("Kanban")
+  })
+
+  it("has no tab strip on a destination with a single page", () => {
+    renderAt("/")
+    expect(screen.queryByRole("navigation", { name: "Sections" })).not.toBeInTheDocument()
+  })
+
+  it("opens the event log over the current page and closes it again", () => {
+    renderAt("/cost/budget")
+    expect(screen.queryByText("event log")).not.toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole("complementary")).getByRole("button", { name: "Logs" }))
+    expect(screen.getByRole("region", { name: "Logs" })).toHaveTextContent("event log")
+    expect(screen.getByRole("status", { name: "location" })).toHaveTextContent("/cost/budget?logs=1")
+    fireEvent.click(screen.getByRole("button", { name: "Close logs" }))
+    expect(screen.queryByText("event log")).not.toBeInTheDocument()
   })
 })

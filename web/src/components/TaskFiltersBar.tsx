@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -98,6 +99,40 @@ export function TaskFiltersBar({ value, onChange, phaseOptions, modelOptions }: 
       </div>
     </div>
   )
+}
+
+const FILTER_PARAMS = { search: "q", status: "status", phase: "phase", model: "model" } as const
+
+/**
+ * The filters as query parameters, so a filtered view is a link and List,
+ * Kanban and Graph share one set: switching tabs carries the query string.
+ */
+export function useTaskFilterParams(): [TaskFiltersBarValue, (next: TaskFiltersBarValue) => void] {
+  const [params, setParams] = useSearchParams()
+  const value: TaskFiltersBarValue = {
+    search: params.get(FILTER_PARAMS.search) ?? "",
+    status: params.get(FILTER_PARAMS.status) ?? "",
+    phase: params.get(FILTER_PARAMS.phase) ?? "",
+    model: params.get(FILTER_PARAMS.model) ?? "",
+  }
+  const setValue = useCallback(
+    (next: TaskFiltersBarValue) => {
+      setParams(
+        (prev) => {
+          const out = new URLSearchParams(prev)
+          for (const [field, key] of Object.entries(FILTER_PARAMS)) {
+            const v = next[field as keyof TaskFiltersBarValue]
+            if (v) out.set(key, v)
+            else out.delete(key)
+          }
+          return out
+        },
+        { replace: true },
+      )
+    },
+    [setParams],
+  )
+  return [value, setValue]
 }
 
 /**

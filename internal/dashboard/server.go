@@ -100,6 +100,11 @@ type StateReader interface {
 	// a timestamp — see state.EventsSince for why.
 	EventsSince(ctx context.Context, afterID int64, limit int) ([]state.Event, error)
 
+	// LatestRun and InFlightDispatches are what /api/now shows as the run and
+	// the agents working in it. ErrNoRuns means the project never ran.
+	LatestRun(ctx context.Context) (state.Run, error)
+	InFlightDispatches(ctx context.Context) ([]state.Dispatch, error)
+
 	// StakeholderToken is this project's rotated stakeholder token hash, if
 	// any (G8.2/F3.3) — resolved fresh on every gated request (see
 	// expectedTokenHash) rather than once at startup, so
