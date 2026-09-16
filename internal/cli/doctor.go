@@ -11,6 +11,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/doctor"
 	"github.com/hectorcanaimero/orch/internal/router"
+	"github.com/hectorcanaimero/orch/internal/tunnel"
 )
 
 // doctorProjectJSON / doctorSummaryJSON / doctorPayload mirror
@@ -103,6 +104,7 @@ func newDoctorCmd(flags *projectFlags) *cobra.Command {
 				Host:         cfg.VCS.Host,
 			})...)
 			checks = append(checks, doctor.CheckMCPConfig(paths.Root))
+			checks = append(checks, doctor.CheckTunnel(cfg.Tunnel.Enabled, tunnel.LookupBinary(""), tunnel.ConfigBlocker()))
 			checks = append(checks, doctor.CheckSQLite(context.Background(), paths.SQLitePath(cfg)))
 
 			doctor.SortByName(checks)

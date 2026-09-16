@@ -63,6 +63,24 @@ cp tunnel-config.yaml proj/.orchestrator/config.yaml
 ! exec orch dashboard --project-root proj --project-id proj --tunnel --profile stakeholder --token test-token-stakeholder
 stderr 'needs the operator profile'
 
+# ---- a missing cloudflared is refused with the steps to install it ---------
+# Checked before anything listens, so the operator gets the install commands
+# instead of a dashboard whose tunnel can never start. Only where the machine
+# running the tests has no cloudflared, which is the case this is about.
+cp tunnel-config.yaml proj/.orchestrator/config.yaml
+[!exec:cloudflared] ! exec orch dashboard --project-root proj --project-id proj --tunnel
+[!exec:cloudflared] stderr 'cloudflared is not on PATH'
+[!exec:cloudflared] stderr 'cloudflared --version'
+
+# ---- a config still choosing autossh or bore is refused --------------------
+# The tunnel is a Cloudflare quick tunnel; a file asking for another provider
+# would otherwise start something it did not ask for.
+cp tunnel-legacy.yaml proj/.orchestrator/config.yaml
+! exec orch dashboard --project-root proj --project-id proj
+stderr 'tunnel.provider, tunnel.command, tunnel.args'
+stderr 'cloudflared'
+cp tunnel-config.yaml proj/.orchestrator/config.yaml
+
 # ---- a lock left by a dead process is swept at boot ------------------------
 # Without the sweep, a tunnel whose process died without releasing its lock
 # would refuse every start until somebody deleted a file by hand. The refusal
@@ -83,6 +101,14 @@ state:
 budgets_preset: conservative
 tunnel:
   enabled: true
+
+-- tunnel-legacy.yaml --
+spec_root: specs
+state:
+  backend: sqlite
+budgets_preset: conservative
+tunnel:
+  enabled: true
   provider: autossh
   command: autossh
   args: ["-M", "0"]
@@ -91,4 +117,4 @@ tunnel:
 2147483646
 
 -- stale-lock --
-{"pid": 2147483646, "provider": "autossh"}
+{"pid": 2147483646, "provider": "cloudflared"}

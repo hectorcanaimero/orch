@@ -34,10 +34,11 @@ github:
 
 # The typical delivery: enable the tunnel and send the URL to your client
 # so they see task-by-task progress on their bot without asking you.
-dashboard:
-  tunnel:
-    enabled: true
-    auto_start: true
+# It is a Cloudflare quick tunnel: install cloudflared, then start it from
+# the dashboard's Tunnel page or `orch dashboard --tunnel`, and send the link
+# it gives you — the token in it is what lets the client in.
+tunnel:
+  enabled: true
 
 # Get pinged the moment the bot is stuck instead of finding out from your
 # client — plug in a Slack webhook you check on your phone.

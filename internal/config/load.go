@@ -134,6 +134,9 @@ func Load(path, projectRoot string) (Result, error) {
 		return res, fmt.Errorf("read %s: %w", overridePath, err)
 	}
 
+	if err := refuseRemovedTunnelKeys(raw); err != nil {
+		return res, err
+	}
 	res.Warnings = append(res.Warnings, unknownKeyWarnings(raw)...)
 	sort.Strings(res.Warnings)
 
@@ -155,6 +158,29 @@ func Load(path, projectRoot string) (Result, error) {
 	}
 	res.Config = cfg
 	return res, nil
+}
+
+// removedTunnelKeys chose between autossh (Pinggy) and bore. The tunnel is a
+// Cloudflare quick tunnel now, so a config still naming one of them is
+// refused rather than warned about: a warning would let `orch dashboard
+// --tunnel` start something other than what the file asks for.
+var removedTunnelKeys = []string{"provider", "command", "args", "url_regex"}
+
+func refuseRemovedTunnelKeys(raw map[string]any) error {
+	block, _ := raw["tunnel"].(map[string]any)
+	var found []string
+	for _, key := range removedTunnelKeys {
+		if _, ok := block[key]; ok {
+			found = append(found, "tunnel."+key)
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: the dashboard tunnel is a Cloudflare quick tunnel (cloudflared) "+
+		"and autossh/bore are no longer supported — delete %s and keep `tunnel.enabled: true`; "+
+		"the dashboard's Tunnel page shows how to install cloudflared",
+		strings.Join(found, ", "), strings.Join(found, ", "))
 }
 
 // validate rejects the one value that cannot be honoured and normalises the
@@ -281,9 +307,7 @@ var knownKeys = map[string]bool{
 	"publish.interval_s":                 true, "publish.to": true,
 	"publish.dir": true, "publish.git_branch": true,
 	"sync.issues_label": true,
-	"tunnel.enabled":    true, "tunnel.provider": true, "tunnel.command": true,
-	"tunnel.args": true, "tunnel.url_regex": true,
-	"tunnel.url_parse_timeout_s": true, "tunnel.stop_timeout_s": true,
+	"tunnel.enabled":    true, "tunnel.url_parse_timeout_s": true,
 	"telemetry.enabled": true, "telemetry.endpoint": true,
 	"report_findings.enabled": true,
 	"portal.documents":        true,
@@ -292,12 +316,13 @@ var knownKeys = map[string]bool{
 // droppedKeys explains the keys a pre-Go config is most likely to carry, so
 // the warning says what happened rather than just "unknown".
 var droppedKeys = map[string]string{
-	"findings":            "the findings feature was removed",
-	"dashboard.board_url": "the ExcaliDash board embed was removed",
-	"dashboard.kanban":    "the Kanban defaults moved into the SPA",
-	"dashboard.tunnel":    "only autossh and bore remain; configure them under `tunnel`",
-	"dashboard.server":    "host and port are CLI flags",
-	"providers":           "provider settings moved to model_router.yaml",
+	"findings":              "the findings feature was removed",
+	"dashboard.board_url":   "the ExcaliDash board embed was removed",
+	"dashboard.kanban":      "the Kanban defaults moved into the SPA",
+	"dashboard.tunnel":      "the tunnel moved to a top-level `tunnel:` block, where `enabled: true` is all it needs",
+	"tunnel.stop_timeout_s": "the tunnel stops within a fixed grace period",
+	"dashboard.server":      "host and port are CLI flags",
+	"providers":             "provider settings moved to model_router.yaml",
 }
 
 // unknownKeyWarnings walks the raw tree and returns one line per key the Go

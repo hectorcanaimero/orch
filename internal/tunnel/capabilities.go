@@ -10,7 +10,8 @@ const (
 	ReasonConfigDisabled = "config_disabled"
 	ReasonProfileGate    = "profile_gate"
 	ReasonHostGate       = "host_gate"
-	ReasonAutosshMissing = "autossh_missing"
+	// ReasonBinaryMissing: every gate passed and cloudflared is not on PATH.
+	ReasonBinaryMissing = "binary_missing"
 )
 
 // loopbackHosts mirrors deps.py's _LOOPBACK_HOSTS frozenset exactly,
@@ -91,7 +92,7 @@ func EvaluateCapabilities(gates Gates, binaryOnPath bool) (canControl bool, reas
 		return false, ReasonHostGate
 	}
 	if !binaryOnPath {
-		return false, ReasonAutosshMissing
+		return false, ReasonBinaryMissing
 	}
 	return true, ReasonOK
 }

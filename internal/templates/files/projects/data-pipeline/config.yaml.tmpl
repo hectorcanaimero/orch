@@ -38,7 +38,7 @@ notifications:
   slack_webhook: ""         # plug this in and `orch notify test` to verify
 
 # Uncomment when the client wants to see progress:
-# dashboard:
-#   tunnel:
-#     enabled: true
-#     auto_start: true
+# (a Cloudflare quick tunnel: needs cloudflared, and every visitor needs the
+# token in the link `orch dashboard --tunnel` or the Tunnel page gives you)
+# tunnel:
+#   enabled: true

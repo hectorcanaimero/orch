@@ -426,6 +426,38 @@ func TestStakeholderProfileWithoutATokenIsRefused(t *testing.T) {
 	}
 }
 
+// The tunnel is Cloudflare only. A config still choosing autossh or bore
+// would otherwise start something else than it asks for, so it is refused
+// with the one-line fix — and `tunnel.enabled` alone still loads.
+func TestTunnelProviderKeysAreRefusedWithTheWayOut(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	for _, body := range []string{
+		"tunnel:\n  enabled: true\n  provider: autossh\n",
+		"tunnel:\n  provider: bore\n  args: [local, \"7420\"]\n",
+		"tunnel:\n  command: autossh\n",
+		"tunnel:\n  url_regex: x\n",
+	} {
+		write(t, path, body)
+		_, err := Load(path, dir)
+		if err == nil {
+			t.Fatalf("%q loaded; the removed tunnel keys must be refused", body)
+		}
+		if !strings.Contains(err.Error(), "cloudflared") || !strings.Contains(err.Error(), "tunnel.enabled") {
+			t.Errorf("the error does not say what to do: %v", err)
+		}
+	}
+
+	write(t, path, "tunnel:\n  enabled: true\n  url_parse_timeout_s: 20\n")
+	res, err := Load(path, dir)
+	if err != nil {
+		t.Fatalf("tunnel.enabled alone must load: %v", err)
+	}
+	if !res.Config.Tunnel.Enabled || res.Config.Tunnel.URLParseTimeoutS != 20 || len(res.Warnings) != 0 {
+		t.Errorf("got %+v, warnings %v", res.Config.Tunnel, res.Warnings)
+	}
+}
+
 func TestInvalidProfileIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

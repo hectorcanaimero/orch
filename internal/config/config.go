@@ -272,24 +272,15 @@ type Sync struct {
 	IssuesLabel string `yaml:"issues_label"`
 }
 
-// Tunnel configures the dashboard's optional public-URL tunnel (Sprint
-// E-5; G5.6 in the Go tree — internal/tunnel). Field-for-field the same
-// shape as orchestrator/dashboard/tunnel/manager.py's TunnelManagerConfig,
-// plus Enabled (which Python threads through DashboardConfig.tunnel
-// separately). Provider is one of tunnel.KnownProviders() — "autossh" or
-// "bore"; there is no "cloudflared" (see droppedKeys's fixed comment
-// below and docs/brainstorm/go-migration-notes/sonnet-2.md — an earlier
-// plan text and one Go comment both named it, and neither was ever
-// backed by a real provider).
+// Tunnel configures the dashboard's optional public URL, a Cloudflare quick
+// tunnel (internal/tunnel). There is nothing to choose: `enabled: true` is
+// the whole configuration, and the removed provider keys are refused at load
+// (removedTunnelKeys in load.go).
 type Tunnel struct {
-	Enabled  bool     `yaml:"enabled"`
-	Provider string   `yaml:"provider"`
-	Command  string   `yaml:"command"`
-	Args     []string `yaml:"args"`
-	// URLRegex overrides the provider's own default pattern when set.
-	URLRegex         string  `yaml:"url_regex"`
-	URLParseTimeoutS int     `yaml:"url_parse_timeout_s"`
-	StopTimeoutS     float64 `yaml:"stop_timeout_s"`
+	Enabled bool `yaml:"enabled"`
+	// URLParseTimeoutS is how long to wait for cloudflared's URL line before
+	// reporting url_parse_timeout; 0 means 30.
+	URLParseTimeoutS int `yaml:"url_parse_timeout_s"`
 }
 
 // Telemetry controls the anonymous, opt-in usage ping G8.6 (F4.9) adds —

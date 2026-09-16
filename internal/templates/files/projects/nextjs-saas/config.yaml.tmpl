@@ -36,10 +36,11 @@ github:
 
 # Client-shareable dashboard: enable when you want the stakeholder view
 # live for the person paying the invoices.
-dashboard:
-  tunnel:
-    enabled: true
-    auto_start: true
+# It is a Cloudflare quick tunnel: install cloudflared, then start it from
+# the dashboard's Tunnel page or `orch dashboard --tunnel`, and send the link
+# it gives you — the token in it is what lets the client in.
+tunnel:
+  enabled: true
 
 # Ping yourself the moment a task blocks — SaaS deploys have long feedback
 # loops; catching a Clerk key mismatch at task-block time saves a lot of

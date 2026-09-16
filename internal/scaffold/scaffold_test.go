@@ -461,7 +461,9 @@ var defaultsDivergedFromPython = map[string]string{
 		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/. " +
 		"fix/budget-accounting: the budgets comment promised a --budgets-preset flag and an " +
 		"ORCH_BUDGETS_PRESET variable `orch run` never read; it now says where budgets.yaml is looked " +
-		"for and what typical_dispatch_tokens weighs",
+		"for and what typical_dispatch_tokens weighs. " +
+		"The tunnel block sat under `dashboard:`, where the Go loader ignores it, and chose autossh; " +
+		"the tunnel is a Cloudflare quick tunnel and its block is a top-level `tunnel: enabled:`",
 	"budgets.yaml": "fix/budget-accounting: the header's selection order named a CLI flag and an environment " +
 		"variable nothing reads, and the calibration note now says that cache tokens count",
 }
