@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/project"
@@ -195,9 +196,17 @@ func buildStatusRows(ctx context.Context, backend state.Backend, projectID strin
 	for _, t := range hydrated {
 		status := t.Status
 
-		lastEvent, lastEventHuman, err := lastEventFor(ctx, backend, t.ID, projectID)
+		lastEvent, lastEventHuman, lastRaw, err := lastEventFor(ctx, backend, t.ID, projectID)
 		if err != nil {
 			return nil, err
+		}
+		// Python's key, null until now: the reason lived in the run's memory.
+		var deferReason *string
+		if status == model.StatusTodo {
+			if w, ok := budget.WaitingOn(lastRaw, time.Now()); ok {
+				r := "blocked-by-budget:" + w.Provider + " until " + w.ResetAt
+				deferReason = &r
+			}
 		}
 
 		backendName, cliModel, tier := "?", t.Model, (*string)(nil)
@@ -223,7 +232,7 @@ func buildStatusRows(ctx context.Context, backend state.Backend, projectID strin
 			CostUSD:        formatPyFloat(cost),
 			LastEvent:      lastEvent,
 			LastEventHuman: lastEventHuman,
-			DeferReason:    nil,
+			DeferReason:    deferReason,
 			costUSDValue:   cost,
 		})
 	}

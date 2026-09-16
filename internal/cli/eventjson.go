@@ -41,14 +41,15 @@ func toEventJSON(e state.Event, projectID string) eventJSON {
 // lastEventFor returns a task's most recent event (nil if it has none) and
 // the human-readable one-liner `_human_last_event`
 // (orchestrator/observability.py) renders from it — "$type @ $ts", or just
-// "$type" when there's no timestamp, matching Python exactly.
-func lastEventFor(ctx context.Context, backend state.Backend, taskID, projectID string) (*eventJSON, *string, error) {
+// "$type" when there's no timestamp, matching Python exactly. The raw event
+// rides along for readers that interpret it (the budget deferral).
+func lastEventFor(ctx context.Context, backend state.Backend, taskID, projectID string) (*eventJSON, *string, state.Event, error) {
 	evs, err := backend.Events(ctx, taskID, 1)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read last event for %q: %w", taskID, err)
+		return nil, nil, state.Event{}, fmt.Errorf("read last event for %q: %w", taskID, err)
 	}
 	if len(evs) == 0 {
-		return nil, nil, nil
+		return nil, nil, state.Event{}, nil
 	}
 	last := evs[len(evs)-1]
 	ej := toEventJSON(last, projectID)
@@ -56,5 +57,5 @@ func lastEventFor(ctx context.Context, backend state.Backend, taskID, projectID 
 	if last.TS != "" {
 		human = fmt.Sprintf("%s @ %s", last.EventType, last.TS)
 	}
-	return &ej, &human, nil
+	return &ej, &human, last, nil
 }

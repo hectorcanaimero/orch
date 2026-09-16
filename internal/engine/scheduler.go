@@ -684,10 +684,22 @@ func (s *Scheduler) checkBudget(ctx context.Context, task model.Task, backend st
 		return true
 	}
 
-	s.deferReasons[task.ID] = "blocked-by-budget:" + backend
+	reason := "blocked-by-budget:" + backend
+	if s.deferReasons[task.ID] == reason {
+		// Still waiting: the event and the log line were written when it
+		// started, and the refill loop asks again every tick.
+		return false
+	}
+	s.deferReasons[task.ID] = reason
 	s.logger().Info("deferred: over budget",
 		"task", task.ID, "backend", backend,
 		"reason", decision.Reason, "resets_at", resetAtText(decision.ResetAt))
+	if s.Backend != nil {
+		if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventBudgetSkip, task.ID, backend,
+			map[string]any{"reset_at": resetAtText(decision.ResetAt), "reason": decision.Reason}); err != nil {
+			s.logger().Error("recording the budget deferral failed", "task", task.ID, "err", err)
+		}
+	}
 	return false
 }
 
