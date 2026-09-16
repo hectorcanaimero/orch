@@ -195,8 +195,11 @@ orch notify digest                          # print stakeholder digest (cron thi
 ## Provider concurrency + budget
 
 - Concurrency caps live in `config.yaml → concurrency.per_provider`.
-- Budget guardrails in `config.yaml → budget:` (per-provider token limits;
-  no USD limit — dashboard shows spend informationally).
+- Budget guardrails: per-provider token windows in `.orchestrator/budgets.yaml`
+  (preset chosen by `budgets_preset` in config.yaml), plus
+  `budget.per_dispatch_usd` as claude's per-attempt `--max-budget-usd`. No
+  project-wide USD limit. A task waiting on a capped provider shows
+  `defer_reason: blocked-by-budget:…` in `orch status --json`.
 - Silent-fail on Slack/Discord: a broken webhook must never take down
   the dispatch loop.
 
