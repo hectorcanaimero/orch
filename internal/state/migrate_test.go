@@ -57,7 +57,11 @@ ALTER TABLE no_such_table ADD COLUMN probe_b INTEGER;
 	if _, err := applyMigrations(ctx, db.write, append(base, broken)); err == nil {
 		t.Fatal("the broken migration applied")
 	}
-	if v, _ := db.SchemaVersion(ctx); v != len(base) {
+	v, err := db.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion after the failed migration: %v", err)
+	}
+	if v != len(base) {
 		t.Errorf("user_version = %d after a failed migration, want %d", v, len(base))
 	}
 	if hasColumn(t, db, "spend", "probe_a") {
