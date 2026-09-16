@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { isPortfolioDisabled, usePortfolio } from "@/hooks/usePortfolio"
 import { useWhoami } from "@/hooks/useWhoami"
 import type { PortfolioProject } from "@/lib/types"
+import { fmt, t } from "@/i18n"
 import { cn } from "@/lib/utils"
 
 /**
@@ -35,7 +36,7 @@ export function PortfolioPage() {
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("portfolio.title")}</h1>
         {[1, 2, 3].map((i) => (
           <Skeleton key={i} className="h-20 w-full" />
         ))}
@@ -48,11 +49,9 @@ export function PortfolioPage() {
       return (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Portfolio mode is off</AlertTitle>
+          <AlertTitle>{t("portfolio.off")}</AlertTitle>
           <AlertDescription>
-            This dashboard was not started with <code className="font-mono">--portfolio</code>.
-            Restart it with that flag (and a glob naming the projects to
-            include) to see them here.
+            {t("portfolio.off_before")} <code className="font-mono">--portfolio</code>. {t("portfolio.off_after")}
           </AlertDescription>
         </Alert>
       )
@@ -60,8 +59,8 @@ export function PortfolioPage() {
     return (
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
-        <AlertTitle>Failed to load the portfolio</AlertTitle>
-        <AlertDescription>{error?.message ?? "Unknown error"}</AlertDescription>
+        <AlertTitle>{t("portfolio.load_failed")}</AlertTitle>
+        <AlertDescription>{error?.message ?? t("common.unknown_error")}</AlertDescription>
       </Alert>
     )
   }
@@ -71,12 +70,10 @@ export function PortfolioPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
-        <p className="text-sm text-muted-foreground">
-          {data.projects.length} project{data.projects.length === 1 ? "" : "s"}
-          {data.unavailable.length > 0
-            ? ` · ${data.unavailable.length} unavailable`
-            : ""}
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("portfolio.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground tabular-nums">
+          {t("portfolio.projects", { count: data.projects.length })}
+          {data.unavailable.length > 0 ? ` · ${t("portfolio.unavailable", { count: data.unavailable.length })}` : ""}
         </p>
       </header>
 
@@ -89,8 +86,7 @@ export function PortfolioPage() {
       {data.unavailable.length > 0 ? (
         <details className="rounded-lg border bg-card">
           <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-muted-foreground">
-            {data.unavailable.length} directory
-            {data.unavailable.length === 1 ? "" : "ies"} skipped
+            {t("portfolio.skipped", { count: data.unavailable.length })}
           </summary>
           <div className="space-y-1 border-t px-4 py-3 text-xs text-muted-foreground">
             {data.unavailable.map((u) => (
@@ -112,9 +108,9 @@ function ConfidenceDot({ confidence }: { confidence: PortfolioProject["confidenc
     <span
       className={cn(
         "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-        confidence === "high" ? "bg-emerald-500" : "bg-amber-500",
+        confidence === "high" ? "bg-status-done" : "bg-status-blocked",
       )}
-      title={confidence === "high" ? "high confidence" : "low confidence"}
+      title={confidence === "high" ? t("portfolio.high_confidence") : t("portfolio.low_confidence")}
     />
   )
 }
@@ -133,7 +129,7 @@ function ProjectRow({ project }: { project: PortfolioProject }) {
             </div>
           </div>
           <Badge variant="danger" className="shrink-0">
-            {project.reason || "unavailable"}
+            {project.reason || t("portfolio.unavailable_one")}
           </Badge>
         </CardContent>
       </Card>
@@ -141,8 +137,7 @@ function ProjectRow({ project }: { project: PortfolioProject }) {
   }
 
   const href = `/p/${encodeURIComponent(project.project_id)}/`
-  const blockedLabel =
-    project.blocked > 0 ? `${project.blocked} blocked` : "no blockers"
+  const blockedLabel = project.blocked > 0 ? t("portfolio.blocked", { count: project.blocked }) : t("portfolio.no_blockers")
 
   return (
     <Card>
@@ -157,7 +152,7 @@ function ProjectRow({ project }: { project: PortfolioProject }) {
           </a>
           <div className="mt-1 flex items-center gap-2">
             <Progress value={project.percent_done} className="h-1.5 w-32" />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs tabular-nums text-muted-foreground">
               {project.done}/{project.total} · {project.percent_done.toFixed(0)}%
             </span>
           </div>
@@ -167,20 +162,20 @@ function ProjectRow({ project }: { project: PortfolioProject }) {
           <Clock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           <ConfidenceDot confidence={project.confidence} />
           {project.eta_date ? (
-            <span>ETA {project.eta_date}</span>
+            <span className="tabular-nums">{t("portfolio.eta", { date: fmt.day(project.eta_date) })}</span>
           ) : (
-            <span className="text-muted-foreground">no ETA</span>
+            <span className="text-muted-foreground">{t("portfolio.no_eta")}</span>
           )}
         </div>
 
-        <Badge variant={project.blocked > 0 ? "danger" : "muted"} className="shrink-0">
+        <Badge variant={project.blocked > 0 ? "warning" : "muted"} className="shrink-0">
           {blockedLabel}
         </Badge>
 
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs tabular-nums text-muted-foreground">
           {project.spend.available && project.spend.total_cost_usd !== undefined
-            ? `$${project.spend.total_cost_usd.toFixed(2)}`
-            : "spend hidden"}
+            ? fmt.usd(project.spend.total_cost_usd)
+            : t("portfolio.spend_hidden")}
         </div>
 
         {project.blockers[0] ? (

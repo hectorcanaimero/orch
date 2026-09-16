@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/hooks/useAuth"
+import { t } from "@/i18n"
 
 export function LoginPage() {
   const [value, setValue] = useState("")
@@ -26,36 +27,34 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="space-y-2 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center">
             <img src="/favicon.svg" alt="Orch" className="h-12 w-12" />
           </div>
-          <CardTitle>Orch Dashboard</CardTitle>
+          <CardTitle className="text-lg">{t("login.title")}</CardTitle>
           <CardDescription>
-            Paste the token you used to start{" "}
-            <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs">
-              orch dashboard --token ...
-            </code>
+            {t("login.paste")}{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">orch dashboard --token …</code>
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="token">Bearer token</Label>
+              <Label htmlFor="token">{t("login.token")}</Label>
               <Input
                 id="token"
                 type="password"
                 autoComplete="off"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                placeholder="the token from `orch dashboard --token`"
+                placeholder={t("login.placeholder")}
                 autoFocus
               />
             </div>
             <Button type="submit" className="w-full" disabled={!value.trim()}>
-              Enter
+              {t("login.enter")}
             </Button>
           </form>
         </CardContent>

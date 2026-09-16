@@ -87,7 +87,7 @@ describe("StakeholderSummaryPage", () => {
     render(<StakeholderSummaryPage />)
 
     expect(screen.getByText(/Summary not available/i)).toBeInTheDocument()
-    expect(screen.queryByText(/Failed to load summary/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Couldn.t load the summary/i)).not.toBeInTheDocument()
   })
 
   it("shows a named 'not available' state on a real 404 too", () => {
@@ -115,7 +115,7 @@ describe("StakeholderSummaryPage", () => {
 
     render(<StakeholderSummaryPage />)
 
-    expect(screen.getByText(/Failed to load summary/i)).toBeInTheDocument()
+    expect(screen.getByText(/Couldn.t load the summary/i)).toBeInTheDocument()
     expect(screen.queryByText(/Summary not available/i)).not.toBeInTheDocument()
   })
 })
