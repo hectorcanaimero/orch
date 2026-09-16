@@ -106,8 +106,10 @@ func demoSnapshot(milestones int) snapshot.Snapshot {
 			{Phase: 2, Title: "Pasarela de pago", Reason: "Esperando una decisión del equipo."},
 		},
 		Budget: snapshot.Budget{Enabled: true, SpendUSD: &spend},
+		// The page's own labels follow Language; the project's data keeps its
+		// accents, which the transcoding tests below rely on.
 		ExecutiveSummary: snapshot.ExecutiveSummary{
-			Language: "es",
+			Language: "en",
 			Text:     "12 de 40 tareas completadas (30%). Restan ~42h al ritmo actual.",
 		},
 	}

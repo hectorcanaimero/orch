@@ -69,13 +69,14 @@ func PDF(w io.Writer, s snapshot.Snapshot, opts Options) error {
 	pdf.AddPage()
 
 	accent := accentRGB(s)
-	writeHeader(pdf, s, accent)
-	writeSummary(pdf, s)
+	l := labelsFor(s)
+	writeHeader(pdf, s, l, accent)
+	writeSummary(pdf, s, l)
 	writeExecutiveSummary(pdf, s)
-	writeMilestones(pdf, s)
-	writeBlockers(pdf, s)
-	writeBudget(pdf, s)
-	writeFooter(pdf, s, opts.Now)
+	writeMilestones(pdf, s, l)
+	writeBlockers(pdf, s, l)
+	writeBudget(pdf, s, l)
+	writeFooter(pdf, s, l, opts.Now)
 
 	if err := pdf.Output(w); err != nil {
 		return fmt.Errorf("writing the report: %w", err)
@@ -103,7 +104,7 @@ const (
 	logoMaxW = 45.0
 )
 
-func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot, accent [3]int) {
+func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels, accent [3]int) {
 	// The branded name wins over the project's own: `meta.project` is what
 	// the operator calls it, and this is what the client should read.
 	name := s.ProjectName
@@ -111,7 +112,7 @@ func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot, accent [3]int) {
 		name = s.Branding.Name
 	}
 	if name == "" {
-		name = "(unnamed project)"
+		name = l.unnamed
 	}
 
 	textX := marginX
@@ -130,8 +131,8 @@ func writeHeader(pdf *fpdf.Fpdf, s snapshot.Snapshot, accent [3]int) {
 
 	pdf.SetFont("Helvetica", "", 10)
 	pdf.SetTextColor(110, 110, 110)
-	pdf.CellFormat(contentW, 6, latin1("Progress report · generated "+
-		humanTime(s.GeneratedAt)), "", 1, "L", false, 0, "")
+	pdf.CellFormat(contentW, 6, latin1(l.generated+
+		l.humanTime(s.GeneratedAt)), "", 1, "L", false, 0, "")
 	pdf.SetTextColor(0, 0, 0)
 	pdf.SetX(marginX)
 	pdf.SetY(marginTop + 16)
@@ -210,12 +211,12 @@ func parseHexColor(s string) ([3]int, bool) {
 }
 
 // writeSummary is the four figures somebody reads first.
-func writeSummary(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
+func writeSummary(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels) {
 	cells := []struct{ label, value string }{
-		{"Done", fmt.Sprintf("%d / %d", s.Summary.Done, s.Summary.Total)},
-		{"Progress", fmt.Sprintf("%.0f%%", s.Summary.PercentDone)},
-		{"In progress", fmt.Sprintf("%d", s.Summary.InProgress)},
-		{"Blocked", fmt.Sprintf("%d", s.Summary.Blocked)},
+		{l.done, fmt.Sprintf("%d / %d", s.Summary.Done, s.Summary.Total)},
+		{l.progress, fmt.Sprintf("%.0f%%", s.Summary.PercentDone)},
+		{l.inProgress, fmt.Sprintf("%d", s.Summary.InProgress)},
+		{l.blocked, fmt.Sprintf("%d", s.Summary.Blocked)},
 	}
 	// The ETA only appears when there is one. A "—" in a box of numbers reads
 	// as a broken figure; an absent box reads as "not applicable yet", which
@@ -227,12 +228,12 @@ func writeSummary(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	case s.Summary.ETADate != nil:
 		value := *s.Summary.ETADate
 		if d, err := time.Parse("2006-01-02", value); err == nil {
-			value = d.Format("2 Jan 2006")
+			value = l.shortDate(d)
 		}
-		cells = append(cells, struct{ label, value string }{"Est. finish", value})
+		cells = append(cells, struct{ label, value string }{l.estFinish, value})
 	case s.Summary.ETAHours != nil:
 		cells = append(cells, struct{ label, value string }{
-			"Est. remaining", fmt.Sprintf("%.0f h", *s.Summary.ETAHours)})
+			l.estRemaining, fmt.Sprintf("%.0f h", *s.Summary.ETAHours)})
 	}
 
 	w := contentW / float64(len(cells))
@@ -269,11 +270,11 @@ func writeExecutiveSummary(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	pdf.Ln(3)
 }
 
-func writeMilestones(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
+func writeMilestones(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels) {
 	if len(s.Milestones) == 0 {
 		return
 	}
-	sectionTitle(pdf, "Milestones")
+	sectionTitle(pdf, l.milestones)
 
 	shown := s.Milestones
 	overflow := 0
@@ -292,7 +293,7 @@ func writeMilestones(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	for _, m := range shown {
 		name := m.Name
 		if name == "" {
-			name = fmt.Sprintf("Phase %d", m.Phase)
+			name = fmt.Sprintf(l.phase, m.Phase)
 		}
 		pdf.CellFormat(nameW, rowH, latin1(truncate(name, 46)), "", 0, "L", false, 0, "")
 
@@ -315,7 +316,7 @@ func writeMilestones(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	if overflow > 0 {
 		pdf.SetFont("Helvetica", "I", 9)
 		pdf.SetTextColor(110, 110, 110)
-		pdf.CellFormat(contentW, 5, latin1(fmt.Sprintf("+%d more", overflow)),
+		pdf.CellFormat(contentW, 5, latin1(fmt.Sprintf(l.more, overflow)),
 			"", 1, "L", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)
 	}
@@ -326,13 +327,13 @@ func writeMilestones(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 // reader is being handed a backlog rather than a warning.
 const maxBlockers = 5
 
-func writeBlockers(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
+func writeBlockers(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels) {
 	if len(s.Blockers) == 0 {
 		return
 	}
 	// Not "Blocked": that word is already a figure in the summary row above,
 	// and the same word twice on one page reads as the same thing twice.
-	sectionTitle(pdf, "What is blocked")
+	sectionTitle(pdf, l.whatIsBlocked)
 
 	shown := s.Blockers
 	overflow := 0
@@ -353,7 +354,7 @@ func writeBlockers(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 	if overflow > 0 {
 		pdf.SetFont("Helvetica", "I", 9)
 		pdf.SetTextColor(110, 110, 110)
-		pdf.CellFormat(contentW, 5, latin1(fmt.Sprintf("+%d more", overflow)),
+		pdf.CellFormat(contentW, 5, latin1(fmt.Sprintf(l.more, overflow)),
 			"", 1, "L", false, 0, "")
 		pdf.SetTextColor(0, 0, 0)
 	}
@@ -366,13 +367,13 @@ func writeBlockers(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 // `show_spend_to_stakeholder`, and leaves `SpendUSD` nil when it is off. A
 // second check in this package would be a second place for the flag to be
 // wrong.
-func writeBudget(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
+func writeBudget(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels) {
 	if !s.Budget.Enabled || s.Budget.SpendUSD == nil {
 		return
 	}
-	sectionTitle(pdf, "Spend")
+	sectionTitle(pdf, l.spend)
 	pdf.SetFont("Helvetica", "", 11)
-	pdf.CellFormat(contentW, 6, latin1(fmt.Sprintf("$%.2f to date", *s.Budget.SpendUSD)),
+	pdf.CellFormat(contentW, 6, latin1(fmt.Sprintf(l.toDate, *s.Budget.SpendUSD)),
 		"", 1, "L", false, 0, "")
 	pdf.Ln(2)
 }
@@ -380,13 +381,13 @@ func writeBudget(pdf *fpdf.Fpdf, s snapshot.Snapshot) {
 // writeFooter is the freshness line, and it is the reason the report is
 // trustworthy at all: a PDF outlives the moment it was made, and a reader
 // three weeks later has no other way to know that.
-func writeFooter(pdf *fpdf.Fpdf, s snapshot.Snapshot, now time.Time) {
+func writeFooter(pdf *fpdf.Fpdf, s snapshot.Snapshot, l labels, now time.Time) {
 	pdf.SetY(footerFrom)
 	pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(130, 130, 130)
 
-	line := "Snapshot taken " + humanTime(s.GeneratedAt) + "."
-	if age, ok := ageOf(s.GeneratedAt, now); ok {
+	line := fmt.Sprintf(l.taken, l.humanTime(s.GeneratedAt))
+	if age, ok := l.ageOf(s.GeneratedAt, now); ok {
 		line += " " + age
 	}
 	// The agency's line goes FIRST: it is what the client's eye lands on at
@@ -407,16 +408,16 @@ func sectionTitle(pdf *fpdf.Fpdf, title string) {
 // and leaves anything it cannot parse exactly as it found it — a report that
 // prints a raw timestamp is readable; one that prints "0001-01-01" because a
 // parse failed is a lie.
-func humanTime(ts string) string {
+func (l labels) humanTime(ts string) string {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		return ts
 	}
-	return t.UTC().Format("2 January 2006, 15:04 UTC")
+	return l.longDate(t.UTC())
 }
 
 // ageOf phrases how old the snapshot is, or reports that it cannot.
-func ageOf(ts string, now time.Time) (string, bool) {
+func (l labels) ageOf(ts string, now time.Time) (string, bool) {
 	if now.IsZero() {
 		return "", false
 	}
@@ -429,13 +430,13 @@ func ageOf(ts string, now time.Time) (string, bool) {
 	case d < 0:
 		// A snapshot from the future is a clock problem, and saying so is
 		// more use than rendering "-3 hours old".
-		return "Its timestamp is in the future — check the clock on the machine that made it.", true
+		return l.future, true
 	case d < time.Hour:
-		return fmt.Sprintf("%d minutes old.", int(d.Minutes())), true
+		return fmt.Sprintf(l.minutes, int(d.Minutes())), true
 	case d < 48*time.Hour:
-		return fmt.Sprintf("%d hours old.", int(d.Hours())), true
+		return fmt.Sprintf(l.hours, int(d.Hours())), true
 	default:
-		return fmt.Sprintf("%d days old.", int(d.Hours()/24)), true
+		return fmt.Sprintf(l.days, int(d.Hours()/24)), true
 	}
 }
 
