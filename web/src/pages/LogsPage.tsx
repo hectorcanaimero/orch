@@ -10,24 +10,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { LiveStatusPill } from "@/components/LiveStatusPill"
 import { useDebouncedValue } from "@/components/TaskFiltersBar"
 import { useEventsHistory } from "@/hooks/useEventsHistory"
 import { useLiveLogs } from "@/hooks/useLiveLogs"
+import { t } from "@/i18n"
 import { cn } from "@/lib/utils"
 import type { FormattedEvent } from "@/lib/types"
 
 /** Event types the operator can filter on. Empty string = "All types". */
-const EVENT_TYPE_OPTIONS = [
-  { value: "", label: "All types" },
-  { value: "dispatch", label: "dispatch" },
-  { value: "success", label: "success" },
-  { value: "fail", label: "fail" },
-  { value: "timeout", label: "timeout" },
-  { value: "block", label: "block" },
-  { value: "retry", label: "retry" },
-] as const
+// The engine's own event names, shown as they appear in the stream.
+const EVENT_TYPE_OPTIONS = ["dispatch", "success", "fail", "timeout", "block", "retry"] as const
 
 /**
  * Dedup / severity mapping.
@@ -40,28 +35,30 @@ const EVENT_TYPE_OPTIONS = [
  * type. Unknown severities fall through to "muted" so a new backend value
  * still renders.
  */
+// Same scale as task status: red only for failures, amber for anything that
+// waits (warnings, blocks), blue for information.
 const SEVERITY_DOT_CLASS: Record<string, string> = {
-  ok: "bg-emerald-500",
-  success: "bg-emerald-500",
-  err: "bg-red-500",
-  danger: "bg-red-500",
-  warn: "bg-amber-500",
-  warning: "bg-amber-500",
-  block: "bg-orange-500",
-  info: "bg-blue-500",
-  muted: "bg-zinc-500",
+  ok: "bg-status-done",
+  success: "bg-status-done",
+  err: "bg-status-failed",
+  danger: "bg-status-failed",
+  warn: "bg-status-blocked",
+  warning: "bg-status-blocked",
+  block: "bg-status-blocked",
+  info: "bg-status-running",
+  muted: "bg-status-queued",
 }
 
 const SEVERITY_TEXT_CLASS: Record<string, string> = {
-  ok: "text-emerald-400",
-  success: "text-emerald-400",
-  err: "text-red-400",
-  danger: "text-red-400",
-  warn: "text-amber-400",
-  warning: "text-amber-400",
-  block: "text-orange-400",
-  info: "text-blue-400",
-  muted: "text-zinc-400",
+  ok: "text-status-done",
+  success: "text-status-done",
+  err: "text-status-failed",
+  danger: "text-status-failed",
+  warn: "text-status-blocked",
+  warning: "text-status-blocked",
+  block: "text-status-blocked",
+  info: "text-status-running",
+  muted: "text-muted-foreground",
 }
 
 function dotClass(sev: string): string {
@@ -202,11 +199,11 @@ export function LogsPage() {
     <div className="flex h-[calc(100vh-4rem)] flex-col gap-6">
       <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Logs</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("logs.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground tabular-nums">
             {history.isLoading
-              ? "Loading history…"
-              : `${filtered.length} events shown`}
+              ? t("logs.loading")
+              : t("logs.shown", { count: filtered.length })}
           </p>
         </div>
         <LiveStatusPill
@@ -223,33 +220,33 @@ export function LogsPage() {
             type="search"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Filter log lines…"
+            placeholder={t("logs.filter")}
             className="pl-9"
-            aria-label="Filter log lines"
+            aria-label={t("logs.filter")}
           />
         </div>
-        <select
-          value={eventType}
-          onChange={(e) => setEventType(e.target.value)}
-          aria-label="Event type filter"
-          className={cn(
-            "h-10 rounded-md border border-input bg-background px-3 text-sm",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          )}
-        >
-          {EVENT_TYPE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        <div className="w-40">
+          <Select value={eventType} onValueChange={setEventType}>
+            <SelectTrigger aria-label={t("logs.event_type")}>
+              <SelectValue placeholder={t("logs.all_types")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">{t("logs.all_types")}</SelectItem>
+              {EVENT_TYPE_OPTIONS.map((type) => (
+                <SelectItem key={type} value={type}>
+                  <span className="font-mono text-xs">{type}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <Input
           type="text"
           value={taskIdInput}
           onChange={(e) => setTaskIdInput(e.target.value)}
-          placeholder="task_id (e.g. P0-013)"
+          placeholder={t("logs.task_id")}
           className="h-10 w-[200px] font-mono text-xs"
-          aria-label="Filter by task id"
+          aria-label={t("logs.task_id_label")}
         />
         <Button
           type="button"
@@ -259,7 +256,7 @@ export function LogsPage() {
           className="h-10"
           aria-pressed={followTail}
         >
-          {followTail ? "Following" : "Follow tail"}
+          {followTail ? t("logs.following") : t("logs.follow")}
         </Button>
         <Button
           type="button"
@@ -268,17 +265,16 @@ export function LogsPage() {
           onClick={live.clear}
           className="h-10"
         >
-          Clear live
+          {t("logs.clear")}
         </Button>
       </div>
 
       {history.isError ? (
         <Alert variant="destructive" className="flex-shrink-0">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Failed to load event history</AlertTitle>
+          <AlertTitle>{t("logs.history_failed")}</AlertTitle>
           <AlertDescription>
-            {history.error?.message ?? "Unknown error"} — live events will
-            still appear below as they arrive.
+            {t("logs.history_failed_detail", { message: history.error?.message ?? t("common.unknown_error") })}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -290,7 +286,7 @@ export function LogsPage() {
         <div
           ref={containerRef}
           className={cn(
-            "flex-1 rounded-md border bg-zinc-950 text-zinc-100 font-mono text-xs",
+            "flex-1 rounded-xl border bg-card font-mono text-xs text-card-foreground",
             "overflow-auto",
           )}
         >
@@ -299,22 +295,22 @@ export function LogsPage() {
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={`log-skeleton-${i}`}
-                  className="h-5 w-full bg-zinc-800"
+                  className="h-5 w-full"
                 />
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <div className="p-8 text-center text-zinc-500 text-sm">
-              Waiting for events…
+            <div className="p-8 text-center font-sans text-sm text-muted-foreground">
+              {t("logs.waiting")}
             </div>
           ) : (
-            <ul className="divide-y divide-zinc-900">
+            <ul className="divide-y divide-border/60">
               {filtered.map((ev) => (
                 <li
                   key={eventKey(ev)}
-                  className="flex items-baseline gap-2 px-3 py-1 hover:bg-zinc-900"
+                  className="flex items-baseline gap-2.5 px-3 py-1.5 hover:bg-accent/50"
                 >
-                  <span className="text-zinc-500">
+                  <span className="tabular-nums text-muted-foreground">
                     {extractHms(ev.ts)}
                   </span>
                   <span
@@ -326,19 +322,19 @@ export function LogsPage() {
                   />
                   <Badge
                     variant="outline"
-                    className="border-zinc-700 bg-transparent text-zinc-200 font-mono text-[10px] px-1.5 py-0"
+                    className="bg-transparent px-1.5 py-0 font-mono text-[11px] font-normal"
                   >
                     {ev.task_id}
                   </Badge>
                   <span
                     className={cn(
-                      "uppercase tracking-wide text-[10px]",
+                      "text-[11px] font-medium",
                       textClass(ev.severity),
                     )}
                   >
                     {ev.event_type}
                   </span>
-                  <span className="text-zinc-300 truncate">
+                  <span className="truncate text-foreground/85">
                     {extractTail(ev)}
                   </span>
                 </li>
@@ -354,13 +350,13 @@ export function LogsPage() {
             className={cn(
               "absolute bottom-3 left-1/2 -translate-x-1/2",
               "inline-flex items-center gap-1 rounded-full",
-              "bg-zinc-800 px-3 py-1 text-xs text-zinc-100",
-              "shadow-lg shadow-black/40 hover:bg-zinc-700",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400",
+              "border bg-popover px-3 py-1 text-xs text-popover-foreground",
+              "shadow-[0_8px_20px_-8px_rgb(0_0_0/0.45)] hover:bg-accent",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
           >
             <ChevronDown className="h-3.5 w-3.5" />
-            New events
+            {t("logs.new_events")}
           </button>
         ) : null}
       </div>
