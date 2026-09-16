@@ -1,73 +1,134 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* The theme follows a class on <html> (set by lib/theme.ts before the first
+   paint), not the OS media query, so the operator's toggle wins. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* "Mesa de despacho": a dispatch console. Graphite ground, one brand violet
+   reserved for identity, focus and selection, and a status scale where red
+   means failed and nothing else. Light is the same system on paper. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --background: #f6f6f9;
+    --foreground: #15151c;
+    --card: #ffffff;
+    --card-foreground: #15151c;
+    --popover: #ffffff;
+    --popover-foreground: #15151c;
+    --primary: #15151c;
+    --primary-foreground: #ffffff;
+    --secondary: #ececf2;
+    --secondary-foreground: #15151c;
+    --muted: #ececf2;
+    --muted-foreground: #5e5e6e;
+    --accent: #e6e6ee;
+    --accent-foreground: #15151c;
+    --destructive: #d1343a;
+    --destructive-foreground: #ffffff;
+    --border: #dcdce5;
+    --input: #d2d2dc;
+    --ring: #5a43db;
+    --brand: #5a43db;
+    --sidebar: #ececf2;
+    --sidebar-foreground: #15151c;
+    --sidebar-muted: #5e5e6e;
+    --sidebar-active: #dcdce5;
+
+    --status-queued: #6b6b7b;
+    --status-running: #2f6bd6;
+    --status-blocked: #b86e0b;
+    --status-failed: #d1343a;
+    --status-done: #1e8a4c;
+
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --background: #101116;
+    --foreground: #e9e9f0;
+    --card: #17181f;
+    --card-foreground: #e9e9f0;
+    --popover: #1b1c24;
+    --popover-foreground: #e9e9f0;
+    --primary: #e9e9f0;
+    --primary-foreground: #101116;
+    --secondary: #1f2029;
+    --secondary-foreground: #e9e9f0;
+    --muted: #1f2029;
+    --muted-foreground: #9a9baa;
+    --accent: #23242e;
+    --accent-foreground: #e9e9f0;
+    --destructive: #e5484d;
+    --destructive-foreground: #ffffff;
+    --border: #262833;
+    --input: #2e303c;
+    --ring: #8b7bff;
+    --brand: #8b7bff;
+    --sidebar: #0b0c10;
+    --sidebar-foreground: #e9e9f0;
+    --sidebar-muted: #9a9baa;
+    --sidebar-active: #1f2029;
+
+    --status-queued: #8b8d9c;
+    --status-running: #4c82e8;
+    --status-blocked: #d98b1c;
+    --status-failed: #e5484d;
+    --status-done: #3fb06a;
+
+    color-scheme: dark;
+
+    /* ponytail: compat shim — Milestones, Sprint, Budget and Tunnel still
+       carry hardcoded zinc classes until part 2 retokens them. Inverting the
+       ramp in dark keeps their text legible; delete this block with them. */
+    --color-zinc-50: oklch(14.1% 0.005 285.823);
+    --color-zinc-100: oklch(21% 0.006 285.885);
+    --color-zinc-200: oklch(27.4% 0.006 286.033);
+    --color-zinc-300: oklch(37% 0.013 285.805);
+    --color-zinc-400: oklch(44.2% 0.017 285.786);
+    --color-zinc-600: oklch(70.5% 0.015 286.067);
+    --color-zinc-700: oklch(87.1% 0.006 286.286);
+    --color-zinc-800: oklch(92% 0.004 286.32);
+    --color-zinc-900: oklch(96.7% 0.001 286.375);
+    --color-zinc-950: oklch(98.5% 0 0);
   }
 }
 
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-active: var(--sidebar-active);
+
+  --color-status-queued: var(--status-queued);
+  --color-status-running: var(--status-running);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-failed: var(--status-failed);
+  --color-status-done: var(--status-done);
+
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -75,39 +136,73 @@
 
 @layer base {
   * {
-    border-color: hsl(var(--border));
+    border-color: var(--border);
+  }
+  html {
+    background-color: var(--background);
   }
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-      "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01";
     -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: color-mix(in oklab, var(--brand) 32%, transparent);
+  }
+  :focus-visible {
+    outline-color: var(--ring);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+  input,
+  textarea {
+    caret-color: var(--brand);
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
-/* Print / PDF export — stakeholder summary */
+/* Print / PDF export — stakeholder summary. lib/theme.ts switches to the
+   light tokens for the print itself, so dark ink never lands on white paper. */
 @media print {
-  /* Hide sidebar, nav, and non-content chrome */
   aside,
   nav,
+  header.md\:hidden,
   .print\:hidden {
     display: none !important;
   }
 
-  /* Reset margins so content fills the page */
   main {
     margin-left: 0 !important;
     padding: 1.5rem !important;
   }
 
-  /* Ensure cards don't break across pages */
   .card,
   [class*="rounded-"] {
     break-inside: avoid;
   }
 
-  /* Remove shadow/border radius for cleaner print */
   * {
     box-shadow: none !important;
   }
