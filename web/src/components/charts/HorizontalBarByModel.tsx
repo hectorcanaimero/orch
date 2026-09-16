@@ -35,8 +35,8 @@ function truncate(s: string, max = 22): string {
 /**
  * Hand-rolled SVG horizontal bar chart for cost-by-model. Sorted by cost
  * desc. Bar length is proportional to the max cost so the top spender always
- * fills 100 % of the plot area. Colors reuse the same zinc-800/200 palette as
- * the day chart to stay minimal.
+ * fills 100 % of the plot area. Bars are a neutral ink on a muted track, the
+ * same pairing as the day chart.
  */
 export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
   if (data.length === 0) {
@@ -72,8 +72,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
               x={LABEL_W}
               y={textY}
               textAnchor="end"
-              className="fill-zinc-700 text-[11px] dark:fill-zinc-300"
-              style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+              className="fill-foreground font-mono text-[11px]"
             >
               {truncate(d.model)}
             </text>
@@ -83,7 +82,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
               width={BAR_W}
               height={BAR_HEIGHT}
               rx={2}
-              className="fill-zinc-100 dark:fill-zinc-900"
+              className="fill-muted"
             />
             <rect
               x={BAR_LEFT}
@@ -91,12 +90,12 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
               width={width}
               height={BAR_HEIGHT}
               rx={2}
-              className="fill-zinc-800 dark:fill-zinc-200"
+              className="fill-muted-foreground/70"
             />
             <text
               x={BAR_RIGHT + 8}
               y={textY}
-              className="fill-zinc-700 text-[11px] tabular-nums dark:fill-zinc-300"
+              className="fill-foreground text-[11px] tabular-nums"
             >
               {USD.format(d.cost_usd)}
             </text>

@@ -53,7 +53,7 @@ export function BudgetChart({ rows }: BudgetChartProps) {
               x={PAD_LEFT - 10}
               y={barY + BAR_H - 4}
               textAnchor="end"
-              className="fill-zinc-700 dark:fill-zinc-300 text-[11px]"
+              className="fill-foreground text-[11px]"
             >
               {r.provider}
             </text>
@@ -64,7 +64,7 @@ export function BudgetChart({ rows }: BudgetChartProps) {
               width={plotW}
               height={BAR_H}
               rx={3}
-              className="fill-zinc-200 dark:fill-zinc-800"
+              className="fill-muted"
             />
             {/* used fill */}
             <rect
@@ -75,8 +75,8 @@ export function BudgetChart({ rows }: BudgetChartProps) {
               rx={3}
               className={
                 r.over_threshold
-                  ? "fill-amber-500 dark:fill-amber-400"
-                  : "fill-emerald-500 dark:fill-emerald-400"
+                  ? "fill-status-blocked"
+                  : "fill-status-done"
               }
             />
             {/* threshold rule */}
@@ -85,7 +85,7 @@ export function BudgetChart({ rows }: BudgetChartProps) {
               x2={thresholdX}
               y1={barY - 3}
               y2={barY + BAR_H + 3}
-              className="stroke-zinc-500 dark:stroke-zinc-400"
+              className="stroke-muted-foreground"
               strokeWidth={1}
               strokeDasharray="2 2"
             />
@@ -93,7 +93,7 @@ export function BudgetChart({ rows }: BudgetChartProps) {
             <text
               x={PAD_LEFT + plotW + 8}
               y={barY + BAR_H - 4}
-              className="fill-zinc-600 dark:fill-zinc-400 text-[10px]"
+              className="fill-muted-foreground text-[10px] tabular-nums"
             >
               {r.pct}% · {shortTokens(r.tokens_used)}/{shortTokens(r.token_budget)}            </text>
           </g>

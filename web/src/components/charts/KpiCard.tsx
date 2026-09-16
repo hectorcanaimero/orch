@@ -1,36 +1,31 @@
+import type { ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
-import { Card, CardContent } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 
 export interface KpiCardProps {
-  label: string
-  value: string | number
+  label: ReactNode
+  value: ReactNode
   icon?: LucideIcon
-  hint?: string
+  /** Colors the icon; the number stays in the foreground so it reads in both themes. */
+  iconClassName?: string
+  hint?: ReactNode
+  children?: ReactNode
 }
 
 /**
- * Compact stat card for the Metrics page. Consistent with the shadcn-flavored
- * Card primitive already used by other pages — label is uppercase muted small
- * text, value is `text-2xl font-semibold`, optional `hint` sits below the
- * value as muted small text. `icon` renders in the top-right corner.
+ * The one figure tile (Summary, Metrics). Flat: a border and the number, no
+ * shadow and no uppercase kicker, so a row of them reads as one instrument.
  */
-export function KpiCard({ label, value, icon: Icon, hint }: KpiCardProps) {
+export function KpiCard({ label, value, icon: Icon, iconClassName, hint, children }: KpiCardProps) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-1 p-4 pt-4">
-        <div className="flex items-start justify-between gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {label}
-          </span>
-          {Icon ? (
-            <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : null}
-        </div>
-        <div className="text-2xl font-semibold leading-tight">{value}</div>
-        {hint ? (
-          <div className="text-xs text-muted-foreground">{hint}</div>
-        ) : null}
-      </CardContent>
-    </Card>
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-xl border bg-card p-4">
+      <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+        <span className="truncate">{label}</span>
+        {Icon ? <Icon className={cn("h-4 w-4 shrink-0", iconClassName)} aria-hidden /> : null}
+      </div>
+      <div className="text-2xl font-semibold leading-tight tracking-[-0.02em] tabular-nums">{value}</div>
+      {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
+      {children}
+    </div>
   )
 }

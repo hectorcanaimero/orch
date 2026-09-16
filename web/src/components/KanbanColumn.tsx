@@ -1,5 +1,6 @@
-import { Badge } from "@/components/ui/badge"
 import { TaskCard } from "@/components/TaskCard"
+import { t } from "@/i18n"
+import { STATUS } from "@/lib/status"
 import { cn } from "@/lib/utils"
 import type { Task } from "@/lib/types"
 
@@ -11,81 +12,43 @@ export interface KanbanColumnProps {
   tasks: Task[]
   taskStatusMap?: Record<string, string>
   onCardClick?: (taskId: string) => void
+  showCriticalPath?: boolean
 }
 
-const STATUS_STYLES: Record<
-  KanbanStatus,
-  {
-    bg: string
-    header: string
-    badge: Parameters<typeof Badge>[0]["variant"]
-    topBorder: string
-  }
-> = {
-  backlog: {
-    bg: "bg-zinc-50",
-    header: "text-zinc-500",
-    badge: "muted",
-    topBorder: "border-t-zinc-400",
-  },
-  todo: {
-    bg: "bg-sky-50",
-    header: "text-sky-700",
-    badge: "info",
-    topBorder: "border-t-sky-400",
-  },
-  in_progress: {
-    bg: "bg-violet-50",
-    header: "text-violet-700",
-    badge: "warning",
-    topBorder: "border-t-violet-500",
-  },
-  blocked: {
-    bg: "bg-rose-50",
-    header: "text-rose-700",
-    badge: "danger",
-    topBorder: "border-t-rose-500",
-  },
-  done: {
-    bg: "bg-emerald-50",
-    header: "text-emerald-700",
-    badge: "success",
-    topBorder: "border-t-emerald-500",
-  },
-}
-
-export function KanbanColumn({
-  title,
-  status,
-  tasks,
-  taskStatusMap,
-  onCardClick,
-}: KanbanColumnProps) {
-  const styles = STATUS_STYLES[status]
+/**
+ * A neutral lane: the status lives in the header (shape + color + count), not
+ * in a tinted fill, so five columns side by side stay quiet and the cards
+ * carry the attention.
+ */
+export function KanbanColumn({ title, status, tasks, taskStatusMap, onCardClick, showCriticalPath }: KanbanColumnProps) {
+  const meta = STATUS[status]
+  const Icon = meta.icon
   return (
     <section
-      className={cn(
-        "flex h-full min-h-[240px] flex-col overflow-hidden rounded-lg",
-        "border border-zinc-200 border-t-4",
-        styles.bg,
-        styles.topBorder,
-      )}
+      className={cn("flex h-full min-h-[200px] flex-col overflow-hidden rounded-xl border bg-muted/40")}
       aria-label={title}
     >
-      <header className="flex flex-shrink-0 items-center justify-between border-b border-zinc-200 bg-white/70 px-3 py-2.5">
-        <div className={cn("text-xs font-semibold uppercase tracking-wider", styles.header)}>
+      <header className="flex flex-shrink-0 items-center justify-between gap-2 px-3 py-2.5">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Icon className={cn("h-4 w-4", meta.text)} aria-hidden />
           {title}
         </div>
-        <Badge variant={styles.badge}>{tasks.length}</Badge>
+        <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+          {tasks.length}
+        </span>
       </header>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
         {tasks.length === 0 ? (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            No tasks
-          </p>
+          <p className="px-2 py-4 text-center text-xs text-muted-foreground">{t("kanban.empty_column")}</p>
         ) : (
-          tasks.map((t) => (
-            <TaskCard key={t.id} task={t} taskStatusMap={taskStatusMap} onClick={onCardClick} />
+          tasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              taskStatusMap={taskStatusMap}
+              onClick={onCardClick}
+              showCriticalPath={showCriticalPath}
+            />
           ))
         )}
       </div>
