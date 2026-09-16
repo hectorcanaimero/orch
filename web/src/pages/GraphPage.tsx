@@ -1,12 +1,12 @@
 /**
  * Graph page — visual DAG of the task dependency graph.
  *
- * Mermaid is bundled and loaded on demand (its own chunk), so the graph works
- * offline and costs nothing until this page opens. Node colors are read from
- * the theme tokens at render time, so the diagram belongs to the page in both
- * themes. Supports zoom (buttons + mouse wheel) and pan (drag). Operator-only.
+ * Laid out in-house (lib/graphLayout.ts) and drawn as SVG by React, so the
+ * graph works offline, adds nothing heavy to the binary, and takes its colors
+ * straight from the theme tokens (a theme switch needs no re-render). Supports
+ * zoom (buttons + mouse wheel) and pan (drag). Operator-only.
  */
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -16,95 +16,43 @@ import { Explain } from "@/components/Explain"
 import { useFullscreen } from "@/hooks/useFullscreen"
 import { useGraph } from "@/hooks/useGraph"
 import { t } from "@/i18n"
+import { layoutGraph, type LayoutNode } from "@/lib/graphLayout"
 import { criticalPathMatters, STATUS, statusKey, type StatusKey } from "@/lib/status"
-import { useIsDark } from "@/lib/theme"
-import type { GraphEdge, GraphNode } from "@/lib/types"
 
-// ---- Mermaid DSL builder ---------------------------------------------------
+// ---- Drawing ---------------------------------------------------------------
 
-function mermaidLabel(label: string): string {
-  return `"${label.replace(/"/g, "'").replace(/\n/g, " ").slice(0, 80)}"`
+const STATUS_VAR: Record<StatusKey, string> = {
+  backlog: "var(--status-queued)",
+  todo: "var(--status-queued)",
+  in_progress: "var(--status-running)",
+  blocked: "var(--status-blocked)",
+  failed: "var(--status-failed)",
+  done: "var(--status-done)",
 }
 
-// Shape repeats the status for readers who can't separate the colors.
-function shapeOf(key: StatusKey): [string, string] {
-  switch (key) {
+const LINE_HEIGHT = 16
+
+/** The outline repeats the status for readers who can't separate the colors. */
+function NodeShape({ node, status }: { node: LayoutNode; status: StatusKey }) {
+  const { x, y, width: w, height: h } = node
+  const color = STATUS_VAR[status]
+  const style = { fill: `color-mix(in oklab, ${color} 16%, var(--card))`, stroke: color, strokeWidth: 1.5 }
+  const k = 12
+  switch (status) {
     case "done":
-      return ["([", "])"]
+      return <rect x={x} y={y} width={w} height={h} rx={h / 2} style={style} />
     case "in_progress":
-      return ["[/", "/]"]
+      return <polygon points={`${x + k},${y} ${x + w},${y} ${x + w - k},${y + h} ${x},${y + h}`} style={style} />
     case "blocked":
-      return ["{{", "}}"]
+      return (
+        <polygon
+          points={`${x + k},${y} ${x + w - k},${y} ${x + w},${y + h / 2} ${x + w - k},${y + h} ${x + k},${y + h} ${x},${y + h / 2}`}
+          style={style}
+        />
+      )
     default:
-      return ["[", "]"]
+      return <rect x={x} y={y} width={w} height={h} rx={6} style={style} />
   }
-}
-
-function safeId(id: string): string {
-  return id.replace(/[^A-Za-z0-9_]/g, "_")
-}
-
-/** Mix two #rrggbb colors; `amount` of `b` over `a`. Mermaid only takes literal colors. */
-function mix(a: string, b: string, amount: number): string {
-  const parse = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
-  const [ca, cb] = [parse(a), parse(b)]
-  if (ca.some(Number.isNaN) || cb.some(Number.isNaN)) return a
-  return `#${ca.map((v, i) => Math.round(v + (cb[i] - v) * amount).toString(16).padStart(2, "0")).join("")}`
-}
-
-function token(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-}
-
-function buildMermaidSource(nodes: GraphNode[], edges: GraphEdge[]): string {
-  if (nodes.length === 0) return "flowchart TD\n  empty([No tasks])"
-
-  const card = token("--card")
-  const foreground = token("--foreground")
-  const lines: string[] = ["flowchart TD"]
-  const keyById = new Map<string, StatusKey>()
-
-  for (const n of nodes) {
-    const key = statusKey(n.status)
-    keyById.set(n.id, key)
-    const [open, close] = shapeOf(key)
-    lines.push(`  ${safeId(n.id)}${open}${mermaidLabel(n.label)}${close}`)
-  }
-  for (const e of edges) lines.push(`  ${safeId(e.source)} --> ${safeId(e.target)}`)
-
-  lines.push("")
-  const cssVar: Record<StatusKey, string> = {
-    backlog: "--status-queued",
-    todo: "--status-queued",
-    in_progress: "--status-running",
-    blocked: "--status-blocked",
-    failed: "--status-failed",
-    done: "--status-done",
-  }
-  for (const key of Object.keys(cssVar) as StatusKey[]) {
-    const color = token(cssVar[key])
-    lines.push(`  classDef ${key} fill:${mix(card, color, 0.16)},stroke:${color},stroke-width:1.5px,color:${foreground}`)
-  }
-
-  const byStatus = new Map<StatusKey, string[]>()
-  for (const n of nodes) {
-    const key = keyById.get(n.id) ?? "backlog"
-    byStatus.set(key, [...(byStatus.get(key) ?? []), safeId(n.id)])
-  }
-  for (const [key, ids] of byStatus) lines.push(`  class ${ids.join(",")} ${key}`)
-
-  // The critical path is a trace along its edges, drawn only when the project
-  // has branches; in a single chain it would mark every edge.
-  if (criticalPathMatters(nodes)) {
-    const critical = new Set(nodes.filter((n) => n.on_critical_path).map((n) => n.id))
-    edges.forEach((e, i) => {
-      if (critical.has(e.source) && critical.has(e.target)) {
-        lines.push(`  linkStyle ${i} stroke:${foreground},stroke-width:2.5px`)
-      }
-    })
-  }
-
-  return lines.join("\n")
 }
 
 // ---- Zoom / pan hook -------------------------------------------------------
@@ -113,26 +61,37 @@ const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.2
 
-function useZoomPan() {
-  const [zoom, setZoom] = useState(1)
+const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+
+/**
+ * `fit` is the zoom that shows the whole width of the drawing. Until the reader
+ * zooms, the view follows it (a resized viewport refits); reset returns to it.
+ */
+function useZoomPan(fit: number) {
+  const [userZoom, setUserZoom] = useState<number | null>(null)
+  const zoom = userZoom ?? clampZoom(fit)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const dragging = useRef(false)
   const lastPos = useRef({ x: 0, y: 0 })
 
-  const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
-
-  const zoomIn = () => setZoom((z) => clampZoom(+(z + ZOOM_STEP).toFixed(2)))
-  const zoomOut = () => setZoom((z) => clampZoom(+(z - ZOOM_STEP).toFixed(2)))
+  const step = useCallback(
+    (delta: number) => setUserZoom((z) => clampZoom(+((z ?? clampZoom(fit)) + delta).toFixed(2))),
+    [fit],
+  )
+  const zoomIn = () => step(ZOOM_STEP)
+  const zoomOut = () => step(-ZOOM_STEP)
   const reset = useCallback(() => {
-    setZoom(1)
+    setUserZoom(null)
     setPan({ x: 0, y: 0 })
   }, [])
 
-  const onWheel = useCallback((e: WheelEvent) => {
-    e.preventDefault()
-    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
-    setZoom((z) => clampZoom(+(z + delta).toFixed(2)))
-  }, [])
+  const onWheel = useCallback(
+    (e: WheelEvent) => {
+      e.preventDefault()
+      step(e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)
+    },
+    [step],
+  )
 
   const onMouseDown = useCallback((e: MouseEvent) => {
     if (e.button !== 0) return
@@ -161,14 +120,22 @@ const LEGEND: StatusKey[] = ["done", "in_progress", "blocked", "todo"]
 
 export function GraphPage() {
   const { data, isLoading, isError, error } = useGraph()
-  const containerRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<HTMLDivElement>(null)
-  const [renderError, setRenderError] = useState<string | null>(null)
   const [isFullscreen, toggleFullscreen] = useFullscreen(graphRef)
-  const isDark = useIsDark()
 
-  const { zoom, pan, zoomIn, zoomOut, reset, onWheel, onMouseDown, onMouseMove, onMouseUp } = useZoomPan()
+  const layout = useMemo(() => (data ? layoutGraph(data.nodes, data.edges) : null), [data])
+  const [viewportWidth, setViewportWidth] = useState(0)
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => setViewportWidth(Math.round(entry.contentRect.width)))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [layout])
+  const fit = layout && viewportWidth ? Math.min(1, viewportWidth / (layout.width + 8)) : 1
+
+  const { zoom, pan, zoomIn, zoomOut, reset, onWheel, onMouseDown, onMouseMove, onMouseUp } = useZoomPan(fit)
 
   // Attach wheel + drag to the viewport
   useEffect(() => {
@@ -186,39 +153,15 @@ export function GraphPage() {
     }
   }, [onWheel, onMouseDown, onMouseMove, onMouseUp, data])
 
-  // Render whenever the data or the theme changes.
-  useEffect(() => {
-    if (!data || data.nodes.length === 0) return
-    let cancelled = false
-    void import("mermaid")
-      .then(async ({ default: mermaid }) => {
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: "base",
-          themeVariables: {
-            fontFamily: "Geist Variable, ui-sans-serif, system-ui, sans-serif",
-            lineColor: token("--muted-foreground"),
-            background: token("--card"),
-          },
-          flowchart: { curve: "basis", useMaxWidth: false },
-        })
-        const { svg } = await mermaid.render(`orch-graph-${Date.now()}`, buildMermaidSource(data.nodes, data.edges))
-        if (cancelled || !containerRef.current) return
-        containerRef.current.innerHTML = svg
-        setRenderError(null)
-        reset()
-      })
-      .catch((e: Error) => {
-        if (!cancelled) setRenderError(t("graph.render_failed", { message: e.message }))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [data, isDark, reset])
-
   const nodeCount = data?.nodes.length ?? 0
   const edgeCount = data?.edges.length ?? 0
   const showCritical = data ? criticalPathMatters(data.nodes) : false
+  const nodeById = useMemo(() => new Map((data?.nodes ?? []).map((n) => [n.id, n])), [data])
+
+  // The critical path is a trace along its edges, drawn only when the project
+  // has branches; in a single chain it would mark every edge.
+  const onCritical = (source: string, target: string) =>
+    showCritical && Boolean(nodeById.get(source)?.on_critical_path && nodeById.get(target)?.on_critical_path)
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -295,13 +238,7 @@ export function GraphPage() {
           <AlertTitle>{t("graph.load_failed")}</AlertTitle>
           <AlertDescription>{error?.message ?? t("common.unknown_error")}</AlertDescription>
         </Alert>
-      ) : renderError ? (
-        <Alert variant="destructive">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>{t("graph.render_error")}</AlertTitle>
-          <AlertDescription>{renderError}</AlertDescription>
-        </Alert>
-      ) : nodeCount === 0 ? (
+      ) : nodeCount === 0 || !layout ? (
         <EmptyTasks />
       ) : (
         <div
@@ -335,14 +272,78 @@ export function GraphPage() {
             className="min-h-0 w-full flex-1 cursor-grab select-none overflow-hidden p-4 active:cursor-grabbing"
           >
             <div
-              ref={containerRef}
-              className="origin-top-left [&_svg]:h-auto [&_svg]:max-w-none"
               style={{
                 transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                 transformOrigin: "top left",
                 transition: "transform 0.05s ease-out",
               }}
-            />
+            >
+              <svg
+                width={layout.width + 8}
+                height={layout.height + 8}
+                viewBox={`-4 -4 ${layout.width + 8} ${layout.height + 8}`}
+                role="img"
+                aria-label={t("graph.title")}
+                className="max-w-none font-sans"
+              >
+                <defs>
+                  {(["muted-foreground", "foreground"] as const).map((color) => (
+                    <marker
+                      key={color}
+                      id={`orch-graph-arrow-${color}`}
+                      viewBox="0 0 10 10"
+                      refX="9"
+                      refY="5"
+                      markerUnits="userSpaceOnUse"
+                      markerWidth="8"
+                      markerHeight="8"
+                      orient="auto"
+                    >
+                      <path d="M0,0 L10,5 L0,10 z" style={{ fill: `var(--${color})` }} />
+                    </marker>
+                  ))}
+                </defs>
+                {layout.edges.map((e) => {
+                  const critical = onCritical(e.source, e.target)
+                  return (
+                    <path
+                      key={`${e.source}->${e.target}`}
+                      d={e.d}
+                      markerEnd={`url(#orch-graph-arrow-${critical ? "foreground" : "muted-foreground"})`}
+                      style={{
+                        fill: "none",
+                        stroke: critical ? "var(--foreground)" : "var(--muted-foreground)",
+                        strokeWidth: critical ? 2.5 : 1.25,
+                        opacity: critical ? 1 : 0.7,
+                      }}
+                    />
+                  )
+                })}
+                {layout.nodes.map((node) => {
+                  const source = nodeById.get(node.id)
+                  const status = statusKey(source?.status ?? "")
+                  const top = node.y + node.height / 2 - ((node.lines.length - 1) * LINE_HEIGHT) / 2
+                  return (
+                    <g key={node.id}>
+                      <title>{`${node.id} · ${source?.label ?? ""} · ${t(STATUS[status].label)}`}</title>
+                      <NodeShape node={node} status={status} />
+                      <text
+                        x={node.x + node.width / 2}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        style={{ fill: "var(--foreground)", fontSize: 13 }}
+                      >
+                        {node.lines.map((line, i) => (
+                          <tspan key={i} x={node.x + node.width / 2} y={top + i * LINE_HEIGHT}>
+                            {line}
+                          </tspan>
+                        ))}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+            </div>
           </div>
         </div>
       )}
