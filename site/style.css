@@ -221,10 +221,101 @@ p { margin: 0; }
 .foot a { color: var(--soft); }
 .foot a:hover { color: var(--text); }
 
+/* ---- inner pages: template gallery and playground ----------------------- */
+
+::selection { background: var(--violet); color: #fff; }
+
+.page { padding-block: clamp(24px, 5vw, 56px) clamp(64px, 9vw, 112px); }
+.page-title {
+  margin: 0; font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.05;
+  font-weight: 600; letter-spacing: -0.03em; text-wrap: balance;
+}
+.page .lede { margin-top: 18px; }
+.page-note { margin-top: 12px; color: var(--soft); max-width: var(--measure); }
+.crumb { margin: 0 0 18px; font-size: 0.95rem; }
+.crumb a { color: var(--soft); }
+.page-section { margin-top: clamp(48px, 7vw, 80px); }
+.page-section h2 { margin-bottom: 12px; }
+.page-section h3 { margin-top: 36px; }
+.page-cta { margin-top: clamp(48px, 7vw, 72px); }
+
+.gallery { list-style: none; margin: 40px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.gallery li { border-bottom: 1px solid var(--line); }
+.gallery-item {
+  display: grid; grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr) auto; gap: 8px 32px;
+  align-items: baseline; padding: 22px 4px; text-decoration: none;
+}
+.gallery-item:hover .gallery-name { color: var(--lilac); }
+.gallery-name { font-family: var(--mono); font-size: 1rem; font-weight: 500; }
+.gallery-summary { color: var(--soft); }
+.gallery-facts { color: var(--soft); font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.facts { display: flex; flex-wrap: wrap; gap: 16px 40px; margin: 32px 0 0; }
+.facts dt { font-size: 0.85rem; color: var(--soft); }
+.facts dd { margin: 2px 0 0; font-size: 1.125rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.facts dd code { font-size: 0.8rem; }
+
+.copy-cmd { display: flex; align-items: center; gap: 12px; margin-top: 28px; max-width: 640px; }
+.copy-cmd .term { flex: 1; min-width: 0; }
+
+.dag-wrap {
+  margin-top: 20px; padding: 16px; overflow: auto; max-height: 72vh;
+  background: var(--raise); border-radius: 14px;
+}
+/* Fit the drawing to the column, but never below 560px (or its own width):
+   past that the labels stop being readable and the well scrolls instead. */
+.dag { display: block; margin-inline: auto; width: 100%; height: auto; max-width: var(--w); min-width: min(var(--w), 560px); }
+.dag-node rect { fill: var(--ink); stroke: var(--line); stroke-width: 1; }
+.dag-node.is-critical rect { stroke: var(--violet); stroke-width: 1.5; }
+.dag-id { font-family: var(--mono); font-size: 12px; fill: var(--lilac); }
+.dag-title { font-family: var(--sans); font-size: 13px; fill: var(--text); }
+.dag-edge { fill: none; stroke: #52525b; stroke-width: 1.25; }
+.dag-edge.is-critical { stroke: var(--violet); stroke-width: 2; }
+.dag-arrowhead { fill: #71717a; }
+
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+.tasks { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.tasks th {
+  text-align: left; font-weight: 500; font-size: 0.8rem; color: var(--soft);
+  padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.tasks td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tasks td code { white-space: nowrap; }   /* ids and model routes never break; the well scrolls */
+.tasks .title { min-width: 18ch; }
+.tasks .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* playground */
+.pg { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(24px, 4vw, 48px); margin-top: 40px; align-items: start; }
+.pg-input label { display: block; font-weight: 500; margin-bottom: 8px; }
+.pg-input textarea {
+  width: 100%; min-height: 32rem; resize: vertical; padding: 16px;
+  background: var(--raise); color: #e4e4e7; caret-color: var(--lilac);
+  border: 1px solid var(--line); border-radius: 14px;
+  font-family: var(--mono); font-size: 0.8rem; line-height: 1.6; tab-size: 2;
+}
+.pg-input textarea:focus-visible { outline: 2px solid var(--lilac); outline-offset: 2px; }
+.pg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
+.pg-actions .button { border: 0; font: inherit; font-weight: 500; cursor: pointer; }
+.pg-actions .button:disabled { opacity: 0.55; cursor: progress; }
+.pg-hint { color: var(--soft); font-size: 0.9rem; }
+.pg-out { min-width: 0; }
+.pg-summary { margin: 0; font-family: var(--mono); font-size: 0.9rem; }
+.pg-summary.is-ok { color: var(--done); }
+.pg-summary.is-bad { color: #f87171; }
+.pg-out .facts { margin-top: 18px; }
+.pg-out h2 { margin: 40px 0 12px; font-size: 1.35rem; letter-spacing: -0.015em; }
+.pg-list { margin: 16px 0 0; padding-left: 20px; color: var(--soft); }
+.pg-list li + li { margin-top: 6px; }
+.pg-path { margin-top: 18px; color: var(--soft); }
+.pg-path code { color: var(--text); }
+.pg-empty { color: var(--soft); }
+
 /* ---- narrow ------------------------------------------------------------ */
 
 @media (max-width: 860px) {
-  .step, .client-view { grid-template-columns: minmax(0, 1fr); }
+  .step, .client-view, .pg { grid-template-columns: minmax(0, 1fr); }
+  .pg-input textarea { min-height: 20rem; }
+  .gallery-item { grid-template-columns: minmax(0, 1fr); }
   .limits dl { grid-template-columns: minmax(0, 1fr); }
   /* The agent's name sits above its lane so the track gets the full width:
      the shortest task is a fifth of it, and its id has to fit. */
