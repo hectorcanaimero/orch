@@ -29,7 +29,6 @@ import (
 	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/project"
-	"github.com/hectorcanaimero/orch/internal/providers"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
@@ -52,7 +51,7 @@ type Input struct {
 	ProjectName      string
 	RefreshIntervalS int
 	// Language selects the translation table and the executive summary's
-	// wording — "es" or "en". Empty is treated as "es", matching
+	// wording — one of Languages. Anything else is treated as "es", matching
 	// config.Dashboard.SummaryLanguage's own default.
 	Language string
 	// ShowSpend gates the Budget section on config.yaml's
@@ -240,7 +239,7 @@ type ExecutiveSummary struct {
 // Build assembles the snapshot from already-gathered project data.
 func Build(in Input) Snapshot {
 	lang := in.Language
-	if lang != "es" && lang != "en" {
+	if _, ok := summaryPhrasesByLang[lang]; !ok {
 		lang = "es"
 	}
 
@@ -480,18 +479,18 @@ func PhaseMilestones(tasks []model.Task, phases []model.Phase, specTitles map[in
 // comment or exit code a blocked task's events may carry. Sorted by
 // (phase, title) for a stable document.
 func buildBlockers(tasks []model.Task, events []state.Event, lang string) []Blocker {
-	latestFailure := latestFailureClassByTask(events)
+	signals := latestBlockSignals(events)
 
 	out := make([]Blocker, 0)
 	for _, t := range tasks {
 		if t.Status != model.StatusBlocked {
 			continue
 		}
-		class, ok := latestFailure[t.ID]
+		sig, ok := signals[t.ID]
 		out = append(out, Blocker{
 			Phase:  t.Phase,
 			Title:  t.Title,
-			Reason: translateReason(lang, class, ok),
+			Reason: translateReason(lang, sig, ok),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -500,33 +499,5 @@ func buildBlockers(tasks []model.Task, events []state.Event, lang string) []Bloc
 		}
 		return out[i].Title < out[j].Title
 	})
-	return out
-}
-
-// latestFailureClassByTask finds each task's most recent fail/timeout
-// event's `failure_class`, the one structured, closed-vocabulary field the
-// event log carries for why a task stopped — as opposed to `reason`, which
-// is free text a human or a CLI wrote and is never surfaced here.
-func latestFailureClassByTask(events []state.Event) map[string]providers.Failure {
-	out := map[string]providers.Failure{}
-	latestTS := map[string]string{}
-	for _, e := range events {
-		if e.EventType != "fail" && e.EventType != "timeout" {
-			continue
-		}
-		raw, ok := e.Extra["failure_class"]
-		if !ok {
-			continue
-		}
-		class, ok := raw.(string)
-		if !ok || class == "" {
-			continue
-		}
-		if e.TS < latestTS[e.TaskID] {
-			continue
-		}
-		latestTS[e.TaskID] = e.TS
-		out[e.TaskID] = providers.Failure(class)
-	}
 	return out
 }
