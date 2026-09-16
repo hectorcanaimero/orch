@@ -62,7 +62,10 @@ export function MetricsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Metrics</h1>
           <p className="text-sm text-muted-foreground">
             {data
-              ? `Total cost: ${USD.format(data.total_cost_usd)} across ${modelsCount} model${modelsCount === 1 ? "" : "s"}`
+              ? `Total cost: ${USD.format(data.total_cost_usd)} across ${modelsCount} model${modelsCount === 1 ? "" : "s"}` +
+                (data.estimated_cost_usd > 0
+                  ? ` — ${USD.format(data.estimated_cost_usd)} of it estimated from pricing.yaml for CLIs that report no price`
+                  : "")
               : "Loading metrics…"}
           </p>
         </div>
@@ -91,7 +94,7 @@ export function MetricsPage() {
         ) : (
           <>
             <KpiCard
-              label="Total spend"
+              label={data.estimated_cost_usd > 0 ? "Total spend (partly estimated)" : "Total spend"}
               value={USD.format(data.total_cost_usd)}
               icon={DollarSign}
             />
