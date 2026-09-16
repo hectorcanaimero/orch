@@ -59,8 +59,8 @@ export function MetricsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Metrics</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em]">Metrics</h1>
+          <p className="mt-1 text-sm text-muted-foreground tabular-nums">
             {data
               ? `Total cost: ${USD.format(data.total_cost_usd)} across ${modelsCount} model${modelsCount === 1 ? "" : "s"}` +
                 (data.estimated_cost_usd > 0
