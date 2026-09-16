@@ -32,7 +32,7 @@ describe("visibleNavItems", () => {
       allowedRoutes: [...STAKEHOLDER_ROUTES, "api_tasks", "api_sprint"],
       portfolioAvailable: false,
     })
-    expect(labels(items)).toEqual(["Summary", "Tasks", "Kanban", "Sprint"])
+    expect(labels(items)).toEqual(["Summary", "Tasks", "Kanban", "Pace"])
   })
 
   it("falls back to hiding operator-only pages when an older server sends no list", () => {

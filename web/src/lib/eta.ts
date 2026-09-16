@@ -5,7 +5,7 @@ interface EtaFields {
 }
 
 // formatEta is the one way a finish estimate is shown. The date comes from
-// the same velocity projection as the Sprint page; hours of work are only a
+// the same velocity projection as the Pace page; hours of work are only a
 // fallback for a project with no measured pace yet.
 export function formatEta({ eta_date, eta_confidence, eta_hours }: EtaFields): {
   value: string
