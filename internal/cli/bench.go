@@ -120,8 +120,10 @@ func runBench(cmd *cobra.Command, version string, o benchOptions) error {
 
 	plan := o.plan(src)
 	if o.dryRun {
-		_, err := fmt.Fprint(cmd.OutOrStdout(), plan)
-		return err
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), plan); err != nil {
+			return fmt.Errorf("print the plan: %w", err)
+		}
+		return nil
 	}
 	_, _ = fmt.Fprint(errOut, plan)
 	if !o.yes {
@@ -166,7 +168,10 @@ func runBench(cmd *cobra.Command, version string, o benchOptions) error {
 	} else {
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", body)
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("print the results: %w", err)
+	}
+	return nil
 }
 
 func (o benchOptions) validate() error {
@@ -236,24 +241,24 @@ func benchOne(ctx context.Context, in io.Reader, errOut io.Writer, src, provider
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	if err := bench.Prepare(src, dir, provider, o.models); err != nil {
-		return bench.Result{}, err
+		return bench.Result{}, fmt.Errorf("prepare the %s copy: %w", provider, err)
 	}
 
 	flags := &projectFlags{root: dir}
 	paths, cfg, err := loadProjectConfig(flags)
 	if err != nil {
-		return bench.Result{}, err
+		return bench.Result{}, fmt.Errorf("load the copy's config: %w", err)
 	}
 	// An absolute state.sqlite_path would point the copy at the project's
 	// real database.
 	if db := filepath.Clean(paths.SQLitePath(cfg)); !strings.HasPrefix(db, filepath.Clean(dir)+string(filepath.Separator)) {
 		return bench.Result{}, fmt.Errorf("state.sqlite_path resolves outside the copy (%s); bench only runs projects with a relative database path", db)
 	}
-	// Opened (and migrated) before the run, so the cap watch never races
-	// the run's own open.
+	// The one backend of this copy: the run writes through it and the cap
+	// watch and Collect read through it, so the file has a single writer.
 	backend, closeBackend, err := openBackend(ctx, paths, cfg)
 	if err != nil {
-		return bench.Result{}, err
+		return bench.Result{}, fmt.Errorf("open the copy's database: %w", err)
 	}
 	defer func() { _ = closeBackend() }()
 	prices := pricing.Load(dir)
@@ -274,7 +279,7 @@ func benchOne(ctx context.Context, in io.Reader, errOut io.Writer, src, provider
 		watched <- nil
 	}
 
-	runErr := runProject(runCtx, in, errOut, flags, runOptions{mode: string(engine.ModeAuto), runID: runID, isolated: true})
+	runErr := runProject(runCtx, in, errOut, flags, runOptions{mode: string(engine.ModeAuto), runID: runID, isolated: true, backend: backend})
 	stop()
 	capErr := <-watched
 
@@ -292,7 +297,10 @@ func benchOne(ctx context.Context, in io.Reader, errOut io.Writer, src, provider
 	default:
 		res.Outcome = "finished"
 	}
-	return res, err
+	if err != nil {
+		return res, fmt.Errorf("collect the %s run: %w", provider, err)
+	}
+	return res, nil
 }
 
 func cliVersion(provider string, fake bool) string {

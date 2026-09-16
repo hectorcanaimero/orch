@@ -74,6 +74,11 @@ type runOptions struct {
 	// benchmark copy has no git history of its own, must never open a PR on
 	// the real remote, and is not news for the project's Slack channel.
 	isolated bool
+	// backend, when set, is the database the run writes through instead of
+	// opening its own; the caller closes it. `orch bench` reads the run's
+	// spend while it goes, and doing that through the run's own backend keeps
+	// one writer on the file (CHECKLIST rule 17).
+	backend state.Backend
 }
 
 // runProject is `orch run` minus cobra: the one code path that walks a
@@ -92,15 +97,19 @@ func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *project
 		return withExitCode(1, err)
 	}
 
-	backend, closeBackend, err := openBackend(ctx, paths, cfg)
-	if err != nil {
-		return withExitCode(1, err)
-	}
-	defer func() {
-		if cerr := closeBackend(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "closing the state backend: %v\n", cerr)
+	backend := opts.backend
+	if backend == nil {
+		opened, closeBackend, err := openBackend(ctx, paths, cfg)
+		if err != nil {
+			return withExitCode(1, err)
 		}
-	}()
+		defer func() {
+			if cerr := closeBackend(); cerr != nil {
+				fmt.Fprintf(os.Stderr, "closing the state backend: %v\n", cerr)
+			}
+		}()
+		backend = opened
+	}
 
 	tasks := loadDAG(paths)
 	if len(tasks) == 0 {
