@@ -265,7 +265,7 @@ every one of those clients already handles; their error branches exist and were
 unreachable while the server answered 200.
 
 Everything outside those two prefixes still reaches the SPA, so a hard refresh
-on a client-side route like `/kanban` keeps working.
+on a client-side route like `/work/kanban` keeps working.
 
 ### Binding beyond localhost needs `--allow-remote`
 
@@ -371,7 +371,7 @@ That is the whole configuration. A config that still sets `provider`,
 
 ### Starting it
 
-**From the dashboard** — open `/tunnel` at `http://127.0.0.1:7420`. The page
+**From the dashboard** — open **Delivery → Share** (`/delivery/share`; the old `/tunnel` redirects there) at `http://127.0.0.1:7420`. The page
 shows one of:
 
 - **The tunnel is off** — `tunnel.enabled` is not set; it shows the two lines

@@ -311,6 +311,16 @@ orch dashboard --demo
 orch dashboard --tunnel
 ```
 
+The operator dashboard has four destinations. **Now** is the first screen:
+the run, each agent at work with a running clock, the blocked tasks and the
+ones waiting on a budget window (with the `orch task set` command that
+unblocks each — the dashboard only reads), phases and the budget window.
+**Work** holds List, Kanban, Graph, Phases and Pace as tabs sharing one set of
+filters in the URL; **Cost** holds Budget and Metrics; **Delivery** holds the
+client summary, CI and Share (the tunnel). **Logs** opens as a panel over any
+page. Old addresses (`/kanban`, `/budget`, `/tunnel`…) redirect to their new
+place.
+
 `--profile operator` (the default) shows everything: tasks, spend per
 model, logs. `--profile stakeholder` gates every data route behind the
 `--token` and an allow-list of stakeholder-safe routes — no log lines, no
