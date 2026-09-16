@@ -152,6 +152,9 @@ func Load(path, projectRoot string) (Result, error) {
 	if err := yaml.Unmarshal(reencoded, &cfg); err != nil {
 		return res, fmt.Errorf("decode %s: %w", path, err)
 	}
+	if b, ok := raw["budget"].(map[string]any); ok {
+		_, cfg.Budget.PerDispatchExplicit = b["per_dispatch_usd"]
+	}
 
 	if err := validate(&cfg); err != nil {
 		return res, err
