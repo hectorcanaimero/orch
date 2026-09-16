@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -93,11 +94,17 @@ func schemaVersion(ctx context.Context, q queryer) (int, error) {
 // advances as a side effect of the file rather than from a separate write.
 // The final defensive set mirrors Python: it also repairs a database whose
 // files were applied by hand without the pragma.
-func migrate(ctx context.Context, db execQueryer) (applied int, err error) {
+func migrate(ctx context.Context, db *sql.DB) (applied int, err error) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		return 0, err
 	}
+	return applyMigrations(ctx, db, migrations)
+}
+
+// applyMigrations runs the given set; migrate passes the embedded one, and a
+// test passes one with a deliberately broken file.
+func applyMigrations(ctx context.Context, db *sql.DB, migrations []migration) (applied int, err error) {
 	current, err := schemaVersion(ctx, db)
 	if err != nil {
 		return 0, err
@@ -106,8 +113,8 @@ func migrate(ctx context.Context, db execQueryer) (applied int, err error) {
 		if m.version <= current {
 			continue
 		}
-		if _, err := db.ExecContext(ctx, m.sql); err != nil {
-			return applied, fmt.Errorf("apply migration %s: %w", m.name, err)
+		if err := applyOne(ctx, db, m); err != nil {
+			return applied, err
 		}
 		applied++
 	}
@@ -119,4 +126,28 @@ func migrate(ctx context.Context, db execQueryer) (applied int, err error) {
 		}
 	}
 	return applied, nil
+}
+
+// applyOne runs one migration file in a transaction, so a statement failing
+// partway leaves the database exactly as it was.
+//
+// The files set `PRAGMA user_version = N` before their statements, and 001–006
+// are released and never edited. Run outside a transaction, a second ALTER
+// failing left user_version at N with the first column already added: the
+// next open skipped the migration, and re-running it would fail on the
+// duplicate column (SQLite has no ADD COLUMN IF NOT EXISTS). user_version is
+// transactional in SQLite, so the rollback undoes it with the schema.
+func applyOne(ctx context.Context, db *sql.DB, m migration) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("apply migration %s: begin: %w", m.name, err)
+	}
+	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("apply migration %s: %w", m.name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("apply migration %s: commit: %w", m.name, err)
+	}
+	return nil
 }

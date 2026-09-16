@@ -43,14 +43,15 @@ function formatReset(iso: string | null): string {
 function Explanation() {
   return (
     <p className="max-w-3xl text-sm text-muted-foreground">
-      The guardrail counts the tokens each provider used in its rolling window
-      (every input token, cache reads included, plus output). When a provider
+      The guardrail counts the tokens each provider used in its rolling window:
+      input and output at full weight, prompt-cache reads at 10% and cache
+      writes at 125%, as Anthropic bills them. When a provider
       reaches its threshold, orch stops sending it new tasks until older usage
       leaves the window; tasks routed elsewhere keep running.{" "}
       <code className="font-mono">budget.per_dispatch_usd</code> is separate:
-      it caps a single claude dispatch (
-      <code className="font-mono">--max-budget-usd</code>) and whether a
-      failing task may escalate to a pricier model.
+      it decides whether a failing task may escalate to a pricier model, and,
+      only when written in config.yaml, caps each claude dispatch (
+      <code className="font-mono">--max-budget-usd</code>).
     </p>
   )
 }
@@ -217,6 +218,11 @@ export function BudgetPage() {
                     <TableCell>{r.window_hours}h</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {INT.format(r.tokens_used)} / {INT.format(cap)}
+                      {r.raw_tokens_used !== r.tokens_used ? (
+                        <span className="block text-xs text-muted-foreground">
+                          {INT.format(r.raw_tokens_used)} raw
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell>{formatReset(r.reset_at)}</TableCell>
                     <TableCell>

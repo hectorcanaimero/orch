@@ -88,11 +88,15 @@ type Request struct {
 // belongs to the engine, not here) and `should_retry_with_fallback` (the reap
 // loop derives it from Classify, so storing it invites the two disagreeing).
 type Result struct {
-	ExitCode  int
-	Success   bool
-	CostUSD   float64
-	TokensIn  int
-	TokensOut int
+	ExitCode int
+	Success  bool
+	CostUSD  float64
+	// TokensIn counts every input token, cache reads and writes included;
+	// CacheReadTokens and CacheCreationTokens say how much of it was which.
+	TokensIn            int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	TokensOut           int
 
 	// Stdout is the captured log — stdout and stderr merged, because that is
 	// how the engine spawns children (dispatcher.py: `stderr=STDOUT`).

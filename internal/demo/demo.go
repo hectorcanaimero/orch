@@ -353,6 +353,9 @@ func (s *seeder) spend(t spec, at time.Time, dur time.Duration) float64 {
 	switch backend(t.model) {
 	case "claude":
 		row.TokensIn, row.TokensOut = in, out
+		// Like the real capture, most of claude's input is prompt cache:
+		// the budget gate weights reads at 10% and writes at 125%.
+		row.CacheReadTokens, row.CacheCreationTokens = in*6/10, in*3/10
 		row.CostUSD = float64(in)*3/1e6 + float64(out)*15/1e6
 		if t.model == opus {
 			row.CostUSD *= 5

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +29,70 @@ func copyPythonFixture(t *testing.T) string {
 	return path
 }
 
+// A migration that fails partway must leave the database as it was. Each file
+// sets `PRAGMA user_version = N` before its statements and was Exec'd outside
+// a transaction, so a second ALTER failing left user_version at N with the
+// first column added: the next open skipped the migration and never added
+// the second column, and re-running the first ALTER would fail on the
+// duplicate. Each migration now runs in a transaction; user_version is
+// transactional in SQLite, so both roll back together.
+func TestAFailedMigrationLeavesVersionAndSchemaUnchanged(t *testing.T) {
+	ctx := context.Background()
+	db, _, err := Open(ctx, filepath.Join(t.TempDir(), "orch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	base, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := len(base) + 1
+
+	broken := migration{version: next, name: "broken.sql", sql: fmt.Sprintf(`
+PRAGMA user_version = %d;
+ALTER TABLE spend ADD COLUMN probe_a INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE no_such_table ADD COLUMN probe_b INTEGER;
+`, next)}
+	if _, err := applyMigrations(ctx, db.write, append(base, broken)); err == nil {
+		t.Fatal("the broken migration applied")
+	}
+	v, err := db.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion after the failed migration: %v", err)
+	}
+	if v != len(base) {
+		t.Errorf("user_version = %d after a failed migration, want %d", v, len(base))
+	}
+	if hasColumn(t, db, "spend", "probe_a") {
+		t.Error("probe_a was added by a migration that failed")
+	}
+
+	fixed := broken
+	fixed.sql = fmt.Sprintf(`
+PRAGMA user_version = %d;
+ALTER TABLE spend ADD COLUMN probe_a INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE spend ADD COLUMN probe_b INTEGER NOT NULL DEFAULT 0;
+`, next)
+	applied, err := applyMigrations(ctx, db.write, append(base, fixed))
+	if err != nil || applied != 1 {
+		t.Fatalf("re-run after the fix: applied=%d err=%v, want 1 and no error", applied, err)
+	}
+	if !hasColumn(t, db, "spend", "probe_a") || !hasColumn(t, db, "spend", "probe_b") {
+		t.Error("the fixed migration did not add both columns")
+	}
+}
+
+func hasColumn(t *testing.T, db *DB, table, column string) bool {
+	t.Helper()
+	var n int
+	if err := db.read.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
+}
+
 func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
 	ms, err := loadMigrations()
 	if err != nil {
@@ -44,8 +109,8 @@ func TestLoadMigrationsIsAContiguousRun(t *testing.T) {
 			t.Errorf("migration %s is empty", m.name)
 		}
 	}
-	if got, want := ms[len(ms)-1].version, 6; got != want {
-		t.Errorf("highest migration is %d, want %d — bump this when 007 ships", got, want)
+	if got, want := ms[len(ms)-1].version, 7; got != want {
+		t.Errorf("highest migration is %d, want %d — bump this when 008 ships", got, want)
 	}
 }
 
@@ -102,15 +167,15 @@ func TestOpenFreshAppliesEveryMigration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if applied != 6 {
-		t.Errorf("applied %d migrations on a fresh DB, want 6", applied)
+	if applied != 7 {
+		t.Errorf("applied %d migrations on a fresh DB, want 7", applied)
 	}
 	v, err := db.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 6 {
-		t.Errorf("user_version = %d, want 6", v)
+	if v != 7 {
+		t.Errorf("user_version = %d, want 7", v)
 	}
 }
 
@@ -156,15 +221,15 @@ func TestOpenPythonWrittenDatabaseAppliesOnlyGoOnlyMigrations(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if applied != 1 {
-		t.Errorf("applied %d migrations to a v0.11.0 (schema 5) database, want 1 (006, Go-only)", applied)
+	if applied != 2 {
+		t.Errorf("applied %d migrations to a v0.11.0 (schema 5) database, want 2 (006 and 007, Go-only)", applied)
 	}
 	v, err := db.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 6 {
-		t.Errorf("user_version = %d, want 6", v)
+	if v != 7 {
+		t.Errorf("user_version = %d, want 7", v)
 	}
 }
 

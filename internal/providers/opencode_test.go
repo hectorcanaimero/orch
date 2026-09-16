@@ -68,6 +68,9 @@ func TestOpencodeParseRealSuccess(t *testing.T) {
 	if res.TokensIn != 11509 || res.TokensOut != 15 {
 		t.Errorf("tokens = (%d,%d), want (11509,15)", res.TokensIn, res.TokensOut)
 	}
+	if res.CacheReadTokens != 1792 || res.CacheCreationTokens != 0 {
+		t.Errorf("cache read/write = %d/%d, want 1792/0", res.CacheReadTokens, res.CacheCreationTokens)
+	}
 	if res.CostUSD != 0 {
 		t.Errorf("CostUSD = %v, want 0", res.CostUSD)
 	}

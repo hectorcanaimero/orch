@@ -186,7 +186,7 @@ rules existed.
 
 ```yaml
 budget:
-  per_dispatch_usd: 5.0  # claude --max-budget-usd, per attempt; <= 0 means no cap
+  per_dispatch_usd: 5.0  # default 5.0; see below for what writing it changes
 
 budgets_config: budgets.yaml
 budgets_preset: conservative
@@ -197,18 +197,22 @@ Two different guardrails:
 
 - **The rolling window** (`budgets.yaml`) rations each provider's quota across
   a run. Every dispatch's tokens are summed per provider over the preset's
-  `window_hours` — all input tokens, cache reads and cache writes included,
-  plus output. When the sum reaches `threshold_pct` of `token_budget`, orch
+  `window_hours`: input and output at full weight, prompt-cache reads at 10%
+  and cache writes at 125% of an input token (what Anthropic bills for them;
+  claude and opencode report the breakdown). Spend rows keep the raw counts,
+  and the Budget page shows both. When the weighted sum reaches `threshold_pct` of `token_budget`, orch
   stops sending that provider new tasks (it writes a `budget_skip` event, and
   `orch status` shows `defer_reason: blocked-by-budget:<provider> until <reset>`);
   when every configured provider is capped the run sleeps until the earliest
   reset (`budget_pause`). A provider the preset does not name is never gated.
   A dispatch whose provider reports no usage at all (gemini) counts as
   `typical_dispatch_tokens`, not as zero.
-- **`budget.per_dispatch_usd`** caps a single task: it is passed to claude as
-  `--max-budget-usd` on each attempt, and a task that has already cost that
-  much does not get the escalation attempt. It is not a project-wide USD limit;
-  orch has none.
+- **`budget.per_dispatch_usd`** is a per-task limit (default 5.0). A task that
+  has already cost that much does not get the attempt-3 escalation — that is
+  all the default does. **Only when the key is written in config.yaml** is it
+  also passed to claude as `--max-budget-usd` on each attempt (the YAML key's
+  presence decides, not its value: writing `5.0` sends the cap). `orch init`
+  leaves it commented out. It is not a project-wide USD limit; orch has none.
 
 `budgets_config` is looked for next to config.yaml first, then at the project
 root; `orch init` writes the packaged presets to `.orchestrator/budgets.yaml`.

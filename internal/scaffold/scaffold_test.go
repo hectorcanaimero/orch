@@ -224,6 +224,11 @@ func TestScaffoldWritesTheBudgetGuardrail(t *testing.T) {
 			if cfg.Providers["claude"].ThresholdPct != 90 {
 				t.Errorf("claude threshold = %v, want the aggressive preset's 90", cfg.Providers["claude"].ThresholdPct)
 			}
+			// The packaged config leaves per_dispatch_usd to its default, so a
+			// new project does not send claude a --max-budget-usd it never chose.
+			if b := loaded.Config.Budget; b.PerDispatchExplicit || b.PerDispatchUSD != 5.0 {
+				t.Errorf("budget = %+v, want the implicit default 5.0", b)
+			}
 		})
 	}
 }
@@ -461,7 +466,9 @@ var defaultsDivergedFromPython = map[string]string{
 		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/. " +
 		"fix/budget-accounting: the budgets comment promised a --budgets-preset flag and an " +
 		"ORCH_BUDGETS_PRESET variable `orch run` never read; it now says where budgets.yaml is looked " +
-		"for and what typical_dispatch_tokens weighs. " +
+		"for and what typical_dispatch_tokens weighs; `budget.per_dispatch_usd` is commented out, because " +
+		"claude now receives --max-budget-usd only when the key is written, and a new project should not " +
+		"send a cap nobody chose (the value is still the 5.0 default, limiting escalation). " +
 		"The tunnel block sat under `dashboard:`, where the Go loader ignores it, and chose autossh; " +
 		"the tunnel is a Cloudflare quick tunnel and its block is a top-level `tunnel: enabled:`",
 	"budgets.yaml": "fix/budget-accounting: the header's selection order named a CLI flag and an environment " +

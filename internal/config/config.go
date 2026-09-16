@@ -91,6 +91,11 @@ type Concurrency struct {
 // window guardrail lives in budgets.yaml, not here.
 type Budget struct {
 	PerDispatchUSD float64 `yaml:"per_dispatch_usd"`
+	// PerDispatchExplicit reports whether config.yaml (or dashboard.yaml)
+	// wrote `budget.per_dispatch_usd` itself, read from the parsed YAML
+	// mapping rather than inferred from the value. Only an explicit value is
+	// sent to claude as --max-budget-usd; the default only limits escalation.
+	PerDispatchExplicit bool `yaml:"-"`
 }
 
 // Retry is the declarative policy F4.6 asks for: one rule per failure class,

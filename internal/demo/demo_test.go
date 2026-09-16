@@ -68,6 +68,17 @@ func TestBuildSeedsAProjectTheDashboardCanRead(t *testing.T) {
 	if byBackend["claude"] == 0 || byBackend["codex"] != 0 {
 		t.Errorf("claude reports dollars and codex only tokens; got %v", byBackend)
 	}
+	// claude's rows carry a cache breakdown, as the real CLI reports it, so
+	// the Budget page shows the weighted window next to the raw one.
+	cached := false
+	for _, s := range spend {
+		if s.Backend == "claude" && s.CacheReadTokens > 0 && s.CacheCreationTokens > 0 {
+			cached = true
+		}
+	}
+	if !cached {
+		t.Error("no claude spend row reports cache tokens")
+	}
 	if _, ok := byBackend["gemini"]; !ok {
 		t.Errorf("gemini should have zero-cost rows; got %v", byBackend)
 	}

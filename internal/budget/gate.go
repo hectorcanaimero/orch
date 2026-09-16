@@ -145,7 +145,10 @@ func (g *Gate) EarliestReset(ctx context.Context) (time.Time, error) {
 
 // window is one provider's usage over its rolling window.
 type window struct {
-	tokens int
+	// tokens is the weighted sum the cap is compared against; raw is the
+	// same rows as reported, for display.
+	tokens float64
+	raw    int
 	// oldest is the timestamp of the earliest row still inside the window.
 	// Zero when the window is empty.
 	oldest time.Time
@@ -165,7 +168,8 @@ func (g *Gate) usage(ctx context.Context, provider string, pb ProviderBudget, no
 		if used == 0 && r.Estimated {
 			used = g.cfg.UnreportedDispatchTokens
 		}
-		w.tokens += used
+		w.raw += used
+		w.tokens += float64(used) + weightedCacheDelta(r)
 		// SpendSince returns rows oldest first and drops any it could not
 		// date, so the first one that parses is the oldest. Asking rather
 		// than trusting the order costs nothing and does not go wrong if
@@ -179,6 +183,24 @@ func (g *Gate) usage(ctx context.Context, provider string, pb ProviderBudget, no
 		}
 	}
 	return w, nil
+}
+
+// Cache weights, relative to a plain input token, from what Anthropic bills:
+// reading from the prompt cache costs 10% of an input token, writing to it
+// 125%. The window is a proxy for the provider's quota, and a cache read
+// burns far less of it than the same count of fresh input.
+const (
+	cacheReadWeight     = 0.10
+	cacheCreationWeight = 1.25
+)
+
+// weightedCacheDelta is what weighting a row's cache tokens adds to its raw
+// count. TokensIn already includes them at weight 1, so the correction is
+// (weight - 1) per token: negative for reads, positive for writes, zero for
+// a row with no cache breakdown (older rows, providers without a cache).
+func weightedCacheDelta(r state.Spend) float64 {
+	return float64(r.CacheReadTokens)*(cacheReadWeight-1) +
+		float64(r.CacheCreationTokens)*(cacheCreationWeight-1)
 }
 
 // decide turns a window into an answer.

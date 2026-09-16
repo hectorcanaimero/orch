@@ -108,9 +108,12 @@ type budgetSummaryPayload struct {
 // budgetSummaryRow pairs one provider's configured window with what it has
 // actually used. Ported from `budget_vs_actual`.
 type budgetSummaryRow struct {
-	Provider      string  `json:"provider"`
-	TokenBudget   int     `json:"token_budget"`
-	TokensUsed    int     `json:"tokens_used"`
+	Provider    string `json:"provider"`
+	TokenBudget int    `json:"token_budget"`
+	TokensUsed  int    `json:"tokens_used"`
+	// RawTokensUsed is the window as the CLIs reported it; TokensUsed is the
+	// gate's weighted count (cache reads 10%, cache writes 125%).
+	RawTokensUsed int     `json:"raw_tokens_used"`
 	Pct           int     `json:"pct"`
 	ThresholdPct  float64 `json:"threshold_pct"`
 	OverThreshold bool    `json:"over_threshold"`
@@ -169,6 +172,7 @@ func (s *Server) handleBudgetSummary(w http.ResponseWriter, r *http.Request) {
 			Provider:         provider,
 			TokenBudget:      pb.TokenBudget,
 			TokensUsed:       used,
+			RawTokensUsed:    snap.RawTokensUsed,
 			Pct:              pct,
 			ThresholdPct:     pb.ThresholdPct,
 			OverThreshold:    pb.TokenBudget > 0 && float64(pct) >= pb.ThresholdPct,
