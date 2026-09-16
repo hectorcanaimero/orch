@@ -1,7 +1,11 @@
 name: Site
 
-# Publishes site/ — the project's public page — to GitHub Pages. Plain static
-# files, no build step: what is in site/ is what is served.
+# Publishes site/ — the project's public page — to GitHub Pages. The pages are
+# plain static files; the one thing built here is the playground's engine
+# (site/playground/orch.wasm + wasm_exec.js, `make site-wasm`), which is
+# gitignored rather than committed. The template gallery and the playground
+# page are committed HTML from `make site-templates`, kept current by
+# cmd/sitegen's tests in go.yml.
 #
 # Needs Pages enabled once with "GitHub Actions" as the source
 # (Settings → Pages, or `gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`).
@@ -13,6 +17,20 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "cmd/orch-wasm/**"
+      - "internal/sitegen/**"
+      - "internal/atomize/**"
+      - "internal/graph/**"
+      - "internal/model/**"
+      - ".github/workflows/pages.yml"
+  # A PR that breaks the WebAssembly build fails here, before it reaches main.
+  pull_request:
+    paths:
+      - "cmd/orch-wasm/**"
+      - "internal/sitegen/**"
+      - "internal/atomize/**"
+      - "internal/graph/**"
+      - "internal/model/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -20,11 +38,30 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the playground engine
+        run: make site-wasm
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -35,12 +72,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

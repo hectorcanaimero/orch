@@ -307,6 +307,25 @@ On `main` this section is obsolete: see [`CONTRIBUTING.md`](../CONTRIBUTING.md)
 `web/`, once `make web` has installed its dependencies). The Python workflow it described
 (`pip install -e '.[dev]'`, `pytest`) only applies to a `python-legacy` checkout.
 
+### The public site (`site/`)
+
+Static files, no build, deployed by `.github/workflows/pages.yml`. Two parts
+come from orch's own code:
+
+- **Template gallery and playground page** (`site/templates/`,
+  `site/playground/index.html`) — committed HTML written by `make site-templates`
+  (`cmd/sitegen`) from the embedded project templates and `sitegen.SampleSpec`.
+  `TestTemplateGalleryIsCurrent` fails when a template changes and the pages
+  were not regenerated.
+- **Playground engine** (`site/playground/orch.wasm` + `wasm_exec.js`) —
+  `internal/atomize` + `internal/graph` compiled to WebAssembly from
+  `cmd/orch-wasm` by `make site-wasm`. Gitignored; the Pages workflow builds it
+  on deploy and checks the build on PRs that touch those packages. About 5.8 MB,
+  1.6 MB gzipped.
+
+To look at it locally: `make site-templates site-wasm`, then
+`python3 -m http.server -d site` and open `http://127.0.0.1:8000/playground/`.
+
 ---
 
 ## Docs
