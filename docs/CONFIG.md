@@ -234,7 +234,7 @@ dashboard:
 
 | Key | Default | What it does |
 |---|---|---|
-| `language` | `es` | The language of everything a client reads: the executive summary, the blocker reasons, the client portal and `orch report pdf`. `en`, `es` or `pt` (Brazilian Portuguese; `pt-BR` is accepted). Any other value is refused when the config loads — it used to become Spanish without a word. The operator dashboard does not follow it. |
+| `language` | `es` | The language of everything a client reads: the executive summary, the blocker reasons, the client portal and `orch report pdf`. `en`, `es` or `pt` (Brazilian Portuguese; `pt-BR` is accepted). Any other value is refused when the config loads — it used to become Spanish without a word. The operator dashboard does not follow it: it starts in the browser's language (en, es or pt, else English) and has its own language button. |
 | `summary_language` | — | The older name of `language`, still read. When both are set, `language` wins. |
 
 A non-operator profile with an empty token is refused at startup: it would
