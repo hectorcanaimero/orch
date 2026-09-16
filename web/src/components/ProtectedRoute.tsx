@@ -40,7 +40,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // and correcting a beat later.
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <Skeleton className="h-8 w-40" />
       </div>
     )
