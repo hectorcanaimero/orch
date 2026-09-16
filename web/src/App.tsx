@@ -1,8 +1,9 @@
-import type { ReactNode } from "react"
+import { Fragment, type ReactNode } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom"
 import { AppLayout } from "@/components/AppLayout"
+import { useLanguage } from "@/i18n"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import { LEGACY_REDIRECTS } from "@/lib/nav"
 import { BudgetPage } from "@/pages/BudgetPage"
@@ -91,11 +92,20 @@ export function AppRoutes() {
 // removed the legacy Jinja UI and moved the SPA from `/spa/` to `/`.
 // Passing no basename lets React Router use `/` implicitly.
 
+// Components read strings through the plain t(), so a language switch
+// remounts the routes under a new key; the query cache above keeps its data.
+// ponytail: remount drops local UI state (an open dialog), fine for a rare switch.
+function LanguageRoot({ children }: { children: ReactNode }) {
+  return <Fragment key={useLanguage()}>{children}</Fragment>
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppRoutes />
+        <LanguageRoot>
+          <AppRoutes />
+        </LanguageRoot>
       </BrowserRouter>
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>

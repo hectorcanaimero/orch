@@ -1,3 +1,5 @@
+import { fmt, t } from "@/i18n"
+
 interface EtaFields {
   eta_date?: string | null
   eta_confidence?: string
@@ -12,10 +14,10 @@ export function formatEta({ eta_date, eta_confidence, eta_hours }: EtaFields): {
   detail: string
 } {
   if (eta_date) {
-    const day = new Date(`${eta_date}T00:00:00Z`)
-    const value = day.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
-    return { value, detail: eta_confidence ? `${eta_confidence} confidence` : "" }
+    const detail =
+      eta_confidence === "high" ? t("eta.confidence.high") : eta_confidence === "low" ? t("eta.confidence.low") : ""
+    return { value: fmt.day(eta_date), detail }
   }
-  if (eta_hours != null) return { value: `${eta_hours.toFixed(1)}h`, detail: "of work left" }
+  if (eta_hours != null) return { value: `${eta_hours.toFixed(1)}h`, detail: t("eta.work_left") }
   return { value: "—", detail: "" }
 }

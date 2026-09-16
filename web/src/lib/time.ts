@@ -1,4 +1,4 @@
-import { locale } from "@/i18n"
+import { getLocale } from "@/i18n"
 
 /** 0:37, 6:41, 1:02:09 — a running clock, not a sentence. */
 export function formatElapsed(ms: number): string {
@@ -19,7 +19,13 @@ export function formatDuration(seconds: number): string {
   return `${s}s`
 }
 
-const relative = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
+const relatives = new Map<string, Intl.RelativeTimeFormat>()
+function relativeFormat(): Intl.RelativeTimeFormat {
+  const loc = getLocale()
+  let f = relatives.get(loc)
+  if (!f) relatives.set(loc, (f = new Intl.RelativeTimeFormat(loc, { numeric: "auto" })))
+  return f
+}
 
 /** "3 hours ago", "in 2 hours" — the unit that keeps the number small. */
 export function formatRelative(iso: string, now: number): string {
@@ -27,6 +33,7 @@ export function formatRelative(iso: string, now: number): string {
   if (Number.isNaN(at)) return "—"
   const diff = (at - now) / 1000
   const abs = Math.abs(diff)
+  const relative = relativeFormat()
   if (abs < 60) return relative.format(Math.round(diff), "second")
   if (abs < 3600) return relative.format(Math.round(diff / 60), "minute")
   if (abs < 86_400) return relative.format(Math.round(diff / 3600), "hour")

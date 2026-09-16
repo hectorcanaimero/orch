@@ -1,3 +1,4 @@
+import { fmt, t } from "@/i18n"
 export interface HorizontalBarByModelDatum {
   model: string
   cost_usd: number
@@ -8,12 +9,6 @@ export interface HorizontalBarByModelProps {
   data: HorizontalBarByModelDatum[]
 }
 
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
 
 // SVG geometry — viewBox stays fixed; the outer <svg> stretches to container
 // width. Per-row height is constant so the chart grows vertically with N.
@@ -42,7 +37,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
   if (data.length === 0) {
     return (
       <div className="flex h-60 items-center justify-center">
-        <p className="text-sm text-muted-foreground">No spend recorded yet.</p>
+        <p className="text-sm text-muted-foreground">{t("metrics.no_spend")}</p>
       </div>
     )
   }
@@ -57,7 +52,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
       width="100%"
       height={vbHeight}
       role="img"
-      aria-label="Cost by model"
+      aria-label={t("metrics.by_model")}
     >
       {sorted.map((d, i) => {
         const ratio = maxCost > 0 ? d.cost_usd / maxCost : 0
@@ -67,7 +62,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
         const textY = rowY + ROW_H / 2 + 4
         return (
           <g key={d.model}>
-            <title>{`${d.model} — ${USD.format(d.cost_usd)} (${d.tasks_total} tasks)`}</title>
+            <title>{t("metrics.model_tasks", { model: d.model, cost: fmt.usd(d.cost_usd), count: d.tasks_total })}</title>
             <text
               x={LABEL_W}
               y={textY}
@@ -97,7 +92,7 @@ export function HorizontalBarByModel({ data }: HorizontalBarByModelProps) {
               y={textY}
               className="fill-foreground text-[11px] tabular-nums"
             >
-              {USD.format(d.cost_usd)}
+              {fmt.usd(d.cost_usd)}
             </text>
           </g>
         )

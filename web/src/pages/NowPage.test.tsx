@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Now } from "@/hooks/useNow"
 import type { Onboarding, ReceiptPayload } from "@/hooks/useReceipt"
+import { setLanguage } from "@/i18n"
+import { englishLeaks, visibleText } from "@/i18n/leaks"
 import { formatElapsed } from "@/lib/time"
 import { NowPage } from "@/pages/NowPage"
 
@@ -173,6 +175,29 @@ describe("NowPage", () => {
     expect(screen.queryByText(/This project has not run yet/)).not.toBeInTheDocument()
     fireEvent.click(within(card).getByRole("button", { name: "Check again" }))
     expect(refetch).toHaveBeenCalled()
+  })
+})
+
+describe("NowPage in Portuguese", () => {
+  afterEach(() => setLanguage("en"))
+
+  // Every section at once — working, attention, budget, onboarding — so an
+  // English string left outside the dictionary shows up here.
+  it("leaves no English on the page", () => {
+    state.now = base()
+    state.receipt = undefined
+    state.onboarding = {
+      complete: false,
+      items: [
+        { id: "providers", done: false, optional: false, detail: "", command: "orch doctor" },
+        { id: "vcs", done: false, optional: true, detail: "", link: "/delivery/ci" },
+      ],
+    }
+    setLanguage("pt")
+    const { container } = renderPage()
+    expect(screen.getByRole("heading", { name: "Trabalhando agora" })).toBeInTheDocument()
+    expect(screen.getByText("29.394 / 480.000 tokens")).toBeInTheDocument()
+    expect(englishLeaks(visibleText(container), "pt")).toEqual([])
   })
 })
 

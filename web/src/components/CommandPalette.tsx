@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom"
 import {
   CornerDownLeft,
   Keyboard,
+  Languages,
   ListFilter,
   Monitor,
   Moon,
@@ -17,7 +18,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { TaskDetailModal } from "@/components/TaskDetailModal"
 import { useTasks } from "@/hooks/useTasks"
-import { t, type MessageKey } from "@/i18n"
+import { LANGS, LANGUAGE_NAMES, getLanguage, setLanguage, t, type MessageKey } from "@/i18n"
 import { fuzzyScore } from "@/lib/fuzzy"
 import { TAB_ICONS, type NavDestination } from "@/lib/nav"
 import { STATUS, statusMeta } from "@/lib/status"
@@ -233,6 +234,21 @@ function Palette({
   const next = nextTheme(theme)
   const themeLabel = t("theme.switch_to", { theme: t(`theme.${next}` as const) })
   all.push({ key: "panel:theme", section: "panels", label: themeLabel, search: `${themeLabel} theme`, icon: THEME_ICON[next], run: () => setTheme(next) })
+  for (const lang of LANGS) {
+    if (lang === getLanguage()) continue
+    const label = `${t("language.change")}: ${LANGUAGE_NAMES[lang]}`
+    all.push({
+      key: `panel:lang:${lang}`,
+      section: "panels",
+      label,
+      search: `${label} language idioma língua ${lang}`,
+      icon: Languages,
+      run: () => {
+        close()
+        setLanguage(lang)
+      },
+    })
+  }
   const shortcutsLabel = t("palette.show_shortcuts")
   all.push({
     key: "panel:shortcuts",

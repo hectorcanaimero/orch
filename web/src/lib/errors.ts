@@ -1,3 +1,5 @@
+import { t } from "@/i18n"
+
 interface MaybeHttpError {
   response?: { status?: number }
   message?: string
@@ -9,11 +11,11 @@ interface MaybeHttpError {
 export function describeLoadError(error: unknown): string {
   const e = (error ?? {}) as MaybeHttpError
   const status = e.response?.status
-  if (status === 401) return "Your session or link is no longer valid. Open the link you were sent again."
-  if (status === 403) return "This page is not available with your access. The summary is."
-  if (status !== undefined && status >= 500) return "The dashboard ran into an error reading the project. Try again in a moment."
+  if (status === 401) return t("errors.expired")
+  if (status === 403) return t("errors.forbidden")
+  if (status !== undefined && status >= 500) return t("errors.server")
   if (status === undefined && (!e.message || e.message === "Network Error")) {
-    return "Couldn't reach the dashboard. Check that orch dashboard is still running."
+    return t("errors.unreachable")
   }
-  return e.message ?? "Unknown error"
+  return e.message ?? t("common.unknown_error")
 }

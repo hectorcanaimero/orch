@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-import { ChevronLeft, ChevronRight, LogOut, Monitor, Moon, ScrollText, Search, Sun, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Languages, LogOut, Monitor, Moon, ScrollText, Search, Sun, X } from "lucide-react"
 import { CommandPalette, ShortcutsDialog } from "@/components/CommandPalette"
 import { Tooltip } from "@/components/ui/tooltip"
-import { t } from "@/i18n"
+import { LANGS, LANGUAGE_NAMES, setLanguage, t, useLanguage } from "@/i18n"
 import { useAuth } from "@/hooks/useAuth"
 import { isPortfolioNavVisible, usePortfolio } from "@/hooks/usePortfolio"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
@@ -41,6 +41,25 @@ function ThemeToggle({ compact }: { compact: boolean }) {
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden />
       {compact ? null : <span>{t(`theme.${choice}` as const)}</span>}
+    </button>
+  )
+  return compact ? <Tooltip content={label}>{button}</Tooltip> : button
+}
+
+/** Cycles en → es → pt, like the theme toggle; each language is named in itself. */
+function LanguageToggle({ compact }: { compact: boolean }) {
+  const lang = useLanguage()
+  const next = LANGS[(LANGS.indexOf(lang) + 1) % LANGS.length]
+  const label = t("language.current", { language: LANGUAGE_NAMES[lang] })
+  const button = (
+    <button
+      type="button"
+      onClick={() => setLanguage(next)}
+      aria-label={`${label}. ${t("language.switch_to", { language: LANGUAGE_NAMES[next] })}`}
+      className={cn(sideButton, compact ? "justify-center" : "gap-2 px-3")}
+    >
+      <Languages className="h-4 w-4 shrink-0" aria-hidden />
+      {compact ? null : <span>{LANGUAGE_NAMES[lang]}</span>}
     </button>
   )
   return compact ? <Tooltip content={label}>{button}</Tooltip> : button
@@ -281,6 +300,9 @@ export function AppLayout({ children }: AppLayoutProps) {
               </button>
             ) : null}
             <div className="w-10">
+              <LanguageToggle compact />
+            </div>
+            <div className="w-10">
               <ThemeToggle compact />
             </div>
             <button
@@ -369,6 +391,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             </Tooltip>
           ) : null}
           {collapsed && logsButton ? <Tooltip content={t("nav.logs")}>{logsButton}</Tooltip> : logsButton}
+          <LanguageToggle compact={collapsed} />
           <ThemeToggle compact={collapsed} />
           {collapsed ? (
             <Tooltip content={t("nav.logout")}>

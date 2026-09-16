@@ -3,6 +3,10 @@
 // translation all say the same thing. Each entry is checked against the Go
 // code it describes (internal/graph/analytics.go, graph/eta.go,
 // project/events.go).
+import type { Lang } from "."
+import { esGlossary } from "./es"
+import { ptGlossary } from "./pt"
+
 export type GlossaryTerm =
   | "critical_path"
   | "estimate"
@@ -112,4 +116,11 @@ export const glossary: Record<GlossaryTerm, GlossaryEntry> = {
       "orch runs cloudflared tunnel --url against the dashboard's port. The address is random, changes on every start, carries no live streams and is limited to 200 requests at a time.",
     source: "cloudflared, supervised by orch dashboard (internal/tunnel)",
   },
+}
+
+const GLOSSARIES: Record<Lang, Record<GlossaryTerm, GlossaryEntry>> = { en: glossary, es: esGlossary, pt: ptGlossary }
+
+/** The glossary in the dashboard's current language. */
+export function glossaryFor(lang: Lang): Record<GlossaryTerm, GlossaryEntry> {
+  return GLOSSARIES[lang]
 }
