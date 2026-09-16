@@ -40,7 +40,13 @@ func newReportReceiptCmd(flags *projectFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closeDB() }() // read-only: nothing to lose on a failed close
+			// A failed close loses nothing on a read, so it warns on stderr
+			// rather than changing an exit code the receipt already earned.
+			defer func() {
+				if cerr := closeDB(); cerr != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] closing the database: %v\n", cerr)
+				}
+			}()
 
 			rec, err := receipt.Load(ctx, backend, runID, receipt.Titles(loadDAG(paths)), pricing.Load(paths.Root))
 			if err != nil {

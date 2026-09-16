@@ -109,7 +109,8 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	// this card exists for exactly the project that is not set up yet.
 	view, viewErr := s.loadView(r.Context())
 	cfg := config.Defaults()
-	if loaded, lErr := config.Load(s.paths.ConfigYAML, s.paths.Root); lErr == nil {
+	loaded, cfgErr := config.Load(s.paths.ConfigYAML, s.paths.Root)
+	if cfgErr == nil {
 		cfg = loaded.Config
 	}
 	providers := onboardingItem{ID: "providers", Done: true, Command: "orch doctor"}
@@ -129,6 +130,12 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	out.Items = append(out.Items, providers)
 
 	budgetItem := onboardingItem{ID: "budget", Done: true, Link: "/cost/budget"}
+	// The budget is config.yaml's to name; a config.yaml that does not load
+	// is the unmet item, with the defaults standing in for the other checks.
+	if cfgErr != nil {
+		budgetItem.Done = false
+		budgetItem.Detail = "config.yaml: " + cfgErr.Error()
+	}
 	for _, c := range doctor.CheckBudgetPreset(budget.ResolvePath(s.paths.Root, s.paths.ConfigYAML, cfg.BudgetsConfig), cfg.BudgetsPreset, cfg.TypicalDispatchToken) {
 		if c.Status != doctor.StatusOK {
 			budgetItem.Done = false

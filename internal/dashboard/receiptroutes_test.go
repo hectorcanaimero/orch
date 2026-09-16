@@ -30,7 +30,11 @@ func demoServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the demo database: %v", err)
+		}
+	})
 	s, err := New(cfg(ProfileOperator, ""), Options{
 		Static: spaHandler(t),
 		State:  state.NewSQLite(db, paths.ID, paths.Root),
@@ -125,6 +129,24 @@ func TestOnboarding(t *testing.T) {
 	}
 	if !items["vcs"].Optional || !items["tunnel"].Optional || items["tasks"].Optional {
 		t.Errorf("optional flags wrong: %+v", fresh.Items)
+	}
+
+	// A config.yaml that does not load is the budget item's to report.
+	root := writeProject(t, "budget: [not, a, map\n", testTasksJSON)
+	broken, err := New(cfg(ProfileOperator, ""), Options{
+		Static: spaHandler(t),
+		State:  &fakeState{},
+		Paths:  config.Paths{Root: root, ID: "demo", ConfigYAML: filepath.Join(root, "config.yaml")},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var bad onboardingPayload
+	decode(t, get(t, broken, "/api/onboarding"), &bad)
+	for _, it := range bad.Items {
+		if it.ID == "budget" && (it.Done || !strings.Contains(it.Detail, "config.yaml")) {
+			t.Errorf("budget with a broken config.yaml = %+v, want not done naming config.yaml", it)
+		}
 	}
 
 	// Once a run has dispatched and finished, the card is done.

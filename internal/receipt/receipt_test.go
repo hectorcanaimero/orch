@@ -31,7 +31,11 @@ func TestLatestReceiptOfTheDemo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close the demo database: %v", err)
+		}
+	})
 	b := state.NewSQLite(db, paths.ID, paths.Root)
 
 	tf, err := model.LoadTasksFile(paths.TasksJSON())
