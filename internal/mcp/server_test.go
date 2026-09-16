@@ -407,6 +407,10 @@ func TestListTasksFilters(t *testing.T) {
 		{"ready", map[string]any{"ready": true}, []string{"F0.T1"}},
 		{"limit", map[string]any{"limit": 1}, []string{"F0.T1"}},
 		{"no match", map[string]any{"status": []string{"done"}}, []string{}},
+		// A milestone is a phase; the old table-backed filter matched nothing.
+		{"milestone as a phase number", map[string]any{"milestone": "1"}, []string{"F1.T1"}},
+		{"milestone as F<n>", map[string]any{"milestone": "F0"}, []string{"F0.T1"}},
+		{"milestone as Phase <n>", map[string]any{"milestone": "Phase 1"}, []string{"F1.T1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -449,6 +453,21 @@ func TestListTasksRejectsAnUnknownStatus(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("an unknown status filter was accepted — it would have matched nothing, silently")
+	}
+}
+
+func TestListTasksRejectsAMilestoneThatIsNotAPhase(t *testing.T) {
+	cs, _, _ := newTestSession(t)
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "orch_list_tasks",
+		Arguments: map[string]any{"milestone": "MVP"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a milestone that names no phase was accepted — it would have matched nothing, silently")
 	}
 }
 

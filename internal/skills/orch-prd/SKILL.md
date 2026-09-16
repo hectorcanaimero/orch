@@ -97,8 +97,9 @@ One bullet per user type, with the job they are trying to get done.
   imposed them as a constraint — then they go under *Non-functional
   requirements* as a constraint, not as a design.
 - **Milestones are user-visible slices**, each naming the requirements it
-  delivers. They become orch milestones and the stakeholder view's progress
-  bars, so a client should recognise every one.
+  delivers. Each one becomes a phase in `orch-spec` (`F1`, `F2`, …), and a
+  phase is what orch shows as a milestone — the client portal's and the
+  dashboard's progress bars — so a client should recognise every one.
 - **Open questions are allowed; silent guesses are not.** A PRD with two
   honest open questions beats one that hides them.
 

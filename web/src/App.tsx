@@ -13,7 +13,7 @@ import { MilestonesPage } from "@/pages/MilestonesPage"
 import { PortfolioPage } from "@/pages/PortfolioPage"
 import { BudgetPage } from "@/pages/BudgetPage"
 import { CIPage } from "@/pages/CIPage"
-import { SprintPage } from "@/pages/SprintPage"
+import { PacePage } from "@/pages/PacePage"
 import { StakeholderSummaryPage } from "@/pages/StakeholderSummaryPage"
 import { TunnelPage } from "@/pages/TunnelPage"
 
@@ -87,15 +87,17 @@ export default function App() {
             }
           />
           <Route
-            path="/sprint"
+            path="/pace"
             element={
               <ProtectedRoute>
                 <AppLayout>
-                  <SprintPage />
+                  <PacePage />
                 </AppLayout>
               </ProtectedRoute>
             }
           />
+          {/* The page was /sprint until orch stopped calling it a sprint. */}
+          <Route path="/sprint" element={<Navigate to="/pace" replace />} />
           <Route
             path="/metrics"
             element={

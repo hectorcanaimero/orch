@@ -15,8 +15,6 @@ import (
 // which is the only reason a projected DATE can be in a golden at all.
 var frozenNow = time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 
-const frozenToday = "2026-09-01"
-
 type sprintGolden struct {
 	Sprint map[string]struct {
 		VelocityPerDay float64      `json:"velocity_per_day"`
@@ -29,13 +27,6 @@ type sprintGolden struct {
 		Confidence     string       `json:"confidence"`
 		Blockers       []blockerRow `json:"blockers"`
 	} `json:"sprint"`
-	MilestoneETA []struct {
-		Remaining      int         `json:"remaining"`
-		VelocityPerDay float64     `json:"velocity_per_day"`
-		TargetDate     *string     `json:"target_date"`
-		Today          string      `json:"today"`
-		ETA            *etaPayload `json:"eta"`
-	} `json:"milestone_eta"`
 }
 
 func task(id string, phase int, status model.Status, hours float64, title string) model.Task {
@@ -172,25 +163,6 @@ func TestSprintHealthMatchesThePythonGolden(t *testing.T) {
 	}
 }
 
-func TestMilestoneETAMatchesThePythonGolden(t *testing.T) {
-	for _, tc := range loadSprintGolden(t).MilestoneETA {
-		target := ""
-		if tc.TargetDate != nil {
-			target = *tc.TargetDate
-		}
-		got := milestoneETA(tc.Remaining, tc.VelocityPerDay, tc.Today, target)
-		switch {
-		case got == nil && tc.ETA == nil:
-		case got == nil || tc.ETA == nil:
-			t.Errorf("milestoneETA(%d, %v, %q) = %v, want %v",
-				tc.Remaining, tc.VelocityPerDay, target, got, tc.ETA)
-		case *got != *tc.ETA:
-			t.Errorf("milestoneETA(%d, %v, %q) = %+v, want %+v",
-				tc.Remaining, tc.VelocityPerDay, target, *got, *tc.ETA)
-		}
-	}
-}
-
 // No velocity, or nothing left to do, is NULL — not zero days and not today.
 // "Finishing today" and "no idea when" are opposite claims, and a UI that
 // renders 0 for the second one is lying with a number.
@@ -202,24 +174,6 @@ func TestNoProjectionIsNullNotZero(t *testing.T) {
 	}
 	if got.Confidence != "none" {
 		t.Errorf("confidence = %q, want none", got.Confidence)
-	}
-	if milestoneETA(5, 0, frozenToday, "") != nil {
-		t.Error("milestoneETA with no velocity must be nil")
-	}
-	if milestoneETA(0, 5, frozenToday, "") != nil {
-		t.Error("milestoneETA with nothing remaining must be nil")
-	}
-}
-
-// A milestone needing 1.2 days of work is not finishing today: the projection
-// takes the CEILING of the division, not the rounding.
-func TestMilestoneETACeilsThePartialDay(t *testing.T) {
-	got := milestoneETA(6, 5.0, frozenToday, "")
-	if got == nil || got.ETADays != 2 {
-		t.Fatalf("got %+v, want 2 days (6/5 = 1.2, ceiled)", got)
-	}
-	if got.ETADate != "2026-09-03" {
-		t.Errorf("eta_date = %q, want 2026-09-03", got.ETADate)
 	}
 }
 

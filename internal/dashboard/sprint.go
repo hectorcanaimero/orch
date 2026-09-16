@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"encoding/json"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -26,10 +25,6 @@ import (
 // days, so a week with a public holiday in it reads as a slower week rather
 // than as a stalled project.
 const velocityWindowDays = 7
-
-// etaConfidenceDays is where a projection stops being worth trusting; the
-// value lives with the projection itself, graph.ProjectCompletion.
-const etaConfidenceDays = graph.ProjectionTrustDays
 
 // sprintPayload is `/api/sprint`'s body.
 //
@@ -123,13 +118,6 @@ func sprintHealth(tasks []model.Task, done7d int, lastEvents map[string]state.Ev
 	return out
 }
 
-func confidenceFor(etaDays float64) string {
-	if etaDays <= etaConfidenceDays {
-		return "high"
-	}
-	return "low"
-}
-
 // blockers renders the blocked tasks, ordered by phase.
 //
 // The reason comes from the task's last event: its `extra.reason` if it has
@@ -195,57 +183,6 @@ func titleOr(t model.Task) string {
 		return t.Title
 	}
 	return t.ID
-}
-
-// milestoneETA projects a completion date for one milestone.
-//
-// `today` is a parameter rather than a clock read, so the projection is
-// testable, and `eta_days` is a CEILING: a milestone needing 1.2 days of work
-// is not finishing today.
-//
-// Confidence is "high" when the projection lands on or before the target date,
-// and when there is no target, when it lands within 30 days. A target date
-// that does not parse falls back to the 30-day rule rather than failing — a
-// typo in a date should cost a comparison, not a panel.
-//
-// nil means no projection: nothing remaining, or no velocity to project with.
-// The UI renders "—", which is honest, where a date would not be.
-func milestoneETA(remaining int, velocityPerDay float64, today string, targetDate string) *etaPayload {
-	if remaining <= 0 || velocityPerDay <= 0 {
-		return nil
-	}
-	etaDays := int(math.Ceil(float64(remaining) / velocityPerDay))
-
-	start, err := time.Parse("2006-01-02", today)
-	if err != nil {
-		return nil
-	}
-	etaDate := start.AddDate(0, 0, etaDays)
-
-	confidence := "low"
-	if targetDate != "" {
-		target, terr := time.Parse("2006-01-02", targetDate)
-		switch {
-		case terr != nil:
-			confidence = confidenceFor(float64(etaDays))
-		case !etaDate.After(target):
-			confidence = "high"
-		}
-	} else {
-		confidence = confidenceFor(float64(etaDays))
-	}
-
-	return &etaPayload{
-		ETADate:    etaDate.Format("2006-01-02"),
-		ETADays:    etaDays,
-		Confidence: confidence,
-	}
-}
-
-type etaPayload struct {
-	ETADate    string `json:"eta_date"`
-	ETADays    int    `json:"eta_days"`
-	Confidence string `json:"confidence"`
 }
 
 // round2 is Python's `round(x, 2)`. See project.round3 for why this spelling.

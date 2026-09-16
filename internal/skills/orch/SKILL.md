@@ -161,8 +161,9 @@ orch reset                     # revert stuck in-progress → todo (dry-run firs
 `orch reset` is dry-run by default — it prints what it would revert. Pass
 `--requeue` to actually apply it.
 
-`orch task set` only changes status in this binary: its `--model`,
-`--backend` and `--milestone` flags exist but refuse to run. To change a
+`orch task set` only changes status in this binary: its `--model` and
+`--backend` flags exist but refuse to run. There is no milestone to assign: a
+milestone is a phase. To change a
 task's model, edit `Model` in its spec and re-run `orch atomize` (see
 `orch-tasks`). A running `orch run` stops on Ctrl+C (SIGINT) or SIGTERM: it
 dispatches nothing new, waits for what is in flight and exits 130; a second

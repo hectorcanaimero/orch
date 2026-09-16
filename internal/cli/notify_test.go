@@ -105,6 +105,18 @@ func TestNotifyDigestWithoutSendPostsNothing(t *testing.T) {
 	}
 }
 
+// The digest's milestones are the project's phases. It used to read the
+// milestones table, which nothing ever wrote, so the section never appeared.
+func TestNotifyDigestListsPhasesAsMilestones(t *testing.T) {
+	_, common := newTestProject(t)
+	out := captureStdout(t, func() {
+		_ = cli.Run("v-test", append([]string{"notify", "digest", "--language", "en"}, common...))
+	})
+	if !strings.Contains(out, "Milestones:") || !strings.Contains(out, "/1 — ETA") {
+		t.Errorf("no phase milestones in the digest; got:\n%s", out)
+	}
+}
+
 // TestNotifyDigestLanguageOverridesTheConfig proves `--language` beats
 // `dashboard.summary_language` rather than merely working when they agree —
 // the config here says `es` and the flag says `en`.

@@ -115,7 +115,7 @@ func NewServer(opts Options) (*mcpsdk.Server, error) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name: "orch_list_tasks",
 		Description: "List the project's tasks with their live status. " +
-			"Filter by status, milestone or id, or ask for `ready` to get " +
+			"Filter by status, milestone (a phase: 2 or F2) or id, or ask for `ready` to get " +
 			"only the tasks whose dependencies are all done.",
 	}, s.listTasks)
 

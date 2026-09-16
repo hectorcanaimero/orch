@@ -869,65 +869,6 @@ func TestDispatchLifecycle(t *testing.T) {
 	}
 }
 
-// ---- milestones ------------------------------------------------------------
-
-func TestMilestonesCountProgress(t *testing.T) {
-	ctx := context.Background()
-	b := seeded(t, "T1", "T2", "T3")
-
-	if _, err := b.db.write.ExecContext(ctx,
-		`INSERT INTO milestones (project_id, id, title, description, target_date, created_at)
-		 VALUES ('proj', 'M1', 'Customer API live', 'first slice', '2026-09-20', ?)`,
-		fixedNow); err != nil {
-		t.Fatalf("seed milestone: %v", err)
-	}
-	for _, id := range []string{"T1", "T2"} {
-		if _, err := b.db.write.ExecContext(ctx,
-			`UPDATE tasks_definition SET milestone_id = 'M1'
-			  WHERE project_id = 'proj' AND task_id = ?`, id); err != nil {
-			t.Fatalf("assign %s: %v", id, err)
-		}
-	}
-	if err := b.Transition(ctx, "T1", model.StatusDone, Note{}); err != nil {
-		t.Fatalf("Transition: %v", err)
-	}
-
-	got, err := b.Milestones(ctx)
-	if err != nil {
-		t.Fatalf("Milestones: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d milestones, want 1", len(got))
-	}
-	m := got[0]
-	if m.Total != 2 || m.Done != 1 {
-		t.Errorf("counts = %d/%d, want 1/2 — T3 is not on this milestone", m.Done, m.Total)
-	}
-	if m.PercentDone != 50 {
-		t.Errorf("percent = %d, want 50", m.PercentDone)
-	}
-	if m.TargetDate != "2026-09-20" || m.Title != "Customer API live" {
-		t.Errorf("fields lost: %+v", m)
-	}
-}
-
-func TestMilestoneWithNoTasksIsZeroNotDivideByZero(t *testing.T) {
-	ctx := context.Background()
-	b := seeded(t, "T1")
-	if _, err := b.db.write.ExecContext(ctx,
-		`INSERT INTO milestones (project_id, id, title, created_at)
-		 VALUES ('proj', 'M-empty', 'Nothing yet', ?)`, fixedNow); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	got, err := b.Milestones(ctx)
-	if err != nil {
-		t.Fatalf("Milestones: %v", err)
-	}
-	if len(got) != 1 || got[0].Total != 0 || got[0].PercentDone != 0 {
-		t.Errorf("got %+v, want an empty milestone at 0%%", got)
-	}
-}
-
 // ---- doctor ----------------------------------------------------------------
 
 func TestOrphanRowsFindsWhatForeignKeysMissed(t *testing.T) {
@@ -1034,15 +975,6 @@ func TestPythonWrittenDatabaseIsReadableAndWritable(t *testing.T) {
 	}
 	if len(events) != 2 {
 		t.Errorf("read %d events for F0.T1, want the 2 Python wrote", len(events))
-	}
-
-	// Milestones too.
-	milestones, err := b.Milestones(ctx)
-	if err != nil {
-		t.Fatalf("Milestones: %v", err)
-	}
-	if len(milestones) != 1 || milestones[0].Total != 2 {
-		t.Errorf("milestones = %+v, want M1 with 2 tasks", milestones)
 	}
 
 	// And a write: Go must be able to move a task Python created.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,7 +38,10 @@ type listTasksIn struct {
 	Status []string `json:"status,omitempty" jsonschema:"only these statuses (backlog, todo, in-progress, done, blocked)"`
 	IDs    []string `json:"ids,omitempty" jsonschema:"only these task ids"`
 
-	Milestone string `json:"milestone,omitempty" jsonschema:"only tasks in this milestone id"`
+	// Milestone is a phase: "2", "F2" and "Phase 2" all name phase 2. The
+	// key keeps its name so a client written against the old milestone id
+	// still sends a field this tool reads.
+	Milestone string `json:"milestone,omitempty" jsonschema:"only tasks in this milestone, which is a phase: 2, F2 or Phase 2"`
 	Ready     bool   `json:"ready,omitempty" jsonschema:"only tasks that could be dispatched now: backlog or todo with every dependency done"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"at most this many rows; 0 means every match"`
 }
@@ -74,17 +78,20 @@ func (s *server) listTasks(ctx context.Context, _ *mcpsdk.CallToolRequest, in li
 		return nil, listTasksOut{}, err
 	}
 	wantID := stringSet(in.IDs)
+	wantPhase, err := phaseFilter(in.Milestone)
+	if err != nil {
+		return nil, listTasksOut{}, err
+	}
 
 	out := listTasksOut{Tasks: []taskSummary{}}
 	for _, t := range tasks {
-		rt := runtime[t.ID]
 		if len(wantStatus) > 0 && !wantStatus[t.Status] {
 			continue
 		}
 		if len(wantID) > 0 && !wantID[t.ID] {
 			continue
 		}
-		if in.Milestone != "" && rt.MilestoneID != in.Milestone {
+		if wantPhase != nil && t.Phase != *wantPhase {
 			continue
 		}
 		if ready != nil && !ready[t.ID] {
@@ -226,6 +233,22 @@ func statusSet(names []string) (map[model.Status]bool, error) {
 		out[st] = true
 	}
 	return out, nil
+}
+
+// phaseFilter reads the milestone filter as a phase number. nil means no
+// filter.
+func phaseFilter(milestone string) (*int, error) {
+	v := strings.TrimSpace(milestone)
+	if v == "" {
+		return nil, nil
+	}
+	lower := strings.ToLower(v)
+	lower = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(lower, "phase"), "f"))
+	n, err := strconv.Atoi(lower)
+	if err != nil || n < 0 {
+		return nil, fmt.Errorf("milestone filter %q: a milestone is a phase, e.g. 2, F2 or Phase 2", milestone)
+	}
+	return &n, nil
 }
 
 func stringSet(v []string) map[string]bool {

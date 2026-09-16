@@ -3,8 +3,11 @@ package dashboard
 import (
 	"errors"
 	"net/http"
+	"path/filepath"
 	"testing"
 
+	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
@@ -67,42 +70,51 @@ func TestSprintWithNothingBlockedAsksForNoEvents(t *testing.T) {
 	}
 }
 
-func TestMilestonesEndpoint(t *testing.T) {
+// A milestone is a phase. The fixture is phase 0 = T-1, T-2 and phase 1 = T-3
+// (blocked); T-1 is done in the database.
+func TestMilestonesEndpointReportsPhases(t *testing.T) {
 	f := &fakeState{
 		done7d: 7, // 1 task/day
-		milestones: []state.Milestone{
-			{ID: "m1", Title: "MVP", TargetDate: "2999-01-01", Status: "open",
-				CreatedAt: "2026-08-01T00:00:00Z", Total: 10, Done: 4, PercentDone: 40},
-			{ID: "m2", Title: "Launch", Status: "open",
-				CreatedAt: "2026-08-02T00:00:00Z", Total: 3, Done: 3, PercentDone: 100},
-		},
+		tasks:  []state.TaskRuntime{{ID: "T-1", Status: model.StatusDone}},
 	}
 	s := newReadServer(t, f)
 
 	var got milestonesPayload
 	decode(t, get(t, s, "/api/milestones"), &got)
 	if len(got.Milestones) != 2 {
-		t.Fatalf("got %d milestones, want 2", len(got.Milestones))
+		t.Fatalf("got %d milestones, want one per phase (2): %+v", len(got.Milestones), got.Milestones)
 	}
 
-	mvp, launch := got.Milestones[0], got.Milestones[1]
-	if mvp.Progress.Total != 10 || mvp.Progress.Done != 4 || mvp.Progress.Pct != 40 {
-		t.Errorf("m1 progress = %+v", mvp.Progress)
+	p0, p1 := got.Milestones[0], got.Milestones[1]
+	if p0.Phase != 0 || p0.Name != "Phase 0" || p0.Status != "active" {
+		t.Errorf("phase 0 = %+v", p0)
 	}
-	// 6 remaining at 1/day, and a target date far enough away to be "high".
-	if mvp.ETA == nil || mvp.ETA.ETADays != 6 || mvp.ETA.Confidence != "high" {
-		t.Errorf("m1 eta = %+v, want 6 days and high confidence", mvp.ETA)
+	if p0.Progress.Total != 2 || p0.Progress.Done != 1 || p0.Progress.Pct != 50 {
+		t.Errorf("phase 0 progress = %+v, want 1/2 at 50%%", p0.Progress)
 	}
-	// A finished milestone has nothing to project.
-	if launch.ETA != nil {
-		t.Errorf("m2 eta = %+v, want null — it is done", launch.ETA)
+	// One unblocked task left at 1/day.
+	if p0.ETA == nil || p0.ETA.ETADays != 1 {
+		t.Errorf("phase 0 eta = %+v, want 1 day", p0.ETA)
+	}
+	// Phase 1's only task is blocked: there is no work that can start, so
+	// there is no date to promise.
+	if p1.Blocked != 1 || p1.ETA != nil {
+		t.Errorf("phase 1 = blocked %d, eta %+v; want 1 and null", p1.Blocked, p1.ETA)
 	}
 }
 
-// A project with no milestones answers an empty list and never asks for a
-// velocity it has nothing to project with.
-func TestMilestonesOnAProjectWithNone(t *testing.T) {
-	s := newReadServer(t, &fakeState{})
+// A project with no tasks answers an empty list and never asks for a velocity
+// it has nothing to project with.
+func TestMilestonesOnAProjectWithNoTasks(t *testing.T) {
+	root := writeProject(t, "spec_root: specs\n", `{"meta": {"project": "demo"}, "tasks": []}`)
+	s, err := New(cfg(ProfileOperator, ""), Options{
+		Static: spaHandler(t),
+		State:  &fakeState{done7dErr: errors.New("must not be asked")},
+		Paths:  config.Paths{Root: root, ID: "demo", ConfigYAML: filepath.Join(root, "config.yaml")},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	var got milestonesPayload
 	decode(t, get(t, s, "/api/milestones"), &got)
@@ -122,9 +134,8 @@ func TestSprintEndpointsReportReadFailures(t *testing.T) {
 	}{
 		{"/api/sprint", &fakeState{done7dErr: boom}},
 		{"/api/sprint", &fakeState{lastEventsErr: boom}},
-		{"/api/milestones", &fakeState{milestonesErr: boom}},
-		{"/api/milestones", &fakeState{
-			milestones: []state.Milestone{{ID: "m1", Total: 2}}, done7dErr: boom}},
+		{"/api/milestones", &fakeState{tasksErr: boom}},
+		{"/api/milestones", &fakeState{done7dErr: boom}},
 	} {
 		resp := get(t, newReadServer(t, tc.state), tc.path)
 		if resp.StatusCode != http.StatusInternalServerError {

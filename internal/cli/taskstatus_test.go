@@ -92,7 +92,7 @@ func TestTaskStatusAndTaskSetExitCodes(t *testing.T) {
 
 func TestTaskSetUnimplementedFlagsError(t *testing.T) {
 	_, common := newTestProject(t)
-	for _, flag := range []string{"--model", "--backend", "--milestone"} {
+	for _, flag := range []string{"--model", "--backend"} {
 		args := append([]string{"task", "set", "--id", "F0.T1", flag, "x"}, common...)
 		if rc := cli.Run("test", args); rc == 0 {
 			t.Errorf("task set %s: rc = 0, want non-zero (not implemented)", flag)

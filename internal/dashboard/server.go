@@ -86,8 +86,6 @@ type StateReader interface {
 	// than by recomputing a window that could drift from it.
 	SpendSince(ctx context.Context, backend string, since time.Time) ([]state.Spend, error)
 
-	// Milestones is every milestone with its progress counts.
-	Milestones(ctx context.Context) ([]state.Milestone, error)
 	// CountDoneLastNDays is the numerator of velocity: tasks that finished
 	// inside the window.
 	CountDoneLastNDays(ctx context.Context, days int) (int, error)

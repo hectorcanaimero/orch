@@ -359,10 +359,11 @@ Flags:
 orch task-status F1.1.T5 todo --note "re-queued after manual fix"
 
 # A mesma coisa, pela superfície mais nova `task set` — também onde vai
-# pousar futuramente um override de model/backend/milestone assim que
-# state.Backend suportar escrevê-los (hoje esses três flags estão
+# pousar futuramente um override de model/backend assim que
+# state.Backend suportar escrevê-los (hoje esses dois flags estão
 # registrados mas retornam um erro claro de "not implemented yet" em vez
-# de não fazer nada silenciosamente)
+# de não fazer nada silenciosamente). Não há flag de milestone: um
+# milestone é uma fase, e a fase de uma task vive no tasks.json
 orch task set --id F1.1.T5 --status todo
 
 # Ver quais tasks in-progress parecem travadas, sem tocar em nada
@@ -374,15 +375,14 @@ orch reset --requeue --only 'F1.*'
 
 ```bash
 $ orch task set --help
-Set a task's model, backend, milestone, or status
+Set a task's status (model and backend overrides are not implemented)
 
 Flags:
-      --backend string     Override the backend for this task (not implemented yet)
-  -h, --help               help for set
-      --id string          Task ID, e.g. F1.1.T3
-      --milestone string   Assign the task to a milestone ID (not implemented yet)
-      --model string       Override the model for this task (not implemented yet)
-      --status string      Set the task status (e.g. done, in-progress, blocked)
+      --backend string   Override the backend for this task (not implemented yet)
+  -h, --help             help for set
+      --id string        Task ID, e.g. F1.1.T3
+      --model string     Override the model for this task (not implemented yet)
+      --status string    Set the task status (e.g. done, in-progress, blocked)
 ```
 
 `reset` lê o status **real** de runtime a partir do backend de estado,

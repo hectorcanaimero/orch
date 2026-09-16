@@ -35,7 +35,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/kanban", label: "Kanban", icon: KanbanSquare, route: "api_tasks" },
   { to: "/milestones", label: "Milestones", icon: Milestone, route: "api_milestones" },
   { to: "/budget", label: "Budget", icon: Wallet, route: "api_budget_summary" },
-  { to: "/sprint", label: "Sprint", icon: CalendarClock, route: "api_sprint" },
+  { to: "/pace", label: "Pace", icon: CalendarClock, route: "api_sprint" },
   { to: "/graph", label: "Graph", icon: GitFork, route: "api_graph", operatorOnly: true },
   { to: "/ci", label: "CI", icon: Workflow, route: "api_ci", operatorOnly: true },
   { to: "/tunnel", label: "Tunnel", icon: Radio, route: "api_tunnel_status", operatorOnly: true },
