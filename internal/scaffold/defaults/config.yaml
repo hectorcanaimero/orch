@@ -88,7 +88,7 @@ dashboard:
   # profile: operator                                                     # operator | stakeholder | both
   # token: ""                                                             # required when profile != operator
   show_spend_to_stakeholder: false                                        # G-5: expose the Budget/spend view to stakeholders (off by default — spend is sensitive)
-  summary_language: es                                                    # G-4: executive summary language — es | en
+  language: es                                                            # what the client reads (executive summary, portal, PDF) — en | es | pt; formerly summary_language
   kanban:
     wip_default: null          # integer or null. null = no WIP badge unless ?wip=N.
     sort_default: null         # "impact" | null (default = phase asc + id asc).

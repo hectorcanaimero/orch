@@ -202,7 +202,7 @@ func writeFiles(root string, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("read the scaffolded config.yaml: %w", err)
 	}
-	patched := strings.Replace(string(body), "summary_language: es", "summary_language: en", 1)
+	patched := strings.Replace(string(body), "language: es", "language: en", 1)
 	if err := dir.WriteFile(".orchestrator/config.yaml", []byte(patched), 0o600); err != nil {
 		return fmt.Errorf("set the demo summary language: %w", err)
 	}
