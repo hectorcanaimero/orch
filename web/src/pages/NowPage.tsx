@@ -1,13 +1,16 @@
-import { useState } from "react"
 import { Link } from "react-router-dom"
-import { AlertTriangle, Check, Copy, Hourglass, OctagonPause } from "lucide-react"
+import { AlertTriangle, Hourglass, OctagonPause } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
+import { CopyCommand } from "@/components/CopyCommand"
 import { Explain } from "@/components/Explain"
+import { FirstRunChecklist } from "@/components/FirstRunChecklist"
 import { LiveStatusPill } from "@/components/LiveStatusPill"
+import { RunReceipt } from "@/components/RunReceipt"
 import { useBudgetSummary, type BudgetRow } from "@/hooks/useBudgetSummary"
+import { useOnboarding, useReceipt } from "@/hooks/useReceipt"
 import { useEventStream } from "@/hooks/useEventStream"
 import { useMilestones } from "@/hooks/useMilestones"
 import { useNow, useTicker, type NowDispatch } from "@/hooks/useNow"
@@ -58,27 +61,6 @@ function WorkingRow({ d, now }: { d: NowDispatch; now: number }) {
         {Number.isNaN(started) ? "—" : formatElapsed(now - started)}
       </span>
     </li>
-  )
-}
-
-function CopyCommand({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard refused (insecure origin): the command is still selectable.
-    }
-  }
-  return (
-    <div className="mt-3 flex items-stretch gap-2">
-      <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-md border bg-muted px-2.5 py-2 font-mono text-xs">{command}</code>
-      <Button type="button" size="sm" variant="outline" onClick={copy} aria-label={copied ? t("common.copied") : t("common.copy")}>
-        {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
-      </Button>
-    </div>
   )
 }
 
@@ -158,6 +140,8 @@ export function NowPage() {
   const { data: phases } = useMilestones()
   const { data: budget } = useBudgetSummary()
   const { data: tasks } = useTasks()
+  const { data: receipt } = useReceipt()
+  const onboarding = useOnboarding()
 
   if (isLoading) {
     return (
@@ -227,7 +211,13 @@ export function NowPage() {
             </p>
           </section>
 
-          {!run ? (
+          {onboarding.data && !onboarding.data.complete ? (
+            <FirstRunChecklist
+              onboarding={onboarding.data}
+              onRecheck={() => void onboarding.refetch()}
+              checking={onboarding.isFetching}
+            />
+          ) : !run ? (
             <p className="text-sm text-muted-foreground">
               {t("now.never_ran")} <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">orch run</code>
             </p>
@@ -286,6 +276,13 @@ export function NowPage() {
         </div>
 
         <div className="min-w-0 space-y-8">
+          {receipt?.receipt ? (
+            <section aria-labelledby="now-last-run">
+              <SectionHeading id="now-last-run">{t("now.last_run")}</SectionHeading>
+              <RunReceipt payload={receipt} now={now} />
+            </section>
+          ) : null}
+
           <section aria-labelledby="now-phases">
             <SectionHeading id="now-phases">{t("now.phases")}</SectionHeading>
             <ul className={cn(panel, "space-y-3 p-4")}>

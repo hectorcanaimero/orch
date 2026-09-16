@@ -3,11 +3,23 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Now } from "@/hooks/useNow"
+import type { Onboarding, ReceiptPayload } from "@/hooks/useReceipt"
 import { formatElapsed } from "@/lib/time"
 import { NowPage } from "@/pages/NowPage"
 
 const NOW = Date.parse("2026-09-16T12:00:00Z")
-const state: { now: Now | undefined } = { now: undefined }
+const state: { now: Now | undefined; receipt: ReceiptPayload | undefined; onboarding: Onboarding | undefined } = {
+  now: undefined,
+  receipt: undefined,
+  onboarding: undefined,
+}
+const refetch = vi.fn()
+
+vi.mock("@/hooks/useReceipt", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useReceipt")>()),
+  useReceipt: () => ({ data: state.receipt }),
+  useOnboarding: () => ({ data: state.onboarding, refetch, isFetching: false }),
+}))
 
 vi.mock("@/hooks/useNow", () => ({
   useNow: () => ({ data: state.now, isLoading: false, isError: false }),
@@ -72,6 +84,8 @@ function renderPage() {
 describe("NowPage", () => {
   beforeEach(() => {
     state.now = base()
+    state.receipt = undefined
+    state.onboarding = { complete: true, items: [] }
   })
 
   it("shows each agent at work with a running clock and its attempt", () => {
@@ -107,6 +121,58 @@ describe("NowPage", () => {
     expect(screen.getByText(/This project has not run yet/)).toBeInTheDocument()
     expect(screen.getByText(/Nothing is running/)).toBeInTheDocument()
     expect(screen.getByText(/Nothing needs you/)).toBeInTheDocument()
+  })
+
+  it("shows the last finished run's receipt, with costs labelled by where they come from", () => {
+    state.receipt = {
+      markdown: "## orch run `run-6` — finished\n",
+      built_with: "Built with [orch](https://github.com/hectorcanaimero/orch)",
+      receipt: {
+        run_id: "run-6", started_at: "2026-09-15T08:00:00Z", finished_at: "2026-09-15T10:05:00Z", finished: true,
+        wall_seconds: 7500, agent_seconds: 3000, dispatches: 3, failed_attempts: 1, retries: 1,
+        done: [{ task_id: "A", title: "Alpha" }, { task_id: "B", title: "Beta" }], blocked: [{ task_id: "C", title: "Gamma" }],
+        providers: [
+          { provider: "claude", dispatches: 2, tokens_in: 12000, tokens_out: 800, weighted_tokens: 4000, cost_usd: 1.25, estimated_cost_usd: 0, cost_source: "reported" },
+          { provider: "codex", dispatches: 1, tokens_in: 3000, tokens_out: 200, weighted_tokens: 3200, cost_usd: 0.4, estimated_cost_usd: 0.4, cost_source: "estimated" },
+          { provider: "gemini", dispatches: 1, tokens_in: 0, tokens_out: 0, weighted_tokens: 0, cost_usd: 0, estimated_cost_usd: 0, cost_source: "no_data" },
+        ],
+        total_cost_usd: 1.65, estimated_cost_usd: 0.4,
+        prs: [{ task_id: "A", title: "Alpha", url: "https://github.com/x/y/pull/7", ci_status: "success" }],
+      },
+    }
+    renderPage()
+    const last = screen.getByRole("heading", { name: "Last run" }).closest("section")!
+    expect(within(last).getByText("2 tasks done")).toBeInTheDocument()
+    expect(within(last).getByText(/1 blocked/)).toBeInTheDocument()
+    expect(within(last).getByText("2h 5m wall time · 50m agent time · 1 PR, 1 passed CI")).toBeInTheDocument()
+    expect(within(last).getByText("4,000 weighted · 12,800 raw")).toBeInTheDocument()
+    expect(within(last).getByText("~$0.40")).toBeInTheDocument()
+    expect(within(last).getByText("no data")).toBeInTheDocument()
+  })
+
+  it("walks a new project to its first run, with the command for each unmet step", () => {
+    state.now = { ...base(), run: null, working: [], attention: [], waiting_for_budget: [] }
+    state.onboarding = {
+      complete: false,
+      items: [
+        { id: "providers", done: false, optional: false, detail: "claude not on PATH", command: "orch doctor" },
+        { id: "budget", done: true, optional: false, detail: "" },
+        { id: "tasks", done: true, optional: false, detail: "" },
+        { id: "vcs", done: false, optional: true, detail: "", link: "/delivery/ci" },
+        { id: "first_run", done: false, optional: false, detail: "", command: "orch run" },
+      ],
+    }
+    renderPage()
+    const card = screen.getByRole("heading", { name: "Get to your first run" }).closest("section")!
+    expect(within(card).getByText("2 of 4 required")).toBeInTheDocument()
+    expect(within(card).getByText("claude not on PATH")).toBeInTheDocument()
+    expect(within(card).getByText("orch doctor")).toBeInTheDocument()
+    expect(within(card).getByText("orch run")).toBeInTheDocument()
+    expect(within(card).getByText("Needed only for worktrees and automatic PRs.")).toBeInTheDocument()
+    // The checklist replaces the bare "has not run yet" line.
+    expect(screen.queryByText(/This project has not run yet/)).not.toBeInTheDocument()
+    fireEvent.click(within(card).getByRole("button", { name: "Check again" }))
+    expect(refetch).toHaveBeenCalled()
   })
 })
 
