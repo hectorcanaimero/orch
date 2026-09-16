@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playground — orch</title>
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  
+  <header class="top wrap">
+    <a class="brand" href="../" aria-label="orch home">
+      <svg viewBox="0 0 300 180" aria-hidden="true" class="brand-mark"><rect x="0" y="0" width="210" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="46" width="155" height="24" rx="12" fill="#a78bfa"/><rect x="0" y="92" width="232" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="138" width="128" height="24" rx="12" fill="#a78bfa"/></svg>
+      <span class="brand-word">orch</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="../#install">Install</a>
+      <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap page">
+    <h1 class="page-title">Spec to task graph, in your browser</h1>
+    <p class="lede">Write the work as a spec — phases, packages, tasks, the model for each and what it waits for. orch's own parser and graph checks run on this page, compiled to WebAssembly: the same code as <code>orch atomize</code> and <code>orch validate</code>. Nothing you type is sent anywhere.</p>
+    <div class="pg">
+      <div class="pg-input">
+        <label for="spec">Spec (markdown)</label>
+        <textarea id="spec" spellcheck="false" autocapitalize="off" autocomplete="off"># F0 — Foundation
+
+## F0.1 — Package: scaffold
+
+### F0.1.T1 — Next.js 14 App Router scaffold &#43; Tailwind &#43; shadcn/ui
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 30m
+- **Reason**: Scaffolding — deterministic.
+
+# F1 — Clerk auth
+
+## F1.1 — Package: auth
+
+### F1.1.T1 — Clerk auth: middleware &#43; sign-in/sign-up routes
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 36m
+- **Reason**: SDK integration — Sonnet handles it.
+- **Dependencies**: F0.1.T1
+
+### F1.1.T2 — Protected /dashboard route &#43; server-side user lookup
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 30m
+- **Reason**: One route &#43; one Playwright test.
+- **Dependencies**: F1.1.T1
+
+# F2 — Supabase schema
+
+## F2.1 — Package: data
+
+### F2.1.T1 — Supabase Postgres schema &#43; Drizzle client
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 48m
+- **Reason**: SDK glue &#43; schema — deterministic.
+- **Dependencies**: F0.1.T1
+
+### F2.1.T2 — Clerk webhook syncs users into Supabase
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 1h
+- **Reason**: Webhook &#43; DB write &#43; one integration test.
+- **Dependencies**: F1.1.T1, F2.1.T1
+
+# F3 — Vercel deploy pipeline
+
+## F3.1 — Package: deploy
+
+### F3.1.T1 — Vercel deploy config &#43; preview-on-PR
+
+- **Model**: claude/claude-sonnet-4-6
+- **Estimate**: 36m
+- **Reason**: CI wiring — small.
+- **Dependencies**: F0.1.T1, F2.1.T1
+</textarea>
+        <div class="pg-actions">
+          <button class="button" type="button" id="build" disabled>Loading engine…</button>
+          <span class="pg-hint">Ctrl+Enter builds. The sample is the <a href="../templates/nextjs-saas.html">nextjs-saas</a> template.</span>
+        </div>
+      </div>
+      <div class="pg-out" id="out" aria-live="polite">
+        <p class="pg-empty">Loading orch (about 1.5 MB)…</p>
+        <noscript><p class="pg-empty">The playground runs orch in your browser and needs JavaScript and WebAssembly.</p></noscript>
+      </div>
+    </div>
+
+    <section aria-labelledby="install-title" class="page-section">
+      <h2 id="install-title">Run it for real</h2>
+      <p class="page-note">Install orch, put the spec under <code>specs/</code> and let <code>orch atomize --apply</code> write <code>tasks.json</code>. Then <code>orch run</code> dispatches every ready task to its agent.</p>
+      <div class="copy-cmd">
+        <pre class="term" tabindex="0"><code><span data-copy-source>curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh</span></code></pre>
+        <button class="replay" type="button" data-copy hidden>Copy</button>
+      </div>
+    </section>
+  </main>
+  <script src="wasm_exec.js"></script>
+  <script src="playground.js" defer></script>
+
+  <footer class="foot wrap">
+    <p>orch is MIT-licensed and built in the open.</p>
+    <nav aria-label="Footer">
+      <a href="../">Home</a>
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Manual</a>
+    </nav>
+  </footer>
+  <script src="../copy.js" defer></script>
+</body>
+</html>

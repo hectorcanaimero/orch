@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>python-api template — orch</title>
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  
+  <header class="top wrap">
+    <a class="brand" href="../" aria-label="orch home">
+      <svg viewBox="0 0 300 180" aria-hidden="true" class="brand-mark"><rect x="0" y="0" width="210" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="46" width="155" height="24" rx="12" fill="#a78bfa"/><rect x="0" y="92" width="232" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="138" width="128" height="24" rx="12" fill="#a78bfa"/></svg>
+      <span class="brand-word">orch</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="../#install">Install</a>
+      <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap page">
+    <p class="crumb"><a href="./">Templates</a></p>
+    <h1 class="page-title">python-api</h1>
+    <p class="lede">Python HTTP API — FastAPI &#43; pytest &#43; ruff. Ready for `orch run` out of the box.</p>
+    
+    <dl class="facts">
+      <div><dt>Tasks</dt><dd>2</dd></div>
+      <div><dt>Phases</dt><dd>2</dd></div>
+      <div><dt>Estimated</dt><dd>0.5 h</dd></div>
+      <div><dt>Routed to</dt><dd><code>claude/claude-sonnet-4-6</code></dd></div>
+    </dl>
+    <div class="copy-cmd">
+      <pre class="term" tabindex="0"><code><span class="c">$</span> <span data-copy-source>orch init --template python-api</span></code></pre>
+      <button class="replay" type="button" data-copy hidden>Copy</button>
+    </div>
+
+    <section aria-labelledby="graph-title" class="page-section">
+      <h2 id="graph-title">The plan</h2>
+      <p class="page-note">A task starts only when everything above it is done. The violet trace is the longest chain: it sets how soon the plan can finish.</p>
+      <div class="dag-wrap" tabindex="0" role="group" aria-label="Dependency graph, scrollable"><svg class="dag" viewBox="0 0 244 208" width="244" height="208" style="--w:244px" role="img" aria-label="Dependency graph: 2 tasks in 2 layers"><defs><marker id="dag-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" class="dag-arrowhead"/></marker></defs><path class="dag-edge" d="M122.0 78.0 C122.0 104.0 122.0 104.0 122.0 128.0" marker-end="url(#dag-arrow)"/><g class="dag-node"><title>F0.T1 — Scaffold FastAPI project layout</title><rect x="12.0" y="12.0" width="220" height="66" rx="12"/><text class="dag-id" x="26.0" y="34.0">F0.T1</text><text class="dag-title" x="26.0" y="52.0">Scaffold FastAPI project</text><text class="dag-title" x="26.0" y="68.0">layout</text></g><g class="dag-node"><title>F1.T1 — Health endpoint + integration test</title><rect x="12.0" y="130.0" width="220" height="66" rx="12"/><text class="dag-id" x="26.0" y="152.0">F1.T1</text><text class="dag-title" x="26.0" y="170.0">Health endpoint + integration</text><text class="dag-title" x="26.0" y="186.0">test</text></g></svg></div>
+    </section>
+
+    <section aria-labelledby="tasks-title" class="page-section">
+      <h2 id="tasks-title">Tasks by phase</h2>
+      
+      <h3>F0 — Foundation</h3>
+      <div class="table-wrap" tabindex="0">
+        <table class="tasks">
+          <thead><tr><th scope="col">ID</th><th scope="col">Task</th><th scope="col">Model</th><th scope="col" class="num">Estimate</th><th scope="col">Waits for</th></tr></thead>
+          <tbody>
+            <tr><td><code>F0.T1</code></td><td class="title">Scaffold FastAPI project layout</td><td><code>claude/claude-sonnet-4-6</code></td><td class="num">0.3 h</td><td>—</td></tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+      <h3>F1 — Health endpoint</h3>
+      <div class="table-wrap" tabindex="0">
+        <table class="tasks">
+          <thead><tr><th scope="col">ID</th><th scope="col">Task</th><th scope="col">Model</th><th scope="col" class="num">Estimate</th><th scope="col">Waits for</th></tr></thead>
+          <tbody>
+            <tr><td><code>F1.T1</code></td><td class="title">Health endpoint &#43; integration test</td><td><code>claude/claude-sonnet-4-6</code></td><td class="num">0.2 h</td><td><code>F0.T1</code></td></tr>
+            
+          </tbody>
+        </table>
+      </div>
+      
+    </section>
+
+    <p class="page-cta"><a class="button" href="../playground/">Try your own spec in the playground</a></p>
+  </main>
+
+  <footer class="foot wrap">
+    <p>orch is MIT-licensed and built in the open.</p>
+    <nav aria-label="Footer">
+      <a href="../">Home</a>
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Manual</a>
+    </nav>
+  </footer>
+  <script src="../copy.js" defer></script>
+</body>
+</html>

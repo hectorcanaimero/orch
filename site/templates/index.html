@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project templates — orch</title>
+  <meta name="theme-color" content="#09090b">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  
+  <header class="top wrap">
+    <a class="brand" href="../" aria-label="orch home">
+      <svg viewBox="0 0 300 180" aria-hidden="true" class="brand-mark"><rect x="0" y="0" width="210" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="46" width="155" height="24" rx="12" fill="#a78bfa"/><rect x="0" y="92" width="232" height="24" rx="12" fill="#7c3aed"/><rect x="0" y="138" width="128" height="24" rx="12" fill="#a78bfa"/></svg>
+      <span class="brand-word">orch</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="../#install">Install</a>
+      <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap page">
+    <h1 class="page-title">Project templates</h1>
+    <p class="lede">Each template is a plan orch can run the day you install it: phases, tasks, the model each task goes to and what it waits for. Start from one with <code>orch init --template &lt;name&gt;</code>, then edit the specs.</p>
+    <ul class="gallery">
+      <li>
+        <a class="gallery-item" href="chatbot-whatsapp.html">
+          <span class="gallery-name">chatbot-whatsapp</span>
+          <span class="gallery-summary">WhatsApp chatbot — Waha (self-hosted) &#43; Claude agents &#43; FastAPI webhook.</span>
+          <span class="gallery-facts">4 tasks · 3 phases · 2 h estimated</span>
+        </a>
+      </li>
+      <li>
+        <a class="gallery-item" href="data-pipeline.html">
+          <span class="gallery-name">data-pipeline</span>
+          <span class="gallery-summary">Python ETL — DuckDB warehouse &#43; APScheduler jobs. Read/transform/load with cheap local infra.</span>
+          <span class="gallery-facts">4 tasks · 4 phases · 2.3 h estimated</span>
+        </a>
+      </li>
+      <li>
+        <a class="gallery-item" href="expo-mobile.html">
+          <span class="gallery-name">expo-mobile</span>
+          <span class="gallery-summary">React Native mobile app — Expo &#43; expo-router &#43; TypeScript. Runs on a phone from task one.</span>
+          <span class="gallery-facts">6 tasks · 3 phases · 3.8 h estimated</span>
+        </a>
+      </li>
+      <li>
+        <a class="gallery-item" href="nextjs-saas.html">
+          <span class="gallery-name">nextjs-saas</span>
+          <span class="gallery-summary">Next.js 14 SaaS — App Router &#43; Clerk auth &#43; Supabase Postgres &#43; Vercel deploy.</span>
+          <span class="gallery-facts">6 tasks · 4 phases · 4 h estimated</span>
+        </a>
+      </li>
+      <li>
+        <a class="gallery-item" href="python-api.html">
+          <span class="gallery-name">python-api</span>
+          <span class="gallery-summary">Python HTTP API — FastAPI &#43; pytest &#43; ruff. Ready for `orch run` out of the box.</span>
+          <span class="gallery-facts">2 tasks · 2 phases · 0.5 h estimated</span>
+        </a>
+      </li>
+      
+    </ul>
+  </main>
+
+  <footer class="foot wrap">
+    <p>orch is MIT-licensed and built in the open.</p>
+    <nav aria-label="Footer">
+      <a href="../">Home</a>
+      <a href="../templates/">Templates</a>
+      <a href="../playground/">Playground</a>
+      <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Manual</a>
+    </nav>
+  </footer>
+  <script src="../copy.js" defer></script>
+</body>
+</html>
