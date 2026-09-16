@@ -10,7 +10,7 @@ import {
   TaskFiltersBar,
   toTaskFilters,
   useDebouncedValue,
-  type TaskFiltersBarValue,
+  useTaskFilterParams,
 } from "@/components/TaskFiltersBar"
 import { TaskDetailModal } from "@/components/TaskDetailModal"
 import { EmptyTasks } from "@/components/EmptyTasks"
@@ -48,12 +48,7 @@ function groupTasks(tasks: Task[]): Record<KanbanStatus, Task[]> {
 }
 
 export function KanbanPage() {
-  const [filters, setFilters] = useState<TaskFiltersBarValue>({
-    phase: "",
-    model: "",
-    search: "",
-    status: "",
-  })
+  const [filters, setFilters] = useTaskFilterParams()
   const debouncedSearch = useDebouncedValue(filters.search, 250)
 
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
