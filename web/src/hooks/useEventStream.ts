@@ -17,6 +17,31 @@ export interface UseEventStreamOptions {
   enabled?: boolean
 }
 
+/** How often the fallback refreshes the task list while the stream is down. */
+export const POLL_FALLBACK_MS = 15_000
+
+/**
+ * A stream that has sent nothing — not even the server's keep-alive, every
+ * 25s (internal/dashboard/stream.go) — for this long is not flowing. A proxy
+ * that buffers responses does that: Cloudflare quick tunnels do not support
+ * server-sent events, so through `orch dashboard --tunnel` the connection
+ * opens and then delivers nothing.
+ */
+export const STREAM_STALE_MS = 60_000
+
+/**
+ * Whether the page has to refresh by polling: the stream is not open, or it
+ * is open and silent past two keep-alives.
+ */
+export function needsPolling(
+  status: EventStreamStatus,
+  lastActivityAt: number | null,
+  now: number,
+): boolean {
+  if (status !== "open") return true
+  return lastActivityAt === null || now - lastActivityAt > STREAM_STALE_MS
+}
+
 export interface UseEventStreamResult {
   status: EventStreamStatus
   lastEventAt: Date | null
@@ -38,6 +63,21 @@ export function useEventStream(
   // Keep a stable ref to the client so the effect deps stay minimal.
   const qcRef = useRef(queryClient)
   qcRef.current = queryClient
+  const statusRef = useRef<EventStreamStatus>("connecting")
+  statusRef.current = status
+  const activityRef = useRef<number | null>(null)
+
+  // The fallback: while the stream is not delivering, refresh on a timer so
+  // the page still moves — slower, but never frozen.
+  useEffect(() => {
+    if (!enabled) return
+    const id = window.setInterval(() => {
+      if (needsPolling(statusRef.current, activityRef.current, Date.now())) {
+        void qcRef.current.invalidateQueries({ queryKey: ["tasks"] })
+      }
+    }, POLL_FALLBACK_MS)
+    return () => window.clearInterval(id)
+  }, [enabled])
 
   useEffect(() => {
     if (!enabled) {
@@ -57,7 +97,11 @@ export function useEventStream(
       token,
       signal: controller.signal,
       onOpen: () => {
+        activityRef.current = Date.now()
         setStatus("open")
+      },
+      onActivity: () => {
+        activityRef.current = Date.now()
       },
       onError: (err) => {
         // eslint-disable-next-line no-console

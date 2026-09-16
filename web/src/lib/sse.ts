@@ -24,6 +24,8 @@ export interface StartEventStreamOpts {
   onEvent: (eventName: string, payload: EventPayload) => void
   onError?: (err: unknown) => void
   onOpen?: () => void
+  /** Any bytes arrived, keep-alive comments included — proof the stream flows. */
+  onActivity?: () => void
   signal: AbortSignal
 }
 
@@ -72,7 +74,7 @@ function parseFrame(
 export async function startEventStream(
   opts: StartEventStreamOpts,
 ): Promise<void> {
-  const { url, token, onEvent, onError, onOpen, signal } = opts
+  const { url, token, onEvent, onError, onOpen, onActivity, signal } = opts
   let backoff = INITIAL_BACKOFF_MS
 
   while (!signal.aborted) {
@@ -99,6 +101,7 @@ export async function startEventStream(
         while (true) {
           const { value, done } = await reader.read()
           if (done) break
+          onActivity?.()
           buffer += decoder.decode(value, { stream: true })
           // Frames are separated by a blank line, i.e. "\n\n". Split, keep
           // the last (possibly incomplete) frame in the buffer.
