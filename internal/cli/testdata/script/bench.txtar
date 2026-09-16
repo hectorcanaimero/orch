@@ -1,0 +1,96 @@
+# `orch bench` end to end with no real coding CLI: ORCH_FAKE_PROVIDER replays
+# canned output for claude and codex, while the copy, the routing, `orch run`'s
+# code path and the results are the real ones. Nothing here spends money.
+
+exec orch bench --help
+stdout '--providers'
+stdout '--max-usd'
+stdout '--yes-i-know-it-costs'
+stdout '--dry-run'
+stdout 'real agents, real spend'
+
+env ORCH_FAKE_PROVIDER=$WORK/fake
+
+# An unknown provider is refused before anything runs.
+! exec orch bench --project benchproj --providers claude,openai --max-usd 1 --yes
+stderr 'unknown provider "openai"'
+
+# A bench spends real money, so a cap is required unless waived by name.
+! exec orch bench --project benchproj --providers claude --yes
+stderr '--max-usd is required'
+stderr '--yes-i-know-it-costs'
+
+# --model names a provider that is being run.
+! exec orch bench --project benchproj --providers claude --model codex=gpt-5.4 --max-usd 1 --yes
+stderr 'codex is not in --providers'
+
+# Without a terminal, only --yes starts it: a pipe cannot be asked.
+! exec orch bench --project benchproj --providers claude --max-usd 1
+stderr 'WARNING: this dispatches real agents'
+stderr 'pass --yes'
+
+# --dry-run shows the plan and dispatches nothing; with no --project it plans
+# the packaged template.
+exec orch bench --dry-run --providers claude,codex --max-usd 2
+stdout 'template:python-api with each of: claude, codex \(1 run\(s\) each, 2 in total\)'
+stdout 'stops once it has spent \$2.00'
+stdout 'WARNING'
+
+# The real thing: both providers finish the whole DAG on their own copies,
+# including T-1, which the project already marks done.
+exec orch bench --project benchproj --providers claude,codex --max-usd 5 --yes --markdown --out $WORK/results.json
+stdout '^\| provider \| run \| outcome \|'
+stdout '^\| claude \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \|.*\| 0.02 \| reported \|.*fake \(ORCH_FAKE_PROVIDER\) \|$'
+stdout '^\| codex \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \|.*\| estimated \|'
+exists $WORK/results.json
+grep '"bench_version": 1' $WORK/results.json
+grep '"provider": "codex"' $WORK/results.json
+grep '"weighted_tokens": 2200' $WORK/results.json
+
+# The project itself was never touched: no database, statuses as written.
+! exists benchproj/.orchestrator/state
+grep '"status":"done"' benchproj/tasks.json
+cmp benchproj/.orchestrator/model_router.yaml router.orig
+
+-- benchproj/tasks.json --
+{"tasks":[
+{"id":"T-1","phase":1,"title":"t one","model":"claude/haiku","status":"done","dependencies":[],"estimateHours":1.0,"files":[],"specRef":""},
+{"id":"T-2","phase":1,"title":"t two","model":"claude/haiku","status":"todo","dependencies":["T-1"],"estimateHours":1.0,"files":[],"specRef":""}]}
+-- benchproj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 2
+  per_provider:
+    claude: 2
+    codex: 2
+-- benchproj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+codex/mini:
+  backend: codex
+  cli_model: gpt-5.4-mini
+  tier: cheap
+  is_premium: false
+-- router.orig --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+codex/mini:
+  backend: codex
+  cli_model: gpt-5.4-mini
+  tier: cheap
+  is_premium: false
+-- benchproj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- benchproj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- fake/claude/_default.out --
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":1000}}
+-- fake/codex/_default.out --
+{"type":"turn.completed","usage":{"input_tokens":1000,"output_tokens":100}}

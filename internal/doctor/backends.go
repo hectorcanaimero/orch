@@ -70,7 +70,7 @@ func CheckBackends(backends []string) []Check {
 			out = append(out, authCheck(name, false))
 			continue
 		}
-		ok, detail := probeVersion(name)
+		ok, detail := ProbeVersion(name)
 		if ok {
 			out = append(out, Check{
 				Name:   "backend." + name,
@@ -90,9 +90,9 @@ func CheckBackends(backends []string) []Check {
 	return out
 }
 
-// probeVersion runs `<cli> --version` and reports (ok, first line of
+// ProbeVersion runs `<cli> --version` and reports (ok, first line of
 // output). Ports _probe_version.
-func probeVersion(cli string) (bool, string) {
+func ProbeVersion(cli string) (bool, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 
