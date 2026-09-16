@@ -220,9 +220,11 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 }
 
 // perDispatchCap is budget.per_dispatch_usd as the per-attempt cap claude
-// receives as `--max-budget-usd`; nil (no flag) when it is zero or less.
+// receives as `--max-budget-usd` — only when the project wrote the key. The
+// default 5.0 keeps its older meaning (it limits the attempt-3 escalation) and
+// caps nothing by itself. nil (no flag) when unwritten, zero or less.
 func perDispatchCap(cfg config.Config) *float64 {
-	if cfg.Budget.PerDispatchUSD <= 0 {
+	if !cfg.Budget.PerDispatchExplicit || cfg.Budget.PerDispatchUSD <= 0 {
 		return nil
 	}
 	v := cfg.Budget.PerDispatchUSD

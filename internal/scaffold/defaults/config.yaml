@@ -23,9 +23,12 @@ strict_files_phases:
 # Actual timeout = estimateHours * multiplier * 3600 seconds.
 default_timeout_multiplier: 1.5
 
-# Per-dispatch budget cap passed to `claude --max-budget-usd`.
-budget:
-  per_dispatch_usd: 5.00
+# Per-task spend limit, 5.00 USD by default. By default it only decides
+# whether a failing task may escalate to a pricier model on its third attempt.
+# Uncomment it to ALSO cap every claude dispatch with `--max-budget-usd`
+# (the cap is sent only when the key is written here).
+# budget:
+#   per_dispatch_usd: 5.00
 
 # FR-D-4 (design.md §5): wall-clock delay between a failed dispatch and its
 # retry. Uses `time.monotonic()` so it's immune to wall-clock jumps.
