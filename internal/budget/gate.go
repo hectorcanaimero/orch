@@ -198,6 +198,14 @@ const (
 	cacheCreationWeight = 1.25
 )
 
+// WeightedTokens is a row's usage as the gate counts it: tokens in and out,
+// with the cache part of the input weighted by what it bills. A row orch
+// estimated with no counts is 0 here; the gate substitutes
+// typical_dispatch_tokens for it, which a report of past usage should not.
+func WeightedTokens(r state.Spend) float64 {
+	return float64(r.TokensIn+r.TokensOut) + weightedCacheDelta(r)
+}
+
 // weightedCacheDelta is what weighting a row's cache tokens adds to its raw
 // count. TokensIn already includes them at weight 1, so the correction is
 // (weight - 1) per token: negative for reads, positive for writes, zero for

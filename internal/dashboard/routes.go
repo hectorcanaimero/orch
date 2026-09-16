@@ -27,6 +27,7 @@ func (s *Server) routes() []route {
 	out = append(out, s.ciRoutes()...)
 	out = append(out, s.sprintRoutes()...)
 	out = append(out, s.nowRoutes()...)
+	out = append(out, s.receiptRoutes()...)
 	out = append(out, s.stakeholderRoutes()...)
 	out = append(out, s.portalRoutes()...)
 	out = append(out, s.tunnelRoutes()...)

@@ -10,6 +10,15 @@ export function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
 }
 
+/** 2d 3h, 2h 5m, 50m, 40s — the same spelling `orch report receipt` prints. */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  if (s >= 86_400) return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3600)}h`
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  if (s >= 60) return `${Math.floor(s / 60)}m`
+  return `${s}s`
+}
+
 const relative = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
 
 /** "3 hours ago", "in 2 hours" — the unit that keeps the number small. */

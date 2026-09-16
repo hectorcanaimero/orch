@@ -19,17 +19,15 @@ import (
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
-// newReportCmd is `orch report`, whose only subcommand today is `pdf`.
-//
-// A parent with one child rather than `orch report-pdf`, because the shape it
-// is reserving is real: a report is a rendering of one snapshot, and the next
-// format (html, a one-line digest) is a sibling and not a new command.
+// newReportCmd is `orch report`: `pdf` renders the stakeholder snapshot as a
+// document, `receipt` summarises one run.
 func newReportCmd(flags *projectFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Render the stakeholder snapshot as a document",
+		Short: "Render reports: the stakeholder PDF, a run's receipt",
 	}
 	cmd.AddCommand(newReportPDFCmd(flags))
+	cmd.AddCommand(newReportReceiptCmd(flags))
 	return cmd
 }
 

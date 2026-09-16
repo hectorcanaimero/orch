@@ -23,6 +23,15 @@ grep '^%PDF-' report.pdf
 grep '/MediaBox \[0 0 595\.28 841\.89\]' report.pdf
 ! grep '/Type /Pages?/Type /Page' report.pdf
 
+# ---- orch report receipt ---------------------------------------------------
+# The parity fixture never finished a run: a clear error, not an empty receipt.
+! exec orch report receipt --project-root proj --project-id proj
+stderr 'no run has finished yet'
+! exec orch report receipt --project-root proj --project-id proj --run nope
+stderr 'no events for run "nope"'
+! exec orch report receipt --project-root proj --project-id proj --json --markdown
+stderr 'mutually exclusive'
+
 # ---- default destination ---------------------------------------------------
 exec orch report pdf --project-root proj --project-id proj
 stdout 'orch-report\.pdf'
