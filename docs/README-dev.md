@@ -303,7 +303,8 @@ orch list                 Print this list
 ## Development
 
 On `main` this section is obsolete: see [`CONTRIBUTING.md`](../CONTRIBUTING.md)
-(`make web`, `make test`, `make lint`). The Python workflow it described
+(`make web`, `make test`, `make lint` — which also runs `pnpm lint`, oxlint over
+`web/`, once `make web` has installed its dependencies). The Python workflow it described
 (`pip install -e '.[dev]'`, `pytest`) only applies to a `python-legacy` checkout.
 
 ---

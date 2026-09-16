@@ -17,7 +17,7 @@ developed on `main`.
 ```bash
 make web      # build both SPA bundles (dashboard + stakeholder) into the embed dirs
 make test     # go test ./... -race -cover
-make lint     # golangci-lint, or go vet with a warning
+make lint     # golangci-lint (or go vet with a warning), then oxlint over web/ once node_modules exists
 make build    # bin/orch, version from git describe (runs make web first)
 ```
 

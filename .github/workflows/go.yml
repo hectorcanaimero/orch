@@ -27,6 +27,8 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: web/pnpm-lock.yaml
       - run: make web
+      # oxlint over the SPA; `make web` above already installed node_modules.
+      - run: cd web && pnpm lint
       - run: make test
 
   go-lint:
