@@ -21,9 +21,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/pricing"
+	"github.com/hectorcanaimero/orch/internal/receipt"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
@@ -56,29 +56,36 @@ type Result struct {
 	Provider   string `json:"provider"`
 	CLIVersion string `json:"cli_version"`
 	Run        int    `json:"run"`
-	// Outcome is "finished", "stopped: max-usd" or "error: <message>".
+	// Outcome is "finished", "stopped: max-usd", "exit N" or "error: <message>".
 	Outcome string `json:"outcome"`
 
+	// Tasks is every task in the project; Done and Blocked are tasks by
+	// their last outcome in the run, as its receipt counts them; Unfinished
+	// is the rest, backlog included.
 	Tasks      int `json:"tasks"`
 	Done       int `json:"done"`
 	Blocked    int `json:"blocked"`
 	Unfinished int `json:"unfinished"`
 	Dispatches int `json:"dispatches"`
-	// Retries counts attempts beyond each task's first.
-	Retries int `json:"retries"`
+	// FailedAttempts counts fail and timeout events; Retries counts retry
+	// events. Both are the receipt's.
+	FailedAttempts int `json:"failed_attempts"`
+	Retries        int `json:"retries"`
 
 	WallS  float64 `json:"wall_s"`
 	AgentS float64 `json:"agent_s"`
 
 	// CostUSD is what the CLI reported plus the pricing.yaml estimate for
-	// rows it did not price; CostSource says which of the two it is.
-	CostUSD        float64 `json:"cost_usd"`
-	CostSource     string  `json:"cost_source"`
-	TokensIn       int     `json:"tokens_in"`
-	TokensOut      int     `json:"tokens_out"`
-	CacheRead      int     `json:"cache_read_tokens"`
-	CacheCreation  int     `json:"cache_creation_tokens"`
-	WeightedTokens int     `json:"weighted_tokens"`
+	// rows it did not price, EstimatedCostUSD the estimated part, and
+	// CostSource the receipt's label for it (reported, estimated, no_data).
+	CostUSD          float64 `json:"cost_usd"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
+	CostSource       string  `json:"cost_source"`
+	// TokensIn/TokensOut are as the CLI reported them, cache included;
+	// WeightedTokens is what the budget window counts.
+	TokensIn       int `json:"tokens_in"`
+	TokensOut      int `json:"tokens_out"`
+	WeightedTokens int `json:"weighted_tokens"`
 }
 
 // Prepare copies the project at src to dst for one provider's run: without
@@ -233,91 +240,56 @@ func modelFor(rtr router.Router, backend model.Backend, tier model.Tier) string 
 	return fallback
 }
 
-// Spend is what Collect and the cap watch read from a run's database.
-type Spend interface {
-	Tasks(ctx context.Context, filter state.TaskFilter) ([]state.TaskRuntime, error)
-	AllSpend(ctx context.Context, since time.Time) ([]state.Spend, error)
-}
-
-// Collect reads a finished copy's database into a Result. Provider,
-// CLIVersion, Run, Outcome and WallS are the caller's to fill.
-//
-// It reads the rows directly; the run receipt (`orch report receipt`) sums the
-// same tables, and this can call it once both are on main.
-func Collect(ctx context.Context, db Spend, prices pricing.Table) (Result, error) {
+// Collect reads one run of a copy into a Result: the counts, time and spend
+// come from the run's receipt (internal/receipt, the same builder
+// `orch report receipt` and the dashboard use), plus the task totals the
+// receipt does not carry. Provider, CLIVersion, Run and Outcome are the
+// caller's to fill.
+func Collect(ctx context.Context, db receipt.Reader, runID string, prices pricing.Table) (Result, error) {
 	var r Result
 	tasks, err := db.Tasks(ctx, state.TaskFilter{})
 	if err != nil {
 		return r, fmt.Errorf("read tasks: %w", err)
 	}
-	for _, t := range tasks {
-		r.Tasks++
-		switch t.Status {
-		case model.StatusDone:
-			r.Done++
-		case model.StatusBlocked:
-			r.Blocked++
-		default:
-			r.Unfinished++
-		}
-		if t.Attempts > 1 {
-			r.Retries += t.Attempts - 1
-		}
-	}
-	rows, err := db.AllSpend(ctx, time.Time{})
+	r.Tasks = len(tasks)
+	rc, err := receipt.Load(ctx, db, runID, nil, prices)
 	if err != nil {
-		return r, fmt.Errorf("read spend: %w", err)
+		return r, fmt.Errorf("read the run's receipt: %w", err)
 	}
-	var reported, estimated, weighted float64
-	for _, s := range rows {
-		r.Dispatches++
-		r.AgentS += s.DurationS
-		r.TokensIn += s.TokensIn
-		r.TokensOut += s.TokensOut
-		r.CacheRead += s.CacheReadTokens
-		r.CacheCreation += s.CacheCreationTokens
-		weighted += budget.WeightedTokens(s)
-		if s.CostUSD > 0 {
-			reported += s.CostUSD
-		} else {
-			estimated += prices.ResolveCost(0, s.Model, s.TokensIn, s.TokensOut)
+	r.Unfinished = r.Tasks
+	if rc == nil {
+		// The run wrote no event at all: it failed before dispatching.
+		return r, nil
+	}
+	r.Done, r.Blocked = len(rc.Done), len(rc.Blocked)
+	r.Unfinished = r.Tasks - r.Done - r.Blocked
+	r.Dispatches, r.FailedAttempts, r.Retries = rc.Dispatches, rc.FailedAttempts, rc.Retries
+	r.WallS, r.AgentS = rc.WallSeconds, rc.AgentSeconds
+	r.CostUSD, r.EstimatedCostUSD = rc.TotalCostUSD, rc.EstimatedCostUSD
+	var sources []string
+	for _, p := range rc.Providers {
+		r.TokensIn += p.TokensIn
+		r.TokensOut += p.TokensOut
+		r.WeightedTokens += p.WeightedTokens
+		if !slices.Contains(sources, p.CostSource) {
+			sources = append(sources, p.CostSource)
 		}
 	}
-	r.WeightedTokens = int(weighted + 0.5)
-	r.CostUSD = reported + estimated
-	r.CostSource = costSource(len(rows), reported, estimated)
+	r.CostSource = strings.Join(sources, "+")
+	if r.CostSource == "" {
+		r.CostSource = "no_data"
+	}
 	return r, nil
 }
 
-// costSource labels a cost the way the dashboard's Budget page does
-// (internal/dashboard/metricroutes.go): reported when the CLI priced
-// anything, estimated when only pricing.yaml did, no_data when neither.
-func costSource(rows int, reported, estimated float64) string {
-	switch {
-	case rows == 0:
-		return "none"
-	case reported > 0 && estimated > 0:
-		return "reported+estimated"
-	case reported > 0:
-		return "reported"
-	case estimated > 0:
-		return "estimated"
-	default:
-		return "no_data"
+// SpentUSD is the cap watch's running total: the run's receipt so far, so
+// the cap and the reported cost are the same number.
+func SpentUSD(ctx context.Context, db receipt.Reader, runID string, prices pricing.Table) (float64, error) {
+	rc, err := receipt.Load(ctx, db, runID, nil, prices)
+	if err != nil || rc == nil {
+		return 0, err
 	}
-}
-
-// SpentUSD is the cap watch's running total: the same sum as Collect's cost.
-func SpentUSD(ctx context.Context, db Spend, prices pricing.Table) (float64, error) {
-	rows, err := db.AllSpend(ctx, time.Time{})
-	if err != nil {
-		return 0, fmt.Errorf("read spend: %w", err)
-	}
-	total := 0.0
-	for _, s := range rows {
-		total += prices.ResolveCost(s.CostUSD, s.Model, s.TokensIn, s.TokensOut)
-	}
-	return total, nil
+	return rc.TotalCostUSD, nil
 }
 
 // ErrOverCap is what WatchCap reports when a run crossed its cap.
@@ -349,17 +321,13 @@ func WatchCap(ctx context.Context, ticks <-chan time.Time, max float64, spent fu
 func (r Report) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# orch bench\n\n%s · orch %s · %s/%s · project `%s`\n\n", r.Date, r.OrchVersion, r.OS, r.Arch, r.Project)
-	b.WriteString("| provider | run | outcome | done | blocked | unfinished | dispatches | retries | wall | agent time | cost (USD) | cost source | tokens (raw) | tokens (weighted) | CLI |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| provider | run | outcome | done | blocked | unfinished | dispatches | failed attempts | retries | wall | agent time | cost (USD) | cost source | tokens (raw) | tokens (weighted) | CLI |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, x := range r.Results {
-		fmt.Fprintf(&b, "| %s | %d | %s | %d/%d | %d | %d | %d | %d | %s | %s | %.2f | %s | %d | %d | %s |\n",
-			x.Provider, x.Run, x.Outcome, x.Done, x.Tasks, x.Blocked, x.Unfinished, x.Dispatches, x.Retries,
-			seconds(x.WallS), seconds(x.AgentS), x.CostUSD, x.CostSource,
+		fmt.Fprintf(&b, "| %s | %d | %s | %d/%d | %d | %d | %d | %d | %d | %s | %s | %.2f | %s | %d | %d | %s |\n",
+			x.Provider, x.Run, x.Outcome, x.Done, x.Tasks, x.Blocked, x.Unfinished, x.Dispatches, x.FailedAttempts, x.Retries,
+			receipt.Duration(x.WallS), receipt.Duration(x.AgentS), x.CostUSD, x.CostSource,
 			x.TokensIn+x.TokensOut, x.WeightedTokens, x.CLIVersion)
 	}
 	return b.String()
-}
-
-func seconds(s float64) string {
-	return (time.Duration(s * float64(time.Second))).Round(time.Second).String()
 }

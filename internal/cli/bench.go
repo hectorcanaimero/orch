@@ -21,6 +21,7 @@ import (
 	"github.com/hectorcanaimero/orch/internal/doctor"
 	"github.com/hectorcanaimero/orch/internal/engine"
 	"github.com/hectorcanaimero/orch/internal/pricing"
+	"github.com/hectorcanaimero/orch/internal/providers"
 	"github.com/hectorcanaimero/orch/internal/scaffold"
 )
 
@@ -256,6 +257,7 @@ func benchOne(ctx context.Context, in io.Reader, errOut io.Writer, src, provider
 	}
 	defer func() { _ = closeBackend() }()
 	prices := pricing.Load(dir)
+	runID := providers.NewSessionID()
 
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -265,21 +267,18 @@ func benchOne(ctx context.Context, in io.Reader, errOut io.Writer, src, provider
 		defer ticker.Stop()
 		go func() {
 			watched <- bench.WatchCap(runCtx, ticker.C, o.maxUSD, func(c context.Context) (float64, error) {
-				return bench.SpentUSD(c, backend, prices)
+				return bench.SpentUSD(c, backend, runID, prices)
 			}, stop)
 		}()
 	} else {
 		watched <- nil
 	}
 
-	start := time.Now()
-	_, runErr := runProject(runCtx, in, errOut, flags, runOptions{mode: string(engine.ModeAuto), isolated: true})
-	wall := time.Since(start)
+	runErr := runProject(runCtx, in, errOut, flags, runOptions{mode: string(engine.ModeAuto), runID: runID, isolated: true})
 	stop()
 	capErr := <-watched
 
-	res, err := bench.Collect(ctx, backend, prices)
-	res.WallS = wall.Seconds()
+	res, err := bench.Collect(ctx, backend, runID, prices)
 	switch {
 	case errors.Is(capErr, bench.ErrOverCap):
 		res.Outcome = "stopped: max-usd"

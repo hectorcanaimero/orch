@@ -215,13 +215,6 @@ func weightedCacheDelta(r state.Spend) float64 {
 		float64(r.CacheCreationTokens)*(cacheCreationWeight-1)
 }
 
-// WeightedTokens is a row's tokens as the window counts them: input and
-// output, with cache reads and writes weighted by what they bill. `orch bench`
-// reports it beside the raw count.
-func WeightedTokens(r state.Spend) float64 {
-	return float64(r.TokensIn+r.TokensOut) + weightedCacheDelta(r)
-}
-
 // decide turns a window into an answer.
 func (g *Gate) decide(ctx context.Context, provider string, pb ProviderBudget, now time.Time) (Decision, error) {
 	w, err := g.usage(ctx, provider, pb, now)

@@ -40,8 +40,8 @@ stdout 'WARNING'
 # including T-1, which the project already marks done.
 exec orch bench --project benchproj --providers claude,codex --max-usd 5 --yes --markdown --out $WORK/results.json
 stdout '^\| provider \| run \| outcome \|'
-stdout '^\| claude \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \|.*\| 0.02 \| reported \|.*fake \(ORCH_FAKE_PROVIDER\) \|$'
-stdout '^\| codex \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \|.*\| estimated \|'
+stdout '^\| claude \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \| 0 \|.*\| 0.02 \| reported \|.*fake \(ORCH_FAKE_PROVIDER\) \|$'
+stdout '^\| codex \| 1 \| finished \| 2/2 \| 0 \| 0 \| 2 \| 0 \| 0 \|.*\| estimated \|'
 exists $WORK/results.json
 grep '"bench_version": 1' $WORK/results.json
 grep '"provider": "codex"' $WORK/results.json

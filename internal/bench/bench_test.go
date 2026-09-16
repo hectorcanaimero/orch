@@ -3,7 +3,6 @@ package bench
 import (
 	"context"
 	"errors"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/pricing"
+	"github.com/hectorcanaimero/orch/internal/receipt"
 	"github.com/hectorcanaimero/orch/internal/router"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
@@ -130,74 +130,87 @@ func TestPrepareModelFlagAndMissingRoute(t *testing.T) {
 }
 
 type fakeDB struct {
-	tasks []state.TaskRuntime
-	spend []state.Spend
-	err   error
+	tasks  []state.TaskRuntime
+	events []state.Event
+	spend  []state.Spend
 }
 
 func (f fakeDB) Tasks(context.Context, state.TaskFilter) ([]state.TaskRuntime, error) {
-	return f.tasks, f.err
+	return f.tasks, nil
 }
 
-func (f fakeDB) AllSpend(context.Context, time.Time) ([]state.Spend, error) { return f.spend, f.err }
+func (f fakeDB) AllEvents(context.Context, int) ([]state.Event, error) { return f.events, nil }
 
-func TestCollect(t *testing.T) {
+func (f fakeDB) AllSpend(context.Context, time.Time) ([]state.Spend, error) { return f.spend, nil }
+
+func ev(kind, task, ts string) state.Event {
+	return state.Event{RunID: "r1", EventType: kind, TaskID: task, Backend: "claude", TS: ts}
+}
+
+func TestCollectReadsTheRunsReceipt(t *testing.T) {
 	prices := pricing.Load("")
 	db := fakeDB{
-		tasks: []state.TaskRuntime{
-			{ID: "A", Status: model.StatusDone, Attempts: 1},
-			{ID: "B", Status: model.StatusDone, Attempts: 3},
-			{ID: "C", Status: model.StatusBlocked, Attempts: 2},
-			{ID: "D", Status: model.StatusTodo},
+		tasks: []state.TaskRuntime{{ID: "A"}, {ID: "B"}, {ID: "C"}, {ID: "D"}},
+		events: []state.Event{
+			ev("dispatch", "A", "2026-09-16T10:00:00Z"),
+			ev("success", "A", "2026-09-16T10:01:00Z"),
+			ev("dispatch", "B", "2026-09-16T10:01:00Z"),
+			ev("fail", "B", "2026-09-16T10:02:00Z"),
+			ev("retry", "B", "2026-09-16T10:02:00Z"),
+			ev("dispatch", "B", "2026-09-16T10:02:30Z"),
+			ev("block", "B", "2026-09-16T10:03:00Z"),
+			ev("sprint_done", "", "2026-09-16T10:04:00Z"),
 		},
 		spend: []state.Spend{
-			{Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 1000, TokensOut: 100,
+			{TS: "2026-09-16T10:01:00Z", Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 1000, TokensOut: 100,
 				CacheReadTokens: 800, CostUSD: 0.5, DurationS: 30},
-			{Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 200, TokensOut: 20, DurationS: 12},
+			{TS: "2026-09-16T10:02:00Z", Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 200, TokensOut: 20, DurationS: 12},
+			// Outside the run's span: another run's row, not this one's.
+			{TS: "2026-09-15T10:00:00Z", Backend: "claude", TokensIn: 9999, CostUSD: 9, DurationS: 99},
 		},
 	}
-	got, err := Collect(context.Background(), db, prices)
+	got, err := Collect(context.Background(), db, "r1", prices)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Tasks != 4 || got.Done != 2 || got.Blocked != 1 || got.Unfinished != 1 {
+	if got.Tasks != 4 || got.Done != 1 || got.Blocked != 1 || got.Unfinished != 2 {
 		t.Errorf("task counts = %+v", got)
 	}
-	if got.Retries != 3 {
-		t.Errorf("retries = %d, want 3 (B's two extra attempts plus C's one)", got.Retries)
+	if got.Dispatches != 3 || got.FailedAttempts != 1 || got.Retries != 1 {
+		t.Errorf("dispatches %d failed %d retries %d, want 3, 1, 1", got.Dispatches, got.FailedAttempts, got.Retries)
 	}
-	if got.Dispatches != 2 || got.AgentS != 42 {
-		t.Errorf("dispatches %d agent %v, want 2 and 42", got.Dispatches, got.AgentS)
+	if got.WallS != 240 || got.AgentS != 42 {
+		t.Errorf("wall %v agent %v, want 240 and 42", got.WallS, got.AgentS)
 	}
 	// 1320 raw tokens; the 800 cache reads count at 10%: 1320 - 720.
-	if got.TokensIn+got.TokensOut != 1320 || got.WeightedTokens != 600 || got.CacheRead != 800 {
-		t.Errorf("tokens raw %d weighted %d cache %d", got.TokensIn+got.TokensOut, got.WeightedTokens, got.CacheRead)
+	if got.TokensIn+got.TokensOut != 1320 || got.WeightedTokens != 600 {
+		t.Errorf("tokens raw %d weighted %d, want 1320 and 600", got.TokensIn+got.TokensOut, got.WeightedTokens)
 	}
-	estimate := prices.ResolveCost(0, "claude-sonnet-4-6", 200, 20)
-	if math.Abs(got.CostUSD-(0.5+estimate)) > 1e-9 || got.CostSource != "reported+estimated" {
-		t.Errorf("cost %v source %s, want %v reported+estimated", got.CostUSD, got.CostSource, 0.5+estimate)
+	rc, err := receipt.Load(context.Background(), db, "r1", nil, prices)
+	if err != nil {
+		t.Fatal(err)
 	}
-	spent, err := SpentUSD(context.Background(), db, prices)
-	if err != nil || math.Abs(spent-got.CostUSD) > 1e-9 {
+	if got.CostUSD != rc.TotalCostUSD || got.EstimatedCostUSD != rc.EstimatedCostUSD || got.CostSource != "reported" {
+		t.Errorf("cost %v (est %v, %s), want the receipt's %v (est %v, reported)",
+			got.CostUSD, got.EstimatedCostUSD, got.CostSource, rc.TotalCostUSD, rc.EstimatedCostUSD)
+	}
+	spent, err := SpentUSD(context.Background(), db, "r1", prices)
+	if err != nil || spent != got.CostUSD {
 		t.Errorf("SpentUSD = %v %v, want the same total as Collect (%v)", spent, err, got.CostUSD)
 	}
 }
 
-func TestCostSource(t *testing.T) {
-	for _, c := range []struct {
-		rows                int
-		reported, estimated float64
-		want                string
-	}{
-		{0, 0, 0, "none"},
-		{2, 1, 0, "reported"},
-		{2, 0, 1, "estimated"},
-		{2, 1, 1, "reported+estimated"},
-		{2, 0, 0, "no_data"},
-	} {
-		if got := costSource(c.rows, c.reported, c.estimated); got != c.want {
-			t.Errorf("costSource(%d, %v, %v) = %s, want %s", c.rows, c.reported, c.estimated, got, c.want)
-		}
+func TestCollectARunThatNeverStarted(t *testing.T) {
+	db := fakeDB{tasks: []state.TaskRuntime{{ID: "A"}, {ID: "B"}}}
+	got, err := Collect(context.Background(), db, "r1", pricing.Load(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tasks != 2 || got.Unfinished != 2 || got.Done != 0 || got.Dispatches != 0 {
+		t.Errorf("a run with no events = %+v, want 2 tasks, all unfinished", got)
+	}
+	if spent, err := SpentUSD(context.Background(), db, "r1", pricing.Load("")); spent != 0 || err != nil {
+		t.Errorf("SpentUSD with no run = %v %v, want 0", spent, err)
 	}
 }
 
@@ -238,11 +251,12 @@ func TestWatchCapIgnoresReadErrorsAndEndsWithTheRun(t *testing.T) {
 
 func TestMarkdown(t *testing.T) {
 	r := Report{Date: "2026-09-16", OrchVersion: "v1", OS: "linux", Arch: "amd64", Project: "template:python-api",
-		Results: []Result{{Provider: "codex", Run: 1, Outcome: "finished", Tasks: 2, Done: 2, WallS: 61,
-			AgentS: 50, CostUSD: 0.1234, CostSource: "estimated", TokensIn: 100, TokensOut: 10, WeightedTokens: 110,
-			CLIVersion: "codex 0.154.0"}}}
+		Results: []Result{{Provider: "codex", Run: 1, Outcome: "finished", Tasks: 2, Done: 2, Dispatches: 3,
+			FailedAttempts: 1, Retries: 1, WallS: 61, AgentS: 50, CostUSD: 0.1234, CostSource: "estimated",
+			TokensIn: 100, TokensOut: 10, WeightedTokens: 110, CLIVersion: "codex 0.154.0"}}}
 	md := r.Markdown()
-	for _, want := range []string{"| provider | run |", "| codex | 1 | finished | 2/2 | 0 | 0 | 0 | 0 | 1m1s | 50s | 0.12 | estimated | 110 | 110 | codex 0.154.0 |"} {
+	for _, want := range []string{"| provider | run |",
+		"| codex | 1 | finished | 2/2 | 0 | 0 | 3 | 1 | 1 | 1m | 50s | 0.12 | estimated | 110 | 110 | codex 0.154.0 |"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, md)
 		}

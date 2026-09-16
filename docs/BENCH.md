@@ -50,16 +50,18 @@ write to the real database.
 ## Results
 
 JSON (`bench_version: 1`) on stdout, or a Markdown table with `--markdown`;
-`--out` also writes the JSON to a file. Per run:
+`--out` also writes the JSON to a file. The counts, times and costs are the
+run's receipt — the same numbers `orch report receipt` prints for a run — so a
+bench and a receipt of the same run cannot disagree. Per run:
 
 | field | meaning |
 |---|---|
 | `outcome` | `finished`, `stopped: max-usd`, `exit N` (the run ended with that code, e.g. 130 after a signal) or `error: …` |
-| `tasks`, `done`, `blocked`, `unfinished` | task counts in the copy when the run ended |
-| `dispatches`, `retries` | spend rows recorded, and attempts beyond each task's first |
-| `wall_s`, `agent_s` | the run's elapsed time, and the sum of every dispatch's duration |
-| `cost_usd`, `cost_source` | what the CLI reported plus the `pricing.yaml` estimate for rows it did not price; `reported`, `estimated`, `reported+estimated` or `no_data` |
-| `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_creation_tokens` | as the CLIs reported them |
+| `tasks`, `done`, `blocked`, `unfinished` | every task in the project; done and blocked by their last outcome in the run; the rest (backlog included) |
+| `dispatches`, `failed_attempts`, `retries` | dispatch, fail/timeout and retry events of the run |
+| `wall_s`, `agent_s` | from the run's first event to its end, and the sum of its dispatches' durations |
+| `cost_usd`, `estimated_cost_usd`, `cost_source` | what the CLI reported plus the `pricing.yaml` estimate for rows it did not price, the estimated part, and `reported`, `estimated` or `no_data` |
+| `tokens_in`, `tokens_out` | as the CLI reported them, cache included |
 | `weighted_tokens` | the same tokens as the budget window counts them (cache reads at 10%, cache writes at 125%) |
 | `cli_version` | the provider CLI's `--version` |
 
