@@ -254,6 +254,39 @@ func TestUnreportedDispatchCountsAsATypicalOne(t *testing.T) {
 	}
 }
 
+// Cache tokens weigh what Anthropic bills for them against a plain input
+// token: a cache read 10%, a cache write 125%. The row keeps the raw counts
+// (TokensIn includes both); the gate applies the weights when it sums.
+//
+// The numbers are the claude 2.1.269 capture's: 19 input, 19,792 cache
+// writes, 40,321 cache reads, 603 output — 60,735 raw, 29,394.1 weighted.
+func TestCacheTokensAreWeightedInTheWindow(t *testing.T) {
+	rows := []state.Spend{{
+		TS: "2026-09-02T11:00:00Z", Backend: "claude",
+		TokensIn: 60132, TokensOut: 603,
+		CacheCreationTokens: 19792, CacheReadTokens: 40321,
+	}}
+	// A 30,000 cap: the raw 60,735 would block, the weighted 29,394.1 does not.
+	g := gateAt(t, &staticSpend{rows: rows},
+		oneProvider(ProviderBudget{WindowHours: 5, TokenBudget: 30000, ThresholdPct: 100}),
+		"2026-09-02T12:00:00Z")
+
+	d, err := g.CanDispatch(context.Background(), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.OK {
+		t.Fatalf("blocked: %s — cache reads counted at full weight", d.Reason)
+	}
+	snap, err := g.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snap["claude"]; got.TokensUsed != 29394 || got.RawTokensUsed != 60735 {
+		t.Errorf("tokens_used/raw = %d/%d, want 29394/60735", got.TokensUsed, got.RawTokensUsed)
+	}
+}
+
 // staticSpend returns its rows whatever the window, which is what lets a test
 // hand the gate a row the real backend would have filtered out.
 type staticSpend struct{ rows []state.Spend }

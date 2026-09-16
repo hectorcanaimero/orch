@@ -111,7 +111,8 @@ func TestRecordFinishSuccess(t *testing.T) {
 	out := Outcome{
 		Result: providers.Result{
 			Success: true, ExitCode: 0,
-			CostUSD: 0.0475971, TokensIn: 19, TokensOut: 603,
+			CostUSD: 0.0475971, TokensIn: 60132, TokensOut: 603,
+			CacheCreationTokens: 19792, CacheReadTokens: 40321,
 		},
 		StartedAt: start,
 		Duration:  90 * time.Second,
@@ -131,8 +132,12 @@ func TestRecordFinishSuccess(t *testing.T) {
 	if s.CostUSD != 0.0475971 {
 		t.Errorf("CostUSD = %v", s.CostUSD)
 	}
-	if s.TokensIn != 19 || s.TokensOut != 603 {
-		t.Errorf("tokens = (%d,%d)", s.TokensIn, s.TokensOut)
+	// Raw counts, as the CLI reported them: the budget gate weights the
+	// cache part when it sums, so the row must keep the breakdown.
+	if s.TokensIn != 60132 || s.TokensOut != 603 ||
+		s.CacheCreationTokens != 19792 || s.CacheReadTokens != 40321 {
+		t.Errorf("tokens = (%d,%d) cache write/read = (%d,%d)",
+			s.TokensIn, s.TokensOut, s.CacheCreationTokens, s.CacheReadTokens)
 	}
 	if s.DurationS != 90 {
 		t.Errorf("DurationS = %v, want 90", s.DurationS)

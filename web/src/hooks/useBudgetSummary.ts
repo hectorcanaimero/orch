@@ -7,7 +7,10 @@ export type CostSource = "reported" | "estimated" | "no_data" | "none"
 export interface BudgetRow {
   provider: string
   token_budget: number
+  /** What the gate compares with the cap: cache reads weighted 10%, cache writes 125%. */
   tokens_used: number
+  /** The same window as the CLIs reported it, unweighted. */
+  raw_tokens_used: number
   pct: number
   threshold_pct: number
   over_threshold: boolean

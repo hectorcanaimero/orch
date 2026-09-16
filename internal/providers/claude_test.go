@@ -195,6 +195,10 @@ func TestClaude2_1_269ParseSuccess(t *testing.T) {
 	if res.TokensIn != 60132 {
 		t.Errorf("TokensIn = %d, want 60132", res.TokensIn)
 	}
+	if res.CacheCreationTokens != 19792 || res.CacheReadTokens != 40321 {
+		t.Errorf("cache write/read = %d/%d, want 19792/40321",
+			res.CacheCreationTokens, res.CacheReadTokens)
+	}
 	if res.TokensOut != 603 {
 		t.Errorf("TokensOut = %d, want 603", res.TokensOut)
 	}

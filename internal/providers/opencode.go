@@ -89,6 +89,7 @@ func (OpencodeProvider) Parse(exitCode int, output []byte) Result {
 
 	success := exitCode == 0 && !hasError && terminalOK
 	cost, tokensIn, tokensOut := sumStepFinishCosts(events)
+	cacheRead, cacheWrite := sumStepFinishCache(events)
 
 	// Issue #8: a stream with step_finish events but no usage numbers is a
 	// provider that does not report tokens, not a run that did no work.
@@ -117,15 +118,17 @@ func (OpencodeProvider) Parse(exitCode int, output []byte) Result {
 	}
 
 	return Result{
-		ExitCode:     exitCode,
-		Success:      success,
-		CostUSD:      cost,
-		TokensIn:     tokensIn,
-		TokensOut:    tokensOut,
-		Stdout:       text,
-		Text:         opencodeText(events),
-		ErrorMessage: errMsg,
-		Estimated:    estimated,
+		ExitCode:            exitCode,
+		Success:             success,
+		CostUSD:             cost,
+		TokensIn:            tokensIn,
+		TokensOut:           tokensOut,
+		CacheReadTokens:     cacheRead,
+		CacheCreationTokens: cacheWrite,
+		Stdout:              text,
+		Text:                opencodeText(events),
+		ErrorMessage:        errMsg,
+		Estimated:           estimated,
 	}
 }
 
@@ -230,6 +233,22 @@ func sumStepFinishCosts(events []event) (cost float64, tokensIn, tokensOut int) 
 		tokensOut += toInt(tokens["output"])
 	}
 	return cost, tokensIn, tokensOut
+}
+
+// sumStepFinishCache sums the cache part of the input tokens: `tokens.cache`
+// `read` and `write`, which sumStepFinishCosts already counts in tokensIn.
+func sumStepFinishCache(events []event) (read, write int) {
+	for _, ev := range events {
+		if ev.eventType() != "step_finish" {
+			continue
+		}
+		tokens, _ := asObject(stepFinishPayload(ev)["tokens"])
+		if cache, ok := asObject(tokens["cache"]); ok {
+			read += toInt(cache["read"])
+			write += toInt(cache["write"])
+		}
+	}
+	return read, write
 }
 
 func hasAnyStepFinish(events []event) bool {
