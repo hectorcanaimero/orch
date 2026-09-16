@@ -165,10 +165,13 @@ what this contract forbids, so Go does not port it. Instead, `reason` comes
 from `internal/providers.Failure` — the closed classification the dispatch
 loop already runs every failure through (`internal/providers/classify.go`)
 — mapped to one fixed sentence per class per language
-(`internal/publish/snapshot/translate.go`). A blocked task whose events
-carry no classified failure (blocked by an unmet dependency, or manually
-deferred) gets a generic sentence, never the free-text `reason` an event's
-own `extra` map may also carry.
+(`internal/publish/snapshot/translate.go`). The sentence follows the most
+recent signal in the task's events, by parsed timestamp: a failure's class
+(a class the table does not know reads as a technical problem), a pull
+request whose checks kept failing (`ci_blocked`), or a task the engine could
+not start (`block`). A task with none of those — blocked by a person or an
+agent — gets a generic sentence. Never the free-text `reason` an event's own
+`extra` map may also carry.
 
 ## `budget`
 
@@ -193,7 +196,7 @@ where it can't be bypassed by reading the JSON directly.
 | Field | Type | Notes |
 |---|---|---|
 | `text` | string | A deterministic, no-LLM progress sentence — see below. |
-| `language` | string | `"es"` or `"en"`. |
+| `language` | string | `"en"`, `"es"` or `"pt"` (config.yaml's `dashboard.language`). The client portal and the PDF render their own labels in it; a portal handed any other value shows English and warns in the console. |
 
 Ports `executive_summary` (`orchestrator/dashboard/metrics.py`), trimmed to
 the one call shape `_stakeholder_payload` actually uses: it always passes an

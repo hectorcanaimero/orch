@@ -229,8 +229,13 @@ dashboard:
   profile: operator              # operator | stakeholder | both
   token: ""                      # REQUIRED when profile is not operator
   show_spend_to_stakeholder: false
-  summary_language: es           # es | en
+  language: es                   # en | es | pt — what the client reads
 ```
+
+| Key | Default | What it does |
+|---|---|---|
+| `language` | `es` | The language of everything a client reads: the executive summary, the blocker reasons, the client portal and `orch report pdf`. `en`, `es` or `pt` (Brazilian Portuguese; `pt-BR` is accepted). Any other value is refused when the config loads — it used to become Spanish without a word. The operator dashboard does not follow it. |
+| `summary_language` | — | The older name of `language`, still read. When both are set, `language` wins. |
 
 A non-operator profile with an empty token is refused at startup: it would
 401 every request, which is a confusing way to find out. See
@@ -290,7 +295,7 @@ you — it has no daemon:
 ```
 
 The digest's wording, its `--language` override of
-`dashboard.summary_language`, and the one figure it rounds are in
+`dashboard.language`, and the one figure it rounds are in
 [`CLI.md`](CLI.md)'s `notify digest` row.
 
 ### `presentation`
