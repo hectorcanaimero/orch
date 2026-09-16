@@ -78,6 +78,8 @@ type Runner struct {
 	// CI watches the pull requests this run opened. Nil disables it, which
 	// is every project not running worktree mode with auto-PR.
 	CI *CIPoller
+	// Alerts announces budget windows near or at their cap. Nil disables it.
+	Alerts *BudgetAlerts
 	// Statuses is the database's view of each task, which this run adopts
 	// where it changed behind the run's back. Nil disables it.
 	Statuses StatusReader
@@ -95,6 +97,8 @@ type Runner struct {
 	// whether the stall since then was already reported.
 	lastProgress time.Time
 	stallWarned  bool
+	// lastBudgetAlert is when the budget alerts last read the windows.
+	lastBudgetAlert time.Time
 
 	// tick, sleep and now are the loop's clock, injectable so the tests do
 	// not spend a real minute proving a sixty-second sweep.
@@ -185,6 +189,13 @@ func (r *Runner) Run(ctx context.Context) (int, error) {
 				return 1, fmt.Errorf("refill: %w", err)
 			}
 			progressed = progressed || started > 0
+		}
+
+		// Before the capped sleep below, which skips the rest of the tick:
+		// the moment every provider is capped is the one worth announcing.
+		if r.Alerts != nil && (r.lastBudgetAlert.IsZero() || r.now().Sub(r.lastBudgetAlert) >= budgetAlertInterval) {
+			r.lastBudgetAlert = r.now()
+			r.Alerts.Check(ctx, r.lastBudgetAlert, s.budgetWaiting())
 		}
 
 		// Every provider capped and nothing running: sleep until the window

@@ -98,6 +98,9 @@ var goOnlyEventTypes = map[string]bool{
 	"ci_no_checks": true,
 	// A PR merged outside orch while its CI was watched (#255).
 	"pr_merged": true,
+	// A budget alert sent to Slack/Discord, recorded so a restarted run does
+	// not send it again.
+	"budget_alert": true,
 }
 
 // The four names the plan's FR-STATE-7 listed are not event types.

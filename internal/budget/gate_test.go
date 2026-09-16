@@ -252,6 +252,10 @@ func TestUnreportedDispatchCountsAsATypicalOne(t *testing.T) {
 	if snap["claude"].TokensUsed != 805 {
 		t.Errorf("tokens_used = %d, want 805", snap["claude"].TokensUsed)
 	}
+	// The spend alerts say "part of it estimated" from this.
+	if !snap["claude"].Estimated {
+		t.Error("a window with estimated rows is not marked Estimated")
+	}
 }
 
 // Cache tokens weigh what Anthropic bills for them against a plain input

@@ -26,6 +26,10 @@ type ProviderSnapshot struct {
 	// window. See the note in Snapshot about why those are not the same
 	// condition as CanDispatch's.
 	ResetAt *string `json:"reset_at"`
+	// Estimated is whether any row in the window is orch's guess rather than
+	// the CLI's report. Not serialised: the dashboard labels spend from
+	// /api/metrics, and this JSON shape is Python's. The spend alerts read it.
+	Estimated bool `json:"-"`
 }
 
 // resetLayout is Python's `strftime("%Y-%m-%dT%H:%M:%SZ")`: UTC, second
@@ -87,6 +91,7 @@ func (g *Gate) Snapshot(ctx context.Context) (map[string]ProviderSnapshot, error
 			WindowHours:   pb.WindowHours,
 			Capped:        capped,
 			ResetAt:       resetAt,
+			Estimated:     w.estimated,
 		}
 	}
 	return out, nil
