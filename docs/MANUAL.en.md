@@ -300,6 +300,10 @@ Global Flags:
 # Everything, for you
 orch dashboard
 
+# A synthetic project with realistic history, to look around first
+# (nothing is dispatched; the data is deleted when you stop it)
+orch dashboard --demo
+
 # A read-only URL to hand a client, tunneled out so it's reachable
 # outside your machine (provider/command configured under
 # dashboard.tunnel in config.yaml — --tunnel just starts/stops it)

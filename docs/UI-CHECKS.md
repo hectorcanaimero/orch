@@ -15,10 +15,26 @@ display on the machines this runs on — and every recipe here has been run.
 
 ---
 
+## The data to look at: `--demo`
+
+A fixture with five tasks shows empty charts and empty columns, which is not
+what a change looks like on a real project. `orch dashboard --demo` serves a
+synthetic one — 30 tasks, three agents running, blocked work, pull requests,
+spend per provider, a budget preset — built in a temp directory and deleted on
+exit. Use it for screenshots unless the change is about a specific project's
+state:
+
+```bash
+orch dashboard --demo --port 7420 &
+```
+
 ## The quick check: a page that is not logged in
 
 ```bash
-CHROME=~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+# Wherever Playwright put it: a full chromium-*/chrome-linux64/chrome, or
+# only chromium_headless_shell-*/chrome-linux/headless_shell. Either works.
+CHROME=$(ls ~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome \
+  ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell 2>/dev/null | head -1)
 
 "$CHROME" --headless=new --no-sandbox --disable-gpu \
   --user-data-dir=/tmp/orch-ui-check \
@@ -61,7 +77,7 @@ until curl -sf -o /dev/null http://127.0.0.1:9333/json/version; do sleep 0.3; do
 python3 scripts/ui-dom.py 9333 "http://127.0.0.1:7420/" 8 > dom.html 2> console.txt
 
 # 4. Always.
-pkill -f chrome-linux64/chrome
+pkill -f 'chrome-linux64/chrome|chrome-linux/headless_shell'
 ```
 
 ### stderr is the half that matters
@@ -98,13 +114,13 @@ rg -o '<title>[^<]*</title>' dom.html     # "127.0.0.1" means it never loaded
 
 That is why step 1 waits on `/api/whoami` instead of sleeping.
 
-**`pgrep` matches its own shell.** `pgrep -f chrome-linux64/chrome` counts the
+**`pgrep` matches its own shell.** `pgrep -f chrome-linux64/chrome` (or `headless_shell`) counts the
 command you just typed, so a clean machine reports one survivor. Filter it —
 `ps aux | rg … | rg -v 'rg |bash -c'` — before concluding a browser is still
 running.
 
 **Close the browser.** Headless Chrome does not exit with the shell that
-started it. `pkill -f chrome-linux64/chrome`, then verify with the caveat
+started it. `pkill -f 'chrome-linux64/chrome|chrome-linux/headless_shell'`, then verify with the caveat
 above.
 
 **One browser, many pages.** Step 2 is the slow part; `ui-dom.py` takes the

@@ -300,6 +300,10 @@ Flags:
 # Tudo, para você
 orch dashboard
 
+# Um projeto sintético com histórico realista, para explorar primeiro
+# (nada é despachado; os dados são apagados ao parar)
+orch dashboard --demo
+
 # Uma URL somente leitura para passar a um cliente, com túnel para ficar
 # acessível fora da sua máquina (o provedor/comando é configurado em
 # dashboard.tunnel no config.yaml — --tunnel só liga/desliga)
