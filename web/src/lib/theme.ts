@@ -8,6 +8,13 @@ const STORAGE_KEY = "orch_theme"
 const MEDIA = "(prefers-color-scheme: dark)"
 const listeners = new Set<() => void>()
 
+const ORDER: ThemeChoice[] = ["dark", "light", "system"]
+
+/** The toggle's order: dark → light → system → dark. */
+export function nextTheme(choice: ThemeChoice): ThemeChoice {
+  return ORDER[(ORDER.indexOf(choice) + 1) % ORDER.length]
+}
+
 function readChoice(): ThemeChoice {
   try {
     const v = window.localStorage.getItem(STORAGE_KEY)

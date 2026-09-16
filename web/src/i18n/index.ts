@@ -11,7 +11,9 @@ const plurals = new Intl.PluralRules(locale)
 
 /** Look a message up; `{name}` placeholders take `vars`, plural messages pick by `vars.count`. */
 export function t(key: MessageKey, vars?: Vars): string {
-  const entry: string | Plural = en[key]
+  const entry: string | Plural | undefined = en[key]
+  // A key missing from the dictionary shows itself rather than crashing the page.
+  if (entry === undefined) return key
   let text: string =
     typeof entry === "string"
       ? entry

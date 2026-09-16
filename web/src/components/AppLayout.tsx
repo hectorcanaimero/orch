@@ -9,19 +9,18 @@ import { isPortfolioNavVisible, usePortfolio } from "@/hooks/usePortfolio"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
 import { useWhoami } from "@/hooks/useWhoami"
 import { isPathAllowed, visibleNavItems, type NavItem } from "@/lib/nav"
-import { useTheme, type ThemeChoice } from "@/lib/theme"
+import { nextTheme, useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
 interface AppLayoutProps {
   children: ReactNode
 }
 
-const THEME_ORDER: ThemeChoice[] = ["dark", "light", "system"]
 const THEME_ICON = { dark: Moon, light: Sun, system: Monitor } as const
 
 function ThemeToggle({ compact }: { compact: boolean }) {
   const [choice, setChoice] = useTheme()
-  const next = THEME_ORDER[(THEME_ORDER.indexOf(choice) + 1) % THEME_ORDER.length]
+  const next = nextTheme(choice)
   const Icon = THEME_ICON[choice]
   const label = t("theme.current", { theme: t(`theme.${choice}` as const) })
   const button = (
