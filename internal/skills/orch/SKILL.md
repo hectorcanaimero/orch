@@ -188,7 +188,7 @@ history forward once, not as a command you run repeatedly.
 ```bash
 orch dashboard                              # local read-only server
 orch dashboard --profile stakeholder        # curated client view
-orch dashboard --tunnel                     # publish a shareable URL
+orch dashboard --tunnel                     # Cloudflare quick tunnel; prints token links
 orch notify test                            # verify Slack/Discord webhook
 orch notify digest                          # print stakeholder digest (cron this)
 ```

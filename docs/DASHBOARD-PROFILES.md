@@ -330,194 +330,135 @@ renaming one is the only fix and only you can make it.
 
 ---
 
-## Publishing via ephemeral tunnel (Pinggy via autossh)
+## Publishing via Cloudflare quick tunnel (built in)
 
-Sprint E-5 ships a built-in tunnel manager for the "throw a quick link at
-a stakeholder" use case. It spawns `autossh` against Pinggy's free tier
-under the hood, so you get an ephemeral `https://<random>.a.pinggy.link`
-URL without registering a domain, editing DNS, or installing
-`cloudflared`.
+The built-in tunnel is for the "send a link now" case: a Cloudflare **quick
+tunnel**, which gives this dashboard a random
+`https://<words>.trycloudflare.com` address with no Cloudflare account, no
+login and no DNS record. It is the only provider — autossh (Pinggy) and bore
+were removed.
 
-### When to prefer this over Cloudflare Tunnel
+### When to prefer this over a named Cloudflare Tunnel
 
-| You want…                                              | Use               |
-|--------------------------------------------------------|-------------------|
-| A stable URL your stakeholder bookmarks for weeks      | Cloudflare Tunnel |
-| A share link for a 30-min live-review call             | Ephemeral tunnel  |
-| Custom domain, TLS handled by CF, systemd-managed      | Cloudflare Tunnel |
-| No new DNS record, no CF account, just an SSH tunnel   | Ephemeral tunnel  |
-
-The two are not mutually exclusive — Cloudflare Tunnel remains the
-production-grade option, the ephemeral tunnel is the low-friction one.
+| Need                                                   | Use                  |
+|--------------------------------------------------------|----------------------|
+| A stable URL your stakeholder bookmarks for weeks      | Named Cloudflare Tunnel (below) |
+| A share link for a 30-min live-review call             | Quick tunnel         |
+| Custom domain, TLS handled by CF, systemd-managed      | Named Cloudflare Tunnel |
+| No account, no DNS, one click                          | Quick tunnel         |
 
 ### Prerequisites
 
-- `autossh` installed on the host running the dashboard.
-  - macOS: `brew install autossh`
-  - Debian/Ubuntu: `sudo apt install autossh`
-- Outbound TCP/443 to `a.pinggy.io` from the dashboard host.
-- Dashboard running in `operator` (or `both`) profile — the ephemeral
-  tunnel is an operator-only feature.
+- `cloudflared` on PATH. The Tunnel page lists the steps for your system
+  (Homebrew, apt, dnf, or the single binary from GitHub), and
+  `orch dashboard --tunnel` prints them when the binary is missing.
+- Outbound HTTPS from the dashboard host.
+- The `operator` profile: the tunnel is started by the person at the machine.
+- No `config.yml` / `config.yaml` in `~/.cloudflared/` (or
+  `/etc/cloudflared/`): Cloudflare does not start quick tunnels while one
+  exists. `orch doctor` and the Tunnel page point it out.
 
-No new Python dependencies are pulled in; the manager is stdlib-only.
-
-### Config example
-
-Add a `tunnel:` section to `dashboard.yaml`. Bundled default ships with
-`enabled: false`, so upgrading orch is a no-op — you opt in explicitly.
+### Enabling it
 
 ```yaml
-# dashboard.yaml — tunnel manager (Sprint E-5).
+# .orchestrator/config.yaml
 tunnel:
   enabled: true
-  provider: autossh          # v1 allowlist: only "autossh"
-  command: autossh           # MUST match the provider's pinned binary
-  args:
-    - "-M"
-    - "0"
-    - "-o"
-    - "StrictHostKeyChecking=no"
-    - "-o"
-    - "ServerAliveInterval=30"
-    - "-o"
-    - "ExitOnForwardFailure=yes"
-    - "-p"
-    - "443"
-    - "-R"
-    - "0:localhost:7420"
-    - "a.pinggy.io"
-  auto_start: false          # true = spawn on dashboard boot (see below)
-  startup_probe_timeout_s: 3 # 1..30
-  url_parse_timeout_s: 30    # 5..300
 ```
 
-If `args:` is omitted the provider default (identical to the block above)
-is used — so the minimum viable config is `tunnel: { enabled: true }`.
+That is the whole configuration. A config that still sets `provider`,
+`command`, `args` or `url_regex` is refused at load, with the fix.
 
-### Starting the tunnel from the SPA
+### Starting it
 
-Navigate to `/tunnel` in the dashboard (there's a dedicated route in the
-sidebar). The panel renders three states depending on capabilities:
+**From the dashboard** — open `/tunnel` at `http://127.0.0.1:7420`. The page
+shows one of:
 
-- **Not available** — `tunnel.enabled: false`, or the request did not
-  reach the dashboard via loopback. The panel shows a short explainer
-  and stays out of the way.
-- **`autossh` missing** — feature enabled but the binary isn't on PATH.
-  The panel points at the install line for your OS.
-- **Ready** — Start / Stop buttons, live status, a URL with a copy
-  button once autossh reports it, and a scrolling log tail.
+- **The tunnel is off** — `tunnel.enabled` is not set; it shows the two lines
+  to add.
+- **Install cloudflared** — step-by-step commands for this machine, each with
+  a copy button, and **Check again** (no restart needed).
+- **Sharing** — **Start the tunnel** / **Stop sharing**, the state and uptime,
+  and once Cloudflare assigns the address, two links, each with its own token:
+  the **client portal** (`/stakeholder/`, what to send a client) and the
+  **full dashboard** (for yourself or your team).
 
-Click **Start**. The manager spawns `autossh`, tails stdout, extracts the
-first Pinggy URL it sees, and surfaces it in the panel within
-`url_parse_timeout_s` seconds. Click the URL to copy it.
+**From the CLI** — `orch dashboard --tunnel` starts it once the dashboard is
+listening and prints both links; Ctrl+C stops both. A tunnel started from the
+page also stops when the dashboard exits.
 
-### Starting the tunnel from the CLI
+### Security model
 
-```bash
-# Start.
-curl -X POST http://127.0.0.1:7420/api/tunnel/start \
-  -H "Authorization: Bearer $ORCH_DASHBOARD_TOKEN"
+This is the load-bearing part.
 
-# Status.
-curl -s http://127.0.0.1:7420/api/tunnel/status \
-  -H "Authorization: Bearer $ORCH_DASHBOARD_TOKEN" | jq
+**Every request through the tunnel needs a token.** cloudflared connects to
+the dashboard from `127.0.0.1`, so the internet arrives looking local by
+address. A request counts as local only when all three hold: a loopback
+peer, a loopback `Host`, and none of the headers Cloudflare or a proxy adds
+(`Cf-Connecting-Ip`, `Cf-Ray`, `X-Forwarded-For`, `X-Forwarded-Host`,
+`Forwarded`). While the tunnel is up, any other request to a data route —
+the API, the live stream, the portal's `data.json` — answers **401** unless
+it carries a token, and the token decides how far it gets:
 
-# Stop.
-curl -X POST http://127.0.0.1:7420/api/tunnel/stop \
-  -H "Authorization: Bearer $ORCH_DASHBOARD_TOKEN"
-```
+| Token | Reaches |
+|---|---|
+| Full-dashboard link token (minted on each start) | Everything — for you or your team |
+| Client-portal link token (minted alongside it) | The stakeholder allow-list only; anything else is **403** |
+| The project's stakeholder token (`dashboard.token`, `--token`, `orch dashboard token rotate`) | The stakeholder allow-list only |
 
-For unattended boots, set `tunnel.auto_start: true` in `dashboard.yaml`.
-The dashboard will bind uvicorn, serve, then self-probe `GET /` against
-`http://127.0.0.1:<port>/` with `startup_probe_timeout_s`. On probe
-success it invokes the same code path as `POST /api/tunnel/start`. On
-probe failure it logs `auto_start_skipped: self_probe_failed` and leaves
-state `idle` — the dashboard itself never fails to boot because of the
-tunnel.
+So a client handed the portal link cannot turn it into your view by editing
+the path. The static page shell is served either way; it holds no data.
 
-### Host-gate safety guardrail
+Both link tokens change on every start, so **stopping the tunnel revokes the
+links**. The operator profile, which asks nothing of the person at the
+keyboard, is never what a stranger with the URL gets.
 
-This is the load-bearing security property of the tunnel manager. Read
-this section even if you skim the rest.
+**Control is local-only.** `/api/tunnel/status`, `/start` and `/stop` pass
+three gates in a fixed order, each failure revealing less than the next:
 
-Every request to `/api/tunnel/start`, `/stop`, `/logs`, `/status`
-passes three gates in a fixed order — short-circuiting on the first
-failure:
+| Order | Gate                                             | Failure          |
+|-------|--------------------------------------------------|------------------|
+| 1     | `tunnel.enabled` is `true`                       | `404 Not Found`  |
+| 2     | Profile is `operator`                            | `403 Forbidden`  |
+| 3     | The request is local (the three conditions above) | `403 Forbidden`  |
 
-| Order | Gate     | Failure response |
-|-------|----------|------------------|
-| 1     | Config: `tunnel.enabled` is `true`                        | `404 Not Found`  |
-| 2     | Profile: caller presents a valid `operator` token         | `403 Forbidden`  |
-| 3     | Host: request `Host` header host is `127.0.0.1`, `localhost`, or `[::1]` (port ignored) | `403 Forbidden` |
+`/start` and `/stop` also refuse a browser `Origin` that is not loopback, so
+a page on another site cannot press them through the operator's browser.
+Start answers **409** when cloudflared is missing or a config file blocks
+quick tunnels, and when a tunnel is already running.
 
-Gate 3 is the interesting one. A request that reaches the dashboard
-**via the tunnel domain itself** (e.g. `Host: xyz.a.pinggy.link`) fails
-gate 3 and returns `403` — even with a valid operator token. Two
-consequences that matter:
+`/api/tunnel/capabilities` answers everyone with 200 (a stakeholder SPA reads
+it before it has a token). Only a caller who passes all three gates gets the
+details: the binary's path and version, the detected system, the install
+guides and any blocking config file.
 
-- **You cannot cut the branch you are sitting on.** A stakeholder who
-  guesses the operator token and hits `/api/tunnel/stop` over the
-  pinggy URL is stopped at the door.
-- **A leaked token cannot be used from the tunnel domain to disable the
-  tunnel.** All control lives on loopback.
+A reverse proxy in front of the dashboard that rewrites `Host` or adds
+forwarding headers makes every request non-local: tunnel control then refuses
+even the operator. Use `http://127.0.0.1:7420` directly to control the tunnel.
 
-`X-Forwarded-For` and `X-Forwarded-Host` are **explicitly ignored** by
-gate 3 — you cannot spoof loopback via a proxy header. This is by design
-(TUN-3, resolved decision 2).
+### Limits
 
-The `/api/tunnel/capabilities` probe is intentionally auth-free and
-always returns `200`. Its body reports which gate the caller failed:
-
-```json
-{
-  "enabled": true,
-  "provider": "autossh",
-  "can_control": false,
-  "reason": "host_gate"
-}
-```
-
-`reason` is one of `ok` / `config_disabled` / `profile_gate` /
-`host_gate` / `autossh_missing`. The SPA reads this and renders the
-right empty state (e.g. "Access from the local dashboard to manage the
-tunnel") instead of the Start button when `can_control` is `false`.
-
-**Reverse-proxy caveat (unsupported in v1).** If you front the dashboard
-with nginx / Caddy / Traefik and let it rewrite `Host` to your public
-hostname, gate 3 will reject even loopback callers because the proxy
-overwrote the header. There is no trusted-proxy allowlist and no XFF
-consumption in v1. Use loopback direct (`http://127.0.0.1:7420`) for
-tunnel control, and keep the reverse proxy in front of the read-only
-stakeholder surface only.
+- The address changes on every start; send the new link.
+- Cloudflare caps a quick tunnel at 200 concurrent requests and offers it
+  for testing, with no uptime guarantee.
+- Quick tunnels do not carry server-sent events: a dashboard opened through
+  one refreshes every 15 seconds instead of live.
 
 ### `orch doctor` integration
 
-`orch doctor` reports two new checks:
-
-| Check          | PASS                                                       | WARN                                           | FAIL                                        |
-|----------------|------------------------------------------------------------|------------------------------------------------|---------------------------------------------|
-| `tunnel.config` | `dashboard.yaml → tunnel` absent OR validates per schema  | (n/a)                                          | any validation error (message names the key) |
-| `tunnel.binary` | provider binary on PATH, OR `tunnel.enabled: false`, OR section absent | `enabled: false` AND binary missing (prep-ahead hint) | `enabled: true` AND binary missing         |
-
-Run `orch doctor` before flipping `enabled: true` in a fresh
-environment. `tunnel.config` failures point at the offending YAML key
-verbatim; `tunnel.binary` FAIL includes the install command for your OS.
+`tunnel.cloudflared` is **skip** while `tunnel.enabled` is false, **warn**
+when it is true and cloudflared is missing (the JSON report's `remediation`
+holds the install steps) or a config file blocks quick tunnels, and **ok**
+with the binary's path and version otherwise.
 
 ### Rollback
 
-Set `tunnel.enabled: false` (or delete the section). On the next
-dashboard restart:
-
-- `/api/tunnel/*` routes return `404` (config gate closed).
-- `/tunnel` in the SPA renders the "not available" empty state.
-- The tunnel manager module is not instantiated, no subprocess ever
-  runs, no lock or PID file is created.
-
-This is the intended rollback path — no code changes, no reinstall.
+Set `tunnel.enabled: false`. On the next dashboard restart the tunnel routes
+answer 404, the page shows how to enable it, and nothing is spawned.
 
 ---
 
-## Publishing via Cloudflare Tunnel
+## Publishing via a named Cloudflare Tunnel
 
 Cloudflare Tunnel gives you a stable public URL that terminates TLS +
 proxies to your local orch process, with no port forwarding or exposed

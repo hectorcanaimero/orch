@@ -93,4 +93,4 @@ Destinations:
 - Client (stakeholder) browser → GET https://<worker>/v/<view_token>/ → Worker reads manifest + blobs → page
   (Referrer-Policy no-referrer, noindex). Rotating the view token (orch cloud rotate) kills the old link.
 - `--watch`: re-publishes when the snapshot digest changes (generated_at excluded).
-- Alternative live view: `orch dashboard --profile stakeholder --tunnel` (autossh/Pinggy or bore).
+- Alternative live view: `orch dashboard --tunnel` (Cloudflare quick tunnel; every request through it needs the token in the printed link).

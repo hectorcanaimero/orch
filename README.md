@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/i
 cd my-project
 orch init
 orch run
-orch dashboard --profile stakeholder --tunnel
+orch dashboard --tunnel   # with `tunnel: enabled: true`: prints a link for your client
 ```
 
 `orch` is a single Go binary — no Python, no venv, no `pip`. See
@@ -129,8 +129,9 @@ vcs:
 dashboard:
   kanban:
     refresh_interval_s: 10
-  tunnel:
-    enabled: false        # flip to share a URL with your client
+
+tunnel:
+  enabled: false          # flip to share a link with your client (Cloudflare quick tunnel)
 
 github:
   test_command: pytest    # CI workflow orch generates for you
@@ -146,10 +147,12 @@ Optional overrides drop in as their own files at the project root: `budgets.yaml
 
 ## What your client sees
 
-`orch dashboard --profile stakeholder --tunnel` publishes a read-only URL,
-tunneled out so it's reachable outside your machine (provider/command
-configured under `dashboard.tunnel` in `config.yaml`). Send it once; the
-numbers update themselves. The client gets:
+With `tunnel: enabled: true` in `config.yaml`, `orch dashboard --tunnel` (or
+the **Start** button on the dashboard's Tunnel page) opens a Cloudflare quick
+tunnel — no Cloudflare account needed, just `cloudflared`, whose install steps
+the page shows — and gives you a client-portal link with a token in it. Send
+it; the numbers update themselves, and stopping the tunnel revokes the link.
+The client gets:
 
 ![The stakeholder view — executive summary, phase timeline, ETA and blockers](docs/media/stakeholder.png)
 

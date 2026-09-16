@@ -121,7 +121,7 @@ internal/
   doctor/            — `orch doctor` checks
   explain/           — `orch explain` / orch_context
   notify/            — Slack/Discord webhooks, digest
-  tunnel/            — dashboard tunnel supervisor: autossh (Pinggy) and bore
+  tunnel/            — dashboard tunnel supervisor: Cloudflare quick tunnel (cloudflared) + its install guide
   telemetry/         — opt-in anonymous telemetry (off by default)
   update/            — new-release notice, critical-release gate for run/dashboard, and `orch upgrade` (docs/RELEASING.md)
 web/                 — SPA, embedded by internal/dashboard and internal/publish
