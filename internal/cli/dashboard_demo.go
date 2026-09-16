@@ -37,7 +37,7 @@ func prepareDemo(cmd *cobra.Command, flags *projectFlags, withTunnel bool, portf
 	paths, err := demo.Build(cmd.Context(), dir, time.Now())
 	if err != nil {
 		cleanup()
-		return nil, err
+		return nil, fmt.Errorf("build the demo project: %w", err)
 	}
 	flags.root, flags.id = paths.Root, paths.ID
 

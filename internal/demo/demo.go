@@ -124,12 +124,12 @@ func Build(ctx context.Context, root string, now time.Time) (config.Paths, error
 		return config.Paths{}, fmt.Errorf("scaffold the demo project: %w", err)
 	}
 	if err := writeFiles(root, now); err != nil {
-		return config.Paths{}, err
+		return config.Paths{}, fmt.Errorf("write the demo project files: %w", err)
 	}
 
 	paths, err := config.ResolvePaths(root, Name, "")
 	if err != nil {
-		return config.Paths{}, err
+		return config.Paths{}, fmt.Errorf("resolve the demo project paths: %w", err)
 	}
 	res, err := config.Load(paths.ConfigYAML, paths.Root)
 	if err != nil {
@@ -137,7 +137,7 @@ func Build(ctx context.Context, root string, now time.Time) (config.Paths, error
 	}
 	db, _, err := state.Open(ctx, paths.SQLitePath(res.Config))
 	if err != nil {
-		return config.Paths{}, err
+		return config.Paths{}, fmt.Errorf("open the demo database: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -184,33 +184,42 @@ func writeFiles(root string, now time.Time) error {
 		return fmt.Errorf("route the demo models: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, ".orchestrator", "budgets.yaml"), []byte(budgetsYAML), 0o600); err != nil {
+	// Every write below goes through an os.Root, so the fixed relative names
+	// cannot resolve outside the demo directory.
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open the demo directory %s: %w", root, err)
+	}
+	defer func() { _ = dir.Close() }()
+
+	if err := dir.WriteFile(".orchestrator/budgets.yaml", []byte(budgetsYAML), 0o600); err != nil {
 		return fmt.Errorf("write the demo budgets.yaml: %w", err)
 	}
 
 	// The demo's content is English; the scaffolded default summary language
 	// is Spanish.
-	cfgPath := filepath.Join(root, ".orchestrator", "config.yaml")
-	// #nosec G304 -- cfgPath is the config.yaml scaffold.Run just wrote under root
-	body, err := os.ReadFile(cfgPath)
+	body, err := dir.ReadFile(".orchestrator/config.yaml")
 	if err != nil {
-		return err
+		return fmt.Errorf("read the scaffolded config.yaml: %w", err)
 	}
 	patched := strings.Replace(string(body), "summary_language: es", "summary_language: en", 1)
-	return os.WriteFile(cfgPath, []byte(patched), 0o600)
+	if err := dir.WriteFile(".orchestrator/config.yaml", []byte(patched), 0o600); err != nil {
+		return fmt.Errorf("set the demo summary language: %w", err)
+	}
+	return nil
 }
 
 // seed replays a plausible ten days of work through the backend's own writes.
 func seed(ctx context.Context, b state.Backend, tasksJSON string, now time.Time) error {
 	tf, err := model.LoadTasksFile(tasksJSON)
 	if err != nil {
-		return err
+		return fmt.Errorf("read the demo tasks.json: %w", err)
 	}
 	if err := b.Bootstrap(ctx, tf.Tasks); err != nil {
-		return err
+		return fmt.Errorf("bootstrap the demo tasks: %w", err)
 	}
 	if err := b.StartRun(ctx, RunID, "auto"); err != nil {
-		return err
+		return fmt.Errorf("start the demo run: %w", err)
 	}
 	s := seeder{ctx: ctx, b: b}
 
