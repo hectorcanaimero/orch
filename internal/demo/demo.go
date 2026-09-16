@@ -29,8 +29,13 @@ import (
 // Name is the demo project's name, also its id.
 const Name = "acme-billing-api"
 
-// RunID is the one run the demo's history belongs to.
-const RunID = "demo-run"
+// RunID is the live run: the agents working now, the task that ran out of
+// retries. HistoryRunID is the finished run before it, which did the work
+// that is already done, so the Now page has a receipt to show.
+const (
+	RunID        = "demo-run"
+	HistoryRunID = "demo-history"
+)
 
 const (
 	sonnet   = "claude/claude-sonnet-4-6"
@@ -218,10 +223,12 @@ func seed(ctx context.Context, b state.Backend, tasksJSON string, now time.Time)
 	if err := b.Bootstrap(ctx, tf.Tasks); err != nil {
 		return fmt.Errorf("bootstrap the demo tasks: %w", err)
 	}
-	if err := b.StartRun(ctx, RunID, "auto"); err != nil {
-		return fmt.Errorf("start the demo run: %w", err)
+	for _, id := range []string{HistoryRunID, RunID} {
+		if err := b.StartRun(ctx, id, "auto"); err != nil {
+			return fmt.Errorf("start the demo run %s: %w", id, err)
+		}
 	}
-	s := seeder{ctx: ctx, b: b}
+	s := seeder{ctx: ctx, b: b, run: HistoryRunID}
 
 	var done []spec
 	for _, t := range tasks {
@@ -232,6 +239,7 @@ func seed(ctx context.Context, b state.Backend, tasksJSON string, now time.Time)
 	// Finishes spread over the last ten days, oldest first, so the 7-day
 	// velocity and the ETA have something to work with.
 	span := 10 * 24 * time.Hour
+	var last time.Time
 	for i, t := range done {
 		end := now.Add(-span + time.Duration(i)*span/time.Duration(len(done))).Add(time.Hour)
 		dur := time.Duration(6+int(t.est*4)) * time.Minute
@@ -248,7 +256,14 @@ func seed(ctx context.Context, b state.Backend, tasksJSON string, now time.Time)
 			s.event("ci_success", t, end.Add(4*time.Minute), map[string]any{"pr_url": url})
 			s.event("pr_merged", t, end.Add(9*time.Minute), map[string]any{"pr_url": url})
 		}
+		last = end
 	}
+	// The history run ends the way `orch run` ends one: with sprint_done.
+	s.err(b.AppendEvent(ctx, HistoryRunID, state.Event{
+		RunID: HistoryRunID, EventType: "sprint_done", TS: stamp(last.Add(10 * time.Minute)),
+		Extra: map[string]any{"total": len(tasks), "done": len(done), "mode": "auto"},
+	}))
+	s.run = RunID
 
 	for _, t := range tasks {
 		switch t.fate {
@@ -308,8 +323,10 @@ func seed(ctx context.Context, b state.Backend, tasksJSON string, now time.Time)
 
 // seeder keeps the first error so seed reads as the story it tells.
 type seeder struct {
-	ctx   context.Context
-	b     state.Backend
+	ctx context.Context
+	b   state.Backend
+	// run is the run the next events belong to.
+	run   string
 	first error
 }
 
@@ -324,8 +341,8 @@ func (s *seeder) move(id string, to model.Status, author, body string, at time.T
 }
 
 func (s *seeder) event(kind string, t spec, at time.Time, extra map[string]any) {
-	s.err(s.b.AppendEvent(s.ctx, RunID, state.Event{
-		RunID: RunID, EventType: kind, TaskID: t.id, Backend: backend(t.model), TS: stamp(at), Extra: extra,
+	s.err(s.b.AppendEvent(s.ctx, s.run, state.Event{
+		RunID: s.run, EventType: kind, TaskID: t.id, Backend: backend(t.model), TS: stamp(at), Extra: extra,
 	}))
 }
 
