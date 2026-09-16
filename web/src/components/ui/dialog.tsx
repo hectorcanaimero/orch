@@ -80,13 +80,13 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
         aria-modal="true"
       >
         <div
-          className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in-0"
+          className="absolute inset-0 bg-black/60 animate-in fade-in-0"
           onClick={() => onOpenChange(false)}
         />
         <div
           ref={ref}
           className={cn(
-            "relative z-10 grid w-full max-w-lg gap-4 rounded-lg border bg-background p-6 shadow-lg animate-in fade-in-0 zoom-in-95",
+            "relative z-10 grid w-full max-w-lg gap-4 rounded-xl border bg-card p-6 shadow-[0_24px_48px_-16px_rgb(0_0_0/0.5)] animate-in fade-in-0 zoom-in-95",
             "max-h-[calc(100vh-4rem)] overflow-y-auto overscroll-contain",
             className,
           )}

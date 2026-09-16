@@ -13,6 +13,9 @@ import {
   type TaskFiltersBarValue,
 } from "@/components/TaskFiltersBar"
 import { TaskDetailModal } from "@/components/TaskDetailModal"
+import { EmptyTasks } from "@/components/EmptyTasks"
+import { t } from "@/i18n"
+import { criticalPathMatters, STATUS } from "@/lib/status"
 import { useEventStream } from "@/hooks/useEventStream"
 import { useFullscreen } from "@/hooks/useFullscreen"
 import { useTasks } from "@/hooks/useTasks"
@@ -27,13 +30,7 @@ const STATUS_TO_COLUMN: Record<string, KanbanStatus> = {
   done: "done",
 }
 
-const COLUMNS: { title: string; status: KanbanStatus }[] = [
-  { title: "Backlog", status: "backlog" },
-  { title: "Todo", status: "todo" },
-  { title: "In Progress", status: "in_progress" },
-  { title: "Blocked", status: "blocked" },
-  { title: "Done", status: "done" },
-]
+const COLUMNS: KanbanStatus[] = ["backlog", "todo", "in_progress", "blocked", "done"]
 
 function groupTasks(tasks: Task[]): Record<KanbanStatus, Task[]> {
   const buckets: Record<KanbanStatus, Task[]> = {
@@ -118,11 +115,11 @@ export function KanbanPage() {
     <div className="flex flex-col gap-4 xl:h-[calc(100vh-4rem)]">
       <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Kanban</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em]">{t("kanban.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground tabular-nums">
             {data
-              ? `${data.summary.done}/${data.summary.total} tasks done`
-              : "Loading tasks…"}
+              ? t("kanban.done_of", { done: data.summary.done, total: data.summary.total })
+              : t("tasks.loading")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -132,8 +129,8 @@ export function KanbanPage() {
             variant="outline"
             size="icon"
             onClick={toggleFullscreen}
-            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            title={isFullscreen ? t("common.exit_fullscreen") : t("common.fullscreen")}
+            aria-label={isFullscreen ? t("common.exit_fullscreen") : t("common.fullscreen")}
           >
             {isFullscreen ? (
               <Minimize2 className="h-4 w-4" />
@@ -162,24 +159,11 @@ export function KanbanPage() {
       ) : isError ? (
         <Alert variant="destructive" className="flex-shrink-0">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Failed to load tasks</AlertTitle>
+          <AlertTitle>{t("tasks.load_failed")}</AlertTitle>
           <AlertDescription>{describeLoadError(error)}</AlertDescription>
         </Alert>
       ) : !data || data.tasks.length === 0 ? (
-        <div className="flex-shrink-0 rounded-lg border border-dashed bg-white p-10 text-center">
-          <h2 className="text-base font-medium">No tasks yet</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Run{" "}
-            <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs">
-              orch atomize
-            </code>{" "}
-            or{" "}
-            <code className="rounded bg-zinc-100 px-1 py-0.5 text-xs">
-              orch init
-            </code>{" "}
-            to seed your project.
-          </p>
-        </div>
+        <EmptyTasks />
       ) : (
         // `grid-rows-1` forces the single row to `1fr`, so columns get a
         // bounded height and their inner `overflow-y-auto` finally has
@@ -199,12 +183,13 @@ export function KanbanPage() {
             isFullscreen && "p-4",
           )}
         >
-          {COLUMNS.map((col) => (
+          {COLUMNS.map((status) => (
             <KanbanColumn
-              key={col.status}
-              title={col.title}
-              status={col.status}
-              tasks={grouped ? grouped[col.status] : []}
+              key={status}
+              title={t(STATUS[status].label)}
+              status={status}
+              showCriticalPath={data ? criticalPathMatters(data.tasks) : false}
+              tasks={grouped ? grouped[status] : []}
               taskStatusMap={taskStatusMap}
               onCardClick={(id) => setOpenTaskId(id)}
             />

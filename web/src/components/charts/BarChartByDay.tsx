@@ -104,14 +104,14 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
                 x2={PAD_LEFT + CHART_W}
                 y1={y}
                 y2={y}
-                className="stroke-zinc-200 dark:stroke-zinc-800"
+                className="stroke-border"
                 strokeWidth={1}
               />
               <text
                 x={PAD_LEFT - 6}
                 y={y + 3}
                 textAnchor="end"
-                className="fill-zinc-500 text-[9px]"
+                className="fill-muted-foreground text-[10px] tabular-nums"
               >
                 {value >= 1
                   ? `$${value.toFixed(0)}`
@@ -156,8 +156,8 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
                 height={Math.max(h, d.cost_usd > 0 ? 1 : 0)}
                 className={
                   isHover
-                    ? "fill-zinc-950 dark:fill-zinc-100"
-                    : "fill-zinc-800 dark:fill-zinc-300"
+                    ? "fill-foreground"
+                    : "fill-muted-foreground/70"
                 }
                 pointerEvents="none"
               />
@@ -171,7 +171,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
           x2={PAD_LEFT + CHART_W}
           y1={PAD_TOP + CHART_H}
           y2={PAD_TOP + CHART_H}
-          className="stroke-zinc-300 dark:stroke-zinc-700"
+          className="stroke-input"
           strokeWidth={1}
         />
 
@@ -189,7 +189,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
               y={cy}
               textAnchor="end"
               transform={`rotate(-45 ${cx} ${cy})`}
-              className="fill-zinc-500 text-[9px]"
+              className="fill-muted-foreground text-[10px] tabular-nums"
             >
               {shortDate(d.date)}
             </text>
@@ -200,7 +200,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
       {/* Tooltip — positioned relative to the wrapper. */}
       {hover ? (
         <div
-          className="pointer-events-none absolute z-10 rounded-md border bg-white px-2 py-1 text-xs shadow-sm dark:bg-zinc-900"
+          className="pointer-events-none absolute z-10 rounded-md border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-[0_4px_12px_-4px_rgb(0_0_0/0.3)]"
           style={{
             left: Math.min(hover.x + 12, 9999),
             top: Math.max(hover.y - 36, 0),
@@ -209,7 +209,7 @@ export function BarChartByDay({ data }: BarChartByDayProps) {
           <div className="font-mono text-[10px] text-muted-foreground">
             {data[hover.index]?.date}
           </div>
-          <div className="font-medium">
+          <div className="font-medium tabular-nums">
             {USD.format(data[hover.index]?.cost_usd ?? 0)}
           </div>
         </div>

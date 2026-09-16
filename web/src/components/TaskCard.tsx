@@ -1,29 +1,28 @@
-import { ExternalLink, GitBranch, Lock, Timer, Zap } from "lucide-react"
+import { CircleCheck, CircleDashed, CircleMinus, CircleX, ExternalLink, GitBranch, Lock, Route, Timer } from "lucide-react"
+import { StatusBadge } from "@/components/StatusBadge"
+import { t } from "@/i18n"
 import { cn } from "@/lib/utils"
 import type { CiStatus, Task } from "@/lib/types"
 
-const CI_BADGE: Record<CiStatus, { label: string; className: string }> = {
-  pending:  { label: "CI...",     className: "text-amber-500" },
-  success:  { label: "CI ✓",     className: "text-emerald-600" },
-  failure:  { label: "CI ✗",     className: "text-rose-500" },
-  skipped:  { label: "CI skip",  className: "text-zinc-400" },
+const CI: Record<CiStatus, { label: "ci.pending" | "ci.success" | "ci.failure" | "ci.skipped"; icon: typeof CircleCheck; className: string }> = {
+  pending: { label: "ci.pending", icon: CircleDashed, className: "text-status-running" },
+  success: { label: "ci.success", icon: CircleCheck, className: "text-status-done" },
+  failure: { label: "ci.failure", icon: CircleX, className: "text-status-failed" },
+  skipped: { label: "ci.skipped", icon: CircleMinus, className: "text-muted-foreground" },
 }
 
 export interface TaskCardProps {
   task: Task
   taskStatusMap?: Record<string, string>
   onClick?: (taskId: string) => void
+  /** Kanban columns already say the status; the card grid does not. */
+  showStatus?: boolean
+  /** Only when the project has branches — see criticalPathMatters. */
+  showCriticalPath?: boolean
 }
 
-const STATUS_ACCENT: Record<string, string> = {
-  backlog:       "border-l-zinc-400",
-  todo:          "border-l-sky-400",
-  "in-progress": "border-l-violet-500",
-  blocked:       "border-l-rose-500",
-  done:          "border-l-emerald-500",
-}
-
-export function TaskCard({ task, taskStatusMap, onClick }: TaskCardProps) {
+/** The one task card: kanban columns and the task list's card view. */
+export function TaskCard({ task, taskStatusMap, onClick, showStatus = false, showCriticalPath = false }: TaskCardProps) {
   const blockingDeps =
     taskStatusMap && task.status !== "done"
       ? task.dependencies.filter((id) => {
@@ -31,8 +30,8 @@ export function TaskCard({ task, taskStatusMap, onClick }: TaskCardProps) {
           return s !== undefined && s !== "done"
         })
       : []
-
-  const accentClass = STATUS_ACCENT[task.status] ?? "border-l-zinc-400"
+  const ci = task.ci_status ? CI[task.ci_status] : undefined
+  const model = task.model.includes("/") ? task.model.split("/").pop() : task.model
 
   return (
     <div
@@ -50,83 +49,68 @@ export function TaskCard({ task, taskStatusMap, onClick }: TaskCardProps) {
           : undefined
       }
       className={cn(
-        "group flex flex-col gap-2 rounded-md border border-l-4 border-zinc-200 bg-white p-3",
-        "transition-all hover:border-zinc-300 hover:shadow-md",
+        "group flex flex-col gap-2 rounded-lg border bg-card p-3 text-card-foreground transition-colors",
         onClick
-          ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          ? "cursor-pointer hover:border-input hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           : "cursor-default",
-        accentClass,
       )}
     >
-      {/* ID row */}
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] leading-none text-zinc-400">
-          {task.id}
-        </span>
-        <div className="flex items-center gap-1">
-          {task.parallelizable && (
-            <GitBranch className="h-3 w-3 text-blue-400" aria-label="Parallelizable" />
-          )}
-          {task.on_critical_path && (
-            <Zap className="h-3 w-3 text-red-400" aria-label="Critical path" />
-          )}
+        <span className="font-mono text-xs tabular-nums text-muted-foreground">{task.id}</span>
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          {task.parallelizable ? <GitBranch className="h-3.5 w-3.5 text-status-done" aria-label={t("task.ready")} /> : null}
+          {showCriticalPath && task.on_critical_path ? (
+            <Route className="h-3.5 w-3.5 text-foreground" aria-label={t("task.on_critical_path")} />
+          ) : null}
         </div>
       </div>
 
-      {/* Title */}
-      <p className="line-clamp-3 text-sm font-medium leading-snug text-zinc-800">
-        {task.title}
-      </p>
+      <p className="line-clamp-3 text-sm font-medium leading-snug">{task.title}</p>
 
-      {/* Sprint F-4 — PR + CI badges */}
-      {(task.pr_url || task.ci_status) && (
-        <div className="flex items-center gap-2 text-[10px]">
-          {task.pr_url && (
+      {task.pr_url || ci ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {task.pr_url ? (
             <a
               href={task.pr_url}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-0.5 rounded bg-zinc-100 px-1 py-0.5 font-medium text-zinc-500 hover:text-zinc-700"
+              className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 font-medium text-muted-foreground hover:text-foreground"
             >
-              <ExternalLink className="h-2.5 w-2.5" />
-              PR
+              <ExternalLink className="h-3 w-3" aria-hidden />
+              {t("task.pr")}
             </a>
-          )}
-          {task.ci_status && CI_BADGE[task.ci_status] && (
-            <span className={cn("font-medium", CI_BADGE[task.ci_status].className)}>
-              {CI_BADGE[task.ci_status].label}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Footer */}
-      <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
-        <div className="flex items-center gap-2">
-          {task.estimate_hours != null && (
-            <span className="inline-flex items-center gap-0.5">
-              <Timer className="h-3 w-3" />
-              {task.estimate_hours}h
-            </span>
-          )}
-          {blockingDeps.length > 0 ? (
-            <span className="inline-flex items-center gap-0.5 font-medium text-amber-500">
-              <Lock className="h-3 w-3" />
-              {blockingDeps.length} blocking
-            </span>
-          ) : task.dep_count > 0 ? (
-            <span className="inline-flex items-center gap-0.5">
-              <GitBranch className="h-3 w-3" />
-              {task.dep_count}
+          ) : null}
+          {ci ? (
+            <span className={cn("inline-flex items-center gap-1 font-medium", ci.className)}>
+              <ci.icon className="h-3 w-3" aria-hidden />
+              {t(ci.label)}
             </span>
           ) : null}
         </div>
-        {task.model && (
-          <span className="max-w-[90px] truncate font-mono text-[10px] text-zinc-300">
-            {task.model.includes("/") ? task.model.split("/").pop() : task.model}
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          {showStatus ? <StatusBadge status={task.status} /> : null}
+          {task.estimate_hours != null ? (
+            <span className="inline-flex items-center gap-1 tabular-nums">
+              <Timer className="h-3 w-3" aria-hidden />
+              {t("task.hours", { hours: task.estimate_hours })}
+            </span>
+          ) : null}
+          {blockingDeps.length > 0 ? (
+            <span className="inline-flex items-center gap-1 whitespace-nowrap font-medium text-status-blocked">
+              <Lock className="h-3 w-3" aria-hidden />
+              {t("task.waiting_on", { count: blockingDeps.length })}
+            </span>
+          ) : null}
+        </div>
+        {model ? (
+          <span className="min-w-0 max-w-[110px] truncate font-mono text-[11px]" title={task.model}>
+            {model}
           </span>
-        )}
+        ) : null}
       </div>
     </div>
   )
