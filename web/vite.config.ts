@@ -46,11 +46,6 @@ export default defineConfig(() => ({
         target: 'http://127.0.0.1:7420',
         changeOrigin: true,
       },
-      // Proxy tunnel logs endpoint (SSE)
-      '/api/tunnel/logs': {
-        target: 'http://127.0.0.1:7420',
-        changeOrigin: true,
-      },
     },
   },
 }))

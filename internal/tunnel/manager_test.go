@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,10 +54,7 @@ func waitForCondition(t *testing.T, m *Manager, cond func() bool) {
 func TestStartWritesRunningStateAndOnDiskFiles(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{
-		Provider: ProviderAutossh,
-		Command:  fakeTunnelScript(t),
-	}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	snap, err := m.Start(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +65,8 @@ func TestStartWritesRunningStateAndOnDiskFiles(t *testing.T) {
 	if snap.PID == nil || *snap.PID <= 0 {
 		t.Errorf("PID = %v, want a positive pid", snap.PID)
 	}
-	if snap.Provider == nil || *snap.Provider != ProviderAutossh {
-		t.Errorf("Provider = %v, want %q", snap.Provider, ProviderAutossh)
+	if snap.Provider == nil || *snap.Provider != Provider {
+		t.Errorf("Provider = %v, want %q", snap.Provider, Provider)
 	}
 
 	for _, name := range []string{lockFilename, pidFilename, stateFilename} {
@@ -87,18 +85,18 @@ func TestStartCapturesURLFromStdout(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
 	m.stateChanged = make(chan struct{}, 1)
-	cfg := ManagerConfig{
-		Provider: ProviderAutossh,
-		Command:  fakeTunnelScript(t),
-	}
-	t.Setenv("FAKE_TUNNEL_LINES", "connecting...\nhttps://abc123.a.pinggy.link\n")
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
+	// cloudflared logs its control endpoint on a failed request; the reader
+	// must not hand that out as the tunnel's URL.
+	t.Setenv("FAKE_TUNNEL_LINES", "Requesting new quick Tunnel on https://api.trycloudflare.com...\n"+
+		"|  https://seasonal-deck-organisms-sf.trycloudflare.com  |\n")
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
 	waitForCondition(t, m, func() bool { return m.Status().URL != nil })
 	url := m.Status().URL
-	if *url != "https://abc123.a.pinggy.link" {
-		t.Errorf("URL = %q, want %q", *url, "https://abc123.a.pinggy.link")
+	if *url != "https://seasonal-deck-organisms-sf.trycloudflare.com" {
+		t.Errorf("URL = %q, want the quick tunnel's hostname", *url)
 	}
 	if _, err := m.Stop(); err != nil {
 		t.Fatal(err)
@@ -106,22 +104,20 @@ func TestStartCapturesURLFromStdout(t *testing.T) {
 	waitReaderDone(t, m)
 }
 
-func TestStartAssemblesBoreURLFromNamedGroup(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, 0)
+// cloudflared prints its URL a few seconds in. A URL that arrives after the
+// parse timeout was flagged is not a timeout any more, and the page must not
+// keep showing one next to a working link.
+func TestALateURLClearsTheParseTimeout(t *testing.T) {
+	m := NewManager(t.TempDir(), nil, 0)
 	m.stateChanged = make(chan struct{}, 1)
-	cfg := ManagerConfig{
-		Provider: ProviderBore,
-		Command:  fakeTunnelScript(t),
-	}
-	t.Setenv("FAKE_TUNNEL_LINES", "INFO bore_cli::client: listening at bore.pub:41230\n")
-	if _, err := m.Start(cfg); err != nil {
+	t.Setenv("FAKE_TUNNEL_LINES", "Requesting new quick Tunnel...\n")
+	t.Setenv("FAKE_TUNNEL_LATE_LINES", "Registered tunnel connection\n|  https://late-river-sea-bird.trycloudflare.com  |\n")
+	if _, err := m.Start(ManagerConfig{Command: fakeTunnelScript(t), Port: 7420, URLParseTimeoutS: 1}); err != nil {
 		t.Fatal(err)
 	}
 	waitForCondition(t, m, func() bool { return m.Status().URL != nil })
-	url := m.Status().URL
-	if *url != "http://bore.pub:41230" {
-		t.Errorf("URL = %q, want %q", *url, "http://bore.pub:41230")
+	if st := m.Status(); st.LastError != nil {
+		t.Errorf("LastError = %q with the URL captured", *st.LastError)
 	}
 	if _, err := m.Stop(); err != nil {
 		t.Fatal(err)
@@ -129,29 +125,21 @@ func TestStartAssemblesBoreURLFromNamedGroup(t *testing.T) {
 	waitReaderDone(t, m)
 }
 
-func TestReconnectsAreCountedForAutosshOnly(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, nil, 0)
-	m.stateChanged = make(chan struct{}, 1)
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
-	t.Setenv("FAKE_TUNNEL_LINES", "starting ssh\nssh exited\nstarting ssh\n")
-	if _, err := m.Start(cfg); err != nil {
-		t.Fatal(err)
+// Unset, the parse timeout is 30s, not the 1s floor: cloudflared routinely
+// takes longer than a second to print the URL.
+func TestURLParseTimeoutDefaultsToThirtySeconds(t *testing.T) {
+	if got := urlParseTimeout(ManagerConfig{}); got != 30*time.Second {
+		t.Errorf("urlParseTimeout(unset) = %s, want 30s", got)
 	}
-	waitForCondition(t, m, func() bool { return m.Status().AutosshReconnects >= 3 })
-	if got := m.Status().AutosshReconnects; got != 3 {
-		t.Errorf("AutosshReconnects = %d, want 3", got)
+	if got := urlParseTimeout(ManagerConfig{URLParseTimeoutS: 5}); got != 5*time.Second {
+		t.Errorf("urlParseTimeout(5) = %s, want 5s", got)
 	}
-	if _, err := m.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	waitReaderDone(t, m)
 }
 
 func TestRedactionAppliesToBufferedLogs(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{Provider: ProviderBore, Command: fakeTunnelScript(t)}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	// Obviously-fake placeholder (the classic "deadbeef" filler), not a
 	// string shaped like a real credential — still matches the ≥32-hex
 	// redaction pattern this test exercises.
@@ -183,7 +171,7 @@ func TestRedactionAppliesToBufferedLogs(t *testing.T) {
 func TestStartWhenAlreadyRunningReturnsErrAlreadyRunning(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -205,31 +193,14 @@ func TestStartWhenLockedByLivePeerReturnsErrLocked(t *testing.T) {
 	}
 	// This test process's own pid is guaranteed alive — stands in for
 	// "another dashboard process holds the lock".
-	lockBody := `{"pid": ` + strconv.Itoa(os.Getpid()) + `, "provider": "autossh"}`
+	lockBody := `{"pid": ` + strconv.Itoa(os.Getpid()) + `, "provider": "cloudflared"}`
 	if err := os.WriteFile(filepath.Join(dir, "tunnel", lockFilename), []byte(lockBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	_, err := m.Start(cfg)
 	if err != ErrLocked {
 		t.Errorf("err = %v, want ErrLocked", err)
-	}
-}
-
-func TestStartUnknownProviderReturnsError(t *testing.T) {
-	m := NewManager(t.TempDir(), nil, 0)
-	_, err := m.Start(ManagerConfig{Provider: "cloudflared", Command: "cloudflared"})
-	if err == nil {
-		t.Fatal("expected an error for an unregistered provider")
-	}
-	if !strings.Contains(err.Error(), "unknown provider") {
-		t.Errorf("err = %v, want it to mention \"unknown provider\"", err)
-	}
-	// The lock this Start acquired before validating the provider must not
-	// be left behind — a second Start (with a real provider this time)
-	// should not see ErrLocked because of the failed first attempt.
-	if _, err := os.Stat(filepath.Join(m.tunnelDir, lockFilename)); !os.IsNotExist(err) {
-		t.Errorf("expected the lock file cleaned up after a rejected provider, stat err = %v", err)
 	}
 }
 
@@ -237,7 +208,7 @@ func TestStartSpawnFailureSetsErrorState(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
 	cfg := ManagerConfig{
-		Provider: ProviderAutossh,
+		Port: 7420,
 		// A path that cannot exist — exec.Command.Start returns a real
 		// ENOENT-shaped error here, not a mock.
 		Command: filepath.Join(dir, "no-such-binary-anywhere"),
@@ -261,29 +232,31 @@ func TestStartSpawnFailureSetsErrorState(t *testing.T) {
 	}
 }
 
-func TestStartBadURLRegexFailsBeforeSpawning(t *testing.T) {
-	// Compiling the URL regex up front (before Start spawns anything) —
-	// not asynchronously inside the reader goroutine — is itself the fix
-	// for a bug this test used to expose: a bad regex used to spawn a
-	// real child with no reader ever attached to reap it. See the
-	// migration notes.
+func TestStartRejectsAPortThatIsNotOne(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{
-		Provider: ProviderAutossh,
-		Command:  fakeTunnelScript(t),
-		URLRegex: "(", // invalid — unbalanced group
-	}
-	if _, err := m.Start(cfg); err == nil {
-		t.Fatal("expected Start to fail for an invalid URLRegex")
+	if _, err := m.Start(ManagerConfig{Command: fakeTunnelScript(t)}); err == nil {
+		t.Fatal("expected Start to fail with no port")
 	}
 	if m.Status().State != StateIdle {
 		t.Errorf("State = %q, want %q — nothing should have been spawned", m.Status().State, StateIdle)
 	}
-	for _, name := range []string{lockFilename, pidFilename} {
-		if _, err := os.Stat(filepath.Join(dir, "tunnel", name)); !os.IsNotExist(err) {
-			t.Errorf("expected %s cleaned up after the rejected regex, stat err = %v", name, err)
-		}
+	if _, err := os.Stat(filepath.Join(dir, "tunnel", lockFilename)); !os.IsNotExist(err) {
+		t.Errorf("expected no lock file after the rejected port, stat err = %v", err)
+	}
+}
+
+func TestStartForwardsToTheGivenPort(t *testing.T) {
+	var got []string
+	spawn := func(argv []string) (Spawned, error) {
+		got = argv
+		return Spawned{}, errors.New("recorded")
+	}
+	m := NewManager(t.TempDir(), spawn, 0)
+	_, _ = m.Start(ManagerConfig{Port: 8123})
+	want := []string{"cloudflared", "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8123"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", got, want)
 	}
 }
 
@@ -297,7 +270,7 @@ func TestStopWhenIdleReturnsErrNotRunning(t *testing.T) {
 func TestStopTerminatesProcessAndClearsFiles(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -393,13 +366,14 @@ func TestSweepStaleLockWithNilConfigAlwaysCleansUpRegardlessOfLiveness(t *testin
 
 func TestSweepStaleLockAdoptsLivePIDMatchingCommand(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(dir, nil, 0)
-	// Command is "sh", the script is an arg — `ps -o comm=` for a process
-	// started this way deterministically reports "sh" everywhere;
-	// invoking the script directly via its shebang leaves what `comm`
-	// reports up to the platform's binfmt handling, which this test isn't
-	// trying to pin down.
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: "sh", Args: []string{fakeTunnelScript(t)}}
+	// Command is "sh" and the spawner runs the script through it — `ps -o
+	// comm=` for a process started this way deterministically reports "sh"
+	// everywhere; invoking the script directly via its shebang leaves what
+	// `comm` reports up to the platform's binfmt handling, which this test
+	// isn't trying to pin down.
+	script := fakeTunnelScript(t)
+	m := NewManager(dir, func([]string) (Spawned, error) { return defaultSpawn([]string{"sh", script}) }, 0)
+	cfg := ManagerConfig{Command: "sh", Port: 7420}
 	// Start a real long-lived child so pidComm has something real to
 	// report, then simulate a restarted dashboard process that only
 	// knows the pid (as if state.json/pid survived a crash) by building a
@@ -434,7 +408,7 @@ func TestReadStateReturnsFalseWhenAbsent(t *testing.T) {
 func TestReadStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, nil, 0)
-	cfg := ManagerConfig{Provider: ProviderAutossh, Command: fakeTunnelScript(t)}
+	cfg := ManagerConfig{Command: fakeTunnelScript(t), Port: 7420}
 	if _, err := m.Start(cfg); err != nil {
 		t.Fatal(err)
 	}

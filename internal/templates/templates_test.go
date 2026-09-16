@@ -264,9 +264,15 @@ var divergedFromPython = map[string]string{
 	"projects/python-api/AGENTS.md.tmpl":       "said `pipx install orch`, the archived Python package (#234); points at scripts/install.sh and Homebrew",
 	"github/orch-ci.yml.tmpl": "hardcoded setup-python and pip install in every repo (#233); the " +
 		"setup steps are now a SETUP_STEPS token filled per stack by internal/scaffold/ci.go",
+	"projects/chatbot-whatsapp/config.yaml.tmpl": tunnelTemplateReason,
+	"projects/data-pipeline/config.yaml.tmpl":    tunnelTemplateReason,
+	"projects/nextjs-saas/config.yaml.tmpl":      tunnelTemplateReason,
+	"projects/python-api/config.yaml.tmpl":       tunnelTemplateReason,
 	"gitignore.tmpl": "task worktrees moved out of the checkout to ../<project>.worktrees/ (#249); " +
 		"a comment says `.worktrees/` stays ignored only for what an older orch left inside the project",
 }
+
+const tunnelTemplateReason = "the tunnel block sat under `dashboard:`, which the Go loader ignores, with an `auto_start` nothing reads; it is a top-level `tunnel: enabled:` for the Cloudflare quick tunnel"
 
 // TestGoTreeMatchesPython is the guard on having two copies of this data.
 //

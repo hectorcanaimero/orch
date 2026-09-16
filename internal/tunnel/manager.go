@@ -123,7 +123,7 @@ func pidAlive(pid int) bool {
 	}
 }
 
-// pidComm returns the basename of the binary running as pid ("autossh"),
+// pidComm returns the basename of the binary running as pid ("cloudflared"),
 // or "" if it can't be determined. Shells out to `ps -p <pid> -o comm=`
 // rather than reading /proc directly — ported as-is from manager.py's
 // `_pid_comm`, whose own comment explains why: portable across Linux and
@@ -152,17 +152,16 @@ func pidComm(pid int) string {
 // not just an internal type, so nullable fields are pointers rather than
 // zero values a JSON reader could confuse with a real 0/"".
 type State struct {
-	State             string  `json:"state"`
-	Provider          *string `json:"provider"`
-	PID               *int    `json:"pid"`
-	URL               *string `json:"url"`
-	StartedAt         *string `json:"started_at"`
-	URLAt             *string `json:"url_at"`
-	RestartCount      int     `json:"restart_count"`
-	AutosshReconnects int     `json:"autossh_reconnects"`
-	LastError         *string `json:"last_error"`
-	LastExitCode      *int    `json:"last_exit_code"`
-	Phase             string  `json:"phase"`
+	State        string  `json:"state"`
+	Provider     *string `json:"provider"`
+	PID          *int    `json:"pid"`
+	URL          *string `json:"url"`
+	StartedAt    *string `json:"started_at"`
+	URLAt        *string `json:"url_at"`
+	RestartCount int     `json:"restart_count"`
+	LastError    *string `json:"last_error"`
+	LastExitCode *int    `json:"last_exit_code"`
+	Phase        string  `json:"phase"`
 }
 
 func blankState() State {
@@ -172,18 +171,17 @@ func blankState() State {
 func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }
 
-// ManagerConfig is the runtime-facing subset of config.yaml's `tunnel:`
-// block the manager needs — its own type rather than a reference into the
-// full config.Config, so a test builds one without dragging in the whole
-// config graph. Mirrors manager.py's TunnelManagerConfig field-for-field.
+// ManagerConfig is what one Start needs — its own type rather than a
+// reference into config.Config, so a test builds one without dragging in the
+// whole config graph.
 type ManagerConfig struct {
-	Provider string
-	Command  string
-	Args     []string
-	// URLRegex overrides the provider's own URLPattern when non-empty.
-	URLRegex         string
+	// Command overrides the binary, for tests; empty means cloudflared.
+	Command string
+	// Port is the dashboard's bound port, which the tunnel forwards to.
+	Port int
+	// URLParseTimeoutS is how long to wait for the URL line before flagging
+	// url_parse_timeout in state (the child keeps running).
 	URLParseTimeoutS int
-	StopTimeout      time.Duration
 }
 
 // Spawned is a started child process plus the read end of its merged
@@ -237,8 +235,8 @@ func defaultSpawn(argv []string) (Spawned, error) {
 }
 
 // signalGroup mirrors manager.py's `_signal_pgroup`: signal the whole
-// process group so a child ssh spawned by autossh dies too, falling back
-// to a plain kill if the group is already gone.
+// process group so anything the provider forked dies too, falling back to
+// a plain kill if the group is already gone.
 func signalGroup(pid int, sig syscall.Signal) {
 	pgid, err := syscall.Getpgid(pid)
 	if err != nil {
@@ -345,49 +343,19 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 		m.mu.Unlock()
 		return State{}, ErrAlreadyRunning
 	}
-	if err := m.acquireLockOrErr(cfg.Provider); err != nil {
+	argv, err := commandLine(cfg)
+	if err != nil {
 		m.mu.Unlock()
 		return State{}, err
 	}
-	spec, ok := Resolve(cfg.Provider)
-	if !ok {
+	if err := m.acquireLockOrErr(); err != nil {
 		m.mu.Unlock()
-		m.releaseLockFiles()
-		return State{}, fmt.Errorf("tunnel: unknown provider %q", cfg.Provider)
+		return State{}, err
 	}
-	// Compiled up front, synchronously, mirroring manager.py's own
-	// `_start_reader_thread` call chain — Python's `re.compile` there
-	// runs in start()'s own call stack, so a bad pattern fails Start
-	// itself before anything is ever spawned. Doing this asynchronously
-	// inside the reader goroutine instead (an earlier draft did) meant a
-	// bad regex spawned a real, unmonitored child with no reader ever
-	// attached to reap it — a self-inflicted leak a test caught.
-	pattern := cfg.URLRegex
-	if pattern == "" {
-		pattern = spec.URLPattern
-	}
-	urlRe, err := compileURLRegex(pattern)
-	if err != nil {
-		m.mu.Unlock()
-		m.releaseLockFiles()
-		return State{}, fmt.Errorf("tunnel: %w", err)
-	}
-	reconnectRe, err := compileReconnectRegex(spec)
-	if err != nil {
-		m.mu.Unlock()
-		m.releaseLockFiles()
-		return State{}, fmt.Errorf("tunnel: %w", err)
-	}
-	args := cfg.Args
-	if len(args) == 0 {
-		args = spec.DefaultArgs
-	}
-	argv := append([]string{cfg.Command}, args...)
-
 	m.state = State{
 		State:     StateStarting,
 		Phase:     StateStarting,
-		Provider:  strPtr(cfg.Provider),
+		Provider:  strPtr(Provider),
 		StartedAt: strPtr(utcISO(time.Now())),
 	}
 	if err := m.writeStateLocked(); err != nil {
@@ -403,7 +371,7 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 		m.writeStateBestEffort()
 		m.mu.Unlock()
 		m.releaseLockFiles()
-		return State{}, fmt.Errorf("tunnel: spawn %q: %w", cfg.Command, err)
+		return State{}, fmt.Errorf("tunnel: spawn %q: %w", argv[0], err)
 	}
 
 	m.proc = spawned.Cmd
@@ -422,7 +390,7 @@ func (m *Manager) Start(cfg ManagerConfig) (State, error) {
 	snapshot := m.state
 	m.mu.Unlock()
 
-	m.startReader(spec, cfg, urlRe, reconnectRe, spawned.Stdout)
+	m.startReader(cfg, spawned.Stdout)
 	return snapshot, nil
 }
 
@@ -494,8 +462,8 @@ func waitForDone(done <-chan struct{}, d time.Duration) bool {
 }
 
 // SweepStaleLock is the boot-time reconciler (TUN-8): if state/tunnel/pid
-// names a PID that's still alive AND whose comm matches cfg's command, the
-// manager adopts it as running. Otherwise both lock and pid files are
+// names a PID that's still alive AND whose comm matches cfg's command
+// (cloudflared unless overridden), the manager adopts it as running. Otherwise both lock and pid files are
 // removed and state stays idle. cfg nil means "no expected command" —
 // any live PID is adopted (only used by tests that don't care).
 func (m *Manager) SweepStaleLock(cfg *ManagerConfig) {
@@ -516,8 +484,12 @@ func (m *Manager) SweepStaleLock(cfg *ManagerConfig) {
 		if cfg == nil {
 			adopted = true
 		} else {
+			command := cfg.Command
+			if command == "" {
+				command = Command
+			}
 			comm := pidComm(pid)
-			adopted = comm != "" && comm == filepath.Base(cfg.Command)
+			adopted = comm != "" && comm == filepath.Base(command)
 		}
 	}
 
@@ -526,7 +498,7 @@ func (m *Manager) SweepStaleLock(cfg *ManagerConfig) {
 		m.state = State{
 			State:     StateRunning,
 			Phase:     StateRunning,
-			Provider:  strPtr(cfg.Provider),
+			Provider:  strPtr(Provider),
 			PID:       intPtr(pid),
 			StartedAt: strPtr(utcISO(time.Now())),
 		}
@@ -537,7 +509,7 @@ func (m *Manager) SweepStaleLock(cfg *ManagerConfig) {
 	m.releaseLockFiles()
 }
 
-func (m *Manager) acquireLockOrErr(provider string) error {
+func (m *Manager) acquireLockOrErr() error {
 	lockPath := m.lockPath()
 	if data, err := os.ReadFile(lockPath); err == nil { // #nosec G304 -- fixed path under this manager's own state dir
 		var payload struct {
@@ -557,7 +529,7 @@ func (m *Manager) acquireLockOrErr(provider string) error {
 	return atomicWriteJSON(lockPath, map[string]any{
 		"pid":        os.Getpid(),
 		"started_at": utcISO(time.Now()),
-		"provider":   provider,
+		"provider":   Provider,
 		"phase":      StateStarting,
 	})
 }
@@ -612,7 +584,7 @@ func (m *Manager) writeStateBestEffort() {
 // buffered channel so a polling loop can block on an actual event
 // instead of a bare time.Sleep (CHECKLIST rule 22) while state that
 // isn't tied to the reader goroutine's own exit (readerDone) changes —
-// a captured URL or an incremented reconnect count, while the child is
+// a captured URL, while the child is
 // still very much running. The send is non-blocking so a test that
 // isn't currently receiving can never stall a real write.
 func (m *Manager) notifyStateChanged() {
@@ -626,18 +598,13 @@ func (m *Manager) notifyStateChanged() {
 }
 
 // startReader tails stdout on its own goroutine, redacting each line,
-// buffering it, appending to stdout.log, and watching for the provider's
-// URL and (autossh only) reconnect patterns — mirrors manager.py's
-// `_start_reader_thread` closure.
-func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, urlRe, reconnectRe *regexp.Regexp, stdout io.ReadCloser) {
+// buffering it, appending to stdout.log, and watching for the quick tunnel's
+// URL — mirrors manager.py's `_start_reader_thread` closure.
+func (m *Manager) startReader(cfg ManagerConfig, stdout io.ReadCloser) {
 	done := make(chan struct{})
 	m.readerDone = done
 
-	timeoutS := cfg.URLParseTimeoutS
-	if timeoutS < 1 {
-		timeoutS = 1
-	}
-	deadline := time.Now().Add(time.Duration(timeoutS) * time.Second)
+	deadline := time.Now().Add(urlParseTimeout(cfg))
 
 	go func() {
 		defer close(done)
@@ -652,22 +619,17 @@ func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, urlRe, recon
 			m.appendStdoutLog(line)
 
 			if !urlSeen {
-				if loc := urlRe.FindStringSubmatchIndex(line); loc != nil {
-					match := submatches(line, loc)
-					captured := formatURL(spec.URLTemplate, urlRe, match)
+				if captured := urlPattern.FindString(line); captured != "" {
 					m.mu.Lock()
 					m.state.URL = strPtr(captured)
 					m.state.URLAt = strPtr(utcISO(time.Now()))
+					if m.state.LastError != nil && *m.state.LastError == "url_parse_timeout" {
+						m.state.LastError = nil
+					}
 					m.writeStateBestEffort()
 					m.mu.Unlock()
 					urlSeen = true
 				}
-			}
-			if spec.ReconnectPattern != "" && reconnectRe.MatchString(line) {
-				m.mu.Lock()
-				m.state.AutosshReconnects++
-				m.writeStateBestEffort()
-				m.mu.Unlock()
 			}
 			if !urlSeen && !timeoutFlagged && time.Now().After(deadline) {
 				m.mu.Lock()
@@ -687,20 +649,15 @@ func (m *Manager) startReader(spec ProviderSpec, cfg ManagerConfig, urlRe, recon
 	}()
 }
 
-// submatches renders regexp match indices (from FindStringSubmatchIndex)
-// into the []string shape formatURL expects (whole match + each group,
-// "" for a group that didn't participate) — the Go equivalent of Python's
-// re.Match object indexing.
-func submatches(s string, loc []int) []string {
-	out := make([]string, len(loc)/2)
-	for i := range out {
-		start, end := loc[2*i], loc[2*i+1]
-		if start < 0 || end < 0 {
-			continue
-		}
-		out[i] = s[start:end]
+// urlParseTimeout is how long the reader waits for the URL before flagging
+// url_parse_timeout: tunnel.url_parse_timeout_s, or 30s when unset —
+// cloudflared takes a few seconds to print the URL.
+func urlParseTimeout(cfg ManagerConfig) time.Duration {
+	timeoutS := cfg.URLParseTimeoutS
+	if timeoutS < 1 {
+		timeoutS = 30
 	}
-	return out
+	return time.Duration(timeoutS) * time.Second
 }
 
 func (m *Manager) appendLog(line string) {

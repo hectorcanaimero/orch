@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -157,11 +158,10 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 				return fmt.Errorf("reading the embedded SPA: %w", err)
 			}
 
-			tunnelOpts, stopTunnel, err := setUpTunnel(cmd, cfg, paths, dashCfg, withTunnel)
+			tunnelOpts, err := setUpTunnel(cfg, paths, dashCfg, withTunnel)
 			if err != nil {
 				return err
 			}
-			defer stopTunnel()
 
 			portal, err := publish.Bundle()
 			if err != nil {
@@ -183,6 +183,15 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Whether --tunnel or the Tunnel page started it, a tunnel does not
+			// outlive the dashboard it forwards to.
+			if tunnelOpts.Manager != nil {
+				defer func() {
+					if _, err := server.StopTunnel(); err != nil && !errors.Is(err, tunnel.ErrNotRunning) {
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] stopping the tunnel: %v\n", err)
+					}
+				}()
+			}
 
 			// A project with no tasks.json still serves — the SPA's setup
 			// wizard is the whole point of `/api/config/status` — but saying
@@ -199,11 +208,29 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// The tunnel starts once the listener has its port — `--port 0`
+			// has none before — and a failure to start it ends the command,
+			// which was asked for a tunnel.
+			tunnelErr := make(chan error, 1)
 			go func() {
 				<-server.Ready()
 				printDashboardBanner(cmd, server, dashCfg, paths)
+				if withTunnel && server.BoundAddr() != "" {
+					if err := startTunnelFromCLI(ctx, cmd, server, cfg.Tunnel.URLParseTimeoutS); err != nil {
+						tunnelErr <- err
+						stop()
+					}
+				}
 			}()
-			return server.Serve(ctx)
+			if err := server.Serve(ctx); err != nil {
+				return err
+			}
+			select {
+			case err := <-tunnelErr:
+				return err
+			default:
+				return nil
+			}
 		},
 	}
 
@@ -218,7 +245,7 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 		"Shared token a stakeholder session must present (default: config.yaml; "+
 			"ignored once orch dashboard token rotate has stored one)")
 	cmd.Flags().BoolVar(&withTunnel, "tunnel", false,
-		"Also start the configured tunnel, and stop it on exit")
+		"Also start the Cloudflare quick tunnel (needs tunnel.enabled and cloudflared), and stop it on exit")
 	cmd.Flags().StringVar(&portfolio, "portfolio", "",
 		"Serve every orch project matching this glob from one process "+
 			"(operator only). Quote it, or the shell expands it first.")
@@ -335,89 +362,85 @@ func firstNonLoopbackIP() string {
 	return ""
 }
 
-// setUpTunnel wires the tunnel half of the server, and starts it when asked.
-//
-// Returns the options the server needs and a stop func the caller defers. The
-// stop func is always non-nil, so the defer at the call site needs no guard —
-// a nil check there is the kind of thing that gets deleted in a refactor and
-// panics in a shutdown path nobody tests.
-//
-// # Why --tunnel starts it and the dashboard does not
-//
-// Python's dashboard exposes start/stop as POST routes and the SPA drives
-// them. G5.5 made the operator SPA read-only, so those routes have no
-// consumer and are not ported (see internal/dashboard/tunnelroutes.go). That
-// leaves the operator with no way to raise a tunnel at all — hence the flag.
-// It is also the safer shape: the lever is on the command line, where the
-// person holding it is the person who started the process.
-func setUpTunnel(cmd *cobra.Command, cfg config.Config, paths config.Paths,
-	dashCfg dashboard.Config, start bool) (dashboard.TunnelOptions, func(), error) {
-	noop := func() {}
-
+// setUpTunnel wires the tunnel half of the server. With --tunnel it also
+// refuses, before anything listens, what would only fail once the dashboard
+// is up: a profile that must not publish itself, a missing cloudflared (with
+// the steps to install it), or a cloudflared config that blocks quick tunnels.
+func setUpTunnel(cfg config.Config, paths config.Paths, dashCfg dashboard.Config, start bool) (dashboard.TunnelOptions, error) {
 	if !cfg.Tunnel.Enabled {
 		if start {
-			return dashboard.TunnelOptions{}, noop, errors.New(
+			return dashboard.TunnelOptions{}, errors.New(
 				"--tunnel needs `tunnel.enabled: true` in config.yaml")
 		}
-		return dashboard.TunnelOptions{}, noop, nil
+		return dashboard.TunnelOptions{}, nil
 	}
 
 	mgr := tunnel.NewManager(paths.StateDir(), nil, tunnelLogLines)
-	mcfg := tunnel.ManagerConfig{
-		Provider:         cfg.Tunnel.Provider,
-		Command:          cfg.Tunnel.Command,
-		Args:             cfg.Tunnel.Args,
-		URLRegex:         cfg.Tunnel.URLRegex,
-		URLParseTimeoutS: cfg.Tunnel.URLParseTimeoutS,
-		StopTimeout:      time.Duration(cfg.Tunnel.StopTimeoutS * float64(time.Second)),
-	}
 	// A lock left by a process that died without releasing it would refuse
 	// every start until somebody deleted a file by hand. Swept once at boot,
 	// which is the only moment it is safe to assume nothing of ours holds it.
-	mgr.SweepStaleLock(&mcfg)
-
+	mgr.SweepStaleLock(&tunnel.ManagerConfig{})
 	opts := dashboard.TunnelOptions{
-		Enabled:  true,
-		Provider: cfg.Tunnel.Provider,
-		Command:  cfg.Tunnel.Command,
-		Manager:  mgr,
+		Enabled: true, Manager: mgr, URLParseTimeoutS: cfg.Tunnel.URLParseTimeoutS,
 	}
 	if !start {
-		return opts, noop, nil
+		return opts, nil
 	}
 
-	// The tunnel publishes a URL to the internet. Raising one from a
-	// stakeholder-profile dashboard would publish a surface whose own gate
-	// says the operator is not present, so the flag refuses rather than
-	// asking the operator to notice.
+	// The tunnel publishes this dashboard. Raising one from a stakeholder
+	// dashboard would publish a surface whose own gate says the operator is
+	// not present, so the flag refuses rather than asking anybody to notice.
 	if dashCfg.Profile != dashboard.ProfileOperator {
-		return dashboard.TunnelOptions{}, noop, fmt.Errorf(
+		return dashboard.TunnelOptions{}, fmt.Errorf(
 			"--tunnel needs the %s profile; this dashboard is running as %s",
 			dashboard.ProfileOperator, dashCfg.Profile)
 	}
-
-	state, err := mgr.Start(mcfg)
-	if err != nil {
-		return dashboard.TunnelOptions{}, noop, fmt.Errorf("starting the tunnel: %w", err)
+	if !tunnel.LookupBinary("").Found {
+		return dashboard.TunnelOptions{}, errors.New(strings.TrimRight(tunnel.MissingBinaryMessage(), "\n"))
 	}
-	if state.URL != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Tunnel (%s): %s\n", cfg.Tunnel.Provider, *state.URL)
-	} else {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"Tunnel (%s): started, no URL yet — /api/tunnel/status has it when it arrives\n",
-			cfg.Tunnel.Provider)
+	if path := tunnel.ConfigBlocker(); path != "" {
+		return dashboard.TunnelOptions{}, errors.New(tunnel.BlockerMessage(path))
 	}
-
-	return opts, func() {
-		if _, err := mgr.Stop(); err != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] stopping the tunnel: %v\n", err)
-		}
-	}, nil
+	return opts, nil
 }
 
-// tunnelLogLines is how much of the provider's output the manager keeps. The
-// buffer exists so `/api/tunnel/logs` can replay a tail; that route is not
-// ported, so this only bounds memory for a long-lived process.
+// startTunnelFromCLI starts the tunnel and prints its links once cloudflared
+// reports the URL, which takes a few seconds.
+func startTunnelFromCLI(ctx context.Context, cmd *cobra.Command, server *dashboard.Server, timeoutS int) error {
+	if _, err := server.StartTunnel(); err != nil {
+		return fmt.Errorf("starting the tunnel: %w", err)
+	}
+	if timeoutS <= 0 {
+		timeoutS = defaultTunnelURLTimeoutS
+	}
+	out := cmd.OutOrStdout()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(time.Duration(timeoutS) * time.Second)
+	for {
+		if operator, portal := server.TunnelLinks(); operator != "" {
+			_, _ = fmt.Fprintf(out, "Tunnel (Cloudflare quick tunnel) is up. The token in these links is "+
+				"required through the tunnel and changes on every start:\n"+
+				"  Dashboard:     %s\n  Client portal: %s\n", operator, portal)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-deadline:
+			_, _ = fmt.Fprintln(out, "Tunnel started, no URL yet — the Tunnel page shows the link when cloudflared reports it")
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// defaultTunnelURLTimeoutS is how long --tunnel waits to print the links when
+// tunnel.url_parse_timeout_s is unset.
+const defaultTunnelURLTimeoutS = 30
+
+// tunnelLogLines is how much of cloudflared's output the manager keeps in
+// memory; stdout.log under state/tunnel/ has all of it.
 const tunnelLogLines = 200
 
 // portalRefresh is how often a live portal re-reads its snapshot.

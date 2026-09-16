@@ -62,7 +62,7 @@ func TestEvaluateCapabilitiesGateOrder(t *testing.T) {
 		{
 			"binary consulted only once everything else passes",
 			Gates{Enabled: true, OperatorProfile: true, LoopbackHost: true},
-			false, false, ReasonAutosshMissing,
+			false, false, ReasonBinaryMissing,
 		},
 		{
 			"all gates pass",

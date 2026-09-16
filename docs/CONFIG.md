@@ -355,21 +355,53 @@ publish:
 | `dir` | Relative paths resolve against the project root, not the working directory — `orch publish --project-root ../other` is a normal thing to type. |
 | `git_branch` | The branch is treated as **output, not history**: every publish replaces its whole tree, so an asset a previous export emitted and this one does not is gone rather than left serving. It is created as an **orphan** the first time, so the published site shares no history with the source and a static host serving it never serves your repository. |
 
-### `tunnel` — new (G5.6)
+### `tunnel`
 
-The dashboard's optional public-URL tunnel (Sprint E-5). Two providers only —
-`autossh` (Pinggy, over SSH) and `bore` (bore.pub); there is no `cloudflared`.
+Share the dashboard over a **Cloudflare quick tunnel**: a public
+`https://<random>.trycloudflare.com` address, with no Cloudflare account,
+login or DNS. It needs the `cloudflared` binary on PATH; the dashboard's
+Tunnel page shows the install steps for your system (and `orch dashboard
+--tunnel` prints them when it is missing). Start and stop it from that page
+or with `orch dashboard --tunnel`.
 
 ```yaml
 tunnel:
   enabled: false
-  provider: autossh       # autossh | bore
-  command: autossh        # binary on PATH
-  args: []                # empty means "the provider's own defaults"
-  url_regex: ""           # empty means "the provider's own pattern"
-  url_parse_timeout_s: 30
-  stop_timeout_s: 5
+  url_parse_timeout_s: 30   # how long to wait for cloudflared's URL line
 ```
+
+| Key | Notes |
+|---|---|
+| `enabled` | The whole configuration. Nothing is published until you start the tunnel. |
+| `url_parse_timeout_s` | Seconds before the status reports `url_parse_timeout` (the tunnel keeps running, and a URL that arrives later clears it). `0` or unset means 30. |
+
+**Every request through the tunnel needs a token.** While the tunnel is up,
+a request that does not come straight from this machine (a loopback peer, a
+loopback `Host`, and none of the headers Cloudflare or a proxy add) must
+carry one of the tokens minted when the tunnel started, which are in the two
+links orch prints and the Tunnel page shows: the **full dashboard** link's
+token opens everything; the **client portal** link's token — like the
+project's stakeholder token — reaches only the stakeholder allow-list, so a
+client cannot turn the portal link into your view by editing the path. Both
+change on every start, so stopping the tunnel revokes them. The operator
+profile, which asks nothing of the person at the keyboard, is never what a
+stranger with the URL gets.
+
+**Removed: `provider`, `command`, `args`, `url_regex`, `stop_timeout_s`.**
+autossh (Pinggy) and bore are gone. A config that still sets `provider`,
+`command`, `args` or `url_regex` under `tunnel:` is **refused at load** with
+the fix (delete them, keep `enabled: true`) — a warning would let `--tunnel`
+start something other than what the file asks for. `stop_timeout_s` only
+warns: the stop grace period is fixed.
+
+Quick-tunnel limits worth knowing: the address changes on every start;
+Cloudflare caps a quick tunnel at 200 concurrent requests and offers it for
+testing, not production; it does not carry server-sent events, so a
+dashboard opened through it refreshes every 15 s instead of live; and a
+`config.yml`/`config.yaml` in `~/.cloudflared/` (or `/etc/cloudflared/`)
+stops it from starting — `orch doctor` and the Tunnel page say so. For a
+stable address, run a named Cloudflare Tunnel yourself
+([`DASHBOARD-PROFILES.md`](DASHBOARD-PROFILES.md)).
 
 ### `telemetry` — new (G8.6)
 
@@ -456,7 +488,8 @@ compatibility contract.
 | `findings.*` | The findings feature was removed |
 | `dashboard.board_url` | The ExcaliDash embed was removed |
 | `dashboard.kanban` | Kanban defaults moved into the SPA |
-| `dashboard.tunnel` | Only autossh and bore remain — configure under `tunnel` |
+| `dashboard.tunnel` | The tunnel moved to a top-level `tunnel:` block, where `enabled: true` is all it needs |
+| `tunnel.stop_timeout_s` | The tunnel stops within a fixed grace period |
 | `dashboard.server` | Host and port are CLI flags |
 
 Anything else unrecognised gets a generic warning naming the path. That is

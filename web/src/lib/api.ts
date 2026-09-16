@@ -67,16 +67,9 @@ export async function getProjectConfig(): Promise<ProjectConfig> {
 }
 
 /**
- * Sprint E-5 — Tunnel status API surface.
- *
- * G5.5 trimmed the operator SPA's tunnel manager down to a read-only status
- * panel — `startTunnel`/`stopTunnel`/`buildTunnelLogsUrl` (and
- * `TunnelConflictHttpError`, which only their conflict handling needed) are
- * gone along with it; see docs/brainstorm/go-migration-notes/sonnet-2.md.
- *
- * `/capabilities` is intentionally auth-free on the backend (always 200) so
- * we surface it via `apiClient` without special-casing 401/403 — the axios
- * interceptor still won't fire because the endpoint never returns those.
+ * Dashboard tunnel. `/capabilities` always answers 200; `/status`, `/start`
+ * and `/stop` answer only the local operator. Start and stop resolve with the
+ * new status; a refusal rejects with the server's `detail` as the message.
  */
 export async function getTunnelCapabilities(): Promise<TunnelCapabilities> {
   const { data } = await apiClient.get<TunnelCapabilities>(
@@ -89,6 +82,19 @@ export async function getTunnelStatus(): Promise<TunnelStatus> {
   const { data } = await apiClient.get<TunnelStatus>("/api/tunnel/status")
   return data
 }
+
+async function tunnelAction(action: "start" | "stop"): Promise<TunnelStatus> {
+  try {
+    const { data } = await apiClient.post<TunnelStatus>(`/api/tunnel/${action}`)
+    return data
+  } catch (err) {
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    throw new Error(detail ?? (err instanceof Error ? err.message : `could not ${action} the tunnel`))
+  }
+}
+
+export const startTunnel = () => tunnelAction("start")
+export const stopTunnel = () => tunnelAction("stop")
 
 /**
  * Thrown by `getPortfolio` when `/api/portfolio` answered with something

@@ -226,12 +226,10 @@ export interface ProjectConfig {
 }
 
 /**
- * Sprint E-5 — Tunnel manager types.
- *
- * Backend contract lives in `orchestrator/dashboard/tunnel/manager.py`
- * (`_blank_state()` is the canonical shape returned by `/api/tunnel/status`)
- * and `orchestrator/dashboard/server.py::api_tunnel_capabilities` (TUN-4).
- * Keep these in lock-step — a drift here silently breaks the operator panel.
+ * Dashboard tunnel (Cloudflare quick tunnel) — the shapes of
+ * `/api/tunnel/capabilities` and `/api/tunnel/status`
+ * (internal/dashboard/tunnelroutes.go, internal/tunnel). Keep these in
+ * lock-step with the Go structs.
  */
 export type TunnelState =
   | "idle"
@@ -245,17 +243,33 @@ export type TunnelCapabilityReason =
   | "config_disabled"
   | "profile_gate"
   | "host_gate"
-  | "autossh_missing"
+  | "binary_missing"
+
+export interface TunnelInstallStep {
+  title: string
+  /** One or more shell lines, newline-separated. */
+  command: string
+}
+
+export interface TunnelInstallGuide {
+  id: string
+  label: string
+  steps: TunnelInstallStep[]
+}
 
 export interface TunnelCapabilities {
   enabled: boolean
   provider: string | null
   can_control: boolean
   reason: TunnelCapabilityReason
-  // Multi-reason list — backend appends short codes in gate order (see
-  // `_CAPABILITY_REASON_SHORT` in server.py). Prefer `reason` for single-cause
-  // UI copy; use `reasons` for aggregated debugging surfaces.
   reasons: string[]
+  // Only for the local operator (every gate but the binary passed).
+  binary?: { found: boolean; path?: string; version?: string }
+  host?: { os: string; arch: string; recommended_guide: string }
+  guides?: TunnelInstallGuide[]
+  docs_url?: string
+  /** A cloudflared config file that stops quick tunnels from starting. */
+  config_blocker?: string
 }
 
 export interface TunnelStatus {
@@ -266,13 +280,13 @@ export interface TunnelStatus {
   started_at: string | null
   url_at: string | null
   restart_count: number
-  // Autossh's own supervisor loop can reconnect the underlying `ssh` child
-  // without our supervisor noticing — this axis is separate from
-  // `restart_count` per design D2.
-  autossh_reconnects: number
   last_error: string | null
   last_exit_code: number | null
   phase: TunnelState
+  /** The tunnel URL with this start's token, for the operator dashboard. */
+  share_url: string | null
+  /** The same, for the client portal at /stakeholder/. */
+  portal_url: string | null
 }
 
 // ---- Sprint health (Sprint F-5) --------------------------------------------

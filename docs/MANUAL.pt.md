@@ -293,7 +293,7 @@ Flags:
       --port int         Port to listen on; 0 picks any free one (default 7420)
       --profile string   Access profile: operator, stakeholder or both (default: config.yaml)
       --token string     Shared token a stakeholder session must present (default: config.yaml)
-      --tunnel           Also start the configured tunnel, and stop it on exit
+      --tunnel           Also start the Cloudflare quick tunnel (needs tunnel.enabled and cloudflared), and stop it on exit
 ```
 
 ```bash
@@ -304,10 +304,11 @@ orch dashboard
 # (nada é despachado; os dados são apagados ao parar)
 orch dashboard --demo
 
-# Uma URL somente leitura para passar a um cliente, com túnel para ficar
-# acessível fora da sua máquina (o provedor/comando é configurado em
-# dashboard.tunnel no config.yaml — --tunnel só liga/desliga)
-orch dashboard --profile stakeholder --token "$(openssl rand -hex 16)" --tunnel
+# Um link para passar a um cliente, por um túnel rápido da Cloudflare
+# (precisa de `tunnel: enabled: true` no config.yaml e do cloudflared no
+# PATH — a página Tunnel mostra como instalar). Imprime o link do portal do
+# cliente com o token que toda requisição pelo túnel exige; Ctrl+C o revoga.
+orch dashboard --tunnel
 ```
 
 `--profile operator` (o padrão) mostra tudo: tasks, gasto por modelo,

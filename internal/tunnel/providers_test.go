@@ -1,100 +1,74 @@
 package tunnel
 
 import (
-	"sort"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestResolveKnownProvider(t *testing.T) {
-	spec, ok := Resolve(ProviderAutossh)
-	if !ok {
-		t.Fatal("Resolve(autossh) ok = false, want true")
-	}
-	if spec.Command != "autossh" {
-		t.Errorf("Command = %q, want %q", spec.Command, "autossh")
-	}
-}
-
-func TestResolveUnknownProvider(t *testing.T) {
-	if _, ok := Resolve("cloudflared"); ok {
-		t.Error("Resolve(cloudflared) ok = true, want false — not a registered provider")
-	}
-}
-
-func TestKnownProvidersIsExactlyAutosshAndBore(t *testing.T) {
-	got := KnownProviders()
-	sort.Strings(got)
-	want := []string{ProviderAutossh, ProviderBore}
-	sort.Strings(want)
-	if len(got) != len(want) {
-		t.Fatalf("KnownProviders() = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("KnownProviders() = %v, want %v", got, want)
+func TestURLPatternTakesTheQuickTunnelNotTheControlEndpoint(t *testing.T) {
+	for line, want := range map[string]string{
+		"2026-09-16T10:00:00Z INF |  https://seasonal-deck-organisms-sf.trycloudflare.com  |": "https://seasonal-deck-organisms-sf.trycloudflare.com",
+		`failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel"`:         "",
+		"https://example.com": "",
+	} {
+		if got := urlPattern.FindString(line); got != want {
+			t.Errorf("urlPattern on %q = %q, want %q", line, got, want)
 		}
 	}
 }
 
-func TestCompileURLRegexRejectsBadPattern(t *testing.T) {
-	if _, err := compileURLRegex("("); err == nil {
-		t.Error("expected an error for an unbalanced regex")
+func TestRecommendedGuide(t *testing.T) {
+	for _, tc := range []struct {
+		name, goos, osRelease string
+		brew                  bool
+		want                  string
+	}{
+		{"mac with brew", "darwin", "", true, GuideBrew},
+		{"mac without brew", "darwin", "", false, GuideMacBinary},
+		{"ubuntu", "linux", "NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\n", false, GuideApt},
+		{"mint through ID_LIKE", "linux", "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n", false, GuideApt},
+		{"fedora", "linux", "ID=fedora\n", false, GuideDnf},
+		{"rocky through ID_LIKE", "linux", "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", false, GuideDnf},
+		{"arch", "linux", "ID=arch\n", true, GuideLinuxBinary},
+		{"no os-release", "linux", "", false, GuideLinuxBinary},
+		{"windows", "windows", "", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RecommendedGuide(tc.goos, tc.osRelease, tc.brew); got != tc.want {
+				t.Errorf("RecommendedGuide = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestCompileReconnectRegexEmptyPatternMatchesNothing(t *testing.T) {
-	spec := ProviderSpec{ReconnectPattern: ""}
-	re, err := compileReconnectRegex(spec)
-	if err != nil {
-		t.Fatal(err)
+// Every recommendation must name a guide that exists, and every guide must
+// end in something that proves the install worked.
+func TestEveryRecommendedGuideExists(t *testing.T) {
+	ids := map[string]bool{}
+	for _, g := range InstallGuides("arm64") {
+		ids[g.ID] = true
+		if len(g.Steps) == 0 || g.Steps[len(g.Steps)-1].Command != "cloudflared --version" {
+			t.Errorf("guide %s does not end by checking the binary", g.ID)
+		}
 	}
-	if re.MatchString("starting ssh") {
-		t.Error("empty ReconnectPattern (bore) should never match")
-	}
-}
-
-func TestFormatURLWholeMatchWhenNoTemplate(t *testing.T) {
-	re, err := compileURLRegex(autosshURLPattern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := "connected: https://abc123.a.pinggy.link ready"
-	loc := re.FindStringSubmatchIndex(line)
-	if loc == nil {
-		t.Fatal("expected a match")
-	}
-	match := submatches(line, loc)
-	got := formatURL("", re, match)
-	want := "https://abc123.a.pinggy.link"
-	if got != want {
-		t.Errorf("formatURL() = %q, want %q", got, want)
+	for _, id := range []string{GuideBrew, GuideApt, GuideDnf, GuideLinuxBinary, GuideMacBinary} {
+		if !ids[id] {
+			t.Errorf("no guide for %s", id)
+		}
 	}
 }
 
-func TestFormatURLNamedGroupTemplateForBore(t *testing.T) {
-	re, err := compileURLRegex(boreURLPattern)
-	if err != nil {
+func TestFindConfigReportsTheFileThatBlocksQuickTunnels(t *testing.T) {
+	empty, withConfig := t.TempDir(), t.TempDir()
+	if got := findConfig([]string{empty}); got != "" {
+		t.Errorf("findConfig on an empty dir = %q", got)
+	}
+	path := filepath.Join(withConfig, "config.yaml")
+	if err := os.WriteFile(path, []byte("tunnel: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	line := "2024-01-15T12:00:00Z INFO bore_cli::client: listening at bore.pub:41230"
-	loc := re.FindStringSubmatchIndex(line)
-	if loc == nil {
-		t.Fatal("expected a match")
-	}
-	match := submatches(line, loc)
-	got := formatURL(boreURLTemplate, re, match)
-	want := "http://bore.pub:41230"
-	if got != want {
-		t.Errorf("formatURL() = %q, want %q", got, want)
-	}
-}
-
-func TestAutosshDoesNotMatchBoreLine(t *testing.T) {
-	re, err := compileURLRegex(autosshURLPattern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if re.MatchString("listening at bore.pub:41230") {
-		t.Error("autossh's URL pattern should not match a bore line")
+	if got := findConfig([]string{empty, withConfig}); got != path {
+		t.Errorf("findConfig = %q, want %q", got, path)
 	}
 }

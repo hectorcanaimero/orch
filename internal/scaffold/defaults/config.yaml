@@ -74,8 +74,8 @@ report_findings:
 
 # Sprint E-2 / E-3 — dashboard client (SPA + FastAPI) knobs. All optional.
 # `profile` / `token` gate the middleware (operator|stakeholder|both — see
-# orchestrator/dashboard/dashboard_config.py). Sprint H-2's `kanban`/
-# `tunnel` defaults live in this same block — a second top-level
+# orchestrator/dashboard/dashboard_config.py). Sprint H-2's `kanban`
+# defaults live in this same block — a second top-level
 # `dashboard:` key used to follow further down (bug 4, see
 # docs/brainstorm/go-migration-notes.md): PyYAML silently keeps only the
 # LAST block on a duplicate top-level key, so that second definition had
@@ -91,30 +91,15 @@ dashboard:
     sort_default: null         # "impact" | null (default = phase asc + id asc).
     group_default: null        # "phase" | null.
     refresh_interval_s: 10     # HTMX polling cadence for the board.
-  # Tunnel manager (Sprint E-5). Disabled by default. Flip `enabled: true`
-  # to expose `/api/tunnel/*` (three-gate: config → operator profile →
-  # loopback host). Requires `autossh` on PATH.
-  tunnel:
-    enabled: false
-    provider: autossh          # v1 allowlist: autossh, bore.
-    command: autossh
-    args:
-      - "-M"
-      - "0"
-      - "-o"
-      - "StrictHostKeyChecking=no"
-      - "-o"
-      - "ServerAliveInterval=30"
-      - "-o"
-      - "ExitOnForwardFailure=yes"
-      - "-p"
-      - "443"
-      - "-R"
-      - "0:localhost:7420"
-      - "a.pinggy.io"
-    auto_start: false          # true = self-probe + spawn on dashboard boot.
-    startup_probe_timeout_s: 3    # 1..30 — self-probe timeout for auto_start.
-    url_parse_timeout_s: 30       # 5..300 — how long we wait for the URL line.
+
+# Dashboard tunnel — share the dashboard over a Cloudflare quick tunnel
+# (https://<random>.trycloudflare.com; no Cloudflare account needed). Needs
+# `cloudflared` on PATH: the dashboard's Tunnel page shows how to install it
+# and has the start/stop button, or run `orch dashboard --tunnel`. Every
+# request through the tunnel must carry the token in the link orch prints,
+# and the link changes on every start.
+tunnel:
+  enabled: false
 
 # Sprint F-2 — git worktree isolation per task.
 # When worktree_mode is true, each dispatched task runs in a dedicated

@@ -18,7 +18,7 @@ That sentence. That's it. No spreadsheet, no Slack thread, no weekly email.
 
 - `orch` installed (`curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh`, or `brew install hectorcanaimero/orch/orch` — see the README)
 - At least one AI CLI on your PATH: `claude`, `codex`, or `opencode`
-- Optional but recommended: `bore` for tunneling (`brew install bore-cli` or `cargo install bore-cli`)
+- For sharing a link: `cloudflared` (Cloudflare's tunnel client — no Cloudflare account needed). The dashboard's Tunnel page shows the install steps for your system; on macOS it is `brew install cloudflared`.
 
 ---
 
@@ -49,30 +49,17 @@ client-name/
 
 ## Step 2 — Configure the stakeholder dashboard
 
-Create `dashboard.yaml` at the project root:
+Turn the tunnel on in `.orchestrator/config.yaml`:
 
-```bash
-TOKEN="$(openssl rand -hex 16)"
-cat > dashboard.yaml << EOF
-profile: both
-token: "${TOKEN}"
-server:
-  host: 127.0.0.1
-  port: 7420
+```yaml
 tunnel:
   enabled: true
-  provider: bore
-  command: bore
-  args: ["local", "7420", "--to", "bore.pub"]
-EOF
-
-echo "Client token: ${TOKEN}"
-echo "Save this — you'll send it to your client."
 ```
 
-`profile: both` means:
+That is all. The dashboard stays the operator's:
 - **You** hit `http://127.0.0.1:7420` and see everything (no token needed locally)
-- **Your client** uses the public URL with `?token=<TOKEN>` and sees only the curated view
+- **Your client** gets a link with a token that reaches only the client portal —
+  they cannot turn it into your view by editing the address
 
 ---
 
@@ -101,20 +88,17 @@ orch validate     # check for cycles, unrouted models, schema errors
 ## Step 4 — Start the dashboard and tunnel
 
 ```bash
-# Start dashboard (stays in background)
-orch dashboard &
-
-# Start tunnel (bore, autossh, or cloudflared — configured in dashboard.yaml)
-orch tunnel start
+orch dashboard --tunnel
 ```
 
-The dashboard UI shows the tunnel URL once it's live. Or check it:
+Or start `orch dashboard` and press **Start the tunnel** on the Tunnel page
+(`http://127.0.0.1:7420/tunnel`). If `cloudflared` is missing, the page shows
+the install steps for your system and a **Check again** button.
 
-```bash
-orch dashboard   # visit http://127.0.0.1:7420 → Tunnel tab
-```
+Once Cloudflare assigns the address (a few seconds) you get two links:
 
-You'll see something like: `https://chatbot-client.bore.pub`
+- **Client portal** — `https://<words>.trycloudflare.com/stakeholder/?token=…` — send this one.
+- **Full dashboard** — for you or your team only.
 
 ---
 
@@ -125,7 +109,7 @@ Hi María,
 
 Your project is live. You can follow progress here:
 
-  https://chatbot-client.bore.pub?token=<YOUR_TOKEN>
+  <client portal link>
 
 What you'll see:
 - Phase completion (% done per phase, tasks done / in-progress / blocked)
@@ -201,14 +185,14 @@ the API structure still can't see operator-only data — every restricted route 
 Running several projects at once? Each gets its own `orch dashboard` instance on a different port:
 
 ```bash
-# Client A — port 7420, tunnel to bore.pub
-orch dashboard --project-root ~/work/client-a &
+# Client A — port 7420, its own quick tunnel
+orch dashboard --project-root ~/work/client-a --tunnel &
 
-# Client B — port 7421, tunnel to bore.pub
-orch dashboard --project-root ~/work/client-b --port 7421 &
+# Client B — port 7421, its own quick tunnel
+orch dashboard --project-root ~/work/client-b --port 7421 --tunnel &
 ```
 
-Each `dashboard.yaml` has its own token. Clients never share a session.
+Each tunnel mints its own tokens. Clients never share a session.
 
 For subdomain routing across all clients (agency setup), put an nginx or Caddy reverse
 proxy in front and route by Host header to each port.
@@ -254,21 +238,25 @@ To make the stakeholder view more meaningful:
 ## Troubleshooting
 
 **Client gets 401**
-The token in the URL doesn't match `dashboard.yaml`. Regenerate: `openssl rand -hex 16`,
-update `dashboard.yaml`, restart the dashboard.
+The link is from an earlier start: every start mints new tokens and a new address. Send
+the current client-portal link from the Tunnel page.
 
-**Client gets 403 on all routes**
-The dashboard is running in `operator` profile. Change to `profile: both` or `stakeholder`
-in `dashboard.yaml`.
+**Client gets 403**
+They opened a page outside the client portal with the portal link's token — expected.
+Send the client-portal link, not the full-dashboard one.
 
 **Tunnel URL changes on restart**
-bore and autossh don't guarantee a stable URL. For a stable public URL, use Cloudflare
-Tunnel with a named tunnel — full guide in [docs/DASHBOARD-PROFILES.md](DASHBOARD-PROFILES.md).
+Quick tunnels get a new random address on every start. For a stable public URL, run a
+named Cloudflare Tunnel — full guide in [docs/DASHBOARD-PROFILES.md](DASHBOARD-PROFILES.md).
 
-**Dashboard not updating**
-The SPA uses SSE for live updates. If the client's browser is behind a proxy that buffers
-SSE (corporate networks, some VPNs), they may need to disable the proxy or use the
-direct URL.
+**The tunnel does not start**
+Check the Tunnel page or `orch doctor`: `cloudflared` must be on PATH, and a
+`config.yml`/`config.yaml` in `~/.cloudflared/` stops quick tunnels (rename it while sharing).
+
+**Dashboard not updating live**
+Quick tunnels do not carry server-sent events, so through the tunnel the dashboard
+refreshes every 15 seconds instead of live. The same happens behind proxies that buffer
+responses (corporate networks, some VPNs).
 
 ---
 
