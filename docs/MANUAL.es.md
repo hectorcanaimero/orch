@@ -317,7 +317,9 @@ destraba cada una — el dashboard solo lee), las fases y la ventana de budget.
 los filtros en la URL; **Cost** reúne Budget y Metrics; **Delivery**, el resumen
 para el cliente, CI y Share (el túnel). **Logs** se abre como panel sobre
 cualquier página. Las direcciones viejas (`/kanban`, `/budget`, `/tunnel`…)
-redirigen a su lugar nuevo.
+redirigen a su lugar nuevo. **⌘K** (Ctrl+K) busca páginas, tasks y filtros y
+copia comandos de la CLI; `g` y luego `n`/`w`/`c`/`d` cambia de destino, `/`
+busca en la lista de tasks y `?` muestra todos los atajos.
 
 `--profile operator` (el default) muestra todo: tasks, gasto por modelo,
 logs. `--profile stakeholder` protege cada ruta de datos detrás del

@@ -319,6 +319,9 @@ Kanban, Graph, Phases e Pace como abas que compartilham os filtros na URL;
 **Cost** reúne Budget e Metrics; **Delivery**, o resumo para o cliente, CI e
 Share (o túnel). **Logs** abre como painel sobre qualquer página. Os endereços
 antigos (`/kanban`, `/budget`, `/tunnel`…) redirecionam para o novo lugar.
+**⌘K** (Ctrl+K) busca páginas, tasks e filtros e copia comandos da CLI; `g` e
+depois `n`/`w`/`c`/`d` troca de destino, `/` busca na lista de tasks e `?`
+mostra todos os atalhos.
 
 `--profile operator` (o padrão) mostra tudo: tasks, gasto por modelo,
 logs. `--profile stakeholder` protege cada rota de dados atrás do

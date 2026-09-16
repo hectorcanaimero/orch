@@ -319,7 +319,9 @@ unblocks each — the dashboard only reads), phases and the budget window.
 filters in the URL; **Cost** holds Budget and Metrics; **Delivery** holds the
 client summary, CI and Share (the tunnel). **Logs** opens as a panel over any
 page. Old addresses (`/kanban`, `/budget`, `/tunnel`…) redirect to their new
-place.
+place. **⌘K** (Ctrl+K) searches pages, tasks and filters and copies CLI
+commands; `g` then `n`/`w`/`c`/`d` changes destination, `/` searches the task
+list and `?` lists every shortcut.
 
 `--profile operator` (the default) shows everything: tasks, spend per
 model, logs. `--profile stakeholder` gates every data route behind the

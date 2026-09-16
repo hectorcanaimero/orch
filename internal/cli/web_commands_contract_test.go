@@ -58,13 +58,33 @@ func TestDashboardOnlyNamesCommandsThatExist(t *testing.T) {
 var (
 	codeElement    = regexp.MustCompile(`<code[^>]*>([^<]*)</code>`)
 	quotedCodeSpan = regexp.MustCompile("[\"'][^\"'\n]*`(orch [^`\n]+)`")
+	// A command the page copies to the clipboard — `command="orch doctor"`,
+	// `command: "orch status"`, or a template with a task id in it. The
+	// `${…}` holes become a placeholder value; the flags around them still count.
+	commandValue = regexp.MustCompile("command(?:=\\{?|:)\\s*[\"'`](orch [^\"'`\n]+)[\"'`]")
+	templateHole = regexp.MustCompile(`\$\{[^}]*\}`)
 )
+
+// Copied commands are checked too, templated ones included: the palette and
+// Now page hand these to a terminal verbatim.
+func TestWebOrchInvocationsReadsCopiedCommands(t *testing.T) {
+	src := "<CopyCommand command={`orch task set --id ${b.task_id} --status todo`} />\n" +
+		"const COMMANDS = [{ command: \"orch doctor\" }]\n"
+	got := webOrchInvocations(src)
+	want := []string{"orch task set --id X --status todo", "orch doctor"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("webOrchInvocations = %q, want %q", got, want)
+	}
+}
 
 // webOrchInvocations returns the orch command lines in a TSX/TS source.
 // A `<code>` element may wrap its text over several lines; whitespace is
 // collapsed before the check.
 func webOrchInvocations(content string) []string {
 	var out []string
+	for _, m := range commandValue.FindAllStringSubmatch(content, -1) {
+		out = append(out, templateHole.ReplaceAllString(m[1], "X"))
+	}
 	for _, m := range codeElement.FindAllStringSubmatch(content, -1) {
 		if inv := strings.Join(strings.Fields(m[1]), " "); strings.HasPrefix(inv, "orch ") {
 			out = append(out, inv)
