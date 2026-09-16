@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { currentPhase, deliveriesSince, parseRoute, phaseName, phaseState, qualityLine, rememberLinkToken, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
+import { currentPhase, deliveriesSince, formatDay, langOf, parseRoute, phaseName, phaseState, qualityLine, relativeTime, rememberLinkToken, renderMarkdown, snapshotURL, statusLine } from "@/stakeholder/portal"
 import type { StakeholderMilestone, StakeholderSnapshot } from "@/stakeholder/types"
 
 function milestone(phase: number, name: string, done: number, total: number, extra: Partial<StakeholderMilestone> = {}): StakeholderMilestone {
@@ -149,6 +149,53 @@ describe("rememberLinkToken", () => {
       throw new Error("blocked")
     })
     expect(rememberLinkToken("")).toBeNull()
+  })
+})
+
+describe("Portuguese", () => {
+  // pt is a language of its own, not Spanish with a different flag.
+  it("writes the status line, dates and counts in Portuguese", () => {
+    const s = statusLine(snapshot({ summary: { ...snapshot().summary, blocked: 2 } }), "pt")
+    expect(s.headline).toBe("Prevemos terminar em 16 de setembro.")
+    expect(s.detail).toBe("Agora: Campaña de lanzamiento. 2 itens em espera.")
+    expect(statusLine(snapshot({ summary: { ...snapshot().summary, blocked: 1 } }), "pt").detail).toContain("1 item em espera.")
+    expect(formatDay("2026-09-16", "pt")).toBe("16 de setembro")
+    expect(qualityLine({ gates: ["tests"], delivered: 1, verified: 1, first_pass: 1 }, "pt")).toBe(
+      "1 de 1 entrega passou em todas as verificações, 1 na primeira tentativa.",
+    )
+  })
+
+  it("dates in each language, in UTC", () => {
+    expect(formatDay("2026-09-16", "es")).toBe("16 de septiembre")
+    expect(formatDay("2026-09-16", "en")).toBe("September 16")
+    expect(formatDay("2026-09-16T23:30:00Z", "pt")).toBe("16 de setembro")
+  })
+})
+
+describe("langOf", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it("reads the snapshot's language", () => {
+    expect(langOf(snapshot({ executive_summary: { text: "", language: "pt" } }))).toBe("pt")
+    expect(langOf(snapshot({ executive_summary: { text: "", language: "es" } }))).toBe("es")
+  })
+
+  // A language the portal cannot write is shown in English and said out loud,
+  // instead of silently becoming Spanish.
+  it("falls back to English, with a warning, for a language it does not have", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    expect(langOf(snapshot({ executive_summary: { text: "", language: "fr" } }))).toBe("en")
+    expect(warn).toHaveBeenCalled()
+  })
+})
+
+describe("relativeTime", () => {
+  const now = Date.parse("2026-09-14T12:00:00Z")
+  it("says how long ago, in the project's language", () => {
+    expect(relativeTime("2026-09-14T11:55:00Z", "pt", now)).toBe("há 5 minutos")
+    expect(relativeTime("2026-09-14T09:00:00Z", "es", now)).toBe("hace 3 horas")
+    expect(relativeTime("2026-09-13T12:00:00Z", "en", now)).toBe("yesterday")
+    expect(relativeTime("not a date", "en", now)).toBe("not a date")
   })
 })
 

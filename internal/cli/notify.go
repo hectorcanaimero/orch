@@ -95,9 +95,9 @@ func newNotifyDigestCmd(flags *projectFlags) *cobra.Command {
 			"  0 9 * * MON  orch notify digest --send",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if language != "" && language != "es" && language != "en" {
+			if language != "" && language != "es" && language != "en" && language != "pt" {
 				return withExitCode(2, fmt.Errorf(
-					"invalid --language %q (want es or en)", language))
+					"invalid --language %q (want en, es or pt)", language))
 			}
 			ctx := cmd.Context()
 			paths, cfg, err := loadProjectConfig(flags)
@@ -158,7 +158,7 @@ func newNotifyDigestCmd(flags *projectFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&send, "send", false,
 		"POST the digest to the configured webhooks as well as printing it")
 	cmd.Flags().StringVar(&language, "language", "",
-		"Override dashboard.summary_language for this run (es|en)")
+		"Override dashboard.language for this run (en|es|pt)")
 	return cmd
 }
 

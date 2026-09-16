@@ -8,6 +8,8 @@ import {
   langOf,
   parseRoute,
   phaseName,
+  readerLang,
+  relativeTime,
   snapshotURL,
   phaseState,
   readAndRecordVisit,
@@ -93,7 +95,7 @@ export default function App() {
       <div className="portal">
         <main className="mx-auto max-w-[720px] px-5 py-16">
           {state.status === "loading" ? (
-            <p className="text-[var(--portal-muted)]">Loading…</p>
+            <p className="text-[var(--portal-muted)]">{copy[readerLang()].loading}</p>
           ) : (
             <div role="alert" className="flex gap-3 rounded-xl bg-[var(--portal-hold-soft)] p-5 text-[var(--portal-ink)]">
               <TriangleAlert className="mt-1 h-5 w-5 shrink-0 text-[var(--portal-hold)]" aria-hidden />
@@ -112,18 +114,10 @@ class LinkError extends Error {}
 // loadMessage says what went wrong in words a client can act on. The page has
 // no project language yet, so it answers in the reader's own.
 function loadMessage(err: unknown): string {
-  const es = typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("es")
-  if (err instanceof LinkError) {
-    return es
-      ? "Este enlace ya no es válido. Pide al equipo un enlace nuevo."
-      : "This link is no longer valid. Ask the team for a new one."
-  }
-  if (err instanceof TypeError && window.location.protocol === "file:") {
-    return "Your browser blocks a local file from reading another local file. Serve this folder over HTTP (for example `python3 -m http.server`) and open it from there."
-  }
-  return es
-    ? "No pudimos cargar el estado del proyecto. Vuelve a intentarlo en un momento."
-    : "We couldn't load the project status. Try again in a moment."
+  const t = copy[readerLang()]
+  if (err instanceof LinkError) return t.linkInvalid
+  if (err instanceof TypeError && window.location.protocol === "file:") return t.fileBlocked
+  return t.loadError
 }
 
 function Portal({ data }: { data: StakeholderSnapshot }) {
@@ -161,7 +155,7 @@ function Portal({ data }: { data: StakeholderSnapshot }) {
             <h1 className="portal-display truncate text-xl font-semibold">{name}</h1>
           </div>
           <span className="shrink-0 text-sm text-[var(--portal-muted)]" title={data.generated_at}>
-            {t.updated(relative(data.generated_at, lang))}
+            {t.updated(relativeTime(data.generated_at, lang))}
           </span>
         </div>
         <nav aria-label={name} className="mx-auto hidden max-w-[720px] gap-6 px-5 sm:flex">
@@ -485,17 +479,4 @@ function StatusIcon({ status, lang }: { status: DeliverableStatus; lang: Lang })
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
-}
-
-function relative(iso: string, lang: Lang): string {
-  const then = Date.parse(iso)
-  if (Number.isNaN(then)) return iso
-  const minutes = Math.round((Date.now() - then) / 60_000)
-  const es = lang === "es"
-  if (minutes < 1) return es ? "hace un momento" : "just now"
-  if (minutes < 60) return es ? `hace ${minutes} min` : `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return es ? `hace ${hours} h` : `${hours} h ago`
-  const days = Math.round(hours / 24)
-  return es ? `hace ${days} ${days === 1 ? "día" : "días"}` : `${days} ${days === 1 ? "day" : "days"} ago`
 }

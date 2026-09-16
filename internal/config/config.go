@@ -174,6 +174,10 @@ type Dashboard struct {
 	Token                  string `yaml:"token"`
 	ShowSpendToStakeholder bool   `yaml:"show_spend_to_stakeholder"`
 	SummaryLanguage        string `yaml:"summary_language"`
+	// Language is the client-facing language (en, es or pt): the executive
+	// summary, the portal and the PDF report. summary_language is its older
+	// name; validate resolves both into the same value.
+	Language string `yaml:"language"`
 }
 
 // Dispatch controls per-task git isolation.

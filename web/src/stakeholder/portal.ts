@@ -2,103 +2,39 @@ import DOMPurify from "dompurify"
 import { marked } from "marked"
 import type { StakeholderDelivery, StakeholderMilestone, StakeholderQuality, StakeholderSnapshot } from "./types"
 
-export type Lang = "es" | "en"
+import { copy, LOCALES, type Lang } from "./i18n"
 
+export { copy, readerLang, type Lang } from "./i18n"
+
+// langOf is the snapshot's language. One the portal cannot write is shown in
+// English and said out loud in the console, instead of silently becoming
+// Spanish.
 export function langOf(snapshot: StakeholderSnapshot): Lang {
-  return snapshot.executive_summary.language === "en" ? "en" : "es"
+  const lang = snapshot.executive_summary.language
+  if (lang === "en" || lang === "es" || lang === "pt") return lang
+  console.warn(`orch portal: no translation for language ${JSON.stringify(lang)}; showing English`)
+  return "en"
 }
 
-// The words the portal uses. Kept here, beside the only code that picks
-// between them, rather than in a framework: two languages, one page.
-export const copy = {
-  es: {
-    summary: "Resumen",
-    roadmap: "Hoja de ruta",
-    progress: (done: number, total: number) => `${done} de ${total} entregables`,
-    since: "Desde tu última visita",
-    sinceFirst: "Entregado esta semana",
-    nothingNew: "Nada nuevo desde tu última visita.",
-    onHold: "En espera",
-    now: "Ahora",
-    next: "Después",
-    done: "Entregado",
-    inProgress: "En curso",
-    blocked: "En espera",
-    pending: "Pendiente",
-    updated: (rel: string) => `Actualizado ${rel}`,
-    other: "Otros entregables",
-    budget: "Presupuesto",
-    spent: "Consumido",
-    loadError: "No pudimos cargar el estado del proyecto.",
-    loading: "Cargando…",
-    showAll: (n: number) => `Ver las ${n} entregas`,
-    showLess: "Ver menos",
-    documents: "Documentos",
-    allDocuments: "Todos los documentos",
-    updatedOn: (day: string) => `Actualizado el ${day}`,
-    noDocument: "Ese documento ya no está publicado.",
-    quality: "Cómo verificamos cada entrega",
-    gates: {
-      tests: "Pruebas automáticas",
-      typecheck: "Revisión de tipos",
-      lint: "Revisión de estilo del código",
-      build: "Compilación completa",
-      review: "Revisión automática del código",
-    },
-    verified: (verified: number, delivered: number, firstPass: number) =>
-      `${verified} de ${delivered} ${delivered === 1 ? "entrega pasó" : "entregas pasaron"} todas las verificaciones, ${firstPass} a la primera.`,
-  },
-  en: {
-    summary: "Overview",
-    roadmap: "Roadmap",
-    progress: (done: number, total: number) => `${done} of ${total} deliverables`,
-    since: "Since your last visit",
-    sinceFirst: "Delivered this week",
-    nothingNew: "Nothing new since your last visit.",
-    onHold: "On hold",
-    now: "Now",
-    next: "Next",
-    done: "Delivered",
-    inProgress: "In progress",
-    blocked: "On hold",
-    pending: "Not started",
-    updated: (rel: string) => `Updated ${rel}`,
-    other: "Other deliverables",
-    budget: "Budget",
-    spent: "Spent",
-    loadError: "We couldn't load the project status.",
-    loading: "Loading…",
-    showAll: (n: number) => `Show all ${n} deliveries`,
-    showLess: "Show less",
-    documents: "Documents",
-    allDocuments: "All documents",
-    updatedOn: (day: string) => `Updated ${day}`,
-    noDocument: "That document is no longer published.",
-    quality: "How every delivery is checked",
-    gates: {
-      tests: "Automated tests",
-      typecheck: "Type checks",
-      lint: "Code style checks",
-      build: "A full build",
-      review: "Automated code review",
-    },
-    verified: (verified: number, delivered: number, firstPass: number) =>
-      `${verified} of ${delivered} ${delivered === 1 ? "delivery" : "deliveries"} passed every check, ${firstPass} on the first try.`,
-  },
-} as const
-
-const MONTHS: Record<Lang, string[]> = {
-  es: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
-  en: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
-}
-
-// formatDay renders an ISO day as "16 de septiembre" / "September 16", in
-// UTC so the day never shifts with the reader's timezone.
+// formatDay renders an ISO day as "September 16" / "16 de septiembre" /
+// "16 de setembro", in UTC so the day never shifts with the reader's timezone.
 export function formatDay(iso: string, lang: Lang): string {
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso)
   if (Number.isNaN(d.getTime())) return iso
-  const month = MONTHS[lang][d.getUTCMonth()]
-  return lang === "es" ? `${d.getUTCDate()} de ${month}` : `${month} ${d.getUTCDate()}`
+  return new Intl.DateTimeFormat(LOCALES[lang], { day: "numeric", month: "long", timeZone: "UTC" }).format(d)
+}
+
+// relativeTime says how long ago an instant was ("5 minutes ago", "hace 3
+// horas", "ontem"). An instant that does not parse is returned as given.
+export function relativeTime(iso: string, lang: Lang, now: number = Date.now()): string {
+  const then = Date.parse(iso)
+  if (Number.isNaN(then)) return iso
+  const rtf = new Intl.RelativeTimeFormat(LOCALES[lang], { numeric: "auto" })
+  const minutes = Math.round((then - now) / 60_000)
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, "minute")
+  const hours = Math.round(minutes / 60)
+  if (Math.abs(hours) < 24) return rtf.format(hours, "hour")
+  return rtf.format(Math.round(hours / 24), "day")
 }
 
 // phaseName drops a leading "F6 — " a tasks.json name may carry: the phase
@@ -121,29 +57,17 @@ export function phaseState(m: StakeholderMilestone, current: StakeholderMileston
 // statusLine is the sentence a client reads first: when it finishes, then
 // where the work is and what waits.
 export function statusLine(s: StakeholderSnapshot, lang: Lang): { headline: string; detail: string } {
+  const t = copy[lang]
   const { summary } = s
   if (summary.total > 0 && summary.done === summary.total) {
-    return { headline: lang === "es" ? "Todo lo planificado está entregado." : "Everything planned has been delivered.", detail: "" }
+    return { headline: t.allDelivered, detail: "" }
   }
-  let headline: string
-  if (summary.eta_date) {
-    const day = formatDay(summary.eta_date, lang)
-    const early = summary.eta_confidence === "low"
-    headline =
-      lang === "es"
-        ? `Estimamos terminar el ${day}${early ? " (estimación preliminar)" : ""}.`
-        : `We expect to finish around ${day}${early ? " (early estimate)" : ""}.`
-  } else {
-    headline = lang === "es" ? "El trabajo está en curso." : "Work is in progress."
-  }
+  const headline = summary.eta_date ? t.finish(formatDay(summary.eta_date, lang), summary.eta_confidence === "low") : t.working
 
   const parts: string[] = []
   const cur = currentPhase(s.milestones)
-  if (cur) parts.push(`${lang === "es" ? "Ahora" : "Now"}: ${phaseName(cur.name)}.`)
-  if (summary.blocked > 0) {
-    const n = summary.blocked
-    parts.push(lang === "es" ? `${n} ${n === 1 ? "tema" : "temas"} en espera.` : `${n} ${n === 1 ? "item" : "items"} on hold.`)
-  }
+  if (cur) parts.push(t.nowPhase(phaseName(cur.name)))
+  if (summary.blocked > 0) parts.push(t.itemsOnHold(summary.blocked))
   return { headline, detail: parts.join(" ") }
 }
 

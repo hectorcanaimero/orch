@@ -218,6 +218,10 @@ func validate(cfg *Config) error {
 			cfg.Dashboard.Profile)
 	}
 
+	if err := resolveLanguage(&cfg.Dashboard); err != nil {
+		return err
+	}
+
 	if err := validateBranding(&cfg.Presentation.Branding); err != nil {
 		return err
 	}
@@ -228,6 +232,29 @@ func validate(cfg *Config) error {
 	if cfg.Dispatch.BaseBranch == "" {
 		cfg.Dispatch.BaseBranch = "main"
 	}
+	return nil
+}
+
+// resolveLanguage settles dashboard.language, falling back to its older name
+// summary_language, and refuses a language orch cannot write — before this
+// key existed, an unknown value silently became Spanish.
+func resolveLanguage(d *Dashboard) error {
+	key, value := "dashboard.language", d.Language
+	if value == "" {
+		key, value = "dashboard.summary_language", d.SummaryLanguage
+	}
+	lang := strings.ToLower(strings.TrimSpace(value))
+	if lang == "pt-br" || lang == "pt_br" {
+		lang = "pt"
+	}
+	switch lang {
+	case "":
+		lang = "es"
+	case "en", "es", "pt":
+	default:
+		return fmt.Errorf("%s: %q is not one of en, es, pt", key, value)
+	}
+	d.Language, d.SummaryLanguage = lang, lang
 	return nil
 }
 
@@ -297,6 +324,7 @@ var knownKeys = map[string]bool{
 	"dashboard.profile":       true, "dashboard.token": true,
 	"dashboard.show_spend_to_stakeholder": true,
 	"dashboard.summary_language":          true,
+	"dashboard.language":                  true,
 	"dispatch.worktree_mode":              true, "dispatch.base_branch": true,
 	"vcs.provider": true, "vcs.host": true, "vcs.auto_pr": true,
 	"vcs.ci_max_retries": true, "vcs.ci_poll_interval_s": true,

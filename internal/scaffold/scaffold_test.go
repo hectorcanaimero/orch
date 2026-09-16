@@ -470,7 +470,9 @@ var defaultsDivergedFromPython = map[string]string{
 		"claude now receives --max-budget-usd only when the key is written, and a new project should not " +
 		"send a cap nobody chose (the value is still the 5.0 default, limiting escalation). " +
 		"The tunnel block sat under `dashboard:`, where the Go loader ignores it, and chose autossh; " +
-		"the tunnel is a Cloudflare quick tunnel and its block is a top-level `tunnel: enabled:`",
+		"the tunnel is a Cloudflare quick tunnel and its block is a top-level `tunnel: enabled:`. " +
+		"feat/i18n-portal-pt: `summary_language` is written as `dashboard.language`, the key that now also " +
+		"picks the portal's and the PDF's language, and pt joins en and es",
 	"budgets.yaml": "fix/budget-accounting: the header's selection order named a CLI flag and an environment " +
 		"variable nothing reads, and the calibration note now says that cache tokens count",
 }
