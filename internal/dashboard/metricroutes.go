@@ -30,12 +30,12 @@ func (s *Server) metricRoutes() []route {
 
 // metricsPayload is `/api/metrics`'s body.
 type metricsPayload struct {
-	ProjectID          string       `json:"project_id"`
-	TotalCostUSD       float64      `json:"total_cost_usd"`
+	ProjectID    string  `json:"project_id"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
 	// EstimatedCostUSD is the part of TotalCostUSD that no CLI reported:
 	// priced from tokens with pricing.yaml. Zero when every dollar is real.
-	EstimatedCostUSD float64      `json:"estimated_cost_usd"`
-	ByModel          []modelStats `json:"by_model"`
+	EstimatedCostUSD   float64      `json:"estimated_cost_usd"`
+	ByModel            []modelStats `json:"by_model"`
 	ByDay              []dayStats   `json:"by_day"`
 	EstimateHoursTotal float64      `json:"estimate_hours_total"`
 }
