@@ -5,7 +5,7 @@ export interface BudgetChartProps {
 }
 
 // Fixed viewBox, outer <svg> stretches to container width — mirrors
-// GanttChart / BarChartByDay. One horizontal bar per provider: track =
+// BarChartByDay. One horizontal bar per provider: track =
 // token_budget, fill = tokens_used, a dashed rule marks threshold_pct.
 const VB_WIDTH = 900
 const ROW_H = 40

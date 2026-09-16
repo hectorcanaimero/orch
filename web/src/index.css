@@ -78,9 +78,16 @@
 
     color-scheme: dark;
 
-    /* ponytail: compat shim — Milestones, Sprint, Budget and Tunnel still
-       carry hardcoded zinc classes until part 2 retokens them. Inverting the
-       ramp in dark keeps their text legible; delete this block with them. */
+    /* ponytail: compat shim — Milestones, Pace, Budget and Tunnel still
+       carry hardcoded zinc/amber/rose classes until part 2 retokens them.
+       Inverting those ramps in dark keeps their text legible and their
+       pastel callouts dark; delete this block with them. */
+    --color-amber-50: color-mix(in oklab, var(--status-blocked) 12%, var(--card));
+    --color-amber-300: color-mix(in oklab, var(--status-blocked) 45%, var(--card));
+    --color-amber-900: #f3c77a;
+    --color-rose-50: color-mix(in oklab, var(--status-failed) 10%, var(--card));
+    --color-rose-100: color-mix(in oklab, var(--status-failed) 30%, var(--card));
+    --color-rose-700: #f19a9d;
     --color-zinc-50: oklch(14.1% 0.005 285.823);
     --color-zinc-100: oklch(21% 0.006 285.885);
     --color-zinc-200: oklch(27.4% 0.006 286.033);
