@@ -112,6 +112,7 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				Cwd:               paths.Root,
 				ProjectID:         paths.ID,
 				RunID:             runID,
+				BudgetUSD:         perDispatchCap(cfg),
 			})
 			scheduler.Backend = engine.NewStateRecorder(backend)
 			// The same adapter, named separately because it answers a
@@ -216,6 +217,16 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 		"Skip pushing task branches — for a project with no remote")
 
 	return cmd
+}
+
+// perDispatchCap is budget.per_dispatch_usd as the per-attempt cap claude
+// receives as `--max-budget-usd`; nil (no flag) when it is zero or less.
+func perDispatchCap(cfg config.Config) *float64 {
+	if cfg.Budget.PerDispatchUSD <= 0 {
+		return nil
+	}
+	v := cfg.Budget.PerDispatchUSD
+	return &v
 }
 
 // newBudgetGate loads the provider guardrails, or returns nil when the
