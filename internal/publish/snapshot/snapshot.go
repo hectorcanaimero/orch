@@ -249,7 +249,7 @@ func Build(in Input) Snapshot {
 	eta := etaHoursRemaining(in.Tasks, humanHours)
 	projection := graph.ProjectCompletion(remainingTasks(in.Tasks), in.DoneInVelocityWindow, VelocityWindowDays, in.Now)
 
-	milestones := buildMilestones(in.Tasks, in.Phases, in.PhaseTitles)
+	milestones := PhaseMilestones(in.Tasks, in.Phases, in.PhaseTitles)
 	addPackages(milestones, in.Tasks, in.PackageTitles, in.FinishedAt)
 	blockers := buildBlockers(in.Tasks, in.Events, lang)
 
@@ -429,12 +429,17 @@ func brandingOrNil(b Branding) *Branding {
 	return &b
 }
 
-// buildMilestones reshapes graph.PhaseCounts (aggregate, id-free already)
+// PhaseMilestones reshapes graph.PhaseCounts (aggregate, id-free already)
 // into the stakeholder's milestone shape, adding the phase name from
 // tasks.json's own `phases[]` list — the same lookup Python's
 // `_stakeholder_payload` does, falling back to "Phase N" when a project has
 // no name for it (or none at all: plenty of fixtures predate `phases[]`).
-func buildMilestones(tasks []model.Task, phases []model.Phase, specTitles map[int]string) []Milestone {
+//
+// Exported because a milestone IS a phase everywhere orch shows one: the
+// operator's Milestones page, `orch notify digest` and the MCP filter all read
+// this, so the portal and the operator cannot disagree about what a milestone
+// holds.
+func PhaseMilestones(tasks []model.Task, phases []model.Phase, specTitles map[int]string) []Milestone {
 	names := make(map[int]string, len(phases))
 	for n, title := range specTitles {
 		names[n] = title

@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/publish/snapshot"
 )
 
 // The last two read endpoints of G5.2: where the project is going, and when
@@ -61,18 +63,34 @@ type milestonesPayload struct {
 	Milestones []milestoneRow `json:"milestones"`
 }
 
-// milestoneRow is one milestone with its progress and its projection.
+// milestoneRow is one phase with its progress and its projection.
+//
+// A milestone is a phase. The `milestones` table migration 004 added never had
+// a write path, so a page reading it was empty on every real project and told
+// the operator to run a flag that did not exist. Phases are what the portal,
+// `orch publish` and `orch report pdf` already call milestones
+// (snapshot.PhaseMilestones), and now this page says the same thing they do.
 type milestoneRow struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	TargetDate  string            `json:"target_date"`
-	Status      string            `json:"status"`
-	CreatedAt   string            `json:"created_at"`
-	Progress    milestoneProgress `json:"progress"`
-	// ETA is null when there is nothing left or no velocity to project with.
-	// The UI renders "—", which is honest where a date would not be.
-	ETA *etaPayload `json:"eta"`
+	Phase int    `json:"phase"`
+	Name  string `json:"name"`
+	// Status is "done" when every task is done, "active" once any task has
+	// started, and "pending" before that.
+	Status     string            `json:"status"`
+	Progress   milestoneProgress `json:"progress"`
+	InProgress int               `json:"in_progress"`
+	Blocked    int               `json:"blocked"`
+	// ETA projects the phase's unblocked remaining tasks at the project's
+	// velocity with graph.ProjectCompletion, the projection /api/sprint and
+	// the portal show, so a phase can never finish after the project does.
+	// Null when nothing unblocked remains or there is no velocity to project
+	// with; the UI renders "—".
+	ETA *phaseETA `json:"eta"`
+}
+
+type phaseETA struct {
+	ETADate    string  `json:"eta_date"`
+	ETADays    float64 `json:"eta_days"`
+	Confidence string  `json:"confidence"`
 }
 
 type milestoneProgress struct {
@@ -86,36 +104,56 @@ func (s *Server) handleMilestones(w http.ResponseWriter, r *http.Request) {
 		s.failRead(w, "milestones", errNoBackend)
 		return
 	}
-	milestones, err := s.state.Milestones(r.Context())
+	view, err := s.loadView(r.Context())
 	if err != nil {
 		s.failRead(w, "milestones", err)
 		return
 	}
+	phases := snapshot.PhaseMilestones(view.Tasks, view.Phases, nil)
 
-	// The velocity every milestone's ETA is projected from is the PROJECT's,
-	// not each milestone's own. Python does the same, and it is the honest
-	// choice with the data available: the team that finishes a milestone is
-	// the team that finishes the next one, and a per-milestone velocity would
-	// be measured over whatever handful of tasks it holds.
-	velocity := 0.0
-	if len(milestones) > 0 {
-		done7d, cErr := s.state.CountDoneLastNDays(r.Context(), velocityWindowDays)
+	// The velocity every phase's ETA is projected from is the PROJECT's, not
+	// each phase's own: the team that finishes one phase is the team that
+	// finishes the next, and a per-phase velocity would be measured over
+	// whatever handful of tasks it holds.
+	done7d := 0
+	if len(phases) > 0 {
+		n, cErr := s.state.CountDoneLastNDays(r.Context(), velocityWindowDays)
 		if cErr != nil {
 			s.failRead(w, "milestones", cErr)
 			return
 		}
-		velocity = round2(float64(done7d) / float64(velocityWindowDays))
+		done7d = n
 	}
-	today := time.Now().UTC().Format("2006-01-02")
+	now := time.Now()
 
-	rows := make([]milestoneRow, 0, len(milestones))
-	for _, m := range milestones {
+	rows := make([]milestoneRow, 0, len(phases))
+	for _, m := range phases {
+		var eta *phaseETA
+		// Blocked tasks are not remaining work, as in sprintHealth: a date for
+		// work that cannot start is the number least worth promising.
+		if p := graph.ProjectCompletion(m.Total-m.Done-m.Blocked, done7d, velocityWindowDays, now); p != nil {
+			eta = &phaseETA{ETADate: p.Date, ETADays: p.Days, Confidence: p.Confidence}
+		}
 		rows = append(rows, milestoneRow{
-			ID: m.ID, Title: m.Title, Description: m.Description,
-			TargetDate: m.TargetDate, Status: m.Status, CreatedAt: m.CreatedAt,
-			Progress: milestoneProgress{Total: m.Total, Done: m.Done, Pct: m.PercentDone},
-			ETA:      milestoneETA(m.Total-m.Done, velocity, today, m.TargetDate),
+			Phase:      m.Phase,
+			Name:       m.Name,
+			Status:     phaseStatus(m),
+			Progress:   milestoneProgress{Total: m.Total, Done: m.Done, Pct: int(m.PercentDone)},
+			InProgress: m.InProgress,
+			Blocked:    m.Blocked,
+			ETA:        eta,
 		})
 	}
 	writeJSON(w, http.StatusOK, milestonesPayload{Milestones: rows})
+}
+
+func phaseStatus(m snapshot.Milestone) string {
+	switch {
+	case m.Complete:
+		return "done"
+	case m.Done > 0 || m.InProgress > 0 || m.Blocked > 0:
+		return "active"
+	default:
+		return "pending"
+	}
 }

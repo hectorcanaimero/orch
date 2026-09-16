@@ -13,14 +13,16 @@ export interface MilestoneEta {
   confidence: "high" | "low"
 }
 
+// A milestone is a phase of tasks.json — the same rows the client portal
+// shows. The server derives it (snapshot.PhaseMilestones); nothing stores it.
 export interface Milestone {
-  id: string
-  title: string
-  description: string | null
-  target_date: string | null
-  status: "open" | "completed" | "cancelled"
-  created_at: string
+  phase: number
+  name: string
+  status: "done" | "active" | "pending"
   progress: MilestoneProgress
+  in_progress: number
+  blocked: number
+  // Null when no unblocked work remains or no task finished in the last 7 days.
   eta: MilestoneEta | null
 }
 

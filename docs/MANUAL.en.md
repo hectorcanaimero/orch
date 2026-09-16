@@ -358,9 +358,11 @@ Flags:
 orch task-status F1.1.T5 todo --note "re-queued after manual fix"
 
 # Same thing, via the newer `task set` surface — also where a future
-# model/backend/milestone override will land once state.Backend supports
-# writing them (today those three flags are registered but return a
-# clear "not implemented yet" error rather than silently doing nothing)
+# model/backend override will land once state.Backend supports writing
+# them (today those two flags are registered but return a clear "not
+# implemented yet" error rather than silently doing nothing). There is no
+# milestone flag: a milestone is a phase, and a task's phase lives in
+# tasks.json
 orch task set --id F1.1.T5 --status todo
 
 # See which in-progress tasks look stuck, without touching anything
@@ -372,15 +374,14 @@ orch reset --requeue --only 'F1.*'
 
 ```bash
 $ orch task set --help
-Set a task's model, backend, milestone, or status
+Set a task's status (model and backend overrides are not implemented)
 
 Flags:
-      --backend string     Override the backend for this task (not implemented yet)
-  -h, --help               help for set
-      --id string          Task ID, e.g. F1.1.T3
-      --milestone string   Assign the task to a milestone ID (not implemented yet)
-      --model string       Override the model for this task (not implemented yet)
-      --status string      Set the task status (e.g. done, in-progress, blocked)
+      --backend string   Override the backend for this task (not implemented yet)
+  -h, --help             help for set
+      --id string        Task ID, e.g. F1.1.T3
+      --model string     Override the model for this task (not implemented yet)
+      --status string    Set the task status (e.g. done, in-progress, blocked)
 ```
 
 `reset` reads the **real** runtime status from the state backend, not

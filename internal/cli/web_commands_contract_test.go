@@ -30,11 +30,11 @@ func TestDashboardOnlyNamesCommandsThatExist(t *testing.T) {
 			return err
 		}
 		name := d.Name()
-		if d.IsDir() || !(strings.HasSuffix(name, ".tsx") || strings.HasSuffix(name, ".ts")) ||
-			strings.Contains(name, ".test.") {
+		source := strings.HasSuffix(name, ".tsx") || strings.HasSuffix(name, ".ts")
+		if d.IsDir() || !source || strings.Contains(name, ".test.") {
 			return nil
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) // #nosec G304 G122 -- a file under this repo's web/src
 		if err != nil {
 			return err
 		}

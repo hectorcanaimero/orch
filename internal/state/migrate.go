@@ -21,6 +21,11 @@ import (
 // superseding a migration means adding the next number, never editing an
 // earlier one.
 //
+// 004's `milestones` table and `tasks_definition.milestone_id` column are
+// unused: nothing ever wrote them, and every "milestone" orch shows is a
+// phase (snapshot.PhaseMilestones). They stay because a migration is never
+// edited, and a database Python wrote may still carry rows in them.
+//
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 

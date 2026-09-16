@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hectorcanaimero/orch/internal/config"
-	"github.com/hectorcanaimero/orch/internal/dashboard"
+	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/notify"
 	"github.com/hectorcanaimero/orch/internal/project"
@@ -195,7 +195,7 @@ func newNotifier(cfg config.Config) *notify.Notifier {
 // a precision the calculation does not have. Do not "unify" the two ETAs.
 //
 // The milestone ETAs below ARE dates, because a milestone's projection is the
-// task-count kind (dashboard.MilestoneETADate) — the same figure
+// task-count kind (graph.ProjectCompletion) — the same figure
 // `/api/milestones` renders.
 func digestText(ctx context.Context, backend state.Backend, paths config.Paths, cfg config.Config, language string) (string, error) {
 	lang := language
@@ -258,47 +258,26 @@ func digestText(ctx context.Context, backend state.Backend, paths config.Paths, 
 		DoneInVelocityWindow: doneInWindow,
 	})
 
-	milestones, err := digestMilestones(ctx, backend, tasks, now)
-	if err != nil {
-		return "", err
-	}
+	milestones := digestMilestones(snap.Milestones, doneInWindow, now)
 	return notify.DigestText(snap.ExecutiveSummary.Text, milestones), nil
 }
 
-// digestMilestones reads the milestones table and projects each one's ETA.
-//
-// The milestones TABLE, not the snapshot's phase rows: Python's digest calls
-// `backend.get_milestones()`, and a phase and a milestone are different
-// groupings of the same tasks — a project can have five phases and one
-// milestone called "MVP". `notify.Milestone`'s name-or-id fallback exists for
-// this shape.
-func digestMilestones(ctx context.Context, backend state.Backend, tasks []model.Task, now time.Time) ([]notify.Milestone, error) {
-	rows, err := backend.Milestones(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read milestones: %w", err)
+// digestMilestones projects each phase's ETA. A milestone is a phase — the
+// same rows the portal and `/api/milestones` show — because the milestones
+// table Python's digest read never had a write path, so its section never
+// appeared. Blocked tasks are not remaining work, as on `/api/milestones`.
+func digestMilestones(phases []snapshot.Milestone, doneInWindow int, now time.Time) []notify.Milestone {
+	out := make([]notify.Milestone, 0, len(phases))
+	for _, m := range phases {
+		row := notify.Milestone{Name: m.Name, Done: m.Done, Total: m.Total}
+		// doneInWindow was counted over snapshot.VelocityWindowDays; project
+		// over the same N.
+		if p := graph.ProjectCompletion(m.Total-m.Done-m.Blocked, doneInWindow, snapshot.VelocityWindowDays, now); p != nil {
+			row.ETADate = p.Date
+		}
+		out = append(out, row)
 	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-
-	done7d, err := backend.CountDoneLastNDays(ctx, dashboard.VelocityWindowDays)
-	if err != nil {
-		return nil, fmt.Errorf("count recently finished tasks: %w", err)
-	}
-	velocity := float64(done7d) / float64(dashboard.VelocityWindowDays)
-	today := now.Format("2006-01-02")
-
-	out := make([]notify.Milestone, 0, len(rows))
-	for _, m := range rows {
-		out = append(out, notify.Milestone{
-			Name:    m.Title,
-			ID:      m.ID,
-			Done:    m.Done,
-			Total:   m.Total,
-			ETADate: dashboard.MilestoneETADate(m.Total-m.Done, velocity, today, m.TargetDate),
-		})
-	}
-	return out, nil
+	return out
 }
 
 // startOfDayUTC is midnight of `now`'s UTC day — the window Python's digest

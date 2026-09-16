@@ -90,7 +90,9 @@ Run it from a client, not from a terminal.
 ### `orch_list_tasks`
 
 Every task with its live status. Filters: `status` (a list), `ids` (a list),
-`milestone`, `limit`, and `ready` — the tasks that could be dispatched right
+`milestone` (a phase: `2`, `F2` or `Phase 2` — orch's milestones are its
+phases; anything else is an error rather than an empty list), `limit`, and
+`ready` — the tasks that could be dispatched right
 now, which is `todo` with every dependency `done`, the same question the
 dispatch loop asks. A `backlog` task is not ready until it is promoted.
 

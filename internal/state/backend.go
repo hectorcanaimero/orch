@@ -86,9 +86,6 @@ type Backend interface {
 	// Runs returns every run, newest first.
 	Runs(ctx context.Context) ([]Run, error)
 
-	// Milestones returns every milestone with its progress counts.
-	Milestones(ctx context.Context) ([]Milestone, error)
-
 	// CountDoneLastNDays counts tasks at `done` whose row was touched in the
 	// last n days — the numerator of the sprint velocity figure.
 	CountDoneLastNDays(ctx context.Context, days int) (int, error)
@@ -238,11 +235,8 @@ const taskSelect = `
 	SELECT r.task_id, r.status, r.comments_json,
 	       COALESCE(r.started_at, ''), COALESCE(r.finished_at, ''), r.updated_at,
 	       COALESCE(r.attempts, 0), COALESCE(r.last_model, ''), COALESCE(r.last_backend, ''),
-	       COALESCE(r.pr_url, ''), COALESCE(r.ci_status, ''), COALESCE(r.ci_attempts, 0),
-	       COALESCE(d.milestone_id, '')
+	       COALESCE(r.pr_url, ''), COALESCE(r.ci_status, ''), COALESCE(r.ci_attempts, 0)
 	  FROM tasks_runtime r
-	  LEFT JOIN tasks_definition d
-	    ON d.project_id = r.project_id AND d.task_id = r.task_id
 	 WHERE r.project_id = ?`
 
 func (b *SQLite) Tasks(ctx context.Context, filter TaskFilter) ([]TaskRuntime, error) {
@@ -260,10 +254,6 @@ func (b *SQLite) Tasks(ctx context.Context, filter TaskFilter) ([]TaskRuntime, e
 		for _, id := range filter.IDs {
 			args = append(args, id)
 		}
-	}
-	if filter.MilestoneID != "" {
-		q += " AND d.milestone_id = ?"
-		args = append(args, filter.MilestoneID)
 	}
 	q += " ORDER BY r.task_id"
 
@@ -314,7 +304,6 @@ func scanTask(rows *sql.Rows) (TaskRuntime, error) {
 		&t.StartedAt, &t.FinishedAt, &t.UpdatedAt,
 		&t.Attempts, &t.LastModel, &t.LastBackend,
 		&t.PRURL, &t.CIStatus, &t.CIAttempts,
-		&t.MilestoneID,
 	); err != nil {
 		return TaskRuntime{}, fmt.Errorf("scan task row: %w", err)
 	}
@@ -637,45 +626,6 @@ func (b *SQLite) Events(ctx context.Context, taskID string, n int) ([]Event, err
 	}
 	if n > 0 {
 		reverse(out)
-	}
-	return out, nil
-}
-
-// ---- milestones ------------------------------------------------------------
-
-func (b *SQLite) Milestones(ctx context.Context) ([]Milestone, error) {
-	rows, err := b.db.read.QueryContext(ctx,
-		`SELECT m.id, m.title, COALESCE(m.description, ''),
-		        COALESCE(m.target_date, ''), COALESCE(m.status, ''), m.created_at,
-		        COUNT(td.task_id),
-		        COALESCE(SUM(CASE WHEN tr.status = 'done' THEN 1 ELSE 0 END), 0)
-		   FROM milestones m
-		   LEFT JOIN tasks_definition td
-		     ON td.project_id = m.project_id AND td.milestone_id = m.id
-		   LEFT JOIN tasks_runtime tr
-		     ON tr.project_id = td.project_id AND tr.task_id = td.task_id
-		  WHERE m.project_id = ?
-		  GROUP BY m.id
-		  ORDER BY m.created_at`, b.projectID)
-	if err != nil {
-		return nil, fmt.Errorf("query milestones: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []Milestone
-	for rows.Next() {
-		var m Milestone
-		if err := rows.Scan(&m.ID, &m.Title, &m.Description, &m.TargetDate,
-			&m.Status, &m.CreatedAt, &m.Total, &m.Done); err != nil {
-			return nil, fmt.Errorf("scan milestone row: %w", err)
-		}
-		if m.Total > 0 {
-			m.PercentDone = m.Done * 100 / m.Total
-		}
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate milestones: %w", err)
 	}
 	return out, nil
 }

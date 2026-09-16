@@ -39,8 +39,6 @@ type TaskRuntime struct {
 	PRURL      string
 	CIStatus   string
 	CIAttempts int
-
-	MilestoneID string
 }
 
 // TaskFilter narrows a Tasks query. A zero filter returns every task in the
@@ -50,8 +48,6 @@ type TaskFilter struct {
 	Statuses []model.Status
 	// IDs, when non-empty, restricts to those task ids.
 	IDs []string
-	// MilestoneID, when non-empty, restricts to one milestone.
-	MilestoneID string
 }
 
 // Note is the trail a transition leaves. It becomes an entry in the task's
@@ -157,21 +153,6 @@ var eventTypes = map[string]bool{
 	// goOnlyEventTypes in eventtypes_test.go for why that is safe in a
 	// database both binaries write to.
 	"sprint_done": true, "ci_no_checks": true, "pr_merged": true,
-}
-
-// Milestone groups tasks for the stakeholder view, with the progress counts
-// computed from its tasks rather than stored.
-type Milestone struct {
-	ID          string
-	Title       string
-	Description string
-	TargetDate  string
-	Status      string
-	CreatedAt   string
-	Total       int
-	Done        int
-	// PercentDone is Done/Total as a whole number, 0 when Total is 0.
-	PercentDone int
 }
 
 // OrphanRows reports rows whose project_id has no row in `projects`, keyed by

@@ -27,13 +27,11 @@ type fakeState struct {
 	tasksErr   error
 	eventsErr  error
 	spendErr   error
-	milestones []state.Milestone
 	done7d     int
 	lastEvents map[string]state.Event
 
-	milestonesErr error
-	latestErr     error
-	sinceErr      error
+	latestErr error
+	sinceErr  error
 	// mu guards events, which the live-tail tests append to while a stream
 	// goroutine reads it.
 	mu            sync.Mutex
@@ -153,10 +151,6 @@ func (f *fakeState) appendEvent(e state.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.events = append(f.events, e)
-}
-
-func (f *fakeState) Milestones(context.Context) ([]state.Milestone, error) {
-	return f.milestones, f.milestonesErr
 }
 
 func (f *fakeState) CountDoneLastNDays(_ context.Context, _ int) (int, error) {
