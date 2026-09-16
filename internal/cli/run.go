@@ -122,11 +122,8 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 			// Built unconditionally: with no webhook configured it is a
 			// working no-op, so the engine never has to ask whether the
 			// operator wanted notifications.
-			scheduler.Notify = notify.New(
-				cfg.Notifications.SlackWebhook,
-				cfg.Notifications.DiscordWebhook,
-				float64(cfg.Notifications.TimeoutS),
-			)
+			notifier := newNotifier(cfg)
+			scheduler.Notify = notifier
 			if engine.Mode(mode) == engine.ModeSemi {
 				scheduler.Gate = engine.TerminalGate{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
 			}
@@ -188,6 +185,7 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 			if gate := newBudgetGate(paths, cfg, backend); gate != nil {
 				scheduler.Budget = gate
 				runner.Budget = gate
+				runner.Alerts = newBudgetAlerts(cfg, notifier, gate, backend, runID)
 			}
 
 			code, err := runner.Run(ctx)
@@ -229,6 +227,22 @@ func perDispatchCap(cfg config.Config) *float64 {
 	}
 	v := cfg.Budget.PerDispatchUSD
 	return &v
+}
+
+// newBudgetAlerts builds the budget-window alerts, or nil when they would
+// have nowhere to go: notifications.budget_alerts off, or no webhook set.
+func newBudgetAlerts(cfg config.Config, notifier *notify.Notifier, usage engine.BudgetUsage,
+	events engine.AlertEvents, runID string) *engine.BudgetAlerts {
+	if !cfg.Notifications.BudgetAlerts || !notifier.Enabled() {
+		return nil
+	}
+	return &engine.BudgetAlerts{
+		Usage:  usage,
+		Notify: notifier,
+		Events: events,
+		RunID:  runID,
+		Pct:    cfg.Notifications.BudgetAlertPct,
+	}
 }
 
 // newBudgetGate loads the provider guardrails, or returns nil when the

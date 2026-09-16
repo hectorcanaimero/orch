@@ -224,6 +224,13 @@ func TestNotifyTestPostsTheMessageAndExitsZero(t *testing.T) {
 			args: []string{"notify", "test", "--message", "ping from the deploy box"},
 			want: "ping from the deploy box",
 		},
+		{
+			// The wording a run sends near a provider's cap, marked as a test.
+			name: "an example budget alert",
+			args: []string{"notify", "test", "--budget"},
+			want: "[test] :warning: orch: claude is at 80% of its budget cap " +
+				"(384,000 of 480,000 tokens in its 5h window).",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
