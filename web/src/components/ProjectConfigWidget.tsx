@@ -2,20 +2,14 @@ import { ChevronRight } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useProjectConfig } from "@/hooks/useProjectConfig"
+import { fmt, t } from "@/i18n"
 import type { ProjectConfig } from "@/lib/types"
-
-const usdFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1 text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono text-xs">{value}</span>
+      <span className="text-right font-mono text-xs tabular-nums">{value}</span>
     </div>
   )
 }
@@ -29,7 +23,7 @@ function Section({
 }) {
   return (
     <section className="space-y-1">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h4 className="text-xs font-medium text-muted-foreground">
         {title}
       </h4>
       <div className="divide-y divide-border/50">{children}</div>
@@ -45,7 +39,7 @@ function ConfigBody({ config }: { config: ProjectConfig }) {
   if (isEmpty(config)) {
     return (
       <p className="py-2 text-sm text-muted-foreground">
-        No configuration found.
+        {t("config.none")}
       </p>
     )
   }
@@ -64,41 +58,41 @@ function ConfigBody({ config }: { config: ProjectConfig }) {
   return (
     <div className="grid gap-6 md:grid-cols-2">
       {concurrency ? (
-        <Section title="Concurrency">
+        <Section title={t("config.concurrency")}>
           {concurrency.global_max != null ? (
-            <Row label="Global max" value={concurrency.global_max} />
+            <Row label={t("config.global_max")} value={concurrency.global_max} />
           ) : null}
           {concurrency.per_file != null ? (
-            <Row label="Per file" value={concurrency.per_file} />
+            <Row label={t("config.per_file")} value={concurrency.per_file} />
           ) : null}
           {concurrency.per_provider
             ? Object.entries(concurrency.per_provider).map(([provider, n]) => (
-                <Row key={provider} label={`Per provider · ${provider}`} value={n} />
+                <Row key={provider} label={t("config.per_provider", { provider })} value={n} />
               ))
             : null}
         </Section>
       ) : null}
 
       {budget ? (
-        <Section title="Budget">
+        <Section title={t("config.budget")}>
           {budget.per_dispatch_usd != null ? (
             <Row
-              label="Per dispatch"
-              value={usdFormatter.format(budget.per_dispatch_usd)}
+              label={t("config.per_dispatch")}
+              value={fmt.usd(budget.per_dispatch_usd)}
             />
           ) : null}
         </Section>
       ) : null}
 
       {state ? (
-        <Section title="State">
-          {state.backend ? <Row label="Backend" value={state.backend} /> : null}
+        <Section title={t("config.state")}>
+          {state.backend ? <Row label={t("config.backend")} value={state.backend} /> : null}
           {state.sqlite_path ? (
-            <Row label="SQLite path" value={state.sqlite_path} />
+            <Row label={t("config.sqlite_path")} value={state.sqlite_path} />
           ) : null}
           {state.tasks_json_precedence ? (
             <Row
-              label="tasks.json precedence"
+              label={t("config.precedence")}
               value={state.tasks_json_precedence}
             />
           ) : null}
@@ -106,13 +100,13 @@ function ConfigBody({ config }: { config: ProjectConfig }) {
       ) : null}
 
       {retry ? (
-        <Section title="Retry">
+        <Section title={t("config.retry")}>
           {retry.backoff_seconds != null ? (
-            <Row label="Backoff" value={`${retry.backoff_seconds}s`} />
+            <Row label={t("config.backoff")} value={`${retry.backoff_seconds}s`} />
           ) : null}
           {retry.rate_limit_backoff_seconds != null ? (
             <Row
-              label="Rate limit backoff"
+              label={t("config.rate_limit_backoff")}
               value={`${retry.rate_limit_backoff_seconds}s`}
             />
           ) : null}
@@ -120,20 +114,20 @@ function ConfigBody({ config }: { config: ProjectConfig }) {
       ) : null}
 
       {findings ? (
-        <Section title="Findings">
+        <Section title={t("config.findings")}>
           {findings.publish_repo ? (
-            <Row label="Publish repo" value={findings.publish_repo} />
+            <Row label={t("config.publish_repo")} value={findings.publish_repo} />
           ) : null}
           {findings.publish_rate_limit_per_hour != null ? (
             <Row
-              label="Rate limit / hour"
+              label={t("config.rate_limit_hour")}
               value={findings.publish_rate_limit_per_hour}
             />
           ) : null}
-          {findings.label ? <Row label="Label" value={findings.label} /> : null}
+          {findings.label ? <Row label={t("config.label")} value={findings.label} /> : null}
           {findings.min_publish_confidence ? (
             <Row
-              label="Min confidence"
+              label={t("config.min_confidence")}
               value={findings.min_publish_confidence}
             />
           ) : null}
@@ -143,17 +137,17 @@ function ConfigBody({ config }: { config: ProjectConfig }) {
       {spec_root ||
       default_timeout_multiplier != null ||
       (strict_files_phases && strict_files_phases.length > 0) ? (
-        <Section title="Other">
-          {spec_root ? <Row label="Spec root" value={spec_root} /> : null}
+        <Section title={t("config.other")}>
+          {spec_root ? <Row label={t("config.spec_root")} value={spec_root} /> : null}
           {default_timeout_multiplier != null ? (
             <Row
-              label="Default timeout multiplier"
+              label={t("config.timeout_multiplier")}
               value={`×${default_timeout_multiplier}`}
             />
           ) : null}
           {strict_files_phases && strict_files_phases.length > 0 ? (
             <Row
-              label="Strict files phases"
+              label={t("config.strict_files")}
               value={strict_files_phases.join(", ")}
             />
           ) : null}
@@ -170,11 +164,11 @@ export function ProjectConfigWidget() {
     <Card>
       <CardContent className="p-0">
         <details className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-2 p-6 text-sm font-medium">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-4 text-sm font-medium hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90" />
-            <span>Project configuration</span>
+            <span>{t("config.title")}</span>
           </summary>
-          <div className="border-t px-6 py-4">
+          <div className="border-t px-5 py-4">
             {isLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-40" />
@@ -183,7 +177,7 @@ export function ProjectConfigWidget() {
               </div>
             ) : isError ? (
               <p className="text-sm text-muted-foreground">
-                Failed to load configuration
+                {t("config.load_failed")}
                 {error?.message ? `: ${error.message}` : ""}
               </p>
             ) : data ? (

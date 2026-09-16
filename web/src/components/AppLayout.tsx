@@ -1,16 +1,88 @@
+import { useState, type ReactNode } from "react"
 import { Navigate, NavLink, useLocation, useNavigate } from "react-router-dom"
-import { ChevronLeft, ChevronRight, LogOut } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ChevronLeft, ChevronRight, LogOut, Menu, Monitor, Moon, Sun } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tooltip } from "@/components/ui/tooltip"
+import { t } from "@/i18n"
 import { useAuth } from "@/hooks/useAuth"
 import { isPortfolioNavVisible, usePortfolio } from "@/hooks/usePortfolio"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
 import { useWhoami } from "@/hooks/useWhoami"
-import { isPathAllowed, visibleNavItems } from "@/lib/nav"
+import { isPathAllowed, visibleNavItems, type NavItem } from "@/lib/nav"
+import { useTheme, type ThemeChoice } from "@/lib/theme"
 import { cn } from "@/lib/utils"
-import type { ReactNode } from "react"
 
 interface AppLayoutProps {
   children: ReactNode
+}
+
+const THEME_ORDER: ThemeChoice[] = ["dark", "light", "system"]
+const THEME_ICON = { dark: Moon, light: Sun, system: Monitor } as const
+
+function ThemeToggle({ compact }: { compact: boolean }) {
+  const [choice, setChoice] = useTheme()
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(choice) + 1) % THEME_ORDER.length]
+  const Icon = THEME_ICON[choice]
+  const label = t("theme.current", { theme: t(`theme.${choice}` as const) })
+  const button = (
+    <button
+      type="button"
+      onClick={() => setChoice(next)}
+      aria-label={`${label}. ${t("theme.switch_to", { theme: t(`theme.${next}` as const) })}`}
+      className={cn(
+        "flex h-9 items-center gap-2 rounded-md text-sm text-sidebar-muted transition-colors hover:bg-sidebar-active hover:text-sidebar-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        compact ? "w-full justify-center" : "w-full px-3",
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+      {compact ? null : <span>{t(`theme.${choice}` as const)}</span>}
+    </button>
+  )
+  return compact ? <Tooltip content={label}>{button}</Tooltip> : button
+}
+
+function NavLinks({ items, collapsed, onNavigate }: { items: NavItem[]; collapsed?: boolean; onNavigate?: () => void }) {
+  return (
+    <>
+      {items.map((item) => {
+        const Icon = item.icon
+        const link = (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            onClick={onNavigate}
+            aria-label={collapsed ? item.label : undefined}
+            className={({ isActive }) =>
+              cn(
+                "relative flex items-center rounded-md text-sm transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                collapsed ? "h-9 w-full justify-center" : "h-9 gap-2.5 px-3",
+                isActive
+                  ? "bg-sidebar-active font-medium text-sidebar-foreground"
+                  : "text-sidebar-muted hover:bg-sidebar-active/60 hover:text-sidebar-foreground",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon className={cn("h-4 w-4 shrink-0", isActive && "text-brand")} aria-hidden />
+                {collapsed ? null : <span>{item.label}</span>}
+              </>
+            )}
+          </NavLink>
+        )
+        return collapsed ? (
+          <Tooltip key={item.to} content={item.label}>
+            {link}
+          </Tooltip>
+        ) : (
+          link
+        )
+      })}
+    </>
+  )
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
@@ -19,6 +91,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const [collapsed, , toggle] = useSidebarCollapsed()
   const { data: whoami } = useWhoami()
   const { pathname } = useLocation()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const handleLogout = () => {
     clearToken()
@@ -44,6 +117,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   })
 
   const visibleNav = visibleNavItems({ isStakeholder, allowedRoutes, portfolioAvailable })
+  const current = visibleNav.find((item) => (item.end ? pathname === item.to : pathname.startsWith(item.to)))
 
   // A page opened by URL that the server would refuse sends the reader to
   // the summary rather than to a 403.
@@ -53,156 +127,107 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <div className="min-h-screen bg-background md:flex">
-      {/* Small screens: a top bar with the same pages, scrolling sideways on
-          its own when they do not fit, so the page itself never does. */}
-      <header className="sticky top-0 z-30 border-b border-zinc-800 bg-zinc-950 text-zinc-100 md:hidden">
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <img src="/favicon.svg" alt="" className="h-7 w-7 shrink-0" />
-            <span className="text-base font-semibold tracking-tight">Orch</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Logout"
-            className="h-10 w-10 text-zinc-300 hover:bg-zinc-900 hover:text-white"
+      {/* Small screens: a top bar naming the current page, with every page one
+          tap away in a menu — never a strip of labels cut off at the edge. */}
+      <header className="sticky top-0 z-30 border-b bg-sidebar text-sidebar-foreground md:hidden">
+        <div className="flex h-14 items-center justify-between gap-2 px-4">
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={t("nav.menu")}
+                className="-ml-2 flex h-10 items-center gap-2 rounded-md px-2 text-sm font-medium hover:bg-sidebar-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Menu className="h-5 w-5" aria-hidden />
+                <img src="/favicon.svg" alt="" className="h-6 w-6 shrink-0" />
+                <span>{current?.label ?? "Orch"}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 bg-sidebar p-2">
+              <nav aria-label="Main (small screens)" className="grid gap-0.5">
+                <NavLinks items={visibleNav} onNavigate={() => setMenuOpen(false)} />
+              </nav>
+              <div className="mt-2 border-t pt-2">
+                <ThemeToggle compact={false} />
+              </div>
+            </PopoverContent>
+          </Popover>
+          <button
+            type="button"
+            aria-label={t("nav.logout")}
+            className="flex h-10 w-10 items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={handleLogout}
           >
-            <LogOut className="h-4 w-4" />
-          </Button>
+            <LogOut className="h-4 w-4" aria-hidden />
+          </button>
         </div>
-        <nav aria-label="Main (small screens)" className="flex gap-1 overflow-x-auto px-3 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {visibleNav.map((item) => {
-            const Icon = item.icon
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  cn(
-                    "flex min-h-10 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm transition-colors",
-                    isActive ? "bg-zinc-800 text-white" : "text-zinc-300 hover:bg-zinc-900 hover:text-white",
-                  )
-                }
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span>{item.label}</span>
-              </NavLink>
-            )
-          })}
-        </nav>
       </header>
 
       <aside
         className={cn(
-          "fixed left-0 top-0 z-30 hidden h-screen flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 md:flex",
+          "fixed left-0 top-0 z-30 hidden h-screen flex-col border-r bg-sidebar text-sidebar-foreground md:flex",
           "transition-[width] duration-200 ease-out",
           collapsed ? "w-16" : "w-60",
         )}
       >
-        {/* Toggle button — overlaps the sidebar's right edge */}
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-expanded={!collapsed}
-          className={cn(
-            "absolute -right-3 top-12 z-40 flex h-6 w-6 items-center justify-center",
-            "rounded-full border border-zinc-700 bg-zinc-950 text-zinc-300",
-            "shadow-sm shadow-black/40 transition-colors hover:bg-zinc-900 hover:text-white",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400",
-          )}
-        >
-          {collapsed ? (
-            <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronLeft className="h-3.5 w-3.5" />
-          )}
-        </button>
-
-        {/* Logo */}
-        <div
-          className={cn(
-            "flex items-center py-5",
-            collapsed ? "justify-center px-0" : "px-6",
-          )}
-        >
-          {collapsed ? (
-            <img
-              src="/favicon.svg"
-              alt="Orch"
-              aria-label="Orch"
-              className="h-9 w-9 shrink-0"
-            />
-          ) : (
-            <div className="flex items-center gap-2.5">
-              <img
-                src="/favicon.svg"
-                alt="Orch"
-                className="h-8 w-8 shrink-0"
-              />
-              <div>
-                <div className="text-lg font-semibold tracking-tight">Orch</div>
-                <div className="text-xs text-zinc-400">Dashboard</div>
-              </div>
-            </div>
+        <div className={cn("flex h-16 items-center", collapsed ? "justify-center" : "justify-between pl-5 pr-3")}>
+          <div className="flex items-center gap-2.5">
+            <img src="/favicon.svg" alt="Orch" className="h-7 w-7 shrink-0" />
+            {collapsed ? null : <span className="text-[15px] font-semibold tracking-[-0.01em]">orch</span>}
+          </div>
+          {collapsed ? null : (
+            <button
+              type="button"
+              onClick={toggle}
+              aria-label={t("nav.collapse")}
+              aria-expanded
+              className="flex h-7 w-7 items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
           )}
         </div>
 
-        {/* Nav */}
-        <nav
-          aria-label="Main"
-          className={cn(
-            "flex-1 space-y-1",
-            collapsed ? "px-2" : "px-3",
-          )}
-        >
-          {visibleNav.map((item) => {
-            const Icon = item.icon
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                title={collapsed ? item.label : undefined}
-                aria-label={collapsed ? item.label : undefined}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center rounded-md text-sm transition-colors",
-                    collapsed
-                      ? "h-10 w-full justify-center px-0"
-                      : "gap-2 px-3 py-2",
-                    isActive
-                      ? "bg-zinc-800 text-white"
-                      : "text-zinc-300 hover:bg-zinc-900 hover:text-white",
-                  )
-                }
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                {collapsed ? null : <span>{item.label}</span>}
-              </NavLink>
-            )
-          })}
+        <nav aria-label="Main" className={cn("flex-1 space-y-0.5 overflow-y-auto", collapsed ? "px-3" : "px-3")}>
+          <NavLinks items={visibleNav} collapsed={collapsed} />
         </nav>
 
-        {/* Logout */}
-        <div className={cn(collapsed ? "p-2" : "p-3")}>
-          <Button
-            variant="outline"
-            title={collapsed ? "Logout" : undefined}
-            aria-label={collapsed ? "Logout" : undefined}
-            className={cn(
-              "border-zinc-800 bg-transparent text-zinc-100 hover:bg-zinc-900 hover:text-white",
-              collapsed
-                ? "h-10 w-full justify-center gap-0 px-0"
-                : "w-full justify-start gap-2",
-            )}
-            onClick={handleLogout}
-          >
-            <LogOut className="h-4 w-4 shrink-0" />
-            {collapsed ? null : <span>Logout</span>}
-          </Button>
+        <div className="space-y-0.5 border-t p-3">
+          {collapsed ? (
+            <Tooltip content={t("nav.expand")}>
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label={t("nav.expand")}
+                aria-expanded={false}
+                className="flex h-9 w-full items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden />
+              </button>
+            </Tooltip>
+          ) : null}
+          <ThemeToggle compact={collapsed} />
+          {collapsed ? (
+            <Tooltip content={t("nav.logout")}>
+              <button
+                type="button"
+                aria-label={t("nav.logout")}
+                onClick={handleLogout}
+                className="flex h-9 w-full items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <LogOut className="h-4 w-4" aria-hidden />
+              </button>
+            </Tooltip>
+          ) : (
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex h-9 w-full items-center gap-2 rounded-md px-3 text-sm text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <LogOut className="h-4 w-4 shrink-0" aria-hidden />
+              <span>{t("nav.logout")}</span>
+            </button>
+          )}
         </div>
       </aside>
 
@@ -212,7 +237,7 @@ export function AppLayout({ children }: AppLayoutProps) {
           collapsed ? "md:ml-16" : "md:ml-60",
         )}
       >
-        <div className="px-4 py-6 md:px-6 md:py-8 lg:px-8">{children}</div>
+        <div className="mx-auto max-w-[1600px] px-4 py-6 md:px-6 md:py-8 lg:px-10">{children}</div>
       </main>
     </div>
   )
