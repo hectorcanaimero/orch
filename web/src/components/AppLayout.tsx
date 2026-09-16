@@ -1,6 +1,7 @@
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { Navigate, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-import { ChevronLeft, ChevronRight, LogOut, Monitor, Moon, ScrollText, Sun, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, LogOut, Monitor, Moon, ScrollText, Search, Sun, X } from "lucide-react"
+import { CommandPalette, ShortcutsDialog } from "@/components/CommandPalette"
 import { Tooltip } from "@/components/ui/tooltip"
 import { t } from "@/i18n"
 import { useAuth } from "@/hooks/useAuth"
@@ -8,6 +9,7 @@ import { isPortfolioNavVisible, usePortfolio } from "@/hooks/usePortfolio"
 import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed"
 import { useWhoami } from "@/hooks/useWhoami"
 import { TAB_ICONS, findTab, homePath, isPathAllowed, visibleDestinations, type NavDestination } from "@/lib/nav"
+import { isMac, useKeyboardShortcuts } from "@/lib/shortcuts"
 import { nextTheme, useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import { LogsPage } from "@/pages/LogsPage"
@@ -166,6 +168,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const { data: whoami } = useWhoami()
   const { pathname } = useLocation()
   const [params, setParams] = useSearchParams()
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const handleLogout = () => {
     clearToken()
@@ -203,6 +207,12 @@ export function AppLayout({ children }: AppLayoutProps) {
     setParams(next, { replace: true })
   }
 
+  useKeyboardShortcuts({
+    destinations,
+    onPalette: () => setPaletteOpen((open) => !open),
+    onShortcuts: () => setShortcutsOpen(true),
+  })
+
   // A page opened by URL that the server would refuse sends the reader to
   // their first allowed page rather than to a 403.
   if (!isPathAllowed(pathname, { isStakeholder, allowedRoutes })) {
@@ -222,6 +232,25 @@ export function AppLayout({ children }: AppLayoutProps) {
     </button>
   ) : null
 
+  const searchKeys = isMac() ? "⌘K" : "Ctrl K"
+  const searchButton = (
+    <button
+      type="button"
+      onClick={() => setPaletteOpen(true)}
+      aria-label={collapsed ? t("palette.open") : undefined}
+      aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+      className={cn(sideButton, "border border-sidebar-active", collapsed ? "justify-center" : "gap-2 px-3")}
+    >
+      <Search className="h-4 w-4 shrink-0" aria-hidden />
+      {collapsed ? null : (
+        <>
+          <span className="flex-1 text-left">{t("palette.open")}</span>
+          <kbd className="font-mono text-[11px] text-sidebar-muted">{searchKeys}</kbd>
+        </>
+      )}
+    </button>
+  )
+
   return (
     <div className="min-h-screen bg-background md:flex">
       {/* Small screens: a slim top bar and, at the bottom, the same four destinations. */}
@@ -232,6 +261,14 @@ export function AppLayout({ children }: AppLayoutProps) {
             <span className="truncate text-[15px] font-semibold">{current ? t(current.label) : "orch"}</span>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              aria-label={t("palette.open")}
+              className={cn("flex h-10 w-10 items-center justify-center rounded-md text-sidebar-muted hover:bg-sidebar-active hover:text-sidebar-foreground", focusRing)}
+            >
+              <Search className="h-4 w-4" aria-hidden />
+            </button>
             {canSeeLogs ? (
               <button
                 type="button"
@@ -311,6 +348,14 @@ export function AppLayout({ children }: AppLayoutProps) {
           )}
         </div>
 
+        <div className="px-3 pb-3">
+          {collapsed ? (
+            <Tooltip content={`${t("palette.open")} (${searchKeys})`}>{searchButton}</Tooltip>
+          ) : (
+            searchButton
+          )}
+        </div>
+
         <nav aria-label={t("nav.main")} className="flex-1 space-y-0.5 overflow-y-auto px-3">
           <DestinationLinks destinations={destinations} currentId={currentId} collapsed={collapsed} />
         </nav>
@@ -354,6 +399,17 @@ export function AppLayout({ children }: AppLayoutProps) {
       </main>
 
       {logsOpen ? <LogsDrawer onClose={() => setLogs(false)} collapsed={collapsed} /> : null}
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        destinations={destinations}
+        isStakeholder={isStakeholder}
+        canSeeLogs={canSeeLogs}
+        onOpenLogs={() => setLogs(true)}
+        onShowShortcuts={() => setShortcutsOpen(true)}
+      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} destinations={destinations} />
     </div>
   )
 }
