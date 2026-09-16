@@ -25,6 +25,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hectorcanaimero/orch/internal/budget"
+	"github.com/hectorcanaimero/orch/internal/pyfmt"
 )
 
 // DefaultTimeout is Python's `notifications.timeout_s` default.
@@ -97,6 +100,48 @@ func (n *Notifier) CIBlocked(ctx context.Context, taskID, prURL string, attempts
 func (n *Notifier) Stalled(ctx context.Context, stalledFor time.Duration, waitingOn string) {
 	n.send(ctx, fmt.Sprintf(":hourglass: orch: no progress for %s — waiting on %s",
 		stalledFor, firstLine(waitingOn)))
+}
+
+// BudgetAlert announces a provider whose budget window is near its cap, or
+// has reached it and is deferring tasks. The engine decides when; this only
+// words it.
+func (n *Notifier) BudgetAlert(ctx context.Context, a budget.Alert) {
+	n.send(ctx, BudgetAlertText(a))
+}
+
+// BudgetAlertText is the message BudgetAlert sends, exported so
+// `orch notify test --budget` can preview it without a run.
+func BudgetAlertText(a budget.Alert) string {
+	usage := fmt.Sprintf("%s of %s tokens in its %s window",
+		pyfmt.Commas(int64(a.TokensUsed)), pyfmt.Commas(int64(a.Cap)), windowText(a.WindowHours))
+	if a.Estimated {
+		usage += ", part of it estimated"
+	}
+	var b strings.Builder
+	if a.Level == budget.AlertCapped {
+		fmt.Fprintf(&b, ":octagonal_sign: orch: %s reached its budget cap (%s). New %s dispatches wait",
+			a.Provider, usage, a.Provider)
+		if !a.ResetAt.IsZero() {
+			fmt.Fprintf(&b, " until about %s", a.ResetAt.UTC().Format("2006-01-02 15:04 UTC"))
+		}
+		b.WriteString(".")
+	} else {
+		fmt.Fprintf(&b, ":warning: orch: %s is at %.0f%% of its budget cap (%s).",
+			a.Provider, a.PctOfCap, usage)
+	}
+	if a.Waiting > 0 {
+		fmt.Fprintf(&b, " %d task(s) waiting.", a.Waiting)
+	}
+	return b.String()
+}
+
+// windowText spells a window length the way budgets.yaml does: whole hours
+// as "5h", anything else with its fraction.
+func windowText(hours float64) string {
+	if hours == float64(int64(hours)) {
+		return fmt.Sprintf("%dh", int64(hours))
+	}
+	return fmt.Sprintf("%gh", hours)
 }
 
 // Test sends a one-off message and reports whether any channel accepted it.

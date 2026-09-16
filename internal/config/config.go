@@ -207,6 +207,11 @@ type Notifications struct {
 	SlackWebhook   string `yaml:"slack_webhook"`
 	DiscordWebhook string `yaml:"discord_webhook"`
 	TimeoutS       int    `yaml:"timeout_s"`
+	// BudgetAlerts announces a provider's budget window at BudgetAlertPct of
+	// its cap and again when it reaches the cap. On by default, which costs
+	// nothing without a webhook. Go only.
+	BudgetAlerts   bool    `yaml:"budget_alerts"`
+	BudgetAlertPct float64 `yaml:"budget_alert_pct"`
 }
 
 // Presentation renames statuses for display. Internal status values never

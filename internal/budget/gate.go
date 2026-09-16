@@ -149,6 +149,9 @@ type window struct {
 	// same rows as reported, for display.
 	tokens float64
 	raw    int
+	// estimated is whether any row in the window carries orch's guess
+	// rather than the CLI's report.
+	estimated bool
 	// oldest is the timestamp of the earliest row still inside the window.
 	// Zero when the window is empty.
 	oldest time.Time
@@ -169,6 +172,7 @@ func (g *Gate) usage(ctx context.Context, provider string, pb ProviderBudget, no
 			used = g.cfg.UnreportedDispatchTokens
 		}
 		w.raw += used
+		w.estimated = w.estimated || r.Estimated
 		w.tokens += float64(used) + weightedCacheDelta(r)
 		// SpendSince returns rows oldest first and drops any it could not
 		// date, so the first one that parses is the oldest. Asking rather

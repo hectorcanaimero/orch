@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/graph"
 	"github.com/hectorcanaimero/orch/internal/model"
@@ -51,7 +52,10 @@ func newNotifyCmd(flags *projectFlags) *cobra.Command {
 // prints "sent" there, and the exit code is the machine-readable half. A
 // script asking "does my webhook work?" reads `$?`; a human reads the line.
 func newNotifyTestCmd(flags *projectFlags) *cobra.Command {
-	var message string
+	var (
+		message     string
+		budgetAlert bool
+	)
 	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Send a canned message to every configured webhook",
@@ -67,6 +71,15 @@ func newNotifyTestCmd(flags *projectFlags) *cobra.Command {
 					"no webhook configured — set notifications.slack_webhook or "+
 						"notifications.discord_webhook in config.yaml"))
 			}
+			if budgetAlert {
+				// The wording a run sends when a provider nears its cap,
+				// with example numbers. Printed too, so it can be read
+				// without opening the channel.
+				message = "[test] " + notify.BudgetAlertText(sampleBudgetAlert())
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), message); err != nil {
+					return err
+				}
+			}
 			if !notifier.Test(cmd.Context(), message) {
 				return withExitCode(1, fmt.Errorf("no channel accepted the message"))
 			}
@@ -77,7 +90,18 @@ func newNotifyTestCmd(flags *projectFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&message, "message", defaultTestMessage, "Custom message body")
+	cmd.Flags().BoolVar(&budgetAlert, "budget", false,
+		"Send an example budget alert instead (the message a run sends near a provider's cap)")
 	return cmd
+}
+
+// sampleBudgetAlert is the example `notify test --budget` sends: claude at
+// 80% of the conservative preset's cap.
+func sampleBudgetAlert() budget.Alert {
+	return budget.Alert{
+		Provider: "claude", Level: budget.AlertNear,
+		TokensUsed: 384000, Cap: 480000, PctOfCap: 80, WindowHours: 5,
+	}
 }
 
 // newNotifyDigestCmd ports `orch notify digest`.

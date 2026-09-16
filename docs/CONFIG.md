@@ -253,6 +253,8 @@ notifications:
   slack_webhook: ""      # empty disables the channel
   discord_webhook: ""
   timeout_s: 5
+  budget_alerts: true    # Go only; nothing is sent without a webhook
+  budget_alert_pct: 80   # share of a provider's cap, not of token_budget
 ```
 
 | Key | Default | What it does |
@@ -260,6 +262,8 @@ notifications:
 | `slack_webhook` | `""` (off) | Incoming-webhook URL. Posted as `{"text": ...}` |
 | `discord_webhook` | `""` (off) | Webhook URL. Posted as `{"content": ...}` |
 | `timeout_s` | `5` | Per-POST timeout. A webhook that does not answer is given up on, never waited out |
+| `budget_alerts` | `true` | Announce a provider's budget window near and at its cap during `orch run`. On by default because it only does anything once a webhook is set and `budgets.yaml` exists |
+| `budget_alert_pct` | `80` | When the first budget alert goes out, as a percentage of the provider's **cap** (`threshold_pct` of `token_budget`, the point where the gate starts deferring). Must be in (0, 100]; anything else is refused when the config loads |
 
 **A webhook URL is a credential.** Anyone holding it can post to your channel,
 so it belongs in a config file you do not commit — and orch never writes one to
@@ -274,6 +278,17 @@ announced:
 | a task is blocked | `:no_entry: orch: task ``F1.T3`` blocked — <first line of the reason>` |
 | a task is blocked after CI kept failing | `:warning: orch: task ``F1.T3`` blocked after 3 CI attempt(s) (<pr url>)` |
 | a live `orch run` made no progress for 30 minutes (Go only, #255), once per stall | `:hourglass: orch: no progress for 30m0s — waiting on CI on F1.T3 (<pr url>)` |
+| a provider's weighted budget window reaches `budget_alert_pct` of its cap (Go only) | `:warning: orch: claude is at 80% of its budget cap (384,000 of 480,000 tokens in its 5h window).` |
+| it reaches the cap and new dispatches to it wait (Go only) | `:octagonal_sign: orch: claude reached its budget cap (481,200 of 480,000 tokens in its 5h window). New claude dispatches wait until about 2026-09-16 14:05 UTC. 2 task(s) waiting.` |
+
+The budget alerts use the same weighted count the gate does (see
+[`budget`](#budget-and-budget-presets)), add ", part of it estimated" when a
+provider that reports no usage was counted as `typical_dispatch_tokens`, and go
+out at most once per provider and level per window length — even across a
+restarted `orch run`, which reads the `budget_alert` events the earlier run
+wrote. A window that drops back below the line and climbs again inside the
+same window length is not announced a second time. `orch notify test --budget`
+sends an example.
 
 Not successes, and not retries: a task that will try again has not given up,
 and a message per attempt is how a team mutes the channel — after which the

@@ -74,7 +74,7 @@ func Defaults() Config {
 			CIPollIntervalS: 30,
 		},
 		GitHub:        GitHub{TestCommand: "pytest", AutoMerge: false},
-		Notifications: Notifications{TimeoutS: 5},
+		Notifications: Notifications{TimeoutS: 5, BudgetAlerts: true, BudgetAlertPct: 80},
 		Presentation: Presentation{StatusLabels: map[string]string{
 			"backlog":     "Planificado",
 			"todo":        "Por hacer",
@@ -222,6 +222,11 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	if p := cfg.Notifications.BudgetAlertPct; p <= 0 || p > 100 {
+		return fmt.Errorf("notifications.budget_alert_pct: %v is not a percentage "+
+			"of the budget cap in (0, 100]", p)
+	}
+
 	if err := validateBranding(&cfg.Presentation.Branding); err != nil {
 		return err
 	}
@@ -330,7 +335,8 @@ var knownKeys = map[string]bool{
 	"vcs.ci_max_retries": true, "vcs.ci_poll_interval_s": true,
 	"github.test_command": true, "github.auto_merge": true,
 	"notifications.slack_webhook": true, "notifications.discord_webhook": true,
-	"notifications.timeout_s":      true,
+	"notifications.timeout_s":     true,
+	"notifications.budget_alerts": true, "notifications.budget_alert_pct": true,
 	"presentation.status_labels.*": true,
 	"presentation.branding.name":   true, "presentation.branding.logo": true,
 	"presentation.branding.accent_color": true,

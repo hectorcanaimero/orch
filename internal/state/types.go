@@ -159,6 +159,7 @@ var eventTypes = map[string]bool{
 	// goOnlyEventTypes in eventtypes_test.go for why that is safe in a
 	// database both binaries write to.
 	"sprint_done": true, "ci_no_checks": true, "pr_merged": true,
+	"budget_alert": true,
 }
 
 // OrphanRows reports rows whose project_id has no row in `projects`, keyed by

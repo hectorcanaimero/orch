@@ -47,3 +47,23 @@ func TestPerDispatchCap(t *testing.T) {
 }
 
 func ptr(v float64) *float64 { return &v }
+
+// Budget alerts are wired only when they have somewhere to go and are wanted:
+// a project with no webhook, or with budget_alerts off, gets none.
+func TestNewBudgetAlerts(t *testing.T) {
+	cfg := config.Config{Notifications: config.Notifications{BudgetAlerts: true, BudgetAlertPct: 90}}
+	if a := newBudgetAlerts(cfg, newNotifier(cfg), nil, nil, "run-1"); a != nil {
+		t.Error("alerts wired with no webhook configured")
+	}
+
+	cfg.Notifications.SlackWebhook = "https://hooks.slack.test/x"
+	a := newBudgetAlerts(cfg, newNotifier(cfg), nil, nil, "run-1")
+	if a == nil || a.Pct != 90 || a.RunID != "run-1" {
+		t.Fatalf("alerts = %+v, want wired at 90%% for run-1", a)
+	}
+
+	cfg.Notifications.BudgetAlerts = false
+	if a := newBudgetAlerts(cfg, newNotifier(cfg), nil, nil, "run-1"); a != nil {
+		t.Error("alerts wired with notifications.budget_alerts: false")
+	}
+}
