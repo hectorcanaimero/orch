@@ -50,15 +50,15 @@ state:
   sqlite_path: null
 
 # Sprint 7 — provider budget guardrails.
-# `budgets_config` is the path (relative to the orchestrator package OR the
-# project root) to a `budgets.yaml` file. Absent/missing file → gate disabled
-# (backwards-compat: everything works exactly like pre-Sprint 7).
-# `budgets_preset` picks which preset inside that file to use. Overridable
-# with `--budgets-preset` on the CLI or `ORCH_BUDGETS_PRESET` env var.
+# `budgets_config` is the path to a `budgets.yaml` file, relative to this
+# directory first and then the project root (`orch init` writes it next to
+# this file). A missing file disables the gate; `orch doctor` warns about it.
+# `budgets_preset` picks which preset inside that file to use. `orch run`,
+# `orch doctor` and the dashboard all read these two keys.
 # `typical_dispatch_tokens` is the estimated tokens spent on ONE dispatch —
-# used at startup for preset sanity: if any provider's `token_budget` is
-# < 2 * typical, orch prints a WARN because dispatches will serialize inside
-# the budget window (see budget.warn_undersized_presets).
+# used by `orch doctor` for preset sanity (a provider whose `token_budget` is
+# < 2 * typical serializes dispatches inside the window), and by the gate as
+# the weight of a dispatch whose provider reported no token usage (gemini).
 budgets_config: budgets.yaml
 budgets_preset: conservative
 typical_dispatch_tokens: 200000

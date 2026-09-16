@@ -660,6 +660,40 @@ func TestBudgetGate(t *testing.T) {
 	}
 }
 
+// A budget deferral used to live only in the scheduler's memory, so neither
+// `orch status` nor the dashboard could say why a ready task was sitting
+// still. It is now a `budget_skip` event carrying the provider and the reset
+// estimate — written once when the task starts waiting, not on every tick of
+// the refill loop.
+func TestBudgetDeferralIsRecordedOncePerWait(t *testing.T) {
+	resetAt := time.Date(2026, 9, 12, 15, 0, 0, 0, time.UTC)
+	routes := map[string]model.RouteEntry{"claude/opus": route(model.BackendClaude, "opus", false)}
+	tasks := []model.Task{task("C-1", 1, "claude/opus")}
+
+	f := newSchedulerFixture(t, tasks, routes, SchedulerOptions{
+		Mode:        ModeAuto,
+		GlobalMax:   4,
+		PerProvider: map[string]int{"claude": 4},
+	})
+	fb := newFakeBackend()
+	f.s.Backend = fb
+	f.s.Budget = &stubBudget{decision: budget.Decision{OK: false, Reason: "claude over threshold", ResetAt: resetAt}}
+
+	for i := 0; i < 3; i++ {
+		if _, err := f.s.Refill(context.Background()); err != nil {
+			t.Fatalf("Refill %d: %v", i, err)
+		}
+	}
+	got := fb.eventTypes("C-1")
+	if len(got) != 1 || got[0] != EventBudgetSkip {
+		t.Fatalf("events for C-1 = %v, want exactly one %q across three ticks", got, EventBudgetSkip)
+	}
+	ev := fb.events[0]
+	if ev.backend != "claude" || ev.extra["reset_at"] != "2026-09-12T15:00:00Z" || ev.extra["reason"] != "claude over threshold" {
+		t.Errorf("event = %+v, want backend claude, reset_at and reason", ev)
+	}
+}
+
 // TestBudgetGateRunsBeforeTheSemaphores. Checking after would acquire and
 // release a slot on every tick for a capped provider, so the in-flight count
 // AS-05 reads would flap.

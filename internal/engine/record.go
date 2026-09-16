@@ -30,6 +30,10 @@ const (
 	EventBlock    = "block"
 	// EventBudgetPause marks the run parking until a provider window resets.
 	EventBudgetPause = "budget_pause"
+	// EventBudgetSkip marks a ready task deferred because its provider is
+	// over the budget window. Written when the task starts waiting, with the
+	// provider and reset estimate, so status and the dashboard can show it.
+	EventBudgetSkip = "budget_skip"
 	// EventReconciled marks a dispatch row whose process was gone.
 	EventReconciled = "reconciled"
 	// EventPRCreated marks a pull request opened for a finished task.

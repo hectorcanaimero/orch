@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/doctor"
 	"github.com/hectorcanaimero/orch/internal/router"
@@ -93,7 +94,7 @@ func newDoctorCmd(flags *projectFlags) *cobra.Command {
 
 			checks = append(checks, doctor.CheckRoutes(tasks, rtr))
 			checks = append(checks, doctor.CheckBackends(doctor.ReferencedBackends(tasks, rtr))...)
-			checks = append(checks, doctor.CheckBudgetPreset(cfg.BudgetsConfig, cfg.BudgetsPreset, cfg.TypicalDispatchToken)...)
+			checks = append(checks, doctor.CheckBudgetPreset(budget.ResolvePath(paths.Root, paths.ConfigYAML, cfg.BudgetsConfig), cfg.BudgetsPreset, cfg.TypicalDispatchToken)...)
 			checks = append(checks, doctor.CheckOrphanWorktrees(paths.Root))
 			checks = append(checks, doctor.CheckVCSReadiness(paths.Root, doctor.VCSConfig{
 				WorktreeMode: cfg.Dispatch.WorktreeMode,

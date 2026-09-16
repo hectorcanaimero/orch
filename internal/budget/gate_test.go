@@ -223,6 +223,37 @@ func TestUndatedRowCountsButDoesNotDateTheReset(t *testing.T) {
 	}
 }
 
+// A dispatch whose provider reported no usage is not free. Its row is marked
+// Estimated with zero tokens, and the gate counts it as the configured
+// typical dispatch instead of as nothing — otherwise a provider that never
+// reports usage could be dispatched to forever under any budget.
+func TestUnreportedDispatchCountsAsATypicalOne(t *testing.T) {
+	cfg := oneProvider(ProviderBudget{WindowHours: 5, TokenBudget: 1000, ThresholdPct: 60})
+	cfg.UnreportedDispatchTokens = 400
+	rows := []state.Spend{
+		{TS: "2026-09-02T11:00:00Z", Backend: "claude", Estimated: true},
+		{TS: "2026-09-02T11:30:00Z", Backend: "claude", Estimated: true},
+		// Estimated but with numbers: those numbers are used as they are.
+		{TS: "2026-09-02T11:40:00Z", Backend: "claude", Estimated: true, TokensIn: 5},
+	}
+	g := gateAt(t, &staticSpend{rows: rows}, cfg, "2026-09-02T12:00:00Z")
+
+	d, err := g.CanDispatch(context.Background(), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.OK {
+		t.Fatal("two unreported dispatches at 400 each (805 tokens) against a 600 cap must block")
+	}
+	snap, err := g.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap["claude"].TokensUsed != 805 {
+		t.Errorf("tokens_used = %d, want 805", snap["claude"].TokensUsed)
+	}
+}
+
 // staticSpend returns its rows whatever the window, which is what lets a test
 // hand the gate a row the real backend would have filtered out.
 type staticSpend struct{ rows []state.Spend }

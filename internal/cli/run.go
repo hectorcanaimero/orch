@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -113,6 +112,7 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 				Cwd:               paths.Root,
 				ProjectID:         paths.ID,
 				RunID:             runID,
+				BudgetUSD:         perDispatchCap(cfg),
 			})
 			scheduler.Backend = engine.NewStateRecorder(backend)
 			// The same adapter, named separately because it answers a
@@ -219,6 +219,16 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 	return cmd
 }
 
+// perDispatchCap is budget.per_dispatch_usd as the per-attempt cap claude
+// receives as `--max-budget-usd`; nil (no flag) when it is zero or less.
+func perDispatchCap(cfg config.Config) *float64 {
+	if cfg.Budget.PerDispatchUSD <= 0 {
+		return nil
+	}
+	v := cfg.Budget.PerDispatchUSD
+	return &v
+}
+
 // newBudgetGate loads the provider guardrails, or returns nil when the
 // project has none — which is every project that never opted in, and is why
 // a missing budgets.yaml is not an error.
@@ -226,13 +236,11 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 // Read failures are reported and treated as "no gate" rather than failing the
 // run: a guardrail that cannot be loaded must not be able to stop work, the
 // same fail-open the per-dispatch check takes when the window is unreadable.
+// The path is budget.ResolvePath's, the one doctor and the dashboard read too.
 func newBudgetGate(paths config.Paths, cfg config.Config, backend state.Backend) *budget.Gate {
-	path := cfg.BudgetsConfig
+	path := budget.ResolvePath(paths.Root, paths.ConfigYAML, cfg.BudgetsConfig)
 	if path == "" {
 		return nil
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(paths.Root, path)
 	}
 	bcfg, err := budget.LoadConfig(path, cfg.BudgetsPreset)
 	if err != nil {
@@ -242,5 +250,6 @@ func newBudgetGate(paths config.Paths, cfg config.Config, backend state.Backend)
 	if bcfg == nil {
 		return nil
 	}
+	bcfg.UnreportedDispatchTokens = cfg.TypicalDispatchToken
 	return budget.NewGate(backend, bcfg)
 }

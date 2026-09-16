@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/providers"
@@ -96,8 +97,7 @@ func DecideRetry(in RetryInput) RetryDecision {
 	// The third attempt still counts against budget.per_dispatch_usd. A task
 	// that has already spent its cap does not get promoted to a pricier
 	// model to spend more.
-	cap := in.Cfg.Budget.PerDispatchUSD
-	escalationAllowed := hasEscalation && (cap <= 0 || in.SpentUSD < cap)
+	escalationAllowed := hasEscalation && budget.AllowEscalation(in.SpentUSD, in.Cfg.Budget.PerDispatchUSD)
 
 	rule := retryRuleFor(in.Cfg.Retry, in.Failure)
 	base := rule.Attempts(defaultMaxAttempts(in.Cfg.Retry))

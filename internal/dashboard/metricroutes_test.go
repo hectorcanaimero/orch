@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/config"
+	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/state"
 )
 
@@ -52,6 +53,10 @@ func TestMetricsReportsLifetimeSpend(t *testing.T) {
 	// 0.99 recorded + gpt-5's 2.50/1M estimate.
 	if got.TotalCostUSD != 3.49 {
 		t.Errorf("total_cost_usd = %v, want 3.49", got.TotalCostUSD)
+	}
+	// ...and the page can say which part of that total is the estimate.
+	if got.EstimatedCostUSD != 2.5 {
+		t.Errorf("estimated_cost_usd = %v, want 2.5 (gpt-5's pricing.yaml estimate)", got.EstimatedCostUSD)
 	}
 	if len(got.ByModel) != 2 || got.ByModel[0].Model != "gpt-5" {
 		t.Errorf("by_model = %+v; want gpt-5 first (most expensive)", got.ByModel)
@@ -138,6 +143,104 @@ func TestBudgetSummaryPairsTheWindowWithWhatWasUsed(t *testing.T) {
 	}
 	if codex.CostUSD != 0 {
 		t.Errorf("codex cost_usd = %v, want 0", codex.CostUSD)
+	}
+}
+
+// The panel reads the preset and file `orch run` enforces — config.yaml's
+// `budgets_preset` and `budgets_config` — not an environment variable the run
+// never looks at. Before, a project on `shared` saw "no budget configured"
+// here while its run was being gated.
+func TestBudgetSummaryReadsTheRunsPresetAndFile(t *testing.T) {
+	const sharedOnly = `presets:
+  shared:
+    claude:
+      window_hours: 5
+      token_budget: 1000
+      threshold_pct: 40
+`
+	s, root := newMoneyServer(t, &fakeState{}, map[string]string{
+		"config.yaml": "budgets_config: guard/limits.yaml\nbudgets_preset: shared\n",
+	})
+	if err := os.MkdirAll(filepath.Join(root, "guard"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "guard", "limits.yaml"), []byte(sharedOnly), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var got budgetSummaryPayload
+	decode(t, get(t, s, "/api/budget/summary"), &got)
+	if !got.Available || len(got.Rows) != 1 || got.Rows[0].ThresholdPct != 40 {
+		t.Fatalf("got %+v, want the shared preset from guard/limits.yaml", got)
+	}
+	if got.Preset != "shared" || got.Path != filepath.Join(root, "guard", "limits.yaml") {
+		t.Errorf("preset/path = %q / %q", got.Preset, got.Path)
+	}
+}
+
+// "Not available" says why, and where orch looked, so the page can tell an
+// operator the guardrail is off and which file would turn it on.
+func TestBudgetSummaryExplainsAMissingFile(t *testing.T) {
+	s, root := newMoneyServer(t, &fakeState{}, nil)
+
+	var got budgetSummaryPayload
+	decode(t, get(t, s, "/api/budget/summary"), &got)
+	if got.Available || got.Reason != "missing" {
+		t.Fatalf("available/reason = %v/%q, want false/missing", got.Available, got.Reason)
+	}
+	if got.Path != filepath.Join(root, "budgets.yaml") || got.Preset != "conservative" {
+		t.Errorf("path/preset = %q/%q", got.Path, got.Preset)
+	}
+}
+
+// Each provider's dollars say where they came from: recorded by the CLI,
+// estimated from pricing.yaml because the CLI reports tokens but no price, or
+// unknown because it reports nothing at all. The window's reset estimate and
+// the tasks waiting on it travel too.
+func TestBudgetSummaryLabelsCostAndListsWaitingTasks(t *testing.T) {
+	now := time.Now().UTC()
+	ts := now.Format(time.RFC3339)
+	reset := now.Add(2 * time.Hour).Format("2006-01-02T15:04:05Z")
+	f := &fakeState{
+		spends: []state.Spend{
+			{Backend: "claude", Model: "claude-sonnet-4-6", TokensIn: 900, CostUSD: 0.5, TS: ts, TaskID: "T-1"},
+			{Backend: "codex", Model: "gpt-5", TokensIn: 1_000_000, TS: ts, TaskID: "T-2"},
+			{Backend: "gemini", Model: "gemini-2.5-pro", Estimated: true, TS: ts, TaskID: "T-3"},
+		},
+		tasks: []state.TaskRuntime{
+			{ID: "T-4", Status: model.StatusTodo},
+			{ID: "T-5", Status: model.StatusDone},
+		},
+		lastEvents: map[string]state.Event{
+			"T-4": {EventType: "budget_skip", TaskID: "T-4", Backend: "claude",
+				Extra: map[string]any{"reset_at": reset, "reason": "claude over threshold"}},
+		},
+	}
+	const three = `presets:
+  conservative:
+    claude: {window_hours: 5, token_budget: 1000, threshold_pct: 80}
+    codex: {window_hours: 5, token_budget: 10000000, threshold_pct: 80}
+    gemini: {window_hours: 5, token_budget: 1000, threshold_pct: 80}
+`
+	s, _ := newMoneyServer(t, f, map[string]string{"budgets.yaml": three})
+
+	var got budgetSummaryPayload
+	decode(t, get(t, s, "/api/budget/summary"), &got)
+	if len(got.Rows) != 3 {
+		t.Fatalf("rows = %+v", got.Rows)
+	}
+	claude, codex, gemini := got.Rows[0], got.Rows[1], got.Rows[2]
+	if claude.CostSource != "reported" || claude.WindowHours != 5 || claude.ResetAt == nil {
+		t.Errorf("claude = %+v, want reported, a 5h window and a reset (it is capped)", claude)
+	}
+	if codex.CostSource != "estimated" || codex.EstimatedCostUSD != 2.5 || codex.CostUSD != 0 {
+		t.Errorf("codex = %+v, want estimated 2.5 from pricing and recorded 0", codex)
+	}
+	if gemini.CostSource != "no_data" {
+		t.Errorf("gemini cost_source = %q, want no_data", gemini.CostSource)
+	}
+	if len(got.Waiting) != 1 || got.Waiting[0].TaskID != "T-4" || got.Waiting[0].ResetAt != reset {
+		t.Errorf("waiting = %+v, want T-4 until %s", got.Waiting, reset)
 	}
 }
 

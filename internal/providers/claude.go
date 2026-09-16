@@ -150,17 +150,29 @@ func claudeErrorMessage(env map[string]any, isError bool) string {
 	return fmt.Sprintf("claude reported is_error=%s", pyStr(isError))
 }
 
-// claudeCost pulls `total_cost_usd` and `usage.{input,output}_tokens` out of
-// the envelope. Port of ClaudeBackend.extract_cost, which re-parses the text;
+// claudeCost pulls `total_cost_usd` and the `usage` token counts out of the
+// envelope. Port of ClaudeBackend.extract_cost, which re-parses the text;
 // taking the already-decoded envelope saves a second pass and cannot disagree
 // with the one Parse used.
+//
+// # Divergence: cache tokens are input
+//
+// Python read `usage.input_tokens` alone. With prompt caching that is the
+// handful of tokens after the last cache breakpoint: the 2.1.269 capture
+// reports 19 of the 60,132 input tokens the request processed, the rest being
+// `cache_creation_input_tokens` and `cache_read_input_tokens`. The budget
+// window sums these rows, so it saw a few hundred tokens per dispatch and the
+// claude cap practically never tripped. All three count.
 func claudeCost(env map[string]any) (cost float64, tokensIn, tokensOut int) {
 	cost = toFloat(env["total_cost_usd"])
 	usage, ok := asObject(env["usage"])
 	if !ok {
 		return cost, 0, 0
 	}
-	return cost, toInt(usage["input_tokens"]), toInt(usage["output_tokens"])
+	tokensIn = toInt(usage["input_tokens"]) +
+		toInt(usage["cache_creation_input_tokens"]) +
+		toInt(usage["cache_read_input_tokens"])
+	return cost, tokensIn, toInt(usage["output_tokens"])
 }
 
 // ExtractCost reports the spend and token counts in a captured claude log,

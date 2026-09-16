@@ -13,6 +13,9 @@
 #        real usage.
 #     3. Set `token_budget` = the tokens you consumed in that window * 0.9.
 #     4. Bump `threshold_pct` up (60 → 75 → 85) once you're confident.
+#   Tokens are every input token a dispatch processed — cache reads and cache
+#   writes included, which is most of a claude or opencode dispatch — plus
+#   output. The dashboard's Budget page shows the window as orch counts it.
 #
 # HOW TO PICK A PRESET:
 #   - conservative → default. Safe, may leave capacity unused.
@@ -22,11 +25,8 @@
 #                    working hours). Best when you leave orch running while
 #                    you're also coding.
 #
-# Selection order (highest priority first):
-#   1. CLI flag: `orch --budgets-preset aggressive`
-#   2. Env var:  `ORCH_BUDGETS_PRESET=aggressive`
-#   3. config.yaml: `budgets_preset: aggressive`
-#   4. Fallback:  `conservative`
+# The preset is `budgets_preset` in config.yaml (default `conservative`); there
+# is no CLI flag or environment variable for it.
 #
 # window_hours is the rolling window Anthropic/OpenAI/opencode enforce for
 # THEIR rate limits — not something you tune. Values below match public docs

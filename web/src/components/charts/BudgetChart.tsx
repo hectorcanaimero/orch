@@ -11,15 +11,8 @@ const VB_WIDTH = 900
 const ROW_H = 40
 const BAR_H = 18
 const PAD_LEFT = 110 // provider label gutter
-const PAD_RIGHT = 150 // room for "pct% · ~$cost" on the right
+const PAD_RIGHT = 150 // room for "pct% · used/budget" on the right
 const PAD_TOP = 12
-
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
 
 /** 12345 → "12.3k", 1200000 → "1.2M". */
 function shortTokens(n: number): string {
@@ -31,7 +24,8 @@ function shortTokens(n: number): string {
 /**
  * Hand-rolled SVG budget-vs-actual chart (Sprint G-5). Compares tokens used
  * against the configured token_budget per provider — the unit the guardrail
- * enforces. USD spend rides along as an informational label, NOT the axis.
+ * enforces. Spend is not on the chart: the page's table shows it with where
+ * each figure comes from (reported, estimated, no data).
  */
 export function BudgetChart({ rows }: BudgetChartProps) {
   if (rows.length === 0) return null
@@ -95,15 +89,13 @@ export function BudgetChart({ rows }: BudgetChartProps) {
               strokeWidth={1}
               strokeDasharray="2 2"
             />
-            {/* right-hand labels: pct + tokens + informational USD */}
+            {/* right-hand labels: pct + tokens */}
             <text
               x={PAD_LEFT + plotW + 8}
               y={barY + BAR_H - 4}
               className="fill-zinc-600 dark:fill-zinc-400 text-[10px]"
             >
-              {r.pct}% · {shortTokens(r.tokens_used)}/{shortTokens(r.token_budget)}
-              {r.cost_usd > 0 ? ` · ~${USD.format(r.cost_usd)}` : ""}
-            </text>
+              {r.pct}% · {shortTokens(r.tokens_used)}/{shortTokens(r.token_budget)}            </text>
           </g>
         )
       })}

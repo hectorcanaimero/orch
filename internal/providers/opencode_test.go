@@ -63,8 +63,10 @@ func TestOpencodeParseRealSuccess(t *testing.T) {
 	if res.ErrorMessage != "" {
 		t.Errorf("ErrorMessage = %q, want empty", res.ErrorMessage)
 	}
-	if res.TokensIn != 9717 || res.TokensOut != 15 {
-		t.Errorf("tokens = (%d,%d), want (9717,15)", res.TokensIn, res.TokensOut)
+	// input (9717) plus cache.read (1792) plus cache.write (0): the capture's
+	// own tokens.total is 11524 = 11509 + output 15.
+	if res.TokensIn != 11509 || res.TokensOut != 15 {
+		t.Errorf("tokens = (%d,%d), want (11509,15)", res.TokensIn, res.TokensOut)
 	}
 	if res.CostUSD != 0 {
 		t.Errorf("CostUSD = %v, want 0", res.CostUSD)
@@ -245,8 +247,8 @@ func TestOpencodeParseEdgeCases(t *testing.T) {
 func TestOpencodeExtractCost(t *testing.T) {
 	out := readFixture(t, "opencode", "1.18.30", "success.json")
 	cost, in, outTok := OpencodeProvider{}.ExtractCost(out)
-	if cost != 0 || in != 9717 || outTok != 15 {
-		t.Errorf("ExtractCost = (%v,%d,%d), want (0,9717,15)", cost, in, outTok)
+	if cost != 0 || in != 11509 || outTok != 15 {
+		t.Errorf("ExtractCost = (%v,%d,%d), want (0,11509,15)", cost, in, outTok)
 	}
 }
 

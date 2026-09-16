@@ -186,16 +186,37 @@ rules existed.
 
 ```yaml
 budget:
-  per_dispatch_usd: 5.0  # passed to the provider CLI as its own cap
+  per_dispatch_usd: 5.0  # claude --max-budget-usd, per attempt; <= 0 means no cap
 
 budgets_config: budgets.yaml
 budgets_preset: conservative
 typical_dispatch_tokens: 200000
 ```
 
-The rolling-window guardrail lives in `budgets.yaml`, not here.
-`typical_dispatch_tokens` is used at startup to warn when a preset's window is
-too small to fit two dispatches.
+Two different guardrails:
+
+- **The rolling window** (`budgets.yaml`) rations each provider's quota across
+  a run. Every dispatch's tokens are summed per provider over the preset's
+  `window_hours` — all input tokens, cache reads and cache writes included,
+  plus output. When the sum reaches `threshold_pct` of `token_budget`, orch
+  stops sending that provider new tasks (it writes a `budget_skip` event, and
+  `orch status` shows `defer_reason: blocked-by-budget:<provider> until <reset>`);
+  when every configured provider is capped the run sleeps until the earliest
+  reset (`budget_pause`). A provider the preset does not name is never gated.
+  A dispatch whose provider reports no usage at all (gemini) counts as
+  `typical_dispatch_tokens`, not as zero.
+- **`budget.per_dispatch_usd`** caps a single task: it is passed to claude as
+  `--max-budget-usd` on each attempt, and a task that has already cost that
+  much does not get the escalation attempt. It is not a project-wide USD limit;
+  orch has none.
+
+`budgets_config` is looked for next to config.yaml first, then at the project
+root; `orch init` writes the packaged presets to `.orchestrator/budgets.yaml`.
+A missing file means no window guardrail: `orch doctor` warns, and the
+dashboard's Budget page says so. `orch run`, `orch doctor`, MCP and the
+dashboard all read `budgets_config` and `budgets_preset` the same way; there
+is no flag or environment variable for the preset. `typical_dispatch_tokens`
+also drives doctor's warning when a preset's window cannot fit two dispatches.
 
 ### `dashboard`
 

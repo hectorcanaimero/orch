@@ -20,6 +20,9 @@ exists batchproj/scripts/task-start.sh
 exists batchproj/.orchestrator/config.yaml
 exists batchproj/.orchestrator/model_router.yaml
 exists batchproj/.github/workflows/orch-ci.yml
+# The budget guardrail is on from the start: the presets file sits next to
+# config.yaml, where `orch run` and `orch doctor` look for it.
+exists batchproj/.orchestrator/budgets.yaml
 
 # The scaffolded project passes its own validator. This is the assertion the
 # Python side was missing.

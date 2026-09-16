@@ -26,7 +26,11 @@ func CheckBudgetPreset(budgetsYAML, preset string, typicalDispatchTokens int) []
 		return []Check{{Name: name, Status: StatusError, Detail: err.Error()}}
 	}
 	if cfg == nil {
-		return []Check{{Name: name, Status: StatusSkip, Detail: budgetsYAML + " does not exist"}}
+		return []Check{{
+			Name: name, Status: StatusWarn,
+			Detail:      budgetsYAML + " does not exist: the budget guardrail is disabled and runs are not rationed",
+			Remediation: "copy a preset file there (orch init writes one) or set budgets_config to an existing budgets.yaml",
+		}}
 	}
 
 	warnings := budget.WarnUndersizedPresets(cfg, preset, typicalDispatchTokens)

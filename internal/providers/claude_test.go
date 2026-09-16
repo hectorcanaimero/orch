@@ -188,11 +188,12 @@ func TestClaude2_1_269ParseSuccess(t *testing.T) {
 	if res.CostUSD != 0.0475971 {
 		t.Errorf("CostUSD = %v, want 0.0475971", res.CostUSD)
 	}
-	// Deliberately the top-level usage.input_tokens (19), NOT modelUsage's
-	// inputTokens (916): Python reads usage.*, so a divergence here would
-	// silently change every spend row.
-	if res.TokensIn != 19 {
-		t.Errorf("TokensIn = %d, want 19", res.TokensIn)
+	// Every input token the request processed: usage.input_tokens (19) plus
+	// cache_creation_input_tokens (19792) plus cache_read_input_tokens
+	// (40321). Divergence from Python, which read input_tokens alone and so
+	// counted 19 of 60,132 — the claude budget window almost never filled.
+	if res.TokensIn != 60132 {
+		t.Errorf("TokensIn = %d, want 60132", res.TokensIn)
 	}
 	if res.TokensOut != 603 {
 		t.Errorf("TokensOut = %d, want 603", res.TokensOut)
@@ -597,6 +598,11 @@ func TestClaudeCostTolerance(t *testing.T) {
 			name:     "a null cost reads as zero, as `x or 0.0` does",
 			envelope: `{"total_cost_usd":null,"usage":{"input_tokens":3,"output_tokens":4}}`,
 			tokensIn: 3, tokensOut: 4,
+		},
+		{
+			name:     "cache creation and cache reads count as input",
+			envelope: `{"usage":{"input_tokens":2,"cache_creation_input_tokens":30,"cache_read_input_tokens":400,"output_tokens":5}}`,
+			tokensIn: 432, tokensOut: 5,
 		},
 		{
 			name:     "numeric strings coerce, as float()/int() do",

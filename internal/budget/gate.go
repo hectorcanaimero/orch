@@ -161,7 +161,11 @@ func (g *Gate) usage(ctx context.Context, provider string, pb ProviderBudget, no
 
 	var w window
 	for _, r := range rows {
-		w.tokens += r.TokensIn + r.TokensOut
+		used := r.TokensIn + r.TokensOut
+		if used == 0 && r.Estimated {
+			used = g.cfg.UnreportedDispatchTokens
+		}
+		w.tokens += used
 		// SpendSince returns rows oldest first and drops any it could not
 		// date, so the first one that parses is the oldest. Asking rather
 		// than trusting the order costs nothing and does not go wrong if

@@ -117,7 +117,8 @@ type Result struct {
 
 	// Estimated marks a run whose backend reported activity but no token
 	// usage, so downstream spend rows can tell missing telemetry apart from
-	// genuinely zero-cost work. Only opencode sets it (Issue #8).
+	// genuinely zero-cost work. opencode sets it when a run reported no
+	// numbers (Issue #8); gemini always does, having no usage to report.
 	Estimated bool
 
 	// PermissionDenials are the tool calls the CLI refused without asking,

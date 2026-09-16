@@ -167,6 +167,7 @@ func Run(opts Options) (Result, error) {
 	w.mkdir(filepath.Join(".orchestrator", "state"))
 	w.touch(filepath.Join(".orchestrator", "state", ".gitkeep"))
 	w.config()
+	w.budgets()
 	w.routerStub()
 	w.softCopyShared(".gitignore", "gitignore.tmpl")
 	w.agents()
@@ -414,6 +415,27 @@ func (w *writer) config() {
 		return
 	}
 	w.write(rel, []byte(templates.Render(string(body), w.name, w.now)), 0o600)
+}
+
+// budgets writes `.orchestrator/budgets.yaml`, the packaged presets.
+//
+// Go only: Python's init never wrote it, so the guardrail was off on every
+// scaffolded project while the wizard asked which preset to use. The preset
+// itself is config.yaml's `budgets_preset`; this file holds all of them.
+// Like the router, an existing file is kept unless --force.
+func (w *writer) budgets() {
+	rel := filepath.Join(".orchestrator", "budgets.yaml")
+	if !w.force {
+		if _, err := os.Stat(w.path(rel)); err == nil {
+			return
+		}
+	}
+	body, err := packagedDefault("budgets.yaml")
+	if err != nil {
+		w.fail("the packaged default budgets.yaml is missing: %w", err)
+		return
+	}
+	w.write(rel, body, 0o600)
 }
 
 // routerStub writes the empty router.

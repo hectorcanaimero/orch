@@ -20,6 +20,8 @@ export interface MetricsByDayRow {
 export interface MetricsResponse {
   project_id: string
   total_cost_usd: number
+  /** The part of total_cost_usd priced from pricing.yaml, not reported by a CLI. */
+  estimated_cost_usd: number
   by_model: MetricsByModelRow[]
   by_day: MetricsByDayRow[]
   estimate_hours_total: number

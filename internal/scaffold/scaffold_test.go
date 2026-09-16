@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hectorcanaimero/orch/internal/budget"
 	"github.com/hectorcanaimero/orch/internal/config"
 	"github.com/hectorcanaimero/orch/internal/model"
 	"github.com/hectorcanaimero/orch/internal/router"
@@ -190,6 +191,40 @@ func TestScaffoldWritesTheLayout(t *testing.T) {
 	// openspec/ only with --sdd.
 	if _, err := os.Stat(filepath.Join(res.Root, "openspec")); err == nil {
 		t.Error("openspec/ exists without --sdd")
+	}
+}
+
+// A new project gets its budget guardrail. `orch init` used to write no
+// budgets.yaml, so the gate was off on every scaffolded project — silently,
+// while the wizard asked which preset to use. The file is the packaged one,
+// and the preset chosen in config.yaml loads from it where `orch run` looks.
+func TestScaffoldWritesTheBudgetGuardrail(t *testing.T) {
+	for _, template := range []string{"", "python-api"} {
+		t.Run("template="+template, func(t *testing.T) {
+			res, err := Run(Options{
+				Root: filepath.Join(t.TempDir(), "p"), Template: template,
+				BudgetPreset: "aggressive", Now: fixedNow,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			configYAML := filepath.Join(res.Root, ".orchestrator", "config.yaml")
+			loaded, err := config.Load(configYAML, res.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := budget.ResolvePath(res.Root, configYAML, loaded.Config.BudgetsConfig)
+			if path != filepath.Join(res.Root, ".orchestrator", "budgets.yaml") {
+				t.Fatalf("budgets.yaml resolves to %q", path)
+			}
+			cfg, err := budget.LoadConfig(path, loaded.Config.BudgetsPreset)
+			if err != nil || cfg == nil || len(cfg.Providers) == 0 {
+				t.Fatalf("preset %q from %s: cfg=%v err=%v", loaded.Config.BudgetsPreset, path, cfg, err)
+			}
+			if cfg.Providers["claude"].ThresholdPct != 90 {
+				t.Errorf("claude threshold = %v, want the aggressive preset's 90", cfg.Providers["claude"].ThresholdPct)
+			}
+		})
 	}
 }
 
@@ -423,7 +458,12 @@ var defaultsDivergedFromPython = map[string]string{
 		"does not have, and made config.Load warn about the file init had just written; " +
 		"it is replaced by `report_findings:`, the dogfooding opt-in that exists. " +
 		"#249: the dispatch comment named .worktrees/<task-id>/ inside the project; " +
-		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/",
+		"worktrees moved next to it, to ../<project>.worktrees/<task-id>/. " +
+		"fix/budget-accounting: the budgets comment promised a --budgets-preset flag and an " +
+		"ORCH_BUDGETS_PRESET variable `orch run` never read; it now says where budgets.yaml is looked " +
+		"for and what typical_dispatch_tokens weighs",
+	"budgets.yaml": "fix/budget-accounting: the header's selection order named a CLI flag and an environment " +
+		"variable nothing reads, and the calibration note now says that cache tokens count",
 }
 
 // The three packaged defaults started as copies of Python's, so they get the
