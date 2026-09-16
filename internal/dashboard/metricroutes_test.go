@@ -54,6 +54,10 @@ func TestMetricsReportsLifetimeSpend(t *testing.T) {
 	if got.TotalCostUSD != 3.49 {
 		t.Errorf("total_cost_usd = %v, want 3.49", got.TotalCostUSD)
 	}
+	// ...and the page can say which part of that total is the estimate.
+	if got.EstimatedCostUSD != 2.5 {
+		t.Errorf("estimated_cost_usd = %v, want 2.5 (gpt-5's pricing.yaml estimate)", got.EstimatedCostUSD)
+	}
 	if len(got.ByModel) != 2 || got.ByModel[0].Model != "gpt-5" {
 		t.Errorf("by_model = %+v; want gpt-5 first (most expensive)", got.ByModel)
 	}

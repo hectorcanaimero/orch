@@ -158,5 +158,17 @@ func totalCost(spends []state.Spend, table pricing.Table) float64 {
 	return round4(total)
 }
 
+// estimatedCost is the part of totalCost priced from pricing.yaml: the rows
+// with no recorded cost, resolved the same way totalCost resolves them.
+func estimatedCost(spends []state.Spend, table pricing.Table) float64 {
+	var unbilled []state.Spend
+	for _, s := range spends {
+		if s.CostUSD <= 0 {
+			unbilled = append(unbilled, s)
+		}
+	}
+	return totalCost(unbilled, table)
+}
+
 // round4 is Python's `round(x, 4)`.
 func round4(v float64) float64 { return roundDecimals(v, 4) }

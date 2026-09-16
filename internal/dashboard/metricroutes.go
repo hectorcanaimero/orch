@@ -32,7 +32,10 @@ func (s *Server) metricRoutes() []route {
 type metricsPayload struct {
 	ProjectID          string       `json:"project_id"`
 	TotalCostUSD       float64      `json:"total_cost_usd"`
-	ByModel            []modelStats `json:"by_model"`
+	// EstimatedCostUSD is the part of TotalCostUSD that no CLI reported:
+	// priced from tokens with pricing.yaml. Zero when every dollar is real.
+	EstimatedCostUSD float64      `json:"estimated_cost_usd"`
+	ByModel          []modelStats `json:"by_model"`
 	ByDay              []dayStats   `json:"by_day"`
 	EstimateHoursTotal float64      `json:"estimate_hours_total"`
 }
@@ -64,6 +67,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, metricsPayload{
 		ProjectID:          s.paths.ID,
 		TotalCostUSD:       totalCost(spends, table),
+		EstimatedCostUSD:   estimatedCost(spends, table),
 		ByModel:            metricsByModel(spends, table),
 		ByDay:              metricsByDay(spends, table, byDayWindow),
 		EstimateHoursTotal: round1(view.Summary.EstimateHoursTotal),
