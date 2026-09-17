@@ -641,7 +641,7 @@ var reReportFindings = regexp.MustCompile(`(?m)^(report_findings:[ \t]*\n[ \t]+e
 func packagedReportFindingsBlock() (string, error) {
 	raw, err := packagedDefault("config.yaml")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read the packaged default config.yaml: %w", err)
 	}
 	body := string(raw)
 	end := reReportFindings.FindStringSubmatchIndex(body)
