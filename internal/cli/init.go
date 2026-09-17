@@ -32,6 +32,7 @@ func newInitCmd(flags *projectFlags) *cobra.Command {
 		projectName string
 		force       bool
 		sdd         bool
+		noFindings  bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,14 +50,16 @@ func newInitCmd(flags *projectFlags) *cobra.Command {
 				Name:     projectName,
 				Force:    force,
 				SDD:      sdd,
+
+				NoReportFindings: noFindings,
 			}
 			if len(args) == 1 {
 				opts.Root = args[0]
 			}
 
 			// Python's `_is_scaffolder_flag_provided`: a path or any of the
-			// four flags means batch.
-			batch := opts.Root != "" || template != "" || projectName != "" || force || sdd
+			// flags means batch.
+			batch := opts.Root != "" || template != "" || projectName != "" || force || sdd || noFindings
 			if !batch {
 				var confirmed bool
 				var err error
@@ -109,6 +112,8 @@ func newInitCmd(flags *projectFlags) *cobra.Command {
 		"Overwrite an existing project's files")
 	cmd.Flags().BoolVar(&sdd, "sdd", false,
 		"Also scaffold the openspec/ layout")
+	cmd.Flags().BoolVar(&noFindings, "no-report-findings", false,
+		"Write report_findings.enabled: false (agents do not file public issues about orch)")
 	return cmd
 }
 
@@ -163,4 +168,9 @@ func printInitResult(cmd *cobra.Command, res scaffold.Result, opts scaffold.Opti
 	say("Config: %s/.orchestrator/config.yaml", res.Root)
 	say("  One file. `budgets.yaml` and `dashboard.yaml` are optional overrides")
 	say("  that deep-merge on top if you drop them in the project root.")
+	if !opts.NoReportFindings {
+		say("")
+		say("report_findings is on: agents may file public issues about orch with your gh login —")
+		say("  set report_findings.enabled: false in .orchestrator/config.yaml to turn it off.")
+	}
 }

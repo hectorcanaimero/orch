@@ -916,3 +916,21 @@ func TestUnrelatedFilesDoNotSelectTheNamespacedLayout(t *testing.T) {
 		t.Errorf("layout = %q; neither file is orch state", p.Layout)
 	}
 }
+
+// report_findings files public issues under the operator's `gh` login. `orch
+// init` writes it on for new projects, visibly; a project whose config has no
+// such block — every project scaffolded before that — must stay off after an
+// upgrade, or it starts publishing without anyone having chosen to.
+func TestReportFindingsIsOffWhenTheKeyIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	write(t, path, "budgets_preset: conservative\n")
+
+	res, err := Load(path, dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if res.Config.ReportFindings.Enabled {
+		t.Error("report_findings.enabled is true for a config without the key")
+	}
+}

@@ -24,6 +24,11 @@ exists batchproj/.github/workflows/orch-ci.yml
 # config.yaml, where `orch run` and `orch doctor` look for it.
 exists batchproj/.orchestrator/budgets.yaml
 
+# report_findings is on in a new project, and init says so where the operator
+# reads: it files public issues under their gh login.
+stdout 'report_findings is on'
+grep '^  enabled: true' batchproj/.orchestrator/config.yaml
+
 # The scaffolded project passes its own validator. This is the assertion the
 # Python side was missing.
 exec orch validate --project-root batchproj --project-id batchproj
@@ -41,6 +46,11 @@ exec orch validate --project-root blankproj --project-id blankproj
 # A blank project has no tasks, so it has no routes either — and must not
 # have been given guesses.
 ! stdout 'added .* route'
+
+# ---- batch: opting out of report_findings -------------------------------
+exec orch init quietproj --no-report-findings
+grep '^  enabled: false' quietproj/.orchestrator/config.yaml
+! stdout 'report_findings is on'
 
 # ---- the conflict gate -----------------------------------------------------
 ! exec orch init batchproj --template python-api
@@ -80,4 +90,5 @@ agy/pro
 claude/claude-sonnet-4-6
 agy/flash
 n
+y
 n
