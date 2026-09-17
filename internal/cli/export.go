@@ -22,10 +22,11 @@ func newExportCmd(flags *projectFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Send this project's work out to another tracker",
-		Long: "Create this project's tasks in another tracker.\n\n" +
+		Long: "Create or mirror this project's tasks in another tracker.\n\n" +
 			"Writes only to the destination: never to tasks.json or the state database.",
 	}
 	cmd.AddCommand(newExportMulticaCmd(flags))
+	cmd.AddCommand(newExportClickUpCmd(flags))
 	return cmd
 }
 
