@@ -67,13 +67,15 @@ budgets_preset: conservative
 typical_dispatch_tokens: 200000
 
 # Dogfooding — let agents report problems with orch itself.
-# `enabled: true` turns on the MCP tool `orch_report_finding`: an agent files a
-# bug, improvement or feature request as an `auto-reported` issue on
-# hectorcanaimero/orch with your own `gh` login, and every dispatch prompt ends
-# with an optional "Feedback about orch itself" block. Off by default because
-# it publishes under your account. See docs/DOGFOODING.md.
+# `enabled: true` (what `orch init` writes) turns on the MCP tool
+# `orch_report_finding`: an agent files a bug, improvement or feature request
+# as a PUBLIC `auto-reported` issue on hectorcanaimero/orch under your own
+# `gh` login, and every dispatch prompt ends with an optional "Feedback about
+# orch itself" block. Agents are told to leave out secrets, project code and
+# project or customer names. Set `enabled: false` to turn it off; a config
+# without this block is off. See docs/DOGFOODING.md.
 report_findings:
-  enabled: false
+  enabled: true
 
 # Sprint E-2 / E-3 — dashboard client (SPA + FastAPI) knobs. All optional.
 # `profile` / `token` gate the middleware (operator|stakeholder|both — see

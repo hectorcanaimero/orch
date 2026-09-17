@@ -140,9 +140,9 @@ optional `evidence`, `repro`, `suggested_fix`, `confidence`). It files an
 `auto-reported` issue on hectorcanaimero/orch, so keep it about orch: no
 secrets, no project code or names. It searches first and returns an existing
 report instead of filing a duplicate; if it lists similar issues, read them
-and call again with `confirm_new: true` only if yours is different. It is off
-unless the project sets `report_findings.enabled: true`; when off, tell the
-operator instead. Then carry on with your task.
+and call again with `confirm_new: true` only if yours is different. It works
+only when the project sets `report_findings.enabled: true` (what `orch init`
+writes; a config without the key is off); when off, tell the operator instead. Then carry on with your task.
 
 ## How to transition a task
 

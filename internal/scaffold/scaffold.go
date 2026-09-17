@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +68,10 @@ type Options struct {
 	// tasks.json's meta block for downstream tools. Keys: premium, standard,
 	// cheap.
 	TierDefaults map[string]string
+	// NoReportFindings writes `report_findings.enabled: false`. The zero
+	// value writes true: a new project reports problems with orch itself,
+	// and says so (`--no-report-findings`, or "n" in the wizard, opts out).
+	NoReportFindings bool
 }
 
 // Result is what a scaffold produced, for the caller's banner and for tests
@@ -179,6 +184,7 @@ func Run(opts Options) (Result, error) {
 		w.copyShared(filepath.Join("openspec", "README.md"), "openspec/README.md")
 	}
 	w.applyChoices(opts)
+	w.reportFindings(opts)
 	w.stampTaskMeta(opts)
 	if w.err != nil {
 		return res, w.err
@@ -592,6 +598,59 @@ var (
 	reBudgetsPreset = regexp.MustCompile(`(?m)^(budgets_preset:\s*)\S+`)
 	reSpecRoot      = regexp.MustCompile(`(?m)^(spec_root:\s*)\S+`)
 )
+
+// reportFindings writes `report_findings.enabled` — true unless the operator
+// opted out.
+//
+// The packaged default carries the block with its comment; a template's
+// config.yaml.tmpl does not, and a project from a template is as new as a
+// blank one, so the block is appended there with the same comment. The
+// comment is the consent: it says the issues are public and under whose login.
+func (w *writer) reportFindings(opts Options) {
+	if w.err != nil {
+		return
+	}
+	rel := filepath.Join(".orchestrator", "config.yaml")
+	raw, err := os.ReadFile(w.path(rel)) // #nosec G304 -- the file this scaffold just wrote
+	if err != nil {
+		w.fail("read %s to set report_findings: %w", rel, err)
+		return
+	}
+	value := strconv.FormatBool(!opts.NoReportFindings)
+	body := string(raw)
+	if loc := reReportFindings.FindStringSubmatchIndex(body); loc != nil {
+		body = body[:loc[0]] + body[loc[2]:loc[3]] + value + body[loc[1]:]
+	} else {
+		block, err := packagedReportFindingsBlock()
+		if err != nil {
+			w.fail("the packaged default config has no report_findings block: %w", err)
+			return
+		}
+		if !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		body += "\n" + block[:strings.LastIndex(block, "enabled:")] + "enabled: " + value + "\n"
+	}
+	w.write(rel, []byte(body), 0o600)
+}
+
+var reReportFindings = regexp.MustCompile(`(?m)^(report_findings:[ \t]*\n[ \t]+enabled:[ \t]*)\S+`)
+
+// packagedReportFindingsBlock is the packaged default's comment and block, so
+// a template project gets the same words as a blank one.
+func packagedReportFindingsBlock() (string, error) {
+	raw, err := packagedDefault("config.yaml")
+	if err != nil {
+		return "", fmt.Errorf("read the packaged default config.yaml: %w", err)
+	}
+	body := string(raw)
+	end := reReportFindings.FindStringSubmatchIndex(body)
+	start := strings.Index(body, "# Dogfooding")
+	if end == nil || start < 0 || start > end[0] {
+		return "", errors.New("block or its comment not found")
+	}
+	return body[start:end[1]], nil
+}
 
 // replaceOrAppend swaps the value of the first line the pattern matches,
 // keeping whatever prefix (indent, key, spacing) the file already had — or
