@@ -101,6 +101,7 @@ Usage:
 Flags:
       --force                 Overwrite an existing project's files
   -h, --help                  help for init
+      --no-report-findings    Write report_findings.enabled: false (agents do not file public issues about orch)
       --project-name string   Name used in generated files; default = the directory name
       --sdd                   Also scaffold the openspec/ layout
       --template string       Project template (chatbot-whatsapp, data-pipeline, expo-mobile, nextjs-saas, python-api); omit for a blank project
@@ -120,6 +121,12 @@ Eso escribe `.orchestrator/config.yaml`, `.orchestrator/model_router.yaml`,
 [§11](#11-mcp--que-un-agente-maneje-orch-directamente) — que se deja
 intacto en un re-`init`, `--force` incluido, porque puede que ya liste
 otros servidores MCP del proyecto.
+
+Un proyecto nuevo trae `report_findings.enabled: true`: los agentes pueden
+abrir issues **públicos** sobre orch en hectorcanaimero/orch con tu login de
+`gh` ([`DOGFOODING.md`](DOGFOODING.md)). El wizard lo pregunta antes y el modo
+batch lo avisa al final; `--no-report-findings` (o `enabled: false` después)
+lo apaga.
 
 Un proyecto con template (`--template`) viene con tasks reales y ruteadas
 en `tasks.json` — `orch tasks` funciona de una, sin necesidad de atomizar

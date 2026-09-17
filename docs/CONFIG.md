@@ -463,15 +463,18 @@ turn orch's own bug reports into tasks for orch, and every run would add more.
 
 ```yaml
 report_findings:
-  enabled: false   # let agents file issues about orch on hectorcanaimero/orch
+  enabled: true    # what `orch init` writes; absent = false
 ```
 
 Turns on the MCP tool `orch_report_finding` (see [`MCP.md`](MCP.md)): an agent
 that hits a bug in orch, or sees an improvement or a missing feature, files it
 as an `auto-reported` issue with your `gh` login. It also adds a closing,
 optional "Feedback about orch itself" block to every dispatch prompt, so
-agents are asked for those ideas rather than only reporting what blocked them. Off by default, because it
-publishes under your account. Not the Python line's `findings:` block, which
+agents are asked for those ideas rather than only reporting what blocked them. **On in new projects,
+off when the key is absent**: `orch init` writes `enabled: true` with a comment saying the issues are
+public and under your login (the wizard asks, batch mode prints a notice, `--no-report-findings` writes
+`false`); a config without the block — any project from before, or written by hand — stays off, so
+upgrading orch never starts publishing under your account. Not the Python line's `findings:` block, which
 was removed and still warns.
 
 ### `portal` — new
