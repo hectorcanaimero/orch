@@ -180,6 +180,8 @@ func printClickUpAction(w io.Writer, a export.Action, dryRun bool) {
 		_, _ = fmt.Fprintf(w, "%smove         %-12s %s\n", would, a.TaskID, a.Detail)
 	case export.ActionSetField:
 		_, _ = fmt.Fprintf(w, "%sset field    %-12s %s\n", would, a.TaskID, a.Detail)
+	case export.ActionFieldSkipped:
+		_, _ = fmt.Fprintf(w, "warning      %-12s field not written, skipped for this run — %s\n", a.TaskID, a.Detail)
 	case export.ActionDependency:
 		_, _ = fmt.Fprintf(w, "%sadd dep      %-12s waits on %s\n", would, a.TaskID, a.Detail)
 	}
@@ -190,7 +192,7 @@ func printClickUpSummary(w io.Writer, s export.Summary, dryRun bool) error {
 	if dryRun {
 		verb = "Would mirror into ClickUp"
 	}
-	_, err := fmt.Fprintf(w, "\n%s: %d List(s) created, %d task(s) created, %d status change(s), %d field update(s), %d dependency(ies) added, %d task(s) already up to date.\n",
-		verb, s.ListsCreated, s.TasksCreated, s.StatusesMoved, s.FieldsSet, s.DependenciesAdded, s.Unchanged)
+	_, err := fmt.Fprintf(w, "\n%s: %d List(s) created, %d task(s) created, %d status change(s), %d field update(s) (%d refused by ClickUp), %d dependency(ies) added, %d task(s) already up to date.\n",
+		verb, s.ListsCreated, s.TasksCreated, s.StatusesMoved, s.FieldsSet, s.FieldsSkipped, s.DependenciesAdded, s.Unchanged)
 	return err
 }

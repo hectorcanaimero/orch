@@ -50,6 +50,10 @@ type Server struct {
 	RateLimitOnce bool
 	// Remaining, when set, is sent as X-RateLimit-Remaining on every answer.
 	Remaining string
+	// FieldQuotaExceeded refuses every custom-field write, on its own or
+	// inside a task creation, the way ClickUp's Free plan does once its
+	// custom-field quota is used up.
+	FieldQuotaExceeded bool
 	nextID        int
 }
 
@@ -204,6 +208,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"err":"Status does not exist","ECODE":"CRTSK_001"}`, http.StatusBadRequest)
 			return
 		}
+		if _, withFields := body["custom_fields"]; withFields && s.FieldQuotaExceeded {
+			http.Error(w, fieldQuotaBody, http.StatusBadRequest)
+			return
+		}
 		s.nextID++
 		t := &Task{ID: fmt.Sprintf("task-%d", s.nextID), ListID: listID, Name: str(body["name"]),
 			Markdown: str(body["markdown_content"]), Status: str(body["status"]), Fields: map[string]any{}}
@@ -219,6 +227,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.Tasks[t.ID] = t
 		writeJSON(w, s.taskJSON(t))
 	case reTaskField.MatchString(p):
+		if s.FieldQuotaExceeded {
+			http.Error(w, fieldQuotaBody, http.StatusBadRequest)
+			return
+		}
 		m := reTaskField.FindStringSubmatch(p)
 		if t := s.Tasks[m[1]]; t != nil {
 			t.Fields[m[2]] = s.stored(m[2], body["value"])
@@ -246,6 +258,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"err":"Route not found"}`, http.StatusNotFound)
 	}
 }
+
+// fieldQuotaBody is ClickUp's answer once a plan's custom-field quota is used.
+const fieldQuotaBody = `{"err":"Custom field usages exceeded for your plan","ECODE":"FIELD_033"}`
 
 // stored is how ClickUp reads a value back: a drop-down's orderindex.
 func (s *Server) stored(fieldID string, v any) any {

@@ -379,6 +379,11 @@ const (
 	ActionUnchanged    ActionKind = "unchanged"
 	ActionListUnknown  ActionKind = "list-pending"
 	ActionMissingState ActionKind = "missing-status"
+	// ActionFieldSkipped is a custom field ClickUp refused to write (a plan's
+	// custom-field quota, a field type it will not take). Fields are optional,
+	// so the mirror warns, stops writing that field for the rest of the run and
+	// carries on with statuses, comments and dependencies.
+	ActionFieldSkipped ActionKind = "field-skipped"
 )
 
 // Action is one step, reported as it happens.
@@ -394,7 +399,7 @@ type Action struct {
 
 // Summary counts what a Sync did.
 type Summary struct {
-	ListsCreated, TasksCreated, StatusesMoved, FieldsSet, DependenciesAdded, Unchanged int
+	ListsCreated, TasksCreated, StatusesMoved, FieldsSet, FieldsSkipped, DependenciesAdded, Unchanged int
 }
 
 // fieldSet is the custom fields orch fills, found by name on a List. Each is
@@ -439,6 +444,13 @@ func clickUpTaskMarker(projectID, taskID string) string {
 // found again by its marker or its orch ID field.
 func (c ClickUp) Sync(ctx context.Context, plan ClickUpPlan, report func(Action)) (Summary, error) {
 	var sum Summary
+	// skip holds the custom fields ClickUp refused this run.
+	skip := map[string]bool{}
+	skipField := func(ph int, taskID string, f *cuField, err error) {
+		skip[f.ID] = true
+		sum.FieldsSkipped++
+		report(Action{Kind: ActionFieldSkipped, Phase: ph, TaskID: taskID, Detail: fmt.Sprintf("%s: %v", f.Name, err)})
+	}
 	var lists struct {
 		Lists []cuList `json:"lists"`
 	}
@@ -525,7 +537,10 @@ func (c ClickUp) Sync(ctx context.Context, plan ClickUpPlan, report func(Action)
 				if c.DryRun {
 					continue
 				}
-				created, err := c.createTask(ctx, list.ID, plan, t, want, fs)
+				created, refused, err := c.createTask(ctx, list.ID, plan, t, want, fs, skip)
+				for _, f := range refused {
+					skipField(ph.Number, t.ID, f, errFieldsRefused)
+				}
 				if err != nil {
 					return sum, fmt.Errorf("creating the ClickUp task for %s: %w", t.ID, err)
 				}
@@ -549,7 +564,7 @@ func (c ClickUp) Sync(ctx context.Context, plan ClickUpPlan, report func(Action)
 				}
 			}
 			for _, fv := range plan.fieldValues(t, fs) {
-				if sameFieldValue(fieldValue(existing, fv.field.ID), fv) {
+				if skip[fv.field.ID] || sameFieldValue(fieldValue(existing, fv.field.ID), fv) {
 					continue
 				}
 				changed = true
@@ -558,7 +573,11 @@ func (c ClickUp) Sync(ctx context.Context, plan ClickUpPlan, report func(Action)
 				if !c.DryRun {
 					if err := c.Client.do(ctx, http.MethodPost, "/task/"+url.PathEscape(existing.ID)+"/field/"+url.PathEscape(fv.field.ID),
 						map[string]any{"value": fv.value}, nil); err != nil {
-						return sum, fmt.Errorf("setting %q on %s: %w", fv.field.Name, t.ID, err)
+						if !isRefusal(err) {
+							return sum, fmt.Errorf("setting %q on %s: %w", fv.field.Name, t.ID, err)
+						}
+						sum.FieldsSet--
+						skipField(ph.Number, t.ID, fv.field, err)
 					}
 				}
 			}
@@ -643,7 +662,22 @@ func (c ClickUp) missingStatuses(have []cuStatus, tasks []model.Task) []string {
 	return missing
 }
 
-func (c ClickUp) createTask(ctx context.Context, listID string, plan ClickUpPlan, t model.Task, status string, fs fieldSet) (cuTask, error) {
+// errFieldsRefused explains a field dropped because ClickUp refused to create
+// the task with it.
+var errFieldsRefused = errors.New("ClickUp refused to create the task with it, created without")
+
+// isRefusal is a 4xx other than a bad token or a rate limit: ClickUp read the
+// request and said no to its content.
+func isRefusal(err error) bool {
+	var ce *ClickUpError
+	return errors.As(err, &ce) && ce.Status >= 400 && ce.Status < 500 &&
+		ce.Status != http.StatusUnauthorized && ce.Status != http.StatusTooManyRequests
+}
+
+// createTask creates t. When ClickUp refuses the custom fields, it creates the
+// task without them and returns the refused fields, so a quota never stops
+// the mirror.
+func (c ClickUp) createTask(ctx context.Context, listID string, plan ClickUpPlan, t model.Task, status string, fs fieldSet, skip map[string]bool) (cuTask, []*cuField, error) {
 	body := map[string]any{
 		"name":             TaskTitle(t),
 		"markdown_content": plan.TaskDescription(t),
@@ -653,20 +687,32 @@ func (c ClickUp) createTask(ctx context.Context, listID string, plan ClickUpPlan
 		body["time_estimate"] = int64(math.Round(t.EstimateHours * 3600 * 1000))
 	}
 	var custom []map[string]any
+	var fields []*cuField
 	for _, fv := range plan.fieldValues(t, fs) {
+		if skip[fv.field.ID] {
+			continue
+		}
 		custom = append(custom, map[string]any{"id": fv.field.ID, "value": fv.value})
+		fields = append(fields, fv.field)
 	}
 	if len(custom) > 0 {
 		body["custom_fields"] = custom
 	}
 	var created cuTask
-	if err := c.Client.do(ctx, http.MethodPost, "/list/"+url.PathEscape(listID)+"/task", body, &created); err != nil {
-		return cuTask{}, err
+	err := c.Client.do(ctx, http.MethodPost, "/list/"+url.PathEscape(listID)+"/task", body, &created)
+	var refused []*cuField
+	if err != nil && len(custom) > 0 && isRefusal(err) {
+		delete(body, "custom_fields")
+		refused = fields
+		err = c.Client.do(ctx, http.MethodPost, "/list/"+url.PathEscape(listID)+"/task", body, &created)
+	}
+	if err != nil {
+		return cuTask{}, refused, err
 	}
 	if created.ID == "" {
-		return cuTask{}, errors.New("export: ClickUp created the task but answered without an id")
+		return cuTask{}, refused, errors.New("export: ClickUp created the task but answered without an id")
 	}
-	return created, nil
+	return created, refused, nil
 }
 
 // normStatus folds the spellings of in-progress into one.

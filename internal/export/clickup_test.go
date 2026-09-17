@@ -195,6 +195,40 @@ func TestSyncAdoptsTasksFoundByTheOrchIDField(t *testing.T) {
 	}
 }
 
+func TestSyncCarriesOnWhenClickUpRefusesCustomFields(t *testing.T) {
+	// ClickUp's Free plan caps custom-field usages; past it every field write
+	// is a 400 FIELD_033. Statuses, comments and dependencies must still sync.
+	fake := clickuptest.New(t)
+	fake.Fields = fields()
+	l := fake.AddList("F0 — Plataforma base")
+	old := fake.AddTask(l.ID, "F0.1.T1 — old", "orch-task: demo/F0.1.T1", "backlog", nil)
+	fake.FieldQuotaExceeded = true
+
+	plan := newPlan(t, []model.Task{cuTask("F0.1.T1", 0, model.StatusTodo), cuTask("F0.1.T2", 0, model.StatusTodo, "F0.1.T1")}, export.Selection{})
+	plan.Spend = map[string]export.TaskSpend{"F0.1.T1": {CostUSD: 1.2, Attempts: 1}}
+	sum, actions := sync(t, dest(fake, false), plan)
+
+	if old.Status != "to do" || sum.StatusesMoved != 1 {
+		t.Errorf("status not mirrored past the refused field: %q, %+v", old.Status, sum)
+	}
+	created := fake.TaskByName("F0.1.T2 — Title of F0.1.T2")
+	if created == nil || len(created.DependsOn) != 1 {
+		t.Fatalf("F0.1.T2 not created without its fields, or lost its dependency: %+v", created)
+	}
+	if sum.FieldsSkipped == 0 || sum.FieldsSet != 0 {
+		t.Errorf("summary = %+v", sum)
+	}
+	skipped := 0
+	for _, a := range actions {
+		if a.Kind == export.ActionFieldSkipped {
+			skipped++
+		}
+	}
+	if skipped != sum.FieldsSkipped {
+		t.Errorf("%d skip action(s) reported, summary says %d", skipped, sum.FieldsSkipped)
+	}
+}
+
 func TestSyncNamesStatusesTheListLacks(t *testing.T) {
 	fake := clickuptest.New(t)
 	fake.AddList("F0", "to do", "in progress", "complete")
