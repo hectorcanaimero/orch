@@ -62,7 +62,10 @@ func mergeSettings(dst, src map[string]any) map[string]any {
 			dst[k] = mergeSettings(dv, sv)
 		case []any:
 			dv, _ := dst[k].([]any)
-			dst[k] = append(dv, sv...)
+			// Start from a non-nil slice: append(nil, empty...) is nil, which
+			// marshals to null, and claude drops a settings document whose
+			// "deny": null fails its schema — allow rules and all.
+			dst[k] = append(append([]any{}, dv...), sv...)
 		default:
 			dst[k] = v
 		}
