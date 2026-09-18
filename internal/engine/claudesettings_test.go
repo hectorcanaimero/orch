@@ -94,3 +94,24 @@ func putSettings(t *testing.T, dir string, files map[string]string) {
 		}
 	}
 }
+
+// An empty rule list must stay a list. append(nil, empty...) is nil, which
+// marshals to null, and claude rejects a settings document whose
+// "deny": null does not match its schema — silently dropping every allow rule
+// with it, so the agent ran with no allow-list again.
+func TestProjectClaudeSettingsKeepsEmptyLists(t *testing.T) {
+	root, wt := t.TempDir(), t.TempDir()
+	putSettings(t, root, map[string]string{
+		"settings.json": `{"permissions":{"allow":["Bash(go:*)"],"deny":[]}}`,
+	})
+
+	var got struct {
+		Permissions map[string]json.RawMessage `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(projectClaudeSettings(root, wt)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if deny := string(got.Permissions["deny"]); deny != "[]" {
+		t.Errorf(`deny = %s, want []`, deny)
+	}
+}
