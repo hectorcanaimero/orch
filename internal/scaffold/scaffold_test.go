@@ -472,7 +472,9 @@ var defaultsDivergedFromPython = map[string]string{
 		"The tunnel block sat under `dashboard:`, where the Go loader ignores it, and chose autossh; " +
 		"the tunnel is a Cloudflare quick tunnel and its block is a top-level `tunnel: enabled:`. " +
 		"feat/i18n-portal-pt: `summary_language` is written as `dashboard.language`, the key that now also " +
-		"picks the portal's and the PDF's language, and pt joins en and es",
+		"picks the portal's and the PDF's language, and pt joins en and es. " +
+		"feat/report-findings-new-projects: `report_findings.enabled` is true in a new project, and its " +
+		"comment says the issues are public and under the operator's gh login; a config without the key stays off",
 	"budgets.yaml": "fix/budget-accounting: the header's selection order named a CLI flag and an environment " +
 		"variable nothing reads, and the calibration note now says that cache tokens count",
 }
@@ -887,6 +889,50 @@ func TestAgentsMDInstallsTheGoBinary(t *testing.T) {
 			}
 			if !strings.Contains(got, "scripts/install.sh") {
 				t.Errorf("AGENTS.md does not say how to install orch:\n%s", got)
+			}
+		})
+	}
+}
+
+// `orch init` turns report_findings on for a new project — blank or from a
+// template, whose config.yaml.tmpl carries no such block — and
+// NoReportFindings (`--no-report-findings`, or "n" in the wizard) writes it
+// off. The value is read back through config.Load, the way `orch run` reads
+// it, so a block the loader would not see does not pass.
+func TestInitWritesReportFindings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		template string
+		opt      bool
+		want     bool
+	}{
+		{"blank project", "", false, true},
+		{"template project", "python-api", false, true},
+		{"blank, opted out", "", true, false},
+		{"template, opted out", "python-api", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := Run(Options{
+				Root: filepath.Join(t.TempDir(), "proj"), Template: tc.template,
+				Now: fixedNow, NoReportFindings: tc.opt,
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			path := filepath.Join(res.Root, ".orchestrator", "config.yaml")
+			loaded, err := config.Load(path, res.Root)
+			if err != nil {
+				t.Fatalf("config.Load: %v", err)
+			}
+			if got := loaded.Config.ReportFindings.Enabled; got != tc.want {
+				t.Errorf("report_findings.enabled = %v, want %v", got, tc.want)
+			}
+			body := readFile(t, res, ".orchestrator/config.yaml")
+			if strings.Count(body, "report_findings:") != 1 {
+				t.Errorf("want exactly one report_findings block:\n%s", body)
+			}
+			if !strings.Contains(body, "PUBLIC") {
+				t.Error("the config does not say the issues are public")
 			}
 		})
 	}

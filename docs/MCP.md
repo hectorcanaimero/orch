@@ -188,8 +188,9 @@ fetched on demand.
 `auto-reported` (which `orch sync issues` refuses to ingest, so a report never
 loops back as a task). `type` is `bug`, `improvement` or `feature`.
 
-- **Opt-in.** Off unless `.orchestrator/config.yaml` has
-  `report_findings.enabled: true`; the tool is listed either way and, when
+- **On in new projects.** Off unless `.orchestrator/config.yaml` has
+  `report_findings.enabled: true`, which `orch init` writes (a config without
+  the key is off); the tool is listed either way and, when
   off, answers with an error telling the agent to tell the operator. It runs
   the operator's own `gh`, from the MCP server process, so it works even when
   the agent's own Bash is denied.

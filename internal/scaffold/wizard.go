@@ -128,6 +128,16 @@ func Wizard(term *WizardIO, args Options) (opts Options, confirmed bool, err err
 	}
 	opts.SDD = sdd == "y"
 
+	term.say("")
+	term.say("Agents can report problems with orch itself (bugs, missing features) as")
+	term.say("PUBLIC GitHub issues on hectorcanaimero/orch, filed under your gh login.")
+	report, err := q.ask("Let agents report problems with orch itself as public GitHub issues under your gh login?",
+		"y", []string{"y", "n"}, nil)
+	if err != nil {
+		return Options{}, false, err
+	}
+	opts.NoReportFindings = report == "n"
+
 	// H-7: everything in one screen, before anything is written.
 	//
 	// The VCS flags are read out of the config the scaffold will actually
@@ -152,6 +162,7 @@ func Wizard(term *WizardIO, args Options) (opts Options, confirmed bool, err err
 		}
 	}
 	term.say(fmt.Sprintf("  openspec layout  %s", yesNo(opts.SDD)))
+	term.say(fmt.Sprintf("  report findings  %s", yesNo(!opts.NoReportFindings)))
 	term.say("")
 
 	proceed, err := q.ask("Proceed with scaffolding?", "y", []string{"y", "n"}, nil)

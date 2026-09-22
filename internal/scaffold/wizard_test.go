@@ -45,7 +45,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	for range routerTierMapNonEmpty() {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "", "") // sdd → n, proceed → y
+	answers = append(answers, "", "", "") // sdd → n, report findings → y, proceed → y
 
 	s := runWizard(t, answers, Options{})
 	if s.err != nil {
@@ -66,6 +66,9 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if s.opts.SDD {
 		t.Error("SDD defaulted to true")
 	}
+	if s.opts.NoReportFindings {
+		t.Error("report findings defaulted to off")
+	}
 }
 
 // The gate is the point of the whole flow: a "no" returns without an error and
@@ -75,7 +78,7 @@ func TestWizardAbortsAtTheGate(t *testing.T) {
 	for range routerTierMapNonEmpty() {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "", "n") // sdd → n, proceed → n
+	answers = append(answers, "", "", "n") // sdd → n, report findings → y, proceed → n
 
 	s := runWizard(t, answers, Options{})
 	if s.err != nil {
@@ -98,7 +101,7 @@ func TestSummaryShowsEveryChoiceBeforeTheGate(t *testing.T) {
 	for range routerTierMapNonEmpty() {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "y", "y") // sdd → y, proceed → y
+	answers = append(answers, "y", "n", "y") // sdd → y, report findings → n, proceed → y
 
 	s := runWizard(t, answers, Options{})
 	if s.err != nil {
@@ -128,6 +131,14 @@ func TestSummaryShowsEveryChoiceBeforeTheGate(t *testing.T) {
 	}
 	if !strings.Contains(summary, "openspec layout  yes") {
 		t.Error("the summary does not reflect the SDD answer")
+	}
+	// Filing public issues under the operator's login is the one answer here
+	// that reaches outside the machine, so it is on the screen they confirm.
+	if !strings.Contains(summary, "report findings  no") {
+		t.Errorf("the summary does not reflect the report findings answer:\n%s", summary)
+	}
+	if !s.opts.NoReportFindings {
+		t.Error("answering n did not turn report findings off")
 	}
 }
 
@@ -177,7 +188,7 @@ func TestBadAnswersAreReAsked(t *testing.T) {
 	for range routerTierMapNonEmpty() {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "", "", "", "n")
+	answers = append(answers, "", "", "", "", "n")
 
 	s := runWizard(t, answers, Options{})
 	if s.err != nil {
@@ -219,7 +230,7 @@ func TestExplicitTemplateSkipsThePicker(t *testing.T) {
 	for range routerTierMapNonEmpty() {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "", "y")
+	answers = append(answers, "", "", "y")
 
 	s := runWizard(t, answers, Options{Template: "data-pipeline"})
 	if s.err != nil {
@@ -358,7 +369,7 @@ func TestTierPickerListsOptionsAboveNotInline(t *testing.T) {
 	for range tiers {
 		answers = append(answers, "")
 	}
-	answers = append(answers, "", "n")
+	answers = append(answers, "", "", "n")
 
 	s := runWizard(t, answers, Options{})
 	if s.err != nil {
