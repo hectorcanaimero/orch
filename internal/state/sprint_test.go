@@ -5,9 +5,28 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
 )
+
+// backdate rewrites a task's finished_at to `days` before the BACKEND's clock,
+// in the spelling the backend itself writes.
+//
+// Not `datetime('now', '-N days')`: that is SQLite's clock, which the frozen
+// test clock cannot move, and it writes `2026-08-12 12:00:00` — a spelling no
+// orch.db actually contains. Anchoring the fixture to the same clock the rows
+// under test were written with is what keeps these tests from expiring on a
+// date nobody chose.
+func backdate(t *testing.T, b *SQLite, taskID string, days int) {
+	t.Helper()
+	at := b.now().UTC().AddDate(0, 0, -days).Format("2006-01-02T15:04:05Z")
+	if _, err := b.db.write.ExecContext(context.Background(),
+		`UPDATE tasks_runtime SET finished_at = ? WHERE project_id = ? AND task_id = ?`,
+		at, b.projectID, taskID); err != nil {
+		t.Fatalf("backdate %s by %d days: %v", taskID, days, err)
+	}
+}
 
 // Velocity counts COMPLETIONS, not row touches. This is the divergence from
 // Python (bug 21) written as a test, and the two cases below are the two that
@@ -25,11 +44,7 @@ func TestCountDoneLastNDaysCountsCompletionsNotTouches(t *testing.T) {
 	}
 	// Backdate OLD's completion and leave its mtime at now, which is exactly
 	// the shape Python miscounts: an old task edited today.
-	if _, err := b.db.write.ExecContext(ctx,
-		`UPDATE tasks_runtime SET finished_at = datetime('now', '-30 days')
-		  WHERE project_id = ? AND task_id = 'OLD'`, b.projectID); err != nil {
-		t.Fatalf("backdate OLD: %v", err)
-	}
+	backdate(t, b, "OLD", 30)
 
 	got, err := b.CountDoneLastNDays(ctx, 7)
 	if err != nil {
@@ -71,11 +86,7 @@ func TestCountDoneLastNDaysCountsAReopenedTaskOnceAtTheSecondFinish(t *testing.T
 	if err := b.Transition(ctx, "T1", model.StatusDone, Note{}); err != nil {
 		t.Fatalf("first done: %v", err)
 	}
-	if _, err := b.db.write.ExecContext(ctx,
-		`UPDATE tasks_runtime SET finished_at = datetime('now', '-30 days')
-		  WHERE project_id = ? AND task_id = 'T1'`, b.projectID); err != nil {
-		t.Fatalf("backdate: %v", err)
-	}
+	backdate(t, b, "T1", 30)
 	// Only the backdated finish exists so far, so the window is empty.
 	if got, err := b.CountDoneLastNDays(ctx, 7); err != nil || got != 0 {
 		t.Fatalf("counted %d (err %v) before the re-finish, want 0", got, err)
@@ -130,6 +141,39 @@ func TestCountDoneLastNDaysFallsBackToUpdatedAt(t *testing.T) {
 	}
 	if got, err = b.CountDoneLastNDays(ctx, 7); err != nil || got != 1 {
 		t.Errorf("counted %d (err %v), want 1 — an empty finished_at is also 'not set'", got, err)
+	}
+}
+
+// The window follows the BACKEND's clock, not the machine's.
+//
+// This is the test the package did not have, and its absence is what let the
+// old implementation rot: it asked SQLite for `datetime('now')`, so the window
+// stayed wherever the wall clock was while the frozen rows fell out the back
+// of it. The tests passed in September and failed in October with no commit in
+// between. Here the rows stand still and the clock moves, which is the only
+// way to see the window move at all.
+func TestCountDoneLastNDaysUsesTheBackendClock(t *testing.T) {
+	ctx := context.Background()
+	b := seeded(t, "T1")
+	if err := b.Transition(ctx, "T1", model.StatusDone, Note{}); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+
+	if got, err := b.CountDoneLastNDays(ctx, 7); err != nil || got != 1 {
+		t.Fatalf("counted %d (err %v) with the clock at the finish, want 1", got, err)
+	}
+
+	// Ten days later the same row is behind a 7-day window, and no row and no
+	// wall clock changed to make that happen.
+	frozen := b.now()
+	b.now = func() time.Time { return frozen.AddDate(0, 0, 10) }
+	if got, err := b.CountDoneLastNDays(ctx, 7); err != nil || got != 0 {
+		t.Errorf("counted %d (err %v) ten days later, want 0 — the window did not "+
+			"move with the backend clock", got, err)
+	}
+	// ...and a 14-day window reaches back far enough to find it again.
+	if got, err := b.CountDoneLastNDays(ctx, 14); err != nil || got != 1 {
+		t.Errorf("counted %d (err %v) over 14 days, want 1", got, err)
 	}
 }
 
