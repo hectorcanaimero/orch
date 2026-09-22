@@ -595,3 +595,113 @@ func TestCreateClearsAWorktreeLeftInsideTheCheckout(t *testing.T) {
 		t.Errorf("Create reused the old layout %s", wt)
 	}
 }
+
+// #322: a dependency reported done while its PR was still open. The
+// dependent's worktree branched from main, which had none of the dependency's
+// code, and the agent could neither fetch nor merge it. Create now merges each
+// dependency's branch into the new worktree: the pushed one when there is a
+// remote, the local one otherwise, and neither when the base already has it.
+func TestCreateMergesTheUnmergedDependencyBranch(t *testing.T) {
+	root := newTestRepo(t)
+	remote := newBareRemote(t, root)
+	runGit(t, root, "push", "-q", "origin", "main")
+	m := NewManager(root, true)
+
+	// The dependency's task ran to done and pushed, but nobody merged its PR.
+	depWT, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depWT, "dep.txt"), []byte("from the dependency\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F1.T1", "F1.T1: orch auto-commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Push("F1.T1"); err != nil {
+		t.Fatal(err)
+	}
+	if !remoteHasBranch(t, remote, "orch/F1.T1") {
+		t.Fatal("the dependency branch was not pushed")
+	}
+
+	wt, err := m.Create("F1.T2", "main", "F1.T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "dep.txt")); err != nil {
+		t.Errorf("the worktree lacks the dependency's unmerged work: %v", err)
+	}
+}
+
+// Without a remote the dependency's branch only exists locally, and that is
+// what gets merged.
+func TestCreateMergesTheLocalDependencyBranchWhenPushIsDisabled(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, false)
+
+	depWT, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depWT, "dep.txt"), []byte("local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F1.T1", "F1.T1: orch auto-commit"); err != nil {
+		t.Fatal(err)
+	}
+
+	wt, err := m.Create("F1.T2", "main", "F1.T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "dep.txt")); err != nil {
+		t.Errorf("the worktree lacks the local dependency branch: %v", err)
+	}
+}
+
+// A dependency whose branch is gone — merged and deleted on the forge, or a
+// task that never ran in a worktree — is not an error: its work is either in
+// the base already or was never in a branch to begin with.
+func TestCreateSkipsADependencyWithNoBranch(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, false)
+	if _, err := m.Create("F1.T2", "main", "F0.T9"); err != nil {
+		t.Fatalf("Create with a branchless dependency: %v", err)
+	}
+}
+
+// A dependency branch that conflicts with the base cannot be merged for the
+// agent; Create fails, naming the dependency, so the task blocks with the
+// reason instead of running against a tree missing its dependency.
+func TestCreateFailsWhenTheDependencyBranchConflicts(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, false)
+
+	depWT, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depWT, "README.md"), []byte("dependency's version\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F1.T1", "F1.T1: orch auto-commit"); err != nil {
+		t.Fatal(err)
+	}
+	// main moves on the same line in the meantime.
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("main's version\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "commit", "-q", "-am", "main moves")
+
+	_, err = m.Create("F1.T2", "main", "F1.T1")
+	if err == nil {
+		t.Fatal("Create merged a conflicting dependency branch without complaint")
+	}
+	if !strings.Contains(err.Error(), "F1.T1") {
+		t.Errorf("the error does not name the dependency: %v", err)
+	}
+	if m.Exists("F1.T2") {
+		t.Error("the half-merged worktree was left behind")
+	}
+}
