@@ -192,6 +192,7 @@ A release a week, in the open: every change, what broke and the numbers behind
 it. [Releases](https://github.com/hectorcanaimero/orch/releases) ·
 [Atom feed](https://github.com/hectorcanaimero/orch/releases.atom) ·
 [LinkedIn, in Portuguese](https://www.linkedin.com/in/knaimero/) ·
+[X, in Spanish](https://x.com/hectorcanaimero) ·
 [tryorch.us](https://tryorch.us)
 
 ---
