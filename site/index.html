@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>orch — run AI agents as a team</title>
-  <meta name="description" content="orch runs your AI coding agents in parallel over a task graph, keeps spend inside a budget, and gives your client a live page instead of a status thread. One Go binary, local-first, MIT.">
+  <meta name="description" content="orch runs your AI coding agents in parallel over a task graph, pauses a provider when its budget window fills, and gives your client a live page instead of a status thread. One Go binary, local-first, MIT.">
   <meta property="og:title" content="orch — run AI agents as a team">
-  <meta property="og:description" content="Parallel AI agents over a task graph, a budget per provider, and a live page for your client. One Go binary.">
+  <meta property="og:description" content="Parallel AI agents over a task graph, a budget window per provider, and a live page for your client. One Go binary.">
   <meta property="og:image" content="https://hectorcanaimero.github.io/orch/assets/stakeholder.png">
   <meta property="og:url" content="https://hectorcanaimero.github.io/orch/">
   <meta name="theme-color" content="#09090b">
@@ -34,7 +34,7 @@
       <a href="#how">How it works</a>
       <a href="templates/">Templates</a>
       <a href="playground/">Playground</a>
-      <a href="#install">Install</a>
+      <a class="keep" href="#install">Install</a>
       <a href="https://github.com/hectorcanaimero/orch">GitHub</a>
     </nav>
   </header>
@@ -42,11 +42,12 @@
   <main id="main">
     <section class="hero wrap" aria-labelledby="hero-title">
       <h1 id="hero-title">Run AI agents as a team. Show your client a live page, not a status thread.</h1>
-      <p class="lede">orch walks a graph of tasks, hands each one to the coding agent you route it to — Claude Code, Codex, OpenCode — in parallel, keeps spend inside a budget per provider, and publishes a page your client can open to see where the work stands.</p>
+      <p class="lede">orch walks a graph of tasks, hands each one to the coding agent you route it to — Claude Code, Codex, OpenCode — in parallel, pauses a provider when its budget window fills, and publishes a page your client can open to see where the work stands.</p>
       <div class="hero-actions">
         <a class="button" href="#install">Install orch</a>
-        <a class="button quiet" href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">Read the manual</a>
+        <a class="button quiet" href="playground/">Try a spec in your browser</a>
       </div>
+      <p class="hero-note">Already installed? <code>orch dashboard --demo</code> shows a full project without touching yours.</p>
 
       <figure class="run" aria-labelledby="run-caption">
         <div class="run-head">
@@ -107,7 +108,7 @@ Ready to dispatch: 1
         <li class="step">
           <div class="step-text">
             <h3>Hand your client a link</h3>
-            <p><code>orch publish</code> writes the client page as a static site — milestones, blockers in plain language, how fresh the numbers are — to a folder or a <code>gh-pages</code> branch, and keeps it current with <code>--watch</code>. No login, no API, nothing of yours exposed.</p>
+            <p><code>orch publish</code> writes the client page as a static site — phases, blockers in plain language, how fresh the numbers are — to a folder or a <code>gh-pages</code> branch, and keeps it current with <code>--watch</code>. The page it writes has no login and no API: it is files. If your client should watch it live instead, <code>orch dashboard --tunnel</code> opens a Cloudflare quick tunnel whose URL only works with the token it prints.</p>
           </div>
 <pre class="term" tabindex="0"><code><span class="c">$</span> orch publish --to git --watch
 <span class="c">$</span> orch dashboard --tunnel</code></pre>
@@ -120,7 +121,7 @@ Ready to dispatch: 1
         <h2 id="client-title">What your client sees</h2>
         <p>The page is built from one snapshot of the project, written for someone who does not care what a worktree is.</p>
         <ul>
-          <li>Progress by milestone, in the names you gave them.</li>
+          <li>Progress by phase, in the names you gave them.</li>
           <li>Blockers translated out of stack traces into sentences.</li>
           <li>An estimate of the hours left, and how fresh the numbers are.</li>
           <li>Spend only if you choose to show it. It is off by default.</li>
@@ -129,6 +130,17 @@ Ready to dispatch: 1
       </div>
       <figure class="shot">
         <img src="assets/stakeholder.png" width="1440" height="1691" loading="lazy" alt="The client page for a sample project: overall progress, milestones with their completion, open blockers and the estimated hours remaining.">
+      </figure>
+    </section>
+
+    <section class="client-view operator-view wrap" id="operator" aria-labelledby="operator-title">
+      <div class="client-text">
+        <h2 id="operator-title">What you see</h2>
+        <p>Your own screen answers three questions: which agents are working right now, what is waiting for you, and how much of each provider's budget window is left. Phases fill task by task as the run moves.</p>
+        <p class="operator-more"><kbd>Ctrl</kbd> <kbd>K</kbd> opens a palette that jumps to a task, filters the board or copies the CLI command for what you are looking at. When a run ends it leaves a receipt — tasks, wall time, agent time and spend per provider, marked reported or estimated — that you can copy as Markdown.</p>
+      </div>
+      <figure class="shot">
+        <img src="assets/operator.png" width="1440" height="980" loading="lazy" alt="The Now screen of a running project: three agents working with their elapsed times, two tasks needing attention, progress per phase, the last run's receipt and the budget window per provider.">
       </figure>
     </section>
 
@@ -144,22 +156,29 @@ Ready to dispatch: 1
 
     <section class="install wrap" id="install" aria-labelledby="install-title">
       <h2 id="install-title">Install</h2>
-      <p class="install-note">orch is a single binary for Linux and macOS. The first binary release is <strong>v0.12.0</strong> and is not tagged yet; until it is, build from source with Go 1.25+ and pnpm.</p>
-      <div class="install-grid">
-        <div>
-          <h3>From source, today</h3>
+      <p class="install-note">One command. orch is a single binary for Linux and macOS, on <code>amd64</code> and <code>arm64</code>.</p>
+<pre class="term" tabindex="0"><code>curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh</code></pre>
+      <p class="install-note install-after">It downloads the <a href="https://github.com/hectorcanaimero/orch/releases/latest">latest release</a>, checks it against <code>checksums.txt</code>, and puts <code>orch</code> in <code>~/.local/bin</code> — set <code>INSTALL_DIR</code> for somewhere else. A Homebrew tap is not published yet.</p>
+      <details class="install-source">
+        <summary>Build from source instead</summary>
 <pre class="term" tabindex="0"><code>git clone https://github.com/hectorcanaimero/orch
 cd orch
 make build
 ./bin/orch --version</code></pre>
-        </div>
-        <div>
-          <h3>From v0.12.0</h3>
-<pre class="term" tabindex="0"><code>curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
-brew install hectorcanaimero/orch/orch</code></pre>
-        </div>
-      </div>
-      <p class="install-next">Then, in a project: <code>orch init</code>, <code>orch install-skills --all</code> to give your agent the planning skills, and <code>orch doctor</code> to check that every CLI your tasks route to is installed and signed in.</p>
+        <p>Needs Go 1.25+ and pnpm.</p>
+      </details>
+      <p class="install-next">Then, in a project: <code>orch init</code>, <code>orch install-skills --all</code> to give your agent the planning skills, and <code>orch doctor</code> to check that every CLI your tasks route to is installed and signed in. <code>orch dashboard --demo</code> opens a finished project of its own, so you can look at the dashboard before you run anything. The <a href="https://github.com/hectorcanaimero/orch/blob/main/docs/MANUAL.en.md">manual</a> walks through the rest.</p>
+    </section>
+    <section class="follow wrap" id="follow" aria-labelledby="follow-title">
+      <h2 id="follow-title">Follow the build</h2>
+      <p class="follow-lede">A release a week, in the open: every change, what broke and the numbers behind it.</p>
+      <nav class="follow-links" aria-label="Follow">
+        <a href="https://github.com/hectorcanaimero/orch/releases">Releases on GitHub</a>
+        <a href="https://github.com/hectorcanaimero/orch/releases.atom">Atom feed</a>
+        <a href="https://www.linkedin.com/in/knaimero/">LinkedIn, in Portuguese</a>
+        <!-- TODO: X account not created yet — add the handle here once it exists. -->
+      </nav>
+      <p class="follow-who">I am <a href="https://github.com/hectorcanaimero">Héctor Rodríguez</a>, a developer in Curitiba. I built orch because I was spending 30 to 40 minutes a week writing status updates for clients while the agents did the work.</p>
     </section>
   </main>
 

@@ -88,6 +88,7 @@ code { font-family: var(--mono); font-size: 0.86em; color: #e4e4e7; }
 }
 
 .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+.hero-note { margin-top: 18px; color: var(--soft); font-size: 0.95rem; max-width: var(--measure); }
 
 .button {
   display: inline-flex; align-items: center; min-height: 46px; padding: 0 20px;
@@ -201,14 +202,46 @@ p { margin: 0; }
 }
 .shot { margin: 0; border-radius: 14px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
 
+/* The operator's own screen: same pair, mirrored, so the two do not read as
+   one template stamped twice. */
+.operator-view { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
+.operator-view .client-text { order: 2; }
+.operator-view .shot { order: 1; }
+.operator-view .client-text > p { color: var(--soft); max-width: 46ch; }
+.operator-more { margin-top: 18px; }
+.operator-more kbd {
+  font-family: var(--mono); font-size: 0.82em; color: var(--text);
+  padding: 2px 6px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line);
+}
+
 .limits dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px clamp(32px, 5vw, 72px); }
 .limits dt { font-weight: 600; font-size: 1.125rem; }
 .limits dd { margin: 8px 0 0; color: var(--soft); max-width: 46ch; }
 
 .install-note { color: var(--soft); max-width: var(--measure); margin-bottom: 32px; }
 .install-note strong { color: var(--text); font-weight: 600; }
-.install-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; max-width: 900px; }
-.install-next { margin-top: 32px; color: var(--soft); max-width: var(--measure); }
+.install-after { margin-top: 18px; margin-bottom: 0; }
+.install .term { max-width: 900px; }
+.install-source { margin-top: 36px; max-width: 900px; }
+.install-source summary { cursor: pointer; color: var(--soft); }
+.install-source summary:hover { color: var(--text); }
+.install-source .term { margin-top: 16px; }
+.install-source p { margin-top: 12px; color: var(--soft); }
+.install-next { margin-top: 36px; color: var(--soft); max-width: var(--measure); }
+
+/* ---- follow ------------------------------------------------------------ */
+
+.follow { padding-block: clamp(64px, 9vw, 112px); }
+.follow h2 { margin-bottom: 20px; }
+.follow-lede { color: var(--soft); max-width: var(--measure); }
+.follow-links { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 28px; }
+.follow-links a {
+  display: inline-flex; align-items: center; min-height: 42px; padding: 0 18px;
+  border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line);
+  text-decoration: none; font-size: 0.95rem;
+}
+.follow-links a:hover { box-shadow: inset 0 0 0 1px var(--soft); }
+.follow-who { margin-top: 32px; color: var(--soft); max-width: var(--measure); }
 
 /* ---- footer ------------------------------------------------------------ */
 
@@ -314,6 +347,9 @@ p { margin: 0; }
 
 @media (max-width: 860px) {
   .step, .client-view, .pg { grid-template-columns: minmax(0, 1fr); }
+  /* Stacked, the operator's screen reads text first like its neighbour. */
+  .operator-view .client-text { order: 1; }
+  .operator-view .shot { order: 2; }
   .pg-input textarea { min-height: 20rem; }
   .gallery-item { grid-template-columns: minmax(0, 1fr); }
   .limits dl { grid-template-columns: minmax(0, 1fr); }
@@ -329,5 +365,6 @@ p { margin: 0; }
 }
 
 @media (max-width: 560px) {
-  .top nav a:not(:last-child) { display: none; }
+  /* Only the two that lead somewhere from a phone: install, and the source. */
+  .top nav a:not(.keep):not(:last-child) { display: none; }
 }

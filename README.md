@@ -4,19 +4,20 @@
 
 # orch
 
-**Run AI agents as a team. Show clients a live dashboard — not a Slack thread.**
+**Run AI agents as a team. Show clients a live page — not a Slack thread.**
 
 orch is a local task orchestrator for freelancers and agencies building with AI.
-You define the work as a DAG (`tasks.json`), dispatch each task to Claude, Codex,
-or Gemini in parallel, and share a read-only dashboard URL with your client so
-they see progress in real time.
+You define the work as a DAG (`tasks.json`) and dispatch each task to the CLI you
+route it to — `claude`, `codex`, `opencode`, `gemini` or `agy` — in parallel.
 
----
-
-## The problem
-
-Your client is paying for AI tokens they can't see. You're shipping features they
-can't track. Status updates live in Slack threads that get lost. orch fixes that.
+- **Your client stops asking how it is going.** One page — phases, blockers in
+  plain language, hours left — published as a static site or served live behind
+  a token. You write no status update.
+- **The agents run in parallel without burning your quota.** Each task gets its
+  own git worktree, branch and pull request; a rolling token window per provider
+  pauses that provider before it locks you out of your own terminal.
+- **It runs on your machine, with your CLIs and your keys.** One Go binary, no
+  daemon, no hosted service. orch never holds a model key.
 
 ---
 
@@ -25,7 +26,7 @@ can't track. Status updates live in Slack threads that get lost. orch fixes that
 ```
 1. orch atomize --apply   # spec.md → tasks.json → SQLite
 2. orch run               # dispatch tasks to AI agents in parallel
-3. orch dashboard         # share a URL — client sees live progress
+3. orch publish           # a page for your client; --tunnel to serve it live
 ```
 
 ---
@@ -34,15 +35,16 @@ can't track. Status updates live in Slack threads that get lost. orch fixes that
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hectorcanaimero/orch/main/scripts/install.sh | sh
+orch dashboard --demo     # a full synthetic project; touches nothing of yours
 cd my-project
 orch init
 orch run
-orch dashboard --tunnel   # with `tunnel: enabled: true`: prints a link for your client
+orch dashboard --tunnel   # with `tunnel: enabled: true`: a tokenized link for your client
 ```
 
 `orch` is a single Go binary — no Python, no venv, no `pip`. See
-[Install](#install) below for Homebrew and manual-download alternatives,
-and the [manual](docs/MANUAL.en.md) for the full walkthrough.
+[Install](#install) below for the manual download, and the
+[manual](docs/MANUAL.en.md) for the full walkthrough.
 
 ---
 
@@ -58,11 +60,7 @@ Downloads the matching tarball from the latest GitHub Release, verifies
 its checksum, and installs to `~/.local/bin` (`INSTALL_DIR=...` to
 override).
 
-**Homebrew** (once the tap is published — see `docs/RELEASING.md`):
-
-```bash
-brew install hectorcanaimero/orch/orch
-```
+A Homebrew tap is not published yet — `docs/RELEASING.md` has what it needs.
 
 **Manual**: grab a tarball from the
 [Releases page](https://github.com/hectorcanaimero/orch/releases) and put
@@ -84,10 +82,10 @@ builders in that space actually reach for today.
 
 | | [Multica](https://github.com/multica-ai/multica) | [Vibe Kanban](https://github.com/BloopAI/vibe-kanban) | [Agetor](https://github.com/alamops/agetor) | [Claude Squad](https://github.com/smtg-ai/claude-squad) | **orch** |
 |---|:---:|:---:|:---:|:---:|:---:|
-| GitHub stars | 49.6k | 28.1k | 65 | 8.5k | **1** |
+| GitHub stars | 49.6k | 28.1k | 65 | 8.5k | **2** |
 | Stack | Go + Next.js + Postgres | Rust | TypeScript (Electrobun) | Go | Go |
 | License | Apache-2.0 + commercial | Apache-2.0 | MIT | AGPL-3.0 | MIT |
-| CLIs/agents supported | 26 | 10+ | 5 | ~6 | 1 🚧 (claude; codex/opencode/gemini/agy mid-port) |
+| CLIs/agents supported | 26 | 10+ | 5 | ~6 | 5 (claude, codex, opencode, gemini, agy) |
 | Desktop app | ✅ Electron | ❌ | ✅ macOS | ❌ (TUI) | ❌ |
 | Mobile app | ✅ iOS | ❌ | ❌ | ❌ | ❌ |
 | Cloud-hosted option | ✅ multica.ai | ❌ (shut down w/ Bloop) | ❌ | ❌ | ❌ |
@@ -96,7 +94,7 @@ builders in that space actually reach for today.
 | Per-provider budget guardrail (blocks dispatch) | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Spec → tasks pipeline | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Deterministic executive summary | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Static export | ❌ | ❌ | ❌ | ❌ | 🚧 in progress |
+| Static export | ❌ | ❌ | ❌ | ❌ | ✅ `orch publish` |
 
 *Vibe Kanban: Bloop shut down in April 2026 and handed the project to the
 community as Apache-2.0; cloud features were switched off, local/self-host
@@ -159,9 +157,11 @@ The client gets:
 - **Executive summary** in plain business language, recomputed on every page load — no LLM call, so it is free and always says the same thing twice.
 - **Phase timeline** — progress per phase, bar width proportional to estimated effort, with the blocked phase called out.
 - **Blockers with the reason attached**, quoted straight into the summary: _"Stripe sandbox key still pending from the client."_
-- **ETA and AI spend** — hours remaining at the current measured pace, and what the run has cost so far.
+- **ETA** — hours remaining at the current measured pace, with how fresh the numbers are.
 
-The client never sees a log line, a prompt, a diff, or a per-model cost breakdown. Flip `dashboard.show_spend_to_stakeholder` if you want them to see spend at all.
+Spend is **off by default**: flip `dashboard.show_spend_to_stakeholder` if you
+want your client to see what the run has cost. Either way they never see a log
+line, a prompt, a diff, or a per-model cost breakdown.
 
 > _GIF: not recorded yet. The shot list is written and reproducible — see [`docs/media/GIF-SCRIPT.md`](docs/media/GIF-SCRIPT.md). Walk-through in [`docs/DELIVERING-TO-STAKEHOLDERS.md`](docs/DELIVERING-TO-STAKEHOLDERS.md)._
 
@@ -169,13 +169,27 @@ The client never sees a log line, a prompt, a diff, or a per-model cost breakdow
 
 ## Roadmap
 
-**v0.8.x (shipped)** — Serie F+G+H-2/H-3: worktrees, PR + CI auto, auto_merge, sprint health, milestones, Gantt, exec summary, budget chart, Slack/Discord webhooks, `orch notify digest`, config consolidation, brand.
+**Shipped** — worktrees, a pull request and CI watch per task, the budget window
+per provider, the client page and its PDF, the guided `orch init` wizard with
+five templates, the operator dashboard (Now, ⌘K, run receipts) in English,
+Spanish and Portuguese, `orch dashboard --demo`, and a Cloudflare quick tunnel
+that requires a token. The [releases](https://github.com/hectorcanaimero/orch/releases)
+are the living list.
 
-**v1.0 (in flight)** — H-1: guided `orch init` wizard + 5 canonical templates (`python-api`, `nextjs-saas`, `chatbot-whatsapp`, `expo-mobile`, `data-pipeline`).
+**Next** — a DAG visual editor, a VS Code extension, and `orch dashboard
+--portfolio` for agencies running several clients at once.
 
-**Post-1.0** — DAG visual editor, PDF export of the sprint/milestone digest, VS Code / Cursor extension, `orch dashboard --portfolio` for agencies with several clients, per-project client auth tokens.
+Every pull request here is reviewed in CI by an AI against a written checklist
+before a human merges it — see [`docs/CI-REVIEW.md`](docs/CI-REVIEW.md).
 
-`orch` is dogfooded — we plan and dispatch orch's own sprints through orch. Every PR you see on this repo was orchestrated by the version that opened it.
+---
+
+## Follow the build
+
+A release a week, in the open: every change, what broke and the numbers behind
+it. [Releases](https://github.com/hectorcanaimero/orch/releases) ·
+[Atom feed](https://github.com/hectorcanaimero/orch/releases.atom) ·
+[LinkedIn, in Portuguese](https://www.linkedin.com/in/knaimero/)
 
 ---
 
