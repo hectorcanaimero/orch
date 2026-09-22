@@ -34,17 +34,45 @@ import (
 // Not fixed in Python: it would move the figures of every project on the
 // legacy branch, and the migration is where the corrected version belongs.
 //
-// The cutoff is computed by SQLite (`datetime('now', '-N days')`) rather than
-// in Go, so it compares against the same clock and the same string format the
-// rows were written with.
+// # The window is closed in Go, like every other window in this package
+//
+// The cutoff used to be `datetime('now', '-N days')`, which took it from
+// SQLite's own clock and compared it as a string. Both halves were wrong:
+//
+//   - SQLite's clock is not `b.now()`, so a frozen clock could not move the
+//     window. The tests froze time at 2026-09-11 and the real clock walked
+//     past it, so on 2026-09-18 they started counting 0 — green in CI one
+//     week, red the next, with no commit in between.
+//   - Stored timestamps come in two spellings (`Z` and `+00:00`), and "+"
+//     sorts before "Z", so a string cutoff silently drops rows written the
+//     other way. See ParseTS, which says the same thing about spend.
+//
+// So the rows are read and dated in Go with ParseTS, against a cutoff from
+// `b.now()` — one clock, one parser, no lexical comparison. A row whose
+// timestamp ParseTS cannot read is not counted, the same choice SpendSince
+// makes: an unreadable date cannot be placed inside a window. The table is
+// one row per task, so reading them is not a cost worth a correctness risk.
 func (b *SQLite) CountDoneLastNDays(ctx context.Context, days int) (int, error) {
-	var n int
-	err := b.db.read.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tasks_runtime
-		  WHERE project_id = ? AND status = 'done'
-		    AND COALESCE(NULLIF(finished_at, ''), updated_at) >= datetime('now', ?)`,
-		b.projectID, fmt.Sprintf("-%d days", days)).Scan(&n)
+	rows, err := b.db.read.QueryContext(ctx,
+		`SELECT COALESCE(NULLIF(finished_at, ''), updated_at) FROM tasks_runtime
+		  WHERE project_id = ? AND status = 'done'`, b.projectID)
 	if err != nil {
+		return 0, fmt.Errorf("count tasks done in the last %d days: %w", days, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	cutoff := b.now().UTC().AddDate(0, 0, -days)
+	n := 0
+	for rows.Next() {
+		var ts string
+		if err := rows.Scan(&ts); err != nil {
+			return 0, fmt.Errorf("scan a done task's timestamp: %w", err)
+		}
+		if at, ok := ParseTS(ts); ok && !at.Before(cutoff) {
+			n++
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("count tasks done in the last %d days: %w", days, err)
 	}
 	return n, nil
