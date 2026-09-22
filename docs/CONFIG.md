@@ -99,6 +99,12 @@ be writable, and a project at the filesystem root or one whose name ends in
   the project's database rather than bootstrapping one in the worktree. Running
   `orch` yourself from inside `<project>.worktrees/<task-id>/` also resolves
   the project, as long as it holds `.orchestrator/`.
+- A task's worktree starts from the remote's `base_branch` (freshly fetched)
+  plus the branch `orch/<dep>` of every dependency the base does not contain
+  yet, since a dependency is done as soon as its agent says so, usually before
+  its PR merges (#322). A dependency branch that conflicts with the base
+  blocks the task at dispatch, naming the dependency: resolve its PR, then
+  `orch task-status <id> todo` to retry.
 - Worktrees an older orch left inside the project, in `.worktrees/<task-id>/`,
   still resolve the same way. `orch run` removes one when it dispatches that
   task again, and `orch doctor` lists the rest (`worktree.orphans`). The

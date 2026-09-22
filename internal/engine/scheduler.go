@@ -486,7 +486,7 @@ func (s *Scheduler) spawnOne(ctx context.Context, task model.Task, route model.R
 	// prevent.
 	workdir := s.Opts.Cwd
 	if s.Worktree != nil && s.Opts.WorktreeMode {
-		created, err := s.Worktree.Create(ctx, task.ID, s.baseBranch())
+		created, err := s.Worktree.Create(ctx, task.ID, s.baseBranch(), task.Dependencies...)
 		if err != nil {
 			release()
 			s.logger().Error("creating the worktree failed", "task", task.ID, "err", err)

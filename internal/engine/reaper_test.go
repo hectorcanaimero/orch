@@ -537,7 +537,7 @@ func (w *recordingWorktree) RemoveAll(context.Context) error {
 	w.record("remove_all")
 	return nil
 }
-func (w *recordingWorktree) Create(_ context.Context, taskID, _ string) (string, error) {
+func (w *recordingWorktree) Create(_ context.Context, taskID, _ string, _ ...string) (string, error) {
 	w.record("create")
 	if w.createErr != nil {
 		return "", w.createErr
