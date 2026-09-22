@@ -6,6 +6,8 @@
 
 **Run AI agents as a team. Show clients a live page — not a Slack thread.**
 
+Site: **[tryorch.us](https://tryorch.us)** — [try a spec in your browser](https://tryorch.us/playground/).
+
 orch is a local task orchestrator for freelancers and agencies building with AI.
 You define the work as a DAG (`tasks.json`) and dispatch each task to the CLI you
 route it to — `claude`, `codex`, `opencode`, `gemini` or `agy` — in parallel.
@@ -189,7 +191,8 @@ before a human merges it — see [`docs/CI-REVIEW.md`](docs/CI-REVIEW.md).
 A release a week, in the open: every change, what broke and the numbers behind
 it. [Releases](https://github.com/hectorcanaimero/orch/releases) ·
 [Atom feed](https://github.com/hectorcanaimero/orch/releases.atom) ·
-[LinkedIn, in Portuguese](https://www.linkedin.com/in/knaimero/)
+[LinkedIn, in Portuguese](https://www.linkedin.com/in/knaimero/) ·
+[tryorch.us](https://tryorch.us)
 
 ---
 
