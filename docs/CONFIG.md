@@ -80,7 +80,18 @@ state:
 dispatch:
   worktree_mode: true    # each task runs in its own git worktree
   base_branch: main
+  worktree_setup: ""     # e.g. "pnpm install --frozen-lockfile"
 ```
+
+**`worktree_setup`** is a shell command orch runs inside each fresh worktree
+before the agent starts, and again when a CI retry recreates it. A worktree is
+a clean checkout with no `node_modules` or `.venv`, so without it every
+agent's first test run fails and the agent has to install from the lockfile on
+its own (#324). Use the command your CI installs with: `pnpm install
+--frozen-lockfile`, `npm ci`, `uv sync --frozen`, `go mod download`. It runs
+with `sh -c` in the worktree, for at most 10 minutes; a non-zero exit blocks
+the task with the tail of its output, and the worktree is removed. Empty (the
+default) runs nothing. Go only.
 
 With `worktree_mode` on and no git repo — or no remote — orch **degrades and
 says so** rather than failing: see `orch doctor`.
