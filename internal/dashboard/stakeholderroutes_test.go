@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"path/filepath"
 
@@ -41,7 +42,9 @@ func summaryState() *fakeState {
 			{ID: "T-3", Status: "blocked"},
 		},
 		spends: []state.Spend{
-			spend("claude-sonnet-4-6", 1000, 500, 1.20, "2026-09-11T10:00:00Z", "T-1"),
+			// Relative to now: spend_by_day keeps the trailing 14 days, and a
+			// fixed date aged out of it on 2026-09-26.
+			spend("claude-sonnet-4-6", 1000, 500, 1.20, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), "T-1"),
 		},
 	}
 }
