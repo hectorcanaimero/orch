@@ -26,6 +26,9 @@ type WorktreeManager interface {
 	RemoveAll(ctx context.Context) error
 	// BranchName is what a PR is opened from.
 	BranchName(taskID string) string
+	// ChangedFiles lists the files the task's own work changed since Create,
+	// leaving out what the dependency merges brought in.
+	ChangedFiles(ctx context.Context, taskID string) ([]string, error)
 }
 
 // managerAdapter wraps internal/worktree's Manager in the engine's interface.
@@ -74,3 +77,7 @@ func (a managerAdapter) RemoveAll(_ context.Context) error {
 }
 
 func (a managerAdapter) BranchName(taskID string) string { return a.m.BranchName(taskID) }
+
+func (a managerAdapter) ChangedFiles(_ context.Context, taskID string) ([]string, error) {
+	return a.m.ChangedFiles(taskID)
+}

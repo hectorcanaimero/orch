@@ -27,5 +27,8 @@ Coordination protocol:
 
 Constraints:
 - Do NOT edit tasks.json directly.
-- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Stay inside the files listed above. When the task cannot work without a file
+  outside it — wiring the new code in (a route, a module registry), or the
+  manifest and lockfile of the package you work in for a dependency the task
+  needs — edit it, and name each such file and why in your done note.
 - Report progress through one of the two channels above only.

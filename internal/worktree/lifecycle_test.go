@@ -746,3 +746,43 @@ func TestCreateFailsAndCleansUpWhenSetupFails(t *testing.T) {
 		t.Error("a worktree whose setup failed is still tracked as active")
 	}
 }
+
+// ChangedFiles is the task's own work: a dependency's files merged in by
+// Create are not the task's edits, and naming them in its PR as out of scope
+// would bury the real deviations.
+func TestChangedFilesLeavesOutTheDependencyMerge(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, false)
+
+	depWT, err := m.Create("F1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depWT, "dep.txt"), []byte("dep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CommitPending("F1.T1", "F1.T1: orch auto-commit"); err != nil {
+		t.Fatal(err)
+	}
+
+	wt, err := m.Create("F1.T2", "main", "F1.T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"own.txt", "with space.txt"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte("mine\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.CommitPending("F1.T2", "F1.T2: orch auto-commit"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := m.ChangedFiles("F1.T2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "own.txt|with space.txt" {
+		t.Errorf("ChangedFiles = %q, want only the task's own two files", got)
+	}
+}
