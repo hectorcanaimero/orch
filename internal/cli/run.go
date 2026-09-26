@@ -188,7 +188,9 @@ func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *project
 	// root.
 	var wtManager engine.WorktreeManager
 	if worktreeMode {
-		wtManager = engine.NewWorktreeManager(worktree.NewManager(paths.Root, !opts.noPush))
+		wm := worktree.NewManager(paths.Root, !opts.noPush)
+		wm.Setup = cfg.Dispatch.WorktreeSetup
+		wtManager = engine.NewWorktreeManager(wm)
 		scheduler.Worktree = wtManager
 	}
 

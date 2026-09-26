@@ -41,6 +41,10 @@ import (
 // lock-bound command that benefits from one.
 const defaultTimeout = 2 * time.Minute
 
+// setupTimeout bounds dispatch.worktree_setup. A dependency install is slower
+// than any git command here, and a cold one on a large lockfile takes minutes.
+const setupTimeout = 10 * time.Minute
+
 // Error is returned when a git command this package runs exits non-zero.
 // Ports WorktreeError.
 type Error struct {
@@ -70,6 +74,11 @@ type Manager struct {
 	root        string
 	pushEnabled bool
 	timeout     time.Duration
+
+	// Setup is dispatch.worktree_setup: a shell command run inside each
+	// worktree Create or Recreate makes, before the agent starts. "" runs
+	// nothing.
+	Setup string
 
 	mu     sync.Mutex
 	active map[string]string // task id -> worktree path

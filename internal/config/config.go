@@ -184,6 +184,9 @@ type Dashboard struct {
 type Dispatch struct {
 	WorktreeMode bool   `yaml:"worktree_mode"`
 	BaseBranch   string `yaml:"base_branch"`
+	// WorktreeSetup is a shell command run inside each fresh worktree before
+	// the agent starts, e.g. `pnpm install --frozen-lockfile` (#324). Go only.
+	WorktreeSetup string `yaml:"worktree_setup"`
 }
 
 // VCS drives PR creation and CI polling through the `gh` / `glab` CLIs.

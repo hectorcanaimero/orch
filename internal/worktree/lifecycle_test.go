@@ -705,3 +705,44 @@ func TestCreateFailsWhenTheDependencyBranchConflicts(t *testing.T) {
 		t.Error("the half-merged worktree was left behind")
 	}
 }
+
+// ---- Setup (#324) -----------------------------------------------------
+
+// A worktree is a fresh checkout: no node_modules, no .venv. Setup runs in it,
+// so the agent's first test run is not the one that discovers that.
+func TestCreateRunsSetupInsideTheWorktree(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	m.Setup = "pwd > setup-ran"
+
+	path, err := m.Create("F2.1.T1", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(path, "setup-ran")) // #nosec G304 -- the test's own worktree
+	if err != nil {
+		t.Fatalf("setup did not run in the worktree: %v", err)
+	}
+	if want, _ := filepath.EvalSymlinks(path); strings.TrimSpace(string(got)) != want {
+		t.Errorf("setup ran in %q, want %q", strings.TrimSpace(string(got)), want)
+	}
+}
+
+// A failed setup is a failed Create: the task blocks with the command's own
+// output, and no half-prepared worktree is left behind for the next dispatch.
+func TestCreateFailsAndCleansUpWhenSetupFails(t *testing.T) {
+	root := newTestRepo(t)
+	m := NewManager(root, true)
+	m.Setup = "echo 'ERR_PNPM_OUTDATED_LOCKFILE' && exit 3"
+
+	_, err := m.Create("F2.1.T1", "main")
+	if err == nil || !strings.Contains(err.Error(), "ERR_PNPM_OUTDATED_LOCKFILE") {
+		t.Fatalf("err = %v, want the setup's output", err)
+	}
+	if _, statErr := os.Stat(m.WorktreePath("F2.1.T1")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("worktree left behind after a failed setup: %v", statErr)
+	}
+	if _, ok := m.active["F2.1.T1"]; ok {
+		t.Error("a worktree whose setup failed is still tracked as active")
+	}
+}

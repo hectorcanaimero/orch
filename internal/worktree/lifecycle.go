@@ -1,11 +1,14 @@
 package worktree
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // PurgeOrphanBranch best-effort deletes the local branch for taskID's
@@ -97,6 +100,9 @@ func (m *Manager) Create(taskID, baseBranch string, deps ...string) (string, err
 			// reason, and its next dispatch starts from a clean slate.
 			return "", errors.Join(err, m.Remove(taskID), cleanupErr, purgeErr)
 		}
+	}
+	if err := m.runSetup(taskID, wtPath); err != nil {
+		return "", errors.Join(err, m.Remove(taskID), cleanupErr, purgeErr)
 	}
 
 	m.mu.Lock()
@@ -296,6 +302,9 @@ func (m *Manager) Recreate(taskID string) (string, error) {
 	if _, err := m.run(taskID, "git", "worktree", "add", "-B", branch, wtPath, remoteBranch); err != nil {
 		return "", errors.Join(err, cleanupErr)
 	}
+	if err := m.runSetup(taskID, wtPath); err != nil {
+		return "", errors.Join(err, m.Remove(taskID), cleanupErr)
+	}
 
 	m.mu.Lock()
 	m.active[taskID] = wtPath
@@ -324,4 +333,33 @@ func (m *Manager) RemoveAll() []string {
 		}
 	}
 	return withWarnings
+}
+
+// runSetup runs m.Setup inside a fresh worktree (#324). A worktree is a clean
+// checkout — no node_modules, no .venv — so without it every agent's first
+// test run failed, and the agent had to decide whether installing from the
+// lockfile broke its "do not touch dependencies" rule. The error carries the
+// tail of the command's output, which is where an installer says why.
+func (m *Manager) runSetup(taskID, wtPath string) error {
+	if strings.TrimSpace(m.Setup) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
+	defer cancel()
+
+	// #nosec G204 -- dispatch.worktree_setup is the project owner's own command.
+	cmd := exec.CommandContext(ctx, "sh", "-c", m.Setup)
+	cmd.Dir = wtPath
+	// Its own process group, killed whole on timeout: an installer forks.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	tail := strings.TrimSpace(string(out))
+	if len(tail) > 500 {
+		tail = "…" + tail[len(tail)-500:]
+	}
+	return fmt.Errorf("worktree: dispatch.worktree_setup %q failed for %s: %w: %s", m.Setup, taskID, err, tail)
 }
