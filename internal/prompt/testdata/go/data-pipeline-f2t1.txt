@@ -22,6 +22,9 @@ Coordination protocol:
      blocked: scripts/task-block.sh F2.T1 "<why>" "claude/claude-sonnet-4-6"  — then STOP.
    Both write the same row, so use one, not both. Your note is what the tasks
    depending on F2.T1 are shown, so make it a sentence about what changed.
+   If neither done channel is allowed to you, end with a one-sentence summary
+   of what changed and exit: orch records F2.T1 done when you exit cleanly.
+   Never block work you finished — a block keeps it from being published.
    orch_get_task and orch_context (task_id "F2.T1") read this task and its
    dependencies back if you need them again.
 

@@ -19,6 +19,9 @@ Coordination protocol:
      blocked: scripts/task-block.sh T-A "<why>" "opencode-go/glm-5.1"  — then STOP.
    Both write the same row, so use one, not both. Your note is what the tasks
    depending on T-A are shown, so make it a sentence about what changed.
+   If neither done channel is allowed to you, end with a one-sentence summary
+   of what changed and exit: orch records T-A done when you exit cleanly.
+   Never block work you finished — a block keeps it from being published.
    orch_get_task and orch_context (task_id "T-A") read this task and its
    dependencies back if you need them again.
 
