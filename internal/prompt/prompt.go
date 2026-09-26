@@ -368,6 +368,11 @@ func truncateRunes(s string, n int) string {
 //     wording was a `Note:` about `scripts/task-start.sh`, a script the agent
 //     must not run. Stating the state rather than naming the script it should
 //     not call is the same fact with one fewer thing to get wrong.
+//   - **A clean exit is the done of last resort.** A project's own claude
+//     settings can deny both done channels (#328, #336, #337), and an agent
+//     left with only orch_block used it on finished work — which the reaper
+//     honours, so the branch is never pushed. The reaper records a clean
+//     exit as done (or waits on CI), so saying so is true in every mode.
 const template = `TASK_ID={id}
 You are executing task {id}.
 
@@ -389,6 +394,9 @@ Coordination protocol:
      blocked: scripts/task-block.sh {id} "<why>" "{model}"  — then STOP.
    Both write the same row, so use one, not both. Your note is what the tasks
    depending on {id} are shown, so make it a sentence about what changed.
+   If neither done channel is allowed to you, end with a one-sentence summary
+   of what changed and exit: orch records {id} done when you exit cleanly.
+   Never block work you finished — a block keeps it from being published.
    orch_get_task and orch_context (task_id "{id}") read this task and its
    dependencies back if you need them again.
 
