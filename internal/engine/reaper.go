@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -233,6 +234,7 @@ func (s *Scheduler) openPR(ctx context.Context, entry *InFlight, existing string
 		title = task.ID
 	}
 	body := strings.TrimSpace(fmt.Sprintf("Task: `%s`\nSpec: %s\n\n%s", task.ID, spec, task.Reason))
+	body += s.scopeSection(ctx, task)
 
 	prURL, created := existing, existing == ""
 	var err error
@@ -500,3 +502,44 @@ func (s *Scheduler) RetryQueue() []RetryItem { return s.retryQueue }
 
 // SpentUSD is what a task has cost across every attempt.
 func (s *Scheduler) SpentUSD(taskID string) float64 { return s.spentUSD[taskID] }
+
+// scopeSection names, for the PR body, the files the agent changed outside
+// the task's file list (#318, #319, #320). The prompt lets an agent make the
+// edits a task cannot work without — wiring the code in, the package manifest
+// and lockfile — and this is where a reviewer sees them. Empty when the list
+// is empty (nothing to be outside of) or the work stayed inside it.
+func (s *Scheduler) scopeSection(ctx context.Context, task model.Task) string {
+	if len(task.Files) == 0 {
+		return ""
+	}
+	changed, err := s.Worktree.ChangedFiles(ctx, task.ID)
+	if err != nil {
+		s.logger().Warn("listing the task's changed files failed; the PR will not name out-of-scope edits",
+			"task", task.ID, "err", err)
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range changed {
+		if !inFileList(task.Files, f) {
+			fmt.Fprintf(&b, "\n- `%s`", f)
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n\n**Outside the task's file list** (the agent's note should say why):" + b.String()
+}
+
+// inFileList reports whether a task's file list covers file: an exact path,
+// a directory entry ending in "/", or a glob.
+func inFileList(list []string, file string) bool {
+	for _, entry := range list {
+		if entry == file || (strings.HasSuffix(entry, "/") && strings.HasPrefix(file, entry)) {
+			return true
+		}
+		if ok, _ := path.Match(entry, file); ok {
+			return true
+		}
+	}
+	return false
+}

@@ -501,6 +501,8 @@ type recordingWorktree struct {
 	pushErr   error
 	createErr error
 	dir       string
+	// changed is what ChangedFiles reports: the files the agent's work touched.
+	changed []string
 }
 
 func (w *recordingWorktree) record(name string) {
@@ -560,6 +562,9 @@ func (w *recordingWorktree) Recreate(_ context.Context, taskID string) (string, 
 	return path, nil
 }
 func (w *recordingWorktree) BranchName(taskID string) string { return "orch/" + taskID }
+func (w *recordingWorktree) ChangedFiles(context.Context, string) ([]string, error) {
+	return w.changed, nil
+}
 
 func TestWorktreeCallerContract(t *testing.T) {
 	tests := []struct {
@@ -848,6 +853,7 @@ func prFixture(t *testing.T) (*reapFixture, *recordingWorktree, *fakeVCS, *recor
 			ID: "C-1", Phase: 1, Title: "Wire the webhook", Model: "claude/opus",
 			Status: model.StatusTodo, EstimateHours: 1, SpecRef: "specs/f1.md#T1",
 			Reason: "the webhook is unhandled",
+			Files:  []string{"src/webhook.ts", "src/handlers/"},
 		}},
 		map[string]fakeResponse{"C-1": okResponse()},
 		SchedulerOptions{AutoPR: true, WorktreeMode: true, BaseBranch: "main"})
@@ -1269,5 +1275,42 @@ func TestDispatchPromptCarriesTheFindingsOptIn(t *testing.T) {
 		if got := strings.Contains(string(raw), "orch_report_finding"); got != enabled {
 			t.Errorf("report_findings.enabled=%v: prompt mentions orch_report_finding = %v", enabled, got)
 		}
+	}
+}
+
+// #318, #319, #320: a task sometimes cannot work without a file its list left
+// out — the module registry, the package manifest. The agent may edit it; the
+// PR names every such file, so a reviewer sees the deviation without reading
+// the whole diff for it.
+func TestPRBodyNamesFilesOutsideTheTaskList(t *testing.T) {
+	f, wt, v, _ := prFixture(t)
+	wt.changed = []string{"src/webhook.ts", "src/handlers/stripe.ts", "src/app.module.ts", "package.json"}
+
+	f.runOnce(t)
+
+	_, section, found := strings.Cut(v.prBody, "Outside the task's file list")
+	if !found {
+		t.Fatalf("PR body has no out-of-scope section:\n%s", v.prBody)
+	}
+	for _, want := range []string{"`src/app.module.ts`", "`package.json`"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("section is missing %s:\n%s", want, section)
+		}
+	}
+	for _, inside := range []string{"src/webhook.ts", "src/handlers/stripe.ts"} {
+		if strings.Contains(section, inside) {
+			t.Errorf("section names %s, which the task's list covers:\n%s", inside, section)
+		}
+	}
+}
+
+func TestPRBodyHasNoScopeSectionWhenTheWorkStaysInside(t *testing.T) {
+	f, wt, v, _ := prFixture(t)
+	wt.changed = []string{"src/webhook.ts", "src/handlers/stripe.ts"}
+
+	f.runOnce(t)
+
+	if strings.Contains(v.prBody, "Outside the task's file list") {
+		t.Errorf("PR body flags work that stayed inside the list:\n%s", v.prBody)
 	}
 }

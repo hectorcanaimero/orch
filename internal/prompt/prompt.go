@@ -373,6 +373,11 @@ func truncateRunes(s string, n int) string {
 //     left with only orch_block used it on finished work — which the reaper
 //     honours, so the branch is never pushed. The reaper records a clean
 //     exit as done (or waits on CI), so saying so is true in every mode.
+//   - **The file list bends for wiring, visibly.** "Do not touch anything
+//     else unless the spec says so" left an agent choosing between an
+//     unwired feature and a broken rule (#318, #320). It may now make the
+//     edits the task cannot work without and say why in its note, and the
+//     PR names every file outside the list (engine's scopeSection, #319).
 const template = `TASK_ID={id}
 You are executing task {id}.
 
@@ -402,6 +407,9 @@ Coordination protocol:
 
 Constraints:
 - Do NOT edit tasks.json directly.
-- Do NOT touch files outside the list above unless the spec explicitly requires it.
+- Stay inside the files listed above. When the task cannot work without a file
+  outside it — wiring the new code in (a route, a module registry), or the
+  manifest and lockfile of the package you work in for a dependency the task
+  needs — edit it, and name each such file and why in your done note.
 - Report progress through one of the two channels above only.
 {findings_block}`

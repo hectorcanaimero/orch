@@ -145,7 +145,7 @@ func TestFilesListAppearsOnce(t *testing.T) {
 	if n := strings.Count(body, "['src/a.py', 'src/b.py']"); n != 1 {
 		t.Errorf("the files list appears %d times, want 1", n)
 	}
-	if n := strings.Count(body, "Do NOT touch files outside"); n != 1 {
+	if n := strings.Count(body, "Stay inside the files listed above"); n != 1 {
 		t.Errorf("the constraint appears %d times, want 1", n)
 	}
 }

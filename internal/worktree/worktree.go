@@ -82,6 +82,7 @@ type Manager struct {
 
 	mu     sync.Mutex
 	active map[string]string // task id -> worktree path
+	start  map[string]string // task id -> the commit Create handed the agent
 }
 
 // NewManager builds a Manager rooted at root. pushEnabled mirrors Python's
@@ -98,6 +99,7 @@ func NewManager(root string, pushEnabled bool) *Manager {
 		pushEnabled: pushEnabled,
 		timeout:     defaultTimeout,
 		active:      map[string]string{},
+		start:       map[string]string{},
 	}
 }
 

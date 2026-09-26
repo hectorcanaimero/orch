@@ -104,9 +104,16 @@ func (m *Manager) Create(taskID, baseBranch string, deps ...string) (string, err
 	if err := m.runSetup(taskID, wtPath); err != nil {
 		return "", errors.Join(err, m.Remove(taskID), cleanupErr, purgeErr)
 	}
+	// Where the agent's own work starts: after the dependency merges, so
+	// ChangedFiles does not count their files as the task's.
+	head, err := m.run(taskID, "git", "-C", wtPath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", errors.Join(err, m.Remove(taskID), cleanupErr, purgeErr)
+	}
 
 	m.mu.Lock()
 	m.active[taskID] = wtPath
+	m.start[taskID] = strings.TrimSpace(head)
 	m.mu.Unlock()
 	return wtPath, nil
 }
@@ -265,8 +272,28 @@ func (m *Manager) Remove(taskID string) error {
 	err := errors.Join(errs...)
 	m.mu.Lock()
 	delete(m.active, taskID)
+	delete(m.start, taskID)
 	m.mu.Unlock()
 	return err
+}
+
+// ChangedFiles lists the files committed in taskID's worktree since Create
+// handed it to the agent — the task's own work, not its dependencies'. Nil
+// for a worktree Create did not make (a CI retry's Recreate), since there is
+// no starting point to compare against.
+func (m *Manager) ChangedFiles(taskID string) ([]string, error) {
+	m.mu.Lock()
+	wtPath, start := m.active[taskID], m.start[taskID]
+	m.mu.Unlock()
+	if wtPath == "" || start == "" {
+		return nil, nil
+	}
+	// -z: paths verbatim, not quoted or split on the spaces they may hold.
+	out, err := m.run(taskID, "git", "-C", wtPath, "diff", "--name-only", "-z", start, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return strings.FieldsFunc(out, func(r rune) bool { return r == 0 }), nil
 }
 
 // Recreate checks out the already-pushed branch orch/<taskID> into a fresh
