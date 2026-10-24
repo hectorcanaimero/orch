@@ -80,6 +80,8 @@ type Outcome struct {
 	VerifyFailure string
 	// E2E is the attempt's E2E run, when the verify collected one.
 	E2E *E2ESummary
+	// Verify is the local verify's whole result, nil when it did not run.
+	Verify *VerifyResult
 }
 
 // Run spawns a dispatch, supervises it, and parses what it produced.

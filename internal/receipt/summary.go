@@ -54,7 +54,12 @@ func (r *Receipt) Summary(lang string, autoMerge bool) Summary {
 		if reason := shortReason(b.Reason); reason != "" {
 			why += " — " + reason
 		}
-		s.Lines = append(s.Lines, fmt.Sprintf(w["stopped"], label(b), why))
+		line := fmt.Sprintf(w["stopped"], label(b), why)
+		if strings.HasSuffix(why, "…") {
+			// The cut already ends the sentence.
+			line = strings.TrimSuffix(line, ".")
+		}
+		s.Lines = append(s.Lines, line)
 		s.Actions = append(s.Actions, Action{Text: fmt.Sprintf(w[actionKey(b)], b.TaskID, prURL(r, b.TaskID)), Command: retry(b.TaskID)})
 	}
 	if !autoMerge {

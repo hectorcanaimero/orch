@@ -48,27 +48,57 @@ interface Finding {
   text: string
 }
 
-/** What the local verify said: each send-back, with the review's findings it listed. */
+/** What the local verify said: each verdict, with the review's findings. */
 interface VerifyEntry {
   at: string
   attempt?: number
+  passed: boolean
+  /** False when the attempt had no send-back left and the task was blocked. */
+  sentBack: boolean
   reason: string
+  /** True when findings came structured (#463), not parsed out of the reason. */
+  structured: boolean
   findings: Finding[]
+  reviewer?: string
+  commands: { command: string; duration_s: number }[]
 }
 
-/** The verify's send-backs from the task's events; findings are the review's "- `file:line` **title**" lines. */
+/**
+ * The verify's verdicts from the task's events. Findings are the event's
+ * structured ones (#463); an older verify_failed only has the reason, cut at
+ * 500 characters, whose "- `file:line` **title**" lines are parsed instead.
+ */
 function verifyEntries(events: FormattedEvent[]): VerifyEntry[] {
   return events
-    .filter((e) => e.event_type === "verify_failed")
+    .filter((e) => e.event_type === "verify_failed" || e.event_type === "verify_passed")
     .map((e) => {
       const extra = (e.raw?.extra ?? {}) as Record<string, unknown>
       const reason = typeof extra.reason === "string" ? extra.reason : ""
-      const findings: Finding[] = []
-      for (const line of reason.split("\n")) {
-        const m = /^- (?:`([^`]+?)(?::(\d+))?` )?(.+)$/.exec(line.trim())
-        if (m && (m[1] || line.includes("**"))) findings.push({ file: m[1], line: m[2] ? Number(m[2]) : undefined, text: m[3].replaceAll("**", "") })
+      const structured = Array.isArray(extra.findings)
+      const findings: Finding[] = structured
+        ? (extra.findings as { file?: string; line?: number; title?: string; detail?: string }[]).map((f) => ({
+            file: f.file || undefined,
+            line: f.line || undefined,
+            text: f.detail ? `${f.title ?? ""}: ${f.detail}` : (f.title ?? ""),
+          }))
+        : []
+      if (!structured) {
+        for (const line of reason.split("\n")) {
+          const m = /^- (?:`([^`]+?)(?::(\d+))?` )?(.+)$/.exec(line.trim())
+          if (m && (m[1] || line.includes("**"))) findings.push({ file: m[1], line: m[2] ? Number(m[2]) : undefined, text: m[3].replaceAll("**", "") })
+        }
       }
-      return { at: e.ts, attempt: Number(extra.attempt) || undefined, reason, findings }
+      return {
+        at: e.ts,
+        attempt: Number(extra.attempt) || undefined,
+        passed: e.event_type === "verify_passed",
+        sentBack: extra.sent_back !== false,
+        reason,
+        structured,
+        findings,
+        reviewer: typeof extra.reviewer === "string" && extra.reviewer ? extra.reviewer : undefined,
+        commands: Array.isArray(extra.commands) ? (extra.commands as VerifyEntry["commands"]) : [],
+      }
     })
 }
 
@@ -253,7 +283,8 @@ export function TaskChanges({ task, events, canAct }: { task: Task; events: Form
   }, [])
 
   const verify = verifyEntries(events)
-  const findings = verify.flatMap((v) => v.findings)
+  // The diff is the latest attempt's: only the latest verdict's findings are about it.
+  const findings = verify.at(-1)?.findings ?? []
   const paths = new Set(data?.files.map((f) => f.path))
   const e2e = [...events].reverse().find((e) => e.event_type === "e2e_report")
   const e2eExtra = (e2e?.raw?.extra ?? {}) as Record<string, unknown>
@@ -273,12 +304,35 @@ export function TaskChanges({ task, events, canAct }: { task: Task; events: Form
           <p className="text-xs">{t("changes.e2e", { passed: String(e2eExtra.passed ?? 0), failed: String(e2eExtra.failed ?? 0) })}</p>
         ) : null}
         {verify.length === 0 ? <p className="text-xs text-muted-foreground">{t("changes.verify_none")}</p> : null}
-        {verify.map((v, i) => (
-          <div key={i} className="space-y-1 rounded-md border bg-sidebar px-2.5 py-1.5 text-xs">
-            <p className="text-status-blocked">{t("changes.verify_sent_back", { attempt: String(v.attempt ?? "?") })}</p>
-            <p className="whitespace-pre-wrap break-words font-mono text-muted-foreground">{v.reason}</p>
-          </div>
-        ))}
+        {verify.map((v, i) => {
+          const attempt = String(v.attempt ?? "?")
+          return (
+            <div key={i} className="space-y-1 rounded-md border bg-sidebar px-2.5 py-1.5 text-xs">
+              {v.passed ? (
+                <p className="text-status-done">
+                  {t("changes.verify_passed", { attempt })}
+                  {v.reviewer ? <span className="text-muted-foreground"> · {t("changes.verify_reviewer", { reviewer: v.reviewer })}</span> : null}
+                </p>
+              ) : (
+                <p className="text-status-blocked">{t(v.sentBack ? "changes.verify_sent_back" : "changes.verify_blocked", { attempt })}</p>
+              )}
+              {v.commands.length > 0 ? (
+                <ul className="font-mono text-muted-foreground">
+                  {v.commands.map((c, j) => (
+                    <li key={j}>
+                      {c.command} <span className="tabular-nums">{c.duration_s}s</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {v.structured && v.findings.length > 0 ? (
+                <p className="text-muted-foreground">{t("changes.findings", { count: v.findings.length })}</p>
+              ) : v.reason ? (
+                <p className="whitespace-pre-wrap break-words font-mono text-muted-foreground">{v.reason}</p>
+              ) : null}
+            </div>
+          )
+        })}
         {findings
           .filter((f) => !f.file || !paths.has(f.file))
           .map((f, i) => (

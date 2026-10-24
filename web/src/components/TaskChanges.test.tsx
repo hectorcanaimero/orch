@@ -39,10 +39,10 @@ const events = [
   },
 ] as unknown as FormattedEvent[]
 
-function renderChanges(canAct: boolean) {
+function renderChanges(canAct: boolean, evs: FormattedEvent[] = events) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <TaskChanges task={task} events={events} canAct={canAct} />
+      <TaskChanges task={task} events={evs} canAct={canAct} />
     </QueryClientProvider>,
   )
 }
@@ -96,6 +96,54 @@ describe("TaskChanges", () => {
     fireEvent.change(note, { target: { value: "wrong approach" } })
     fireEvent.click(screen.getByRole("button", { name: "Block" }))
     await waitFor(() => expect(api.moveTask).toHaveBeenCalledWith("F1.T2", "blocked", "wrong approach"))
+  })
+
+  // #463: the findings come structured in the event, uncut, so all twelve
+  // sit at their lines even though the reason was cut after a few of them.
+  it("anchors every structured finding, past the reason's cut", async () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => ({ severity: "blocking", file: "store.go", line: i + 1, title: `finding ${i + 1}`, detail: "x".repeat(80) }))
+    const md = twelve.map((f) => `- \`${f.file}:${f.line}\` **${f.title}**: ${f.detail}`).join("\n")
+    api.getTaskDiff.mockResolvedValue({
+      ...diff,
+      files: [{ path: "store.go", additions: 12, deletions: 0, patch: "@@ -0,0 +1,12 @@\n" + Array.from({ length: 12 }, (_, i) => `+code ${i + 1}`).join("\n") + "\n" }],
+    })
+    const failed = [
+      {
+        ...events[0],
+        raw: { extra: { attempt: 1, sent_back: true, reason: ("the review asks for changes.\n\n" + md).slice(0, 497) + "...", findings: twelve } },
+      },
+    ] as unknown as FormattedEvent[]
+    renderChanges(false, failed)
+    await screen.findByText("1 file changed on orch/F1.T2 against origin/main")
+    for (let i = 1; i <= 12; i++) {
+      const row = screen.getByText((_, el) => el?.tagName === "TD" && el.textContent === `code ${i}`).closest("tr")!
+      expect(row.nextElementSibling).toHaveTextContent(`line ${i} · finding ${i}: ${"x".repeat(80)}`)
+    }
+    expect(screen.getByText("12 findings", { selector: "p" })).toBeInTheDocument()
+  })
+
+  // #463: a verify that passed says so, with what it ran and who reviewed.
+  it("says the verify passed", async () => {
+    const passed = [
+      ...events,
+      {
+        ts: "2026-10-12T21:50:00Z",
+        task_id: "F1.T2",
+        event_type: "verify_passed",
+        backend: "claude",
+        human: "",
+        severity: "info",
+        raw: { extra: { attempt: 2, reviewer: "gemini", commands: [{ command: "go test ./...", duration_s: 12.5 }] } },
+      },
+    ] as unknown as FormattedEvent[]
+    renderChanges(false, passed)
+    expect(await screen.findByText("Verify passed attempt 2")).toBeInTheDocument()
+    expect(screen.getByText("· reviewed by gemini", { exact: false })).toBeInTheDocument()
+    expect(screen.getByText("12.5s")).toBeInTheDocument()
+    expect(screen.queryByText("The local verify sent nothing back.")).not.toBeInTheDocument()
+    // The pass is about the diff shown; the earlier send-back's finding is not anchored in it.
+    await screen.findByText("2 files changed on orch/F1.T2 against origin/main")
+    expect(screen.queryByText("line 3 · B is never tested: add a test")).not.toBeInTheDocument()
   })
 
   it("says why there is nothing to show", async () => {

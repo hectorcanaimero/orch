@@ -63,6 +63,7 @@ const DOT: Record<string, string> = {
   fail: "bg-status-failed",
   timeout: "bg-status-failed",
   verify_failed: "bg-status-blocked",
+  verify_passed: "bg-status-done",
   block: "bg-status-blocked",
   ci_blocked: "bg-status-blocked",
   ci_failure_retry: "bg-status-blocked",
@@ -89,7 +90,7 @@ function eventItem(e: FormattedEvent): TimelineItem {
   const known = t(key) !== key
   const who = AGENT_EVENTS.has(e.event_type)
     ? e.backend || "agent"
-    : e.event_type === "verify_failed"
+    : e.event_type === "verify_failed" || e.event_type === "verify_passed"
       ? "verify"
       : e.event_type.startsWith("ci_") || e.event_type.startsWith("pr_")
         ? "CI"

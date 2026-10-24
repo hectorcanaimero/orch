@@ -176,7 +176,7 @@ var eventTypes = map[string]bool{
 	// database both binaries write to.
 	"sprint_done": true, "ci_no_checks": true, "pr_merged": true,
 	"budget_alert": true, "spec_ref_warning": true,
-	"operator_stop": true, "verify_failed": true, "e2e_report": true, "salvage_accepted": true, "task_added": true, "task_edited": true,
+	"operator_stop": true, "verify_failed": true, "verify_passed": true, "e2e_report": true, "salvage_accepted": true, "task_added": true, "task_edited": true,
 	"provider_skip": true, "ci_conflict_retry": true, "merged_locally": true,
 }
 

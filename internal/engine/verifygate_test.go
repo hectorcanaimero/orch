@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,8 @@ type scriptedVerifier struct {
 	// ArtifactsDir.
 	e2e       *E2ESummary
 	artifacts []string
+	// findings come back with every failing answer.
+	findings []VerifyFinding
 }
 
 func (v *scriptedVerifier) Verify(_ context.Context, req VerifyRequest) VerifyResult {
@@ -36,7 +39,11 @@ func (v *scriptedVerifier) Verify(_ context.Context, req VerifyRequest) VerifyRe
 	v.envs = append(v.envs, req.Env)
 	v.artifacts = append(v.artifacts, req.ArtifactsDir)
 	i := min(len(v.dirs), len(v.answers)) - 1
-	return VerifyResult{Failure: v.answers[i], E2E: v.e2e}
+	res := VerifyResult{Failure: v.answers[i], E2E: v.e2e, Commands: []VerifyCommand{{Command: "go test ./...", DurationS: 1.5}}, Reviewer: "gemini"}
+	if res.Failure != "" {
+		res.Findings = v.findings
+	}
+	return res
 }
 
 // verifyFixture is a reap fixture over a real repository with a bare
@@ -162,6 +169,54 @@ func TestVerifyBlocksOnceTheSendBacksAreUsedUp(t *testing.T) {
 	reason, _ := f.backend.eventExtra("C-1", EventFail)["reason"].(string)
 	if !strings.Contains(reason, "local verify still failing") || !strings.Contains(reason, "`make test` failed") {
 		t.Errorf("block reason = %q, want the verify failure", reason)
+	}
+}
+
+// TestVerifyRecordsItsVerdicts is #463: a failing verify records the
+// review's findings uncut next to the reason it cut, sent back or blocking;
+// a passing one records verify_passed with what ran and who reviewed.
+func TestVerifyRecordsItsVerdicts(t *testing.T) {
+	var findings []VerifyFinding
+	for i := 1; i <= 12; i++ {
+		findings = append(findings, VerifyFinding{Severity: "blocking", File: "app.go", Line: i, Title: fmt.Sprintf("finding %d", i), Detail: strings.Repeat("x", 100)})
+	}
+	v := &scriptedVerifier{answers: []string{"the review asks for changes", ""}, findings: findings}
+	f, _ := verifyFixture(t, v, 2)
+
+	f.runOnce(t)
+	f.runOnce(t)
+
+	failed := f.backend.eventExtra("C-1", EventVerifyFailed)
+	if got, _ := failed["findings"].([]VerifyFinding); len(got) != 12 || got[11] != findings[11] {
+		t.Errorf("verify_failed findings = %v, want all 12", failed["findings"])
+	}
+	if failed["reason"] != "the review asks for changes" || failed["attempt"] != 1 || failed["sent_back"] != true {
+		t.Errorf("verify_failed = %v", failed)
+	}
+	passed := f.backend.eventExtra("C-1", EventVerifyPassed)
+	if passed == nil {
+		t.Fatalf("events = %v, want a verify_passed", f.backend.eventTypes("C-1"))
+	}
+	if cmds, _ := passed["commands"].([]VerifyCommand); passed["attempt"] != 2 || passed["reviewer"] != "gemini" || len(cmds) != 1 || cmds[0].DurationS != 1.5 {
+		t.Errorf("verify_passed = %v", passed)
+	}
+
+	// The attempt that runs out of send-backs records its findings too.
+	blocked := &scriptedVerifier{answers: []string{"still wrong"}, findings: findings[:1]}
+	f, _ = verifyFixture(t, blocked, 0)
+	f.s.Opts.Cfg.Verify.MaxAttempts = 1
+	f.runOnce(t)
+	f.runOnce(t)
+	var last map[string]any
+	f.backend.mu.Lock()
+	for _, e := range f.backend.events {
+		if e.eventType == EventVerifyFailed {
+			last = e.extra
+		}
+	}
+	f.backend.mu.Unlock()
+	if last["sent_back"] != false || last["attempt"] != 2 || last["findings"] == nil {
+		t.Errorf("the blocking verify_failed = %v, want attempt 2, not sent back, with its findings", last)
 	}
 }
 

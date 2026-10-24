@@ -134,6 +134,9 @@ func (s *Scheduler) finish(ctx context.Context, c completion) error {
 	// has send-backs left its worktree is kept as it is, for the retry.
 	verifyFailed := !stopped && !agentBlocked && out.Result.Success && out.VerifyFailure != ""
 	sendBack := verifyFailed && s.verifyAttempts[entry.Task.ID] < s.verifyMax()
+	if !stopped && !agentBlocked && out.Result.Success {
+		s.recordVerify(ctx, entry, out.Verify, sendBack)
+	}
 	tidyOut := out
 	if agentBlocked || verifyFailed {
 		tidyOut.Result.Success = false

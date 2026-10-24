@@ -21,9 +21,14 @@ import (
 )
 
 func TestVerifyPassesWhenTheCommandsPass(t *testing.T) {
-	v := Verifier{Cfg: config.Verify{Commands: []string{"true", "test -d ."}, TimeoutS: 10}}
-	if got := v.Verify(context.Background(), engine.VerifyRequest{TaskID: "T-1", Writer: model.BackendClaude, Dir: t.TempDir()}).Failure; got != "" {
-		t.Errorf("Verify = %q, want a pass", got)
+	v := Verifier{Cfg: config.Verify{Commands: []string{"true", "test -d .", "no-such-tool-463"}, TimeoutS: 10}}
+	res := v.Verify(context.Background(), engine.VerifyRequest{TaskID: "T-1", Writer: model.BackendClaude, Dir: t.TempDir()})
+	if res.Failure != "" {
+		t.Errorf("Verify = %q, want a pass", res.Failure)
+	}
+	// #463: the pass says what ran, and the command sh could not find did not.
+	if len(res.Commands) != 2 || res.Commands[0].Command != "true" || res.Commands[1].Command != "test -d ." || res.Commands[0].DurationS < 0 {
+		t.Errorf("Commands = %+v, want true and test -d . with their durations", res.Commands)
 	}
 }
 
@@ -104,6 +109,32 @@ func TestVerifySendsBackABlockingReview(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("Verify = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// #463: every finding comes back structured, however long the reason the
+// agent reads gets, with the reviewer that found them.
+func TestVerifyReturnsEveryFindingStructured(t *testing.T) {
+	dir := branchWithWork(t)
+	var findings []ci.Finding
+	for i := 1; i <= 12; i++ {
+		findings = append(findings, ci.Finding{Severity: ci.SeverityBlocking, File: "store.go", Line: i,
+			Title: "finding " + strconv.Itoa(i), Detail: strings.TrimSpace(strings.Repeat("why it matters ", 10))})
+	}
+	verdict, _ := json.Marshal(ci.Verdict{Verdict: ci.VerdictRequestChanges, Summary: "twelve problems", Findings: findings})
+	answer, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": string(verdict)})
+	fakeReviewer(t, "0", answer)
+	v := Verifier{Cfg: config.Verify{Review: true, Reviewer: "claude", ReviewModel: "opus", TimeoutS: 30}, Base: "main"}
+
+	res := v.Verify(context.Background(), engine.VerifyRequest{TaskID: "T-1", Writer: model.BackendCodex, Dir: dir})
+	if !strings.Contains(res.Failure, "the review asks for changes") {
+		t.Errorf("Failure = %q, want the review's request", res.Failure)
+	}
+	if len(res.Findings) != 12 || res.Findings[11] != engine.VerifyFinding(findings[11]) {
+		t.Errorf("Findings = %+v, want all 12", res.Findings)
+	}
+	if res.Reviewer != "claude" || res.ReviewModel != "opus" {
+		t.Errorf("reviewer = %q/%q, want claude/opus", res.Reviewer, res.ReviewModel)
 	}
 }
 

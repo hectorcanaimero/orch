@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"strings"
 	"strconv"
 
 	"github.com/hectorcanaimero/orch/internal/state"
@@ -33,6 +34,7 @@ var severityByEvent = map[string]string{
 	"flock_contention":  "err",
 	"reconciled":        "info",
 	"verify_failed":     "warn",
+	"verify_passed":     "info",
 	"e2e_report":        "info",
 }
 
@@ -52,6 +54,7 @@ var iconByEvent = map[string]string{
 	"flock_contention":  "LOCK",
 	"reconciled":        "RECON",
 	"verify_failed":     "VERIFY",
+	"verify_passed":     "VERIFY",
 	"e2e_report":        "E2E",
 }
 
@@ -160,10 +163,29 @@ func eventTail(etype string, extra map[string]any) string {
 		}
 		return " (" + reason + ")"
 	case "verify_failed":
-		if attempt := extraRaw(extra, "attempt"); attempt != "" {
-			return fmt.Sprintf(" (send-back %s)", attempt)
+		// sent_back is #463's; an older event was always a send-back.
+		blocked := extra["sent_back"] == false
+		var parts []string
+		if attempt := extraRaw(extra, "attempt"); attempt != "" && blocked {
+			parts = append(parts, "attempt "+attempt)
+		} else if attempt != "" {
+			parts = append(parts, "send-back "+attempt)
 		}
-		return ""
+		if findings, _ := extra["findings"].([]any); len(findings) > 0 {
+			parts = append(parts, fmt.Sprintf("%d findings", len(findings)))
+		}
+		if blocked {
+			parts = append(parts, "blocked")
+		}
+		if len(parts) == 0 {
+			return ""
+		}
+		return " (" + strings.Join(parts, ", ") + ")"
+	case "verify_passed":
+		if reviewer := extraString(extra, "reviewer"); reviewer != "" {
+			return fmt.Sprintf(" (attempt %s, reviewed by %s)", extraRaw(extra, "attempt"), reviewer)
+		}
+		return fmt.Sprintf(" (attempt %s)", extraRaw(extra, "attempt"))
 	case "e2e_report":
 		passed, _ := extraInt(extra, "passed")
 		failed, _ := extraInt(extra, "failed")

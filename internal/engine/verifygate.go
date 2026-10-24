@@ -12,8 +12,13 @@ import (
 	"github.com/hectorcanaimero/orch/internal/model"
 )
 
-// EventVerifyFailed records a local verify that sent a task back to its agent.
+// EventVerifyFailed records a local verify that failed an attempt: the
+// reason the agent reads, and the review's findings uncut (#463).
 const EventVerifyFailed = "verify_failed"
+
+// EventVerifyPassed records a local verify that passed an attempt: the
+// commands it ran and the reviewer that read the diff (#463).
+const EventVerifyPassed = "verify_passed"
 
 // EventE2EReport records the E2E results of one verified attempt: the counts,
 // and the report the dashboard opens.
@@ -38,6 +43,28 @@ type VerifyResult struct {
 	Failure string
 	// E2E summarises the E2E run, when verify.e2e_report collected one.
 	E2E *E2ESummary
+	// Commands are the checks that ran, in order, with how long each took.
+	Commands []VerifyCommand
+	// Reviewer and ReviewModel name who reviewed the diff; empty when no
+	// review completed.
+	Reviewer, ReviewModel string
+	// Findings are the review's, blocking and minor.
+	Findings []VerifyFinding
+}
+
+// VerifyCommand is one check the verify ran.
+type VerifyCommand struct {
+	Command   string  `json:"command"`
+	DurationS float64 `json:"duration_s"`
+}
+
+// VerifyFinding is one review finding, as internal/ci's Finding has it.
+type VerifyFinding struct {
+	Severity string `json:"severity"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // E2ESummary is an E2E run in counts, and where its full report is.
@@ -81,7 +108,31 @@ func (s *Scheduler) verifyOutcome(d Dispatch, attempt int, out *Outcome) {
 		TaskID: d.Req.TaskID, Writer: d.Req.Route.Backend, Dir: d.Cwd, Env: d.Env,
 		ArtifactsDir: E2EArtifactsDir(s.Opts.StateDir, s.Opts.RunID, d.Req.TaskID, attempt),
 	})
-	out.VerifyFailure, out.E2E = res.Failure, res.E2E
+	out.VerifyFailure, out.E2E, out.Verify = res.Failure, res.E2E, &res
+}
+
+// recordVerify records a verified attempt's verdict: verify_passed, or
+// verify_failed with the reason and the findings, sent back or not.
+func (s *Scheduler) recordVerify(ctx context.Context, entry *InFlight, res *VerifyResult, sentBack bool) {
+	if res == nil || s.Backend == nil {
+		return
+	}
+	id := entry.Task.ID
+	event, extra := EventVerifyPassed, map[string]any{
+		"attempt": s.verifyAttempts[id] + 1, "commands": res.Commands,
+		"reviewer": res.Reviewer, "review_model": res.ReviewModel,
+	}
+	if res.Failure != "" {
+		event, extra = EventVerifyFailed, map[string]any{
+			"attempt": s.verifyAttempts[id] + 1, "reason": truncateReason(res.Failure), "sent_back": sentBack,
+		}
+	}
+	if len(res.Findings) > 0 {
+		extra["findings"] = res.Findings
+	}
+	if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, event, id, string(entry.Route.Backend), extra); err != nil {
+		s.logger().Error("recording the verify result failed", "task", id, "err", err)
+	}
 }
 
 // E2EArtifactsDir is where one attempt's E2E report and files are kept:
@@ -140,13 +191,6 @@ func (s *Scheduler) sendBack(ctx context.Context, entry *InFlight, out Outcome) 
 		"task", id, "attempt", s.verifyAttempts[id], "of", s.verifyMax())
 
 	if s.Backend != nil {
-		if err := s.Backend.AppendEngineEvent(ctx, s.Opts.RunID, EventVerifyFailed, id,
-			string(entry.Route.Backend), map[string]any{
-				"attempt": s.verifyAttempts[id],
-				"reason":  truncateReason(out.VerifyFailure),
-			}); err != nil {
-			s.logger().Error("recording the verify failure failed", "task", id, "err", err)
-		}
 		// The agent has most likely reported the task done already, and done
 		// only reopens to todo.
 		if err := transitionThroughTodo(ctx, s.Backend, id, model.StatusTodo, "local verify failed; sent back to its agent"); err != nil {

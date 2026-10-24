@@ -770,7 +770,12 @@ verify:
 Work that fails is not pushed. The task goes back to its agent in the same
 worktree, with the failure in `.orch-ci-feedback.md` and the prompt telling it
 to read that file first. After `max_attempts` send-backs, the task is blocked
-with the failure as its reason. Each send-back is a `verify_failed` event.
+with the failure as its reason. Each failed attempt is a `verify_failed` event
+(`sent_back: false` on the one that blocked the task), with the review's
+findings uncut under `findings` (`severity`, `file`, `line`, `title`, `detail`);
+each passed attempt is a `verify_passed` event with the `commands` that ran,
+their `duration_s`, and the `reviewer` and `review_model`. The dashboard's
+Changes tab and `orch report summary` read them.
 Without the block, or with `enabled: false`, a clean exit is pushed as before.
 
 ### `update` — new (#448)

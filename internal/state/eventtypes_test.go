@@ -111,8 +111,8 @@ var goOnlyEventTypes = map[string]bool{
 	// The operator asked to stop a running task, and the run that stopped
 	// it (#356).
 	"operator_stop": true,
-	// The local verify sent a task back to its agent (verify.enabled).
-	"verify_failed": true,
+	// The local verify failed an attempt (verify.enabled), or passed it (#463).
+	"verify_failed": true, "verify_passed": true,
 	// An attempt's E2E results, collected by the local verify (verify.e2e_report).
 	"e2e_report": true,
 	// Work an earlier attempt committed, accepted with `orch task salvage --accept` (#391).

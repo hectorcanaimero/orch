@@ -528,3 +528,29 @@ func TestRecordFinishCarriesTheQuota(t *testing.T) {
 		t.Errorf("extra quota = %#v", events[0].Extra["quota"])
 	}
 }
+
+// TestVerifyEventsAreAcceptedByTheDatabase: the real backend takes both
+// verify verdicts (#463), and a finding reads back with every field.
+func TestVerifyEventsAreAcceptedByTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	b := openBackend(t)
+	rec := StateRecorder{Backend: b}
+	if err := rec.AppendEngineEvent(ctx, "run-1", EventVerifyPassed, "B-020", "claude", map[string]any{
+		"commands": []VerifyCommand{{Command: "go test ./...", DurationS: 2.5}}, "reviewer": "gemini",
+	}); err != nil {
+		t.Fatalf("verify_passed: %v", err)
+	}
+	if err := rec.AppendEngineEvent(ctx, "run-1", EventVerifyFailed, "B-020", "claude", map[string]any{
+		"findings": []VerifyFinding{{Severity: "blocking", File: "a.go", Line: 3, Title: "t", Detail: "d"}},
+	}); err != nil {
+		t.Fatalf("verify_failed: %v", err)
+	}
+	events, err := b.Events(ctx, "B-020", 0)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events = %v, %v", events, err)
+	}
+	f, _ := events[1].Extra["findings"].([]any)
+	if len(f) != 1 || f[0].(map[string]any)["line"] != float64(3) || f[0].(map[string]any)["file"] != "a.go" {
+		t.Errorf("findings read back as %v", events[1].Extra["findings"])
+	}
+}

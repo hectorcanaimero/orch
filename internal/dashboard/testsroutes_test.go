@@ -140,6 +140,17 @@ func TestVerifyEventsReadInTheLog(t *testing.T) {
 	if want := "[20:00:00] VERIFY C-1 verify_failed (send-back 1)"; sendBack.Human != want || sendBack.Severity != "warn" {
 		t.Errorf("verify_failed = %q %q, want %q warn", sendBack.Human, sendBack.Severity, want)
 	}
+	// #463: the findings counted, the attempt that ran out of send-backs, a pass.
+	blocked := formatEvent(state.Event{EventType: "verify_failed", TaskID: "C-1", TS: "2026-10-22T20:00:00Z",
+		Extra: map[string]any{"attempt": float64(3), "sent_back": false, "findings": []any{map[string]any{}, map[string]any{}}}})
+	if want := "[20:00:00] VERIFY C-1 verify_failed (attempt 3, 2 findings, blocked)"; blocked.Human != want {
+		t.Errorf("verify_failed = %q, want %q", blocked.Human, want)
+	}
+	passed := formatEvent(state.Event{EventType: "verify_passed", TaskID: "C-1", TS: "2026-10-22T20:00:00Z",
+		Extra: map[string]any{"attempt": float64(2), "reviewer": "gemini"}})
+	if want := "[20:00:00] VERIFY C-1 verify_passed (attempt 2, reviewed by gemini)"; passed.Human != want || passed.Severity != "info" {
+		t.Errorf("verify_passed = %q %q, want %q info", passed.Human, passed.Severity, want)
+	}
 	if want := "[20:00:00] E2E C-1 e2e_report (3 passed, 1 failed)"; report.Human != want {
 		t.Errorf("e2e_report = %q, want %q", report.Human, want)
 	}

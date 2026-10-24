@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -172,6 +173,8 @@ func Build(events []state.Event, spend []state.Spend, tasks []state.TaskRuntime,
 	outcome := map[string]string{}
 	why := map[string]TaskRef{}
 	verifyFailed := map[string]bool{}
+	// reviewSaid is the latest verify_failed's findings, in one line (#463).
+	reviewSaid := map[string]string{}
 	var order []string
 	byProvider := map[string]*Provider{}
 	provider := func(name string) *Provider {
@@ -197,6 +200,7 @@ func Build(events []state.Event, spend []state.Spend, tasks []state.TaskRuntime,
 			pending(outcome, e.TaskID)
 		case "verify_failed":
 			verifyFailed[e.TaskID] = true
+			reviewSaid[e.TaskID] = findingsReason(e.Extra["findings"])
 			pending(outcome, e.TaskID)
 		case "success", "block", "ci_blocked", "fail", "timeout":
 			if e.EventType == "fail" || e.EventType == "timeout" {
@@ -207,6 +211,10 @@ func Build(events []state.Event, spend []state.Spend, tasks []state.TaskRuntime,
 			}
 			outcome[e.TaskID] = e.EventType
 			why[e.TaskID] = stopCause(e, verifyFailed[e.TaskID])
+			if c := why[e.TaskID]; c.Cause == "verify" && reviewSaid[e.TaskID] != "" {
+				c.Reason = reviewSaid[e.TaskID]
+				why[e.TaskID] = c
+			}
 		case "pr_created":
 			url, _ := e.Extra["pr_url"].(string)
 			if url == "" || seenPR[url] {
@@ -323,6 +331,29 @@ func stopCause(e state.Event, verifyFailed bool) TaskRef {
 		}
 	}
 	return c
+}
+
+// findingsReason is a verify_failed's structured findings (#463) in one
+// line, "" for an event without them: the reason's own first line only says
+// a review asked for changes.
+func findingsReason(raw any) string {
+	findings, _ := raw.([]any)
+	var titles []string
+	for _, f := range findings {
+		m, _ := f.(map[string]any)
+		title, _ := m["title"].(string)
+		if file, _ := m["file"].(string); file != "" {
+			if line, ok := m["line"].(float64); ok && line > 0 {
+				file += ":" + strconv.Itoa(int(line))
+			}
+			title = file + " " + title
+		}
+		titles = append(titles, title)
+	}
+	if len(titles) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d review findings: %s", len(titles), strings.Join(titles, "; "))
 }
 
 func within(ts string, start, end time.Time) bool {

@@ -66,19 +66,32 @@ func (v Verifier) Verify(ctx context.Context, req engine.VerifyRequest) engine.V
 			return engine.VerifyResult{Failure: failure}
 		}
 	}
+	var ran []engine.VerifyCommand
 	for _, c := range v.commands(req.TaskID, req.Dir) {
-		if out, err := run(ctx, req.Dir, req.Env, c, timeout); notFound(err) {
+		if out, err := timed(&ran, c, func() (string, error) { return run(ctx, req.Dir, req.Env, c, timeout) }); notFound(err) {
 			skipNotFound(req.TaskID, "verify.commands", c, out)
 		} else if err != nil {
-			return engine.VerifyResult{Failure: commandFailed(c, err, out, "")}
+			return engine.VerifyResult{Failure: commandFailed(c, err, out, ""), Commands: ran}
 		}
 	}
 	res := v.e2e(ctx, req, timeout)
+	res.Commands = append(ran, res.Commands...)
 	if res.Failure != "" || !v.Cfg.Review {
 		return res
 	}
-	res.Failure = v.review(ctx, req.TaskID, req.Writer, req.Dir, timeout)
+	res.Failure = v.review(ctx, req.TaskID, req.Writer, req.Dir, timeout, &res)
 	return res
+}
+
+// timed runs f, the check command, and adds it to ran with how long it took
+// unless sh could not find it.
+func timed(ran *[]engine.VerifyCommand, command string, f func() (string, error)) (string, error) {
+	start := time.Now()
+	out, err := f()
+	if !notFound(err) {
+		*ran = append(*ran, engine.VerifyCommand{Command: command, DurationS: time.Since(start).Round(time.Millisecond).Seconds()})
+	}
+	return out, err
 }
 
 func commandFailed(command string, err error, out, context string) string {
@@ -134,7 +147,7 @@ func (v Verifier) e2e(ctx context.Context, req engine.VerifyRequest, timeout tim
 	}
 	var res engine.VerifyResult
 	for _, c := range v.Cfg.E2E {
-		if out, err := run(ctx, req.Dir, env, c, timeout); notFound(err) {
+		if out, err := timed(&res.Commands, c, func() (string, error) { return run(ctx, req.Dir, env, c, timeout) }); notFound(err) {
 			skipNotFound(req.TaskID, "verify.e2e", c, out)
 		} else if err != nil {
 			res.Failure = commandFailed(c, err, out, " against the running app")
@@ -272,8 +285,9 @@ func skipNotFound(taskID, key, command, out string) {
 }
 
 // review asks another provider to review the diff, and returns its blocking
-// findings for the agent, or "".
-func (v Verifier) review(ctx context.Context, taskID string, writer model.Backend, dir string, timeout time.Duration) string {
+// findings for the agent, or "". A review that completes names its reviewer
+// and all its findings in res.
+func (v Verifier) review(ctx context.Context, taskID string, writer model.Backend, dir string, timeout time.Duration, res *engine.VerifyResult) string {
 	reviewer := v.reviewer(writer)
 	if reviewer == "" {
 		slog.Warn("verify: no other provider is installed to review; skipping the review", "task", taskID, "writer", writer)
@@ -297,6 +311,10 @@ func (v Verifier) review(ctx context.Context, taskID string, writer model.Backen
 	if err != nil {
 		slog.Warn("verify: the review's answer did not parse; passing the work", "task", taskID, "reviewer", reviewer, "err", err)
 		return ""
+	}
+	res.Reviewer, res.ReviewModel = string(reviewer), v.Cfg.ReviewModel
+	for _, f := range verdict.Findings {
+		res.Findings = append(res.Findings, engine.VerifyFinding(f))
 	}
 	if !verdict.Blocks() {
 		return ""
