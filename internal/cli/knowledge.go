@@ -168,7 +168,7 @@ func newKnowledgeCmd(flags *projectFlags) *cobra.Command {
 	}
 	stats.Flags().BoolVar(&statsJSON, "json", false, "One JSON object")
 
-	cmd.AddCommand(add, list, show, rm, stats)
+	cmd.AddCommand(add, list, show, rm, stats, newKnowledgeCurateCmd(flags))
 	return cmd
 }
 
