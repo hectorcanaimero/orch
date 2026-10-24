@@ -41,7 +41,8 @@ func openSteer(cmd *cobra.Command, flags *projectFlags) (project.Steer, func() e
 		return project.Steer{}, nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	return project.Steer{Backend: backend, StateDir: paths.StateDir(), Source: "cli",
-		VCS: vcs.Config{Provider: cfg.VCS.Provider, Host: cfg.VCS.Host}}, closeDB, nil
+		VCS:  vcs.Config{Provider: cfg.VCS.Provider, Host: cfg.VCS.Host},
+		Root: paths.Root, BaseBranch: cfg.Dispatch.BaseBranch, TasksJSON: paths.TasksJSON()}, closeDB, nil
 }
 
 // steerErr maps the backend's errors onto `task set`'s exit codes.
@@ -90,12 +91,13 @@ func newTaskNoteCmd(flags *projectFlags) *cobra.Command {
 }
 
 // newTaskAcceptCmd is `orch task accept` (#454): merge a task's reviewed
-// work — its PR — the way the dashboard's Changes tab does.
+// work — its PR, or with vcs.provider local its branch into the base — the
+// way the dashboard's Changes tab does.
 func newTaskAcceptCmd(flags *projectFlags) *cobra.Command {
 	var id string
 	cmd := &cobra.Command{
 		Use:   "accept --id ID",
-		Short: "Accept a task's work: squash-merge its PR now",
+		Short: "Accept a task's work: squash-merge its PR now (vcs.provider local: its branch into the base)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			steer, closeDB, err := openSteer(cmd, flags)

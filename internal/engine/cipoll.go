@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/project"
 	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/state"
 	"github.com/hectorcanaimero/orch/internal/vcs"
@@ -713,9 +714,8 @@ func (p *CIPoller) dropWorktree(ctx context.Context, s *Scheduler, taskID string
 }
 
 // CIFeedbackFile is where the failing CI logs are left for the agent, inside
-// its own worktree. The name is Python's, and it is a contract with whatever
-// the agent is told to read.
-const CIFeedbackFile = ".orch-ci-feedback.md"
+// its own worktree (project.CIFeedbackFile, which Accept also leaves out).
+const CIFeedbackFile = project.CIFeedbackFile
 
 func writeCIFeedback(worktreePath, ciLogs string) error {
 	return writeFeedback(worktreePath, "CI Failure — Please fix", "```\n"+ciLogs+"\n```\n")

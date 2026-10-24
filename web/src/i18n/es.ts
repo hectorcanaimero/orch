@@ -336,6 +336,8 @@ export const es = {
   "changes.review": "Revisión",
   "changes.note": "Una nota: por qué vuelve, o por qué se bloquea",
   "changes.hint": "Aceptar fusiona el PR. Devolver reabre la tarea con tu nota para su agente; Bloquear la detiene con la nota como motivo.",
+  "changes.hint_local": "Aceptar fusiona la rama de la tarea en la base aquí (vcs.provider: local). Devolver reabre la tarea con tu nota para su agente; Bloquear la detiene con la nota como motivo.",
+  "changes.merged_locally": "Ya está fusionada en la base aquí.",
   "changes.no_pr": "Todavía no hay PR que fusionar: devuélvela o bloquéala con una nota.",
   "changes.accept": "Aceptar",
   "changes.send_back": "Devolver",

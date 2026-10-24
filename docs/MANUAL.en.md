@@ -455,7 +455,10 @@ review's findings under the `file:line` they name. The local operator acts
 from there: **Accept** squash-merges the task's PR (`orch task accept`),
 **Send back** reopens the task with your note for its agent (`orch task note
 --retry`), **Block** holds it with the note as the reason. In local mode
-(`vcs.provider: local`, #455) Accept says it is not there yet. A stakeholder
+(`vcs.provider: local`) there is no PR: Accept commits what the task left in
+its worktree and squash-merges `orch/<id>` into the base here, as the run
+does, then marks the task done; if the work conflicts with the base nothing
+changes and the error names the files, for you to send it back. A stakeholder
 does not get the tab unless `api_task_diff` is in
 `dashboard.stakeholder_routes`.
 

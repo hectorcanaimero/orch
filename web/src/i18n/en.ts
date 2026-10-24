@@ -332,6 +332,8 @@ export const en = {
   "changes.review": "Review",
   "changes.note": "A note: why it goes back, or why it is blocked",
   "changes.hint": "Accept merges the PR. Send back reopens the task with your note for its agent; Block holds it with the note as the reason.",
+  "changes.hint_local": "Accept merges the task's branch into the base here (vcs.provider: local). Send back reopens the task with your note for its agent; Block holds it with the note as the reason.",
+  "changes.merged_locally": "Already merged into the base here.",
   "changes.no_pr": "No PR to merge yet: send it back or block it with a note.",
   "changes.accept": "Accept",
   "changes.send_back": "Send back",

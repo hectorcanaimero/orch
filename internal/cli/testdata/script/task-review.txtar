@@ -14,14 +14,33 @@ stdout '"id":"T-1"[^}]*"status":"todo"'
 ! exec orch task accept --id T-1 --project-root $WORK/rproj
 stderr 'T-1: the task has no PR to merge'
 
-# Local mode has no PR; its merge comes with #455.
+# Local mode has no PR (#469): Accept squash-merges orch/T-1 into main here,
+# with the run's message, and the task is done.
 cp $WORK/local.yaml $WORK/rproj/.orchestrator/config.yaml
-! exec orch task accept --id T-1 --project-root $WORK/rproj
-stderr 'not implemented yet: see #455'
+cd $WORK/rproj
+exec git init -q -b main
+exec git add tasks.json
+exec git -c user.email=t@t -c user.name=t commit -q -m initial
+exec git checkout -q -b orch/T-1
+cp $WORK/flag.txt flag.txt
+exec git add flag.txt
+exec git -c user.email=t@t -c user.name=t commit -q -m wip
+exec git checkout -q main
+exec orch task accept --id T-1 --project-root $WORK/rproj
+stdout '^T-1 accepted: merged into main as [0-9a-f]{7}$'
+exists flag.txt
+exec git log -1 --format=%s main
+stdout '^add the flag$'
+exec orch tasks --project-root $WORK/rproj --json
+stdout '"id":"T-1"[^}]*"status":"done"'
 
 -- local.yaml --
+dispatch:
+  base_branch: main
 vcs:
   provider: local
+-- flag.txt --
+on
 -- rproj/tasks.json --
 {"tasks":[{"id":"T-1","phase":1,"title":"add the flag","model":"claude/haiku","status":"todo","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"","reason":""}]}
 -- rproj/.orchestrator/config.yaml --
