@@ -117,8 +117,24 @@ func RecordStart(ctx context.Context, b state.Backend, runID string, d Dispatch,
 func RecordFinish(ctx context.Context, b state.Backend, runID string, d Dispatch, o Outcome, attempt int) error {
 	ts := utcSecond(o.StartedAt.Add(o.Duration))
 
-	if err := b.RecordSpend(ctx, state.Spend{
-		TS:                  ts,
+	if err := b.RecordSpend(ctx, spendRow(d, o, attempt)); err != nil {
+		return fmt.Errorf("record spend for %s: %w", d.Req.TaskID, err)
+	}
+
+	if err := b.AppendEvent(ctx, runID, outcomeEvent(runID, d, o, ts, attempt)); err != nil {
+		return fmt.Errorf("append outcome event for %s: %w", d.Req.TaskID, err)
+	}
+
+	if err := b.ClearDispatch(ctx, runID, d.Req.TaskID); err != nil {
+		return fmt.Errorf("clear dispatch for %s: %w", d.Req.TaskID, err)
+	}
+	return nil
+}
+
+// spendRow is a finished dispatch's cost row.
+func spendRow(d Dispatch, o Outcome, attempt int) state.Spend {
+	return state.Spend{
+		TS:                  utcSecond(o.StartedAt.Add(o.Duration)),
 		TaskID:              d.Req.TaskID,
 		Backend:             string(d.Req.Route.Backend),
 		Model:               d.Req.Route.CLIModel,
@@ -131,18 +147,7 @@ func RecordFinish(ctx context.Context, b state.Backend, runID string, d Dispatch
 		CostUSD:             o.Result.CostUSD,
 		DurationS:           o.Duration.Seconds(),
 		Estimated:           o.Result.Estimated,
-	}); err != nil {
-		return fmt.Errorf("record spend for %s: %w", d.Req.TaskID, err)
 	}
-
-	if err := b.AppendEvent(ctx, runID, outcomeEvent(runID, d, o, ts, attempt)); err != nil {
-		return fmt.Errorf("append outcome event for %s: %w", d.Req.TaskID, err)
-	}
-
-	if err := b.ClearDispatch(ctx, runID, d.Req.TaskID); err != nil {
-		return fmt.Errorf("clear dispatch for %s: %w", d.Req.TaskID, err)
-	}
-	return nil
 }
 
 // outcomeEvent builds the event for a finished dispatch.

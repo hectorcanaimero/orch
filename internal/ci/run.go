@@ -99,6 +99,14 @@ func (fixedArgv) PromptDelivery() providers.PromptDelivery { return providers.Pr
 // It uses the engine's own spawn and supervision (a process group, the
 // timeout's SIGTERM then SIGKILL), and so honours ORCH_FAKE_PROVIDER.
 func Ask(ctx context.Context, backend model.Backend, cliModel, prompt string, timeout time.Duration) (answer string, err error) {
+	return AskOnce(ctx, engine.OneShot{}, ReviewTaskID, model.RouteEntry{Backend: backend, CLIModel: cliModel}, prompt, timeout)
+}
+
+// AskOnce is Ask on a whole route, under taskID, through once: with its
+// State set the spend is recorded under taskID, with its Gate the budget is
+// checked first (#461). taskID is also the fake's canned response name.
+func AskOnce(ctx context.Context, once engine.OneShot, taskID string, route model.RouteEntry, prompt string, timeout time.Duration) (answer string, err error) {
+	backend := route.Backend
 	p, err := providers.Get(backend)
 	if err != nil {
 		return "", err
@@ -122,8 +130,8 @@ func Ask(ctx context.Context, backend model.Backend, cliModel, prompt string, ti
 	}
 
 	req := providers.Request{
-		TaskID:     ReviewTaskID,
-		Route:      model.RouteEntry{Backend: backend, CLIModel: cliModel},
+		TaskID:     taskID,
+		Route:      route,
 		Cwd:        work,
 		OutputPath: filepath.Join(dir, "last-message.md"),
 		PromptText: geminiPrompt,
@@ -132,7 +140,7 @@ func Ask(ctx context.Context, backend model.Backend, cliModel, prompt string, ti
 	if err != nil {
 		return "", err
 	}
-	out, err := engine.Run(ctx, engine.Dispatch{
+	out, err := once.Run(ctx, engine.Dispatch{
 		Provider:   fixedArgv{Provider: p, argv: argv},
 		Req:        req,
 		PromptPath: promptPath,
