@@ -797,6 +797,7 @@ knowledge:
   enabled: true        # what `orch init` / `orch start` write; absent = false
   max_in_prompt: 5     # lessons a dispatch prompt carries; 0 or absent = 5
   auto_capture: true   # orch drafts lessons itself; absent = true
+  curate_every: 0      # curate after this many new lessons (#452); 0 or absent = never
 ```
 
 The project's memory. A lesson is one markdown file under `.orch/knowledge/`
@@ -826,6 +827,13 @@ and reviewed in PRs like `tasks.json` and the specs; the FTS5 index in
 - **The operator** uses `orch knowledge add|list|show|rm|stats`
   ([`CLI.md`](CLI.md)); `stats` compares first-try success and retries per
   task before and since the first lesson.
+- **Curation** (#452). `orch knowledge curate` dispatches one task that merges
+  duplicates, rewrites contradictions and deletes stale lessons, as a PR (or a
+  local merge) that may touch only `.orch/knowledge/` ([`CLI.md`](CLI.md)).
+  With `curate_every: N`, `orch run` runs it at its end, without asking, once
+  N lessons were created since the last curation started (by their `created`
+  date, so a lesson from that same day counts from the next one); off by
+  default and in every config without the key.
 
 **On in new projects, off when the key is absent**, like `retry.conflict`: a
 config written before #451 never starts writing files into the repository.

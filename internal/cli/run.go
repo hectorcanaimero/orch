@@ -48,7 +48,11 @@ func newRunCmd(flags *projectFlags) *cobra.Command {
 		Use:   "run",
 		Short: "Walk the DAG, dispatching ready tasks to their CLI agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProject(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), flags, opts)
+			if err := runProject(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), flags, opts); err != nil {
+				return err
+			}
+			// knowledge.curate_every (#452), once the run's lock is released.
+			return curateIfDue(cmd.Context(), cmd.OutOrStdout(), flags, opts.noPush)
 		},
 	}
 
@@ -89,6 +93,13 @@ type runOptions struct {
 	// spend while it goes, and doing that through the run's own backend keeps
 	// one writer on the file (CHECKLIST rule 17).
 	backend state.Backend
+	// tasks, when set, is the whole DAG this run dispatches instead of
+	// tasks.json, which is then neither read nor reloaded: `orch knowledge
+	// curate`'s one task (#452).
+	tasks []model.Task
+	// verifier, when set, is the only gate a task's work passes before it is
+	// published, whatever verify.enabled says: curate's scope check.
+	verifier engine.Verifier
 }
 
 // runProject is `orch run` minus cobra: the one code path that walks a
@@ -127,7 +138,10 @@ func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *project
 		backend = opened
 	}
 
-	tasks := loadDAG(paths)
+	tasks := opts.tasks
+	if tasks == nil {
+		tasks = loadDAG(paths)
+	}
 	if len(tasks) == 0 {
 		return withExitCode(1, fmt.Errorf("no tasks in %s — plan them with: %s", paths.TasksJSON(), strings.Join(planSteps(), "  then  ")))
 	}
@@ -253,7 +267,9 @@ func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *project
 		wm.Setup = cfg.Dispatch.WorktreeSetup
 		wtManager = engine.NewWorktreeManager(wm)
 		scheduler.Worktree = wtManager
-		if cfg.Verify.Enabled {
+		if opts.verifier != nil {
+			scheduler.Verifier = opts.verifier
+		} else if cfg.Verify.Enabled {
 			scheduler.Verifier = verify.Verifier{Cfg: cfg.Verify, Base: cfg.Dispatch.BaseBranch, RequireTests: cfg.Dispatch.TDD}
 		}
 	} else if cfg.Verify.Enabled {
@@ -292,32 +308,34 @@ func runProject(ctx context.Context, in io.Reader, out io.Writer, flags *project
 	// this run. Checked by modification time, so an unchanged file costs a
 	// stat per tick.
 	tasksMod := fileModTime(paths.TasksJSON())
-	runner.ReloadTasks = func(ctx context.Context) ([]model.Task, bool, error) {
-		mod := fileModTime(paths.TasksJSON())
-		if mod.Equal(tasksMod) {
-			return nil, false, nil
+	if opts.tasks == nil {
+		runner.ReloadTasks = func(ctx context.Context) ([]model.Task, bool, error) {
+			mod := fileModTime(paths.TasksJSON())
+			if mod.Equal(tasksMod) {
+				return nil, false, nil
+			}
+			// Before reading: a file broken mid-edit is reported once, and read
+			// again when it next changes.
+			tasksMod = mod
+			tf, err := model.LoadTasksFile(paths.TasksJSON())
+			if err != nil {
+				return nil, false, err
+			}
+			if err := backend.Bootstrap(ctx, tf.Tasks); err != nil {
+				return nil, false, err
+			}
+			return tf.Tasks, true, nil
 		}
-		// Before reading: a file broken mid-edit is reported once, and read
-		// again when it next changes.
-		tasksMod = mod
-		tf, err := model.LoadTasksFile(paths.TasksJSON())
-		if err != nil {
-			return nil, false, err
-		}
-		if err := backend.Bootstrap(ctx, tf.Tasks); err != nil {
-			return nil, false, err
-		}
-		return tf.Tasks, true, nil
 	}
 
 	// The CI poller only has something to watch when a PR can exist.
 	if provider != nil {
 		runner.CI = &engine.CIPoller{
-			Provider:     provider,
-			Backend:      backend,
-			Worktree:     wtManager,
-			PollInterval: time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
-			MaxRetries:   cfg.VCS.CIMaxRetries,
+			Provider:        provider,
+			Backend:         backend,
+			Worktree:        wtManager,
+			PollInterval:    time.Duration(cfg.VCS.CIPollIntervalS) * time.Second,
+			MaxRetries:      cfg.VCS.CIMaxRetries,
 			ConflictRetries: conflictRetries(cfg),
 			AutoMerge:       cfg.GitHub.AutoMerge,
 			// Python's `gh pr merge --squash --auto`. Without a

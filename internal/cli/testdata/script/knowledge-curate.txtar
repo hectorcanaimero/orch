@@ -1,0 +1,204 @@
+# #452: orch knowledge curate dispatches one task through orch run's own
+# path — worktree, push, PR through a fake gh — whose prompt is the lessons
+# and the commits since the last curation, and whose work may touch only
+# .orch/knowledge/.
+#
+# bin/sleep is the agent (the fake provider's first command, run in the
+# task's worktree with the prompt on stdin): it keeps the prompt, deletes the
+# duplicate, rewrites the stale lesson, and — when $WORK/stray exists — also
+# edits README.md.
+
+[!exec:git] skip
+[!exec:sh] skip
+
+chmod 0755 $WORK/bin/sleep
+chmod 0755 $WORK/bin/gh
+env PATH=$WORK/bin:$PATH
+env ORCH_FAKE_PROVIDER=$WORK/fake
+env CHILD_OUT=$WORK/child
+env GH_STATE=$WORK/gh-state
+mkdir $WORK/child
+mkdir $WORK/gh-state
+cp $WORK/gh-green $WORK/gh-state/checks
+
+exec git init -q --bare --initial-branch=main $WORK/remote.git
+cd $WORK/cproj
+exec git init -q --initial-branch=main .
+exec git config user.email orch@example.com
+exec git config user.name orch
+exec git config commit.gpgsign false
+exec git add -A
+exec git commit -q -m 'initial'
+exec git remote add origin $WORK/remote.git
+exec git push -q -u origin main
+
+# The project has no dispatch.worktree_mode: a curation forces it, so its work
+# is always a branch to review.
+#
+# Without --yes it shows the estimate and asks; no answer dispatches nothing.
+! exec orch knowledge curate
+stdout '^curating 3 lessons on claude/haiku as knowledge-curate-[0-9-]+; the work goes to branch orch/knowledge-curate-'
+stdout '^≈ 1 task · ≈ \$'
+stdout 'Dispatch it\? \[y/N\] aborted: nothing dispatched'
+! exists $WORK/child/prompt
+
+# A curation that also edits README.md is sent back by its scope check and,
+# once the send-backs are used up, blocked: nothing is pushed, no PR opened.
+cp $WORK/fake/stray $WORK/stray
+exec orch knowledge curate --yes
+stderr 'sending the task back to its agent .*attempt=2 of=2'
+stderr 'You changed files outside .orch/knowledge/: README.md'
+! exists $WORK/gh-state/calls
+exec git --git-dir=$WORK/remote.git branch --list
+! stdout 'knowledge-curate'
+rm $WORK/stray
+rm $WORK/child/prompt
+
+# The real one: its prompt carries every lesson and the commits; its PR
+# changes only .orch/knowledge/.
+exec orch knowledge curate --yes
+grep 'Curate this project''s lessons in .orch/knowledge/' $WORK/child/prompt
+grep '^--- .orch/knowledge/run-tests.md$' $WORK/child/prompt
+grep '^--- .orch/knowledge/run-tests-again.md$' $WORK/child/prompt
+grep 'Commits \(no curation yet; the latest 200\):' $WORK/child/prompt
+grep ' initial$' $WORK/child/prompt
+grep 'pr create' $WORK/gh-state/calls
+grep '\-\-head orch/knowledge-curate-' $WORK/gh-state/calls
+exec sh $WORK/changed.sh
+cmp stdout $WORK/want-changed
+
+# The spend is recorded like any task's.
+exec orch report usage --json
+stdout 'knowledge-curate-'
+
+# A second curation reads the commits since the first one only.
+exec git commit -q --allow-empty -m 'after the curation'
+rm $WORK/child/prompt
+exec orch knowledge curate --yes
+grep 'Commits since the last curation \(' $WORK/child/prompt
+
+# knowledge.curate_every: off by default, so orch run curates nothing; at 1,
+# a lesson added since the last curation makes orch run curate at its end.
+rm $WORK/child/prompt
+exec orch run --worktree-mode --skip-update-check
+! stderr 'since the last curation'
+! exists $WORK/child/prompt
+cp $WORK/new-lesson.md .orch/knowledge/new-lesson.md
+cp $WORK/config-every.yaml .orchestrator/config.yaml
+exec orch run --worktree-mode --skip-update-check
+stderr '^note: lessons added since the last curation: 1 \(knowledge.curate_every: 1\) — curating them$'
+grep '^--- .orch/knowledge/new-lesson.md$' $WORK/child/prompt
+
+-- new-lesson.md --
+---
+id: new-lesson
+title: A lesson from the future
+source: operator
+created: "2099-01-01"
+---
+Dated after any curation.
+-- config-every.yaml --
+concurrency:
+  global_max: 1
+  per_provider:
+    claude: 1
+dispatch:
+  base_branch: main
+vcs:
+  provider: github
+  auto_pr: true
+  ci_poll_interval_s: 1
+  ci_max_retries: 1
+github:
+  auto_merge: false
+knowledge:
+  curate_every: 1
+-- want-changed --
+D	.orch/knowledge/run-tests-again.md
+M	.orch/knowledge/use-flake8.md
+-- changed.sh --
+cd "$WORK/cproj"
+b=$(git --git-dir="$WORK/remote.git" for-each-ref --format='%(refname:short)' 'refs/heads/orch/knowledge-curate-*' | head -n1)
+git --git-dir="$WORK/remote.git" diff --name-status main..."$b"
+-- cproj/tasks.json --
+{"tasks":[{"id":"T-1","phase":1,"title":"unrelated","model":"claude/haiku","status":"done","dependencies":[],"estimateHours":1.0,"files":[],"specRef":"","reason":"because"}]}
+-- cproj/README.md --
+a project
+-- cproj/.orch/knowledge/run-tests.md --
+---
+id: run-tests
+title: Run the tests with make test
+source: agent
+created: "2026-10-01"
+---
+make test runs every package with -race.
+-- cproj/.orch/knowledge/run-tests-again.md --
+---
+id: run-tests-again
+title: Tests run with make test
+source: verify
+created: "2026-10-02"
+---
+Use make test; it runs with -race.
+-- cproj/.orch/knowledge/use-flake8.md --
+---
+id: use-flake8
+title: Lint with flake8
+source: operator
+created: "2026-10-03"
+---
+flake8, configured in setup.cfg.
+-- cproj/.orchestrator/config.yaml --
+concurrency:
+  global_max: 1
+  per_provider:
+    claude: 1
+dispatch:
+  base_branch: main
+vcs:
+  provider: github
+  auto_pr: true
+  ci_poll_interval_s: 1
+  ci_max_retries: 1
+github:
+  auto_merge: false
+-- cproj/.orchestrator/model_router.yaml --
+claude/haiku:
+  backend: claude
+  cli_model: claude-haiku-4-5
+  tier: cheap
+  is_premium: false
+claude/sonnet:
+  backend: claude
+  cli_model: claude-sonnet-4-5
+  tier: standard
+  is_premium: false
+-- cproj/scripts/task-start.sh --
+#!/bin/sh
+exec orch task-status "$1" in-progress
+-- cproj/scripts/task-finish.sh --
+#!/bin/sh
+exec orch task-status "$1" done
+-- fake/claude/_default.out --
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1}}
+-- fake/stray --
+-- gh-green --
+[{"state":"completed","conclusion":"success"}]
+-- bin/gh --
+#!/bin/sh
+echo "$@" >> "$GH_STATE/calls"
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "pr create")   echo "https://github.com/o/r/pull/1"; exit 0 ;;
+  "pr checks")   cat "$GH_STATE/checks"; exit 0 ;;
+  "pr merge")    echo "merged"; exit 0 ;;
+  "pr view")     echo '{"statusCheckRollup":[]}'; exit 0 ;;
+  *)             exit 1 ;;
+esac
+-- bin/sleep --
+#!/bin/sh
+cat > "$CHILD_OUT/prompt"
+rm -f .orch/knowledge/run-tests-again.md
+printf -- '---\nid: use-flake8\ntitle: Lint with ruff\nsource: operator\ncreated: "2026-10-03"\n---\nruff check; flake8 is gone.\n' > .orch/knowledge/use-flake8.md
+[ -e "$WORK/stray" ] && echo changed >> README.md
+exit 0

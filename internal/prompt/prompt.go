@@ -398,8 +398,8 @@ func conflictBlock(c *Conflict) string {
 // Caps on the knowledge block (#451): a lesson is a few lines, and the block
 // must never crowd out the task.
 const (
-	lessonMaxLines = 15
-	lessonMaxChars = 600
+	lessonMaxLines = knowledge.MaxLines
+	lessonMaxChars = knowledge.MaxChars
 	knowledgeMax   = 4000
 )
 

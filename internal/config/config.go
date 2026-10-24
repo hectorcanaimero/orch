@@ -126,6 +126,10 @@ type Knowledge struct {
 	// rejection the next attempt fixed, a conflict the agent resolved. Nil
 	// (absent) means on.
 	AutoCapture *bool `yaml:"auto_capture"`
+	// CurateEvery runs `orch knowledge curate` at the end of an `orch run`
+	// once this many lessons were added since the last curation (#452); 0
+	// (absent) never does.
+	CurateEvery int `yaml:"curate_every"`
 }
 
 // Prompt is knowledge.max_in_prompt with its default.
