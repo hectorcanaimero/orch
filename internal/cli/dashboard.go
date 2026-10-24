@@ -184,8 +184,9 @@ func newDashboardCmd(flags *projectFlags) *cobra.Command {
 				Version:   cmd.Root().Version,
 				Releases:  dashboardReleases(),
 				CLILatest: cliLatest(cfg),
-				Steer:     &project.Steer{Backend: backend, StateDir: paths.StateDir(), VCS: vcs.Config{Provider: cfg.VCS.Provider, Host: cfg.VCS.Host}},
-				Editor:    &project.TaskEditor{TasksJSON: paths.TasksJSON(), StateDir: paths.StateDir(), Routes: routerKeys(paths), Backend: backend, Source: "dashboard"},
+				Steer: &project.Steer{Backend: backend, StateDir: paths.StateDir(), VCS: vcs.Config{Provider: cfg.VCS.Provider, Host: cfg.VCS.Host},
+					Root: paths.Root, BaseBranch: cfg.Dispatch.BaseBranch, TasksJSON: paths.TasksJSON()},
+				Editor: &project.TaskEditor{TasksJSON: paths.TasksJSON(), StateDir: paths.StateDir(), Routes: routerKeys(paths), Backend: backend, Source: "dashboard"},
 			})
 			if err != nil {
 				return err

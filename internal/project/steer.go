@@ -43,6 +43,10 @@ type Steer struct {
 	VCS vcs.Config
 	// Provider, when set, is used instead of the one VCS names (tests).
 	Provider vcs.Provider
+	// Root, BaseBranch and TasksJSON are what Accept lands a task with in
+	// local mode: the project's repository, dispatch.base_branch ("" is
+	// main), and where the squash message's title and spec come from.
+	Root, BaseBranch, TasksJSON string
 }
 
 // Providers are the backends orch has an adapter for, the names

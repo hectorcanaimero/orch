@@ -336,6 +336,8 @@ export const pt = {
   "changes.review": "Revisão",
   "changes.note": "Uma nota: por que volta, ou por que é bloqueada",
   "changes.hint": "Aceitar faz o merge do PR. Devolver reabre a tarefa com sua nota para o agente; Bloquear a retém com a nota como motivo.",
+  "changes.hint_local": "Aceitar faz o merge da branch da tarefa na base aqui (vcs.provider: local). Devolver reabre a tarefa com sua nota para o agente; Bloquear a retém com a nota como motivo.",
+  "changes.merged_locally": "Já mesclada na base aqui.",
   "changes.no_pr": "Ainda não há PR para fazer merge: devolva ou bloqueie com uma nota.",
   "changes.accept": "Aceitar",
   "changes.send_back": "Devolver",

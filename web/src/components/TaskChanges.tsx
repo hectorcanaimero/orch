@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, MessageSquareWarning } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useCI } from "@/hooks/useCI"
 import { t } from "@/i18n"
 import { acceptTask, getTaskDiff, moveTask, sendBackTask, type DiffFile } from "@/lib/api"
 import { statusKey } from "@/lib/status"
@@ -170,6 +171,13 @@ function ReviewActions({ task }: { task: Task }) {
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const running = statusKey(task.status) === "in_progress"
+  // vcs.provider local has no PR: Accept squash-merges the task's branch into
+  // the base here, until it has landed.
+  const local = useCI().data?.config?.provider === "local"
+  const acceptable = local ? !task.merged_locally && !running : Boolean(task.pr_url)
+  const hint = local
+    ? t(task.merged_locally ? "changes.merged_locally" : "changes.hint_local")
+    : t(task.pr_url ? "changes.hint" : "changes.no_pr")
 
   async function run(action: () => Promise<string>) {
     setBusy(true)
@@ -202,7 +210,7 @@ function ReviewActions({ task }: { task: Task }) {
         onChange={(e) => setNote(e.target.value)}
       />
       <div className="flex flex-wrap items-center gap-1.5">
-        <p className="text-xs text-muted-foreground">{task.pr_url ? t("changes.hint") : t("changes.no_pr")}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
         <div className="ml-auto flex flex-wrap gap-1.5">
           <Button
             size="sm"
@@ -216,7 +224,7 @@ function ReviewActions({ task }: { task: Task }) {
           <Button size="sm" variant="outline" disabled={busy || running || note.trim() === ""} onClick={() => run(async () => (await sendBackTask(task.id, note)).message)}>
             {t("changes.send_back")}
           </Button>
-          <Button size="sm" disabled={busy || !task.pr_url} onClick={() => run(async () => (await acceptTask(task.id)).message)}>
+          <Button size="sm" disabled={busy || !acceptable} onClick={() => run(async () => (await acceptTask(task.id)).message)}>
             {t("changes.accept")}
           </Button>
         </div>

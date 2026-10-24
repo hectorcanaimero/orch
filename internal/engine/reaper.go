@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hectorcanaimero/orch/internal/model"
+	"github.com/hectorcanaimero/orch/internal/project"
 	"github.com/hectorcanaimero/orch/internal/prompt"
 	"github.com/hectorcanaimero/orch/internal/providers"
 )
@@ -637,15 +638,7 @@ func (s *Scheduler) SpentUSD(taskID string) float64 { return s.spentUSD[taskID] 
 
 // prText is a task's PR title and body, and its local squash commit's message.
 func (s *Scheduler) prText(ctx context.Context, task model.Task) (title, body string) {
-	spec := task.SpecRef
-	if spec == "" {
-		spec = "n/a"
-	}
-	title = task.Title
-	if title == "" {
-		title = task.ID
-	}
-	body = strings.TrimSpace(fmt.Sprintf("Task: `%s`\nSpec: %s\n\n%s", task.ID, spec, task.Reason))
+	title, body = project.PRText(task)
 	return title, body + s.scopeSection(ctx, task)
 }
 

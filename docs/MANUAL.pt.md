@@ -464,7 +464,10 @@ os achados da revisão sob o `arquivo:linha` que citam. O operador local age
 dali: **Aceitar** faz squash-merge do PR (`orch task accept`), **Devolver**
 reabre a task com sua nota para o agente (`orch task note --retry`),
 **Bloquear** a retém com a nota como motivo. No modo local (`vcs.provider:
-local`, #455) Aceitar avisa que ainda não está pronto. Um stakeholder não vê
+local`) não há PR: Aceitar faz commit do que a task deixou no seu worktree e
+squash-merge de `orch/<id>` na base aqui, como o run faz, e marca a task como
+concluída; se o trabalho conflita com a base nada muda e o erro cita os
+arquivos, para você devolvê-la. Um stakeholder não vê
 a aba a menos que `api_task_diff` esteja em `dashboard.stakeholder_routes`.
 
 O dashboard está em inglês, espanhol e português (Brasil). Ele começa no idioma
